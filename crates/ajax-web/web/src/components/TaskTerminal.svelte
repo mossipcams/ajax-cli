@@ -294,6 +294,16 @@
   const BACK_KEY_DATA = "\x1b[D";
   let backRepeatDelay: ReturnType<typeof setTimeout> | undefined;
   let backRepeatInterval: ReturnType<typeof setInterval> | undefined;
+  let backRepeatPointerId: number | undefined;
+  let backRepeatListening = false;
+
+  const onBackVisibilityChange = () => {
+    if (document.visibilityState === "hidden") stopBackRepeat();
+  };
+
+  const onBackWindowBlur = () => {
+    stopBackRepeat();
+  };
 
   const stopBackRepeat = () => {
     if (backRepeatDelay) {
@@ -304,16 +314,39 @@
       clearInterval(backRepeatInterval);
       backRepeatInterval = undefined;
     }
+    backRepeatPointerId = undefined;
+    if (backRepeatListening) {
+      window.removeEventListener("blur", onBackWindowBlur);
+      document.removeEventListener("visibilitychange", onBackVisibilityChange);
+      backRepeatListening = false;
+    }
+  };
+
+  const onBackPointerStop = (event: PointerEvent) => {
+    if (backRepeatPointerId !== undefined && event.pointerId !== backRepeatPointerId) return;
+    stopBackRepeat();
   };
 
   const onBackPointerDown = (event: PointerEvent) => {
+    if (!event.isPrimary) return;
+    if (backRepeatPointerId !== undefined) return;
+
     onToolbarPointerDown(event);
     const target = event.currentTarget;
     if (target instanceof HTMLElement) {
-      target.setPointerCapture(event.pointerId);
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic/inactive pointers cannot capture; real touch/pen still can.
+      }
+    }
+    backRepeatPointerId = event.pointerId;
+    if (!backRepeatListening) {
+      window.addEventListener("blur", onBackWindowBlur);
+      document.addEventListener("visibilitychange", onBackVisibilityChange);
+      backRepeatListening = true;
     }
     sendKey(consumeCtrl(BACK_KEY_DATA));
-    stopBackRepeat();
     backRepeatDelay = setTimeout(() => {
       backRepeatDelay = undefined;
       backRepeatInterval = setInterval(() => {
@@ -981,6 +1014,17 @@
         cursor: "#87afd7",
       },
     });
+    // xterm leaves plain Space keydown uncancelled (keyCode 32 < 48), so the
+    // browser page-scrolls the wrap. Own Space here: one PTY frame, no scroll.
+    liveTerm.attachCustomKeyEventHandler((event) => {
+      if (event.key !== " " && event.code !== "Space") return true;
+      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return true;
+      if (event.type === "keydown") {
+        event.preventDefault();
+        sendKey(" ");
+      }
+      return false;
+    });
     fitAddon = new FitAddon();
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
@@ -1196,9 +1240,9 @@
           type="button"
           class="terminal-key"
           onpointerdown={key.label === "←" ? onBackPointerDown : onToolbarPointerDown}
-          onpointerup={key.label === "←" ? stopBackRepeat : undefined}
-          onpointercancel={key.label === "←" ? stopBackRepeat : undefined}
-          onlostpointercapture={key.label === "←" ? stopBackRepeat : undefined}
+          onpointerup={key.label === "←" ? onBackPointerStop : undefined}
+          onpointercancel={key.label === "←" ? onBackPointerStop : undefined}
+          onlostpointercapture={key.label === "←" ? onBackPointerStop : undefined}
           onclick={(event) => {
             const ownedFocus = consumeToolbarPointerOwnedFocus(event);
             if (key.label !== "←" || event.detail === 0) {
