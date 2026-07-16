@@ -84,4 +84,14 @@ describe("keyboard band height pin contract", () => {
       expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
     }
   });
+
+  it("drops the fullscreen safe-area hotbar pad while the keyboard is open", () => {
+    const ruleBody =
+      taskTerminalSource.match(
+        /:global\(html\.keyboard-open\)\s+\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const body = stripCssComments(ruleBody);
+    expect(body).toMatch(/padding-bottom:\s*6px/);
+    expect(body).not.toMatch(/env\(safe-area-inset-bottom\)/);
+  });
 });
