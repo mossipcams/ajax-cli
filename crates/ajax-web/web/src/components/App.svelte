@@ -376,7 +376,7 @@
     height: 18px;
     border-radius: 50%;
     border: 2px solid var(--rule-strong);
-    border-top-color: var(--teal-bright);
+    border-top-color: var(--accent);
     opacity: 0.5;
     transition: opacity 140ms var(--ease), transform 140ms var(--ease);
   }
@@ -405,7 +405,7 @@
   .new-task-row:hover,
   .new-task-row:focus-visible {
     background: var(--paper-tint);
-    border-color: var(--teal-bright);
+    border-color: var(--accent);
     color: var(--ink);
     outline: none;
   }
@@ -418,8 +418,8 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: var(--teal);
-    color: var(--ink);
+    background: var(--accent);
+    color: var(--paper);
     font-size: 17px;
     font-weight: 600;
     line-height: 1;

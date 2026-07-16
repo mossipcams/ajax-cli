@@ -200,7 +200,7 @@ describe("TaskList", () => {
     expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
   });
 
-  it("uses teal for the active project pill and mustard for attention badges", () => {
+  it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       taskListSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
     const pillBadgeRule = taskListSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -211,10 +211,10 @@ describe("TaskList", () => {
       taskListSource.match(/\.section-head\.attention \.section-head-count\s*\{([^}]*)\}/)?.[1] ??
       "";
 
-    expect(activePillRule).toMatch(/var\(--teal(?:-bright|-deep)?\)/);
-    expect(activePillRule).not.toMatch(/var\(--mustard/);
-    expect(pillBadgeRule).toMatch(/var\(--mustard/);
-    expect(attentionTitleRule).toMatch(/var\(--mustard/);
-    expect(attentionCountRule).toMatch(/var\(--mustard/);
+    expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
+    expect(activePillRule).not.toMatch(/var\(--warn/);
+    expect(pillBadgeRule).toMatch(/var\(--warn/);
+    expect(attentionTitleRule).toMatch(/var\(--warn/);
+    expect(attentionCountRule).toMatch(/var\(--warn/);
   });
 });

@@ -154,28 +154,28 @@
     align-items: center;
     min-height: 44px;
     background: transparent;
-    border: 1px solid var(--rule-strong);
-    border-radius: 999px;
-    padding: 7px 16px;
-    font-size: 11px;
+    border: none;
+    padding: 4px 10px 4px 0;
+    font-family: var(--mono);
+    font-size: 12px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--ink-soft);
+    color: var(--ink-muted);
   }
 
   .detail-header .back:hover,
   .detail-header .back:focus-visible {
-    border-color: var(--ink-soft);
     color: var(--ink);
     outline: none;
   }
 
   .detail-title {
     margin: 0;
-    font-size: 21px;
+    font-family: var(--mono);
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.01em;
-    line-height: 1.25;
+    line-height: 1.3;
     text-transform: none;
     color: var(--ink);
     flex: 1 1 auto;
@@ -188,65 +188,51 @@
     margin-left: auto;
   }
 
-  /* STATUS PILL — lives in the header row so state is always in view ------- */
+  /* STATUS — CLI cockpit glyph + label (▸ ? ! ✓ ·), painted with the tone
+     color. Lives in the header row so state is always in view. */
   .interact-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--rule-strong);
-    font-size: 11px;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--ink);
+    color: var(--tone, var(--ink-muted));
   }
 
-  .interact-pill.tone-running {
-    background: var(--teal-deep);
-    border-color: var(--teal);
+  .interact-pill::before {
+    content: "·";
+    line-height: 1;
   }
 
   .interact-pill.tone-running::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--teal-bright);
+    content: "▸";
     animation: pulse 2.2s ease-in-out infinite;
   }
 
-  .interact-pill.tone-waiting,
-  .interact-pill.tone-attention {
-    background: rgba(201, 162, 74, 0.18);
-    border-color: var(--mustard);
-    color: var(--mustard-bright);
+  .interact-pill.tone-waiting::before,
+  .interact-pill.tone-attention::before,
+  .interact-pill.tone-ready::before {
+    content: "?";
   }
 
-  .interact-pill.tone-error,
-  .interact-pill.tone-danger {
-    background: rgba(188, 92, 62, 0.18);
-    border-color: var(--terracotta);
-    color: var(--terracotta-bright);
+  .interact-pill.tone-error::before,
+  .interact-pill.tone-danger::before {
+    content: "!";
   }
 
-  .interact-pill.tone-success {
-    background: rgba(54, 112, 105, 0.28);
-    border-color: var(--teal);
-  }
-
-  .interact-pill.tone-idle,
-  .interact-pill.tone-muted {
-    background: transparent;
-    border-color: var(--rule-strong);
-    color: var(--ink-muted);
+  .interact-pill.tone-done::before,
+  .interact-pill.tone-success::before {
+    content: "✓";
   }
 
   .interact-summary {
     margin: 0 0 12px;
-    font-size: 14px;
-    line-height: 1.45;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
     color: var(--ink-soft);
     white-space: nowrap;
     overflow: hidden;
@@ -261,15 +247,16 @@
      summary lines, because it explains why status may be stale. */
   .interact-warning {
     margin: 0 0 12px;
-    font-size: 13px;
-    line-height: 1.45;
-    color: var(--terracotta-bright);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--danger);
     overflow-wrap: anywhere;
   }
 
   .interact-activity {
     color: var(--ink-muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   /* META DETAILS ---------------------------------------------------------- */
@@ -314,6 +301,8 @@
 
   .detail-grid dd {
     margin: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
     color: var(--ink);
     overflow-wrap: anywhere;
     font-feature-settings: "tnum";
@@ -355,7 +344,8 @@
   .annotation-list {
     margin: 0;
     padding-left: 18px;
-    font-size: 13px;
+    font-family: var(--mono);
+    font-size: 12.5px;
     color: var(--ink);
   }
 
@@ -434,12 +424,12 @@
     }
 
     .detail-header { margin-bottom: 8px; }
-    .detail-header .back { min-height: 32px; padding: 4px 12px; }
-    .detail-title { font-size: 18px; line-height: 1.15; }
+    .detail-header .back { min-height: 32px; padding: 4px 10px 4px 0; }
+    .detail-title { font-size: 14px; line-height: 1.2; }
   }
 
   @media (max-width: 380px) {
-    .detail-title { font-size: 19px; }
+    .detail-title { font-size: 13px; }
     .detail-grid { grid-template-columns: 92px 1fr; }
   }
 </style>
