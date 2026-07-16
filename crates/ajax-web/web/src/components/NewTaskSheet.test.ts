@@ -35,10 +35,9 @@ describe("NewTaskSheet", () => {
     expect(layerCss).toMatch(/position:\s*fixed/);
     expect(layerCss).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
     expect(layerCss).toMatch(
-      /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/,
+      /height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/,
     );
-    expect(layerCss).toMatch(/height:\s*auto/);
-    expect(layerCss).not.toMatch(/height:\s*var\(--app-band-height/);
+    expect(layerCss).not.toMatch(/bottom:\s*max/);
   });
 
   it("offers every supported agent including opencode", () => {

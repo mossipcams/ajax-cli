@@ -16,15 +16,11 @@
 <style>
   .fullscreen-layer {
     position: fixed;
-    /* Same live-band glue as task terminal / app-viewport keyboard pins. */
+    /* Same visualViewport height pin as task/app keyboard bands. */
     top: var(--app-top, var(--app-band-top, 0px));
     left: 0;
     right: 0;
-    bottom: max(
-      0px,
-      calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
-    );
-    height: auto;
+    height: var(--app-height, var(--app-band-height, 100dvh));
     display: flex;
     flex-direction: column;
     overflow: hidden;

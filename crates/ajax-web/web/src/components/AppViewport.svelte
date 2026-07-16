@@ -33,16 +33,12 @@
 
   :global(html.keyboard-open) .app-viewport {
     position: fixed;
-    /* Pin both edges so mid keyboard animation does not lag height-only sizing. */
+    /* Height pin to visualViewport band. */
     top: var(--app-top, var(--app-band-top, 0px));
     left: 0;
     right: 0;
-    bottom: max(
-      0px,
-      calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
-    );
-    height: auto;
-    max-height: none;
+    height: var(--app-height, var(--app-band-height, 100dvh));
+    max-height: var(--app-height, var(--app-band-height, 100dvh));
     z-index: 30;
   }
 </style>
