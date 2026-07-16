@@ -16,14 +16,20 @@ so the host stays content/`min-height` sized while the wrap grows.
 ## Fix
 
 1. Flex chain all `flex: 1 1 0%` (outlet → detail → panel → wrap).
-2. Make the interaction wrap a column flex container; host `flex: 1 1 0%`
+2. Interaction wrap is a column flex container; host `flex: 1 1 0%`
    (not `height: 100%`) so it consumes the wrap’s used height.
-3. Keep spacer as `flex: none` sibling for scrollback.
-4. Keep equal-width hotbar keys + selection-safe ambient fit.
+3. Spacer stays `flex: none` for scrollback.
+4. Equal-width hotbar keys (`flex: 1 1 0` + `width: 0`).
+
+## Removed as useless
+
+- `ci-flex-fill-e2e-fix.md` (wrong diagnosis: restore `height: 100%`)
+- Ambient fit skip-while-selection (CI band-aid for layout thrash)
 
 ## Checklist
 
-- [ ] CSS/host flex fill
-- [ ] Unit contracts
-- [ ] Build + focused vitest
-- [ ] Push
+- [x] CSS/host flex fill
+- [x] Unit contracts
+- [x] Strip useless CI band-aids
+- [x] Build + focused vitest
+- [x] Push

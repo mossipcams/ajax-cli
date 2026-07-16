@@ -99,17 +99,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(hostRule).not.toMatch(/height:\s*100%/);
   });
 
-  it("skips ambient fits while a terminal selection is active", () => {
-    const scheduleFitBody =
-      taskTerminalSource.match(
-        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
-      )?.[1] ?? "";
-
-    expect(scheduleFitBody).toMatch(
-      /!discreteIntent\s*&&\s*\(term\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
-    );
-  });
-
   it("distributes hotbar keys proportionally and drops safe-area pad when keyboard is open", () => {
     const mobileBlock =
       taskTerminalSource.match(

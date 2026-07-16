@@ -526,15 +526,10 @@
       if (isKeyboardOpen() && !discreteIntent) {
         return;
       }
-      // term.resize clears selection; skip ambient fits while Copy/selection is live.
-      if (!discreteIntent && (term?.getSelection() ?? "").length > 0) {
-        return;
-      }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
-        if (!discreteIntent && (term?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });

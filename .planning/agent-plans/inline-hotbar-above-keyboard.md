@@ -2,36 +2,34 @@
 
 ## Scope
 
-Fix mobile task terminal layout:
-- Hotkey bar keys distribute proportionally across full width.
-- Terminal fills space between status chrome and bottom nav (no dead band on new tasks).
-- Keyboard-open band keeps hotkeys flush above keyboard.
+Mobile task terminal: host fills the wrap (no gap above hotbar), hotkeys
+share row width evenly, keyboard-open stays flush above the keyboard.
+
+Root-cause notes: `.planning/agent-plans/terminal-host-fill-root-cause.md`
 
 ## Non-goals
 
 - Desktop terminal height rules.
 - PTY protocol / FitAddon min-col math.
-- Wterm / Ghostty paths.
+- Selection-fit freezes or other CI band-aids unrelated to host fill.
 
 ## Delegation
 
-`Delegation decision: not delegated — focused CSS flex-chain + hotbar distribution; parent implements with TDD.`
+`Delegation decision: not delegated — focused CSS flex-chain + hotbar distribution.`
 
 ## Checklist
 
-- [x] Test: mobile task route flex-fill contract (no 38vh cap)
-- [x] Test: hotbar keys flex-grow + keyboard-open safe-area pad
-- [x] CSS: task route / task-detail / terminal-panel flex chain
-- [x] TaskTerminal: flex-fill interaction wrap + proportional keys
-- [x] TaskTerminal: debounced discrete refit on resize while keyboard-open
-- [x] Validation: focused vitest + build
+- [x] Flex chain: route → outlet → detail → panel → wrap → host (`1 1 0%`)
+- [x] Host fills via flex (not `height: 100%`)
+- [x] Hotbar keys: `flex: 1 1 0` + `width: 0`
+- [x] Unit contracts + web:build
+- [x] Removed useless CI-chase plan / selection-skip band-aid
 
 ## Validation
 
 ```bash
-cd crates/ajax-web/web && npx vitest run src/components/TaskTerminal.test.ts src/components/App.test.ts
-# 45 passed
-
+npx vitest run --config crates/ajax-web/web/vite.config.mts \
+  crates/ajax-web/web/src/components/TaskTerminal.test.ts \
+  crates/ajax-web/web/src/components/App.test.ts
 npm run web:build
-# built in ~895ms
 ```
