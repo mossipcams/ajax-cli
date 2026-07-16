@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.5...ajax-cli-v0.46.6) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** restore height-based keyboard band pin for iOS flush ([#525](https://github.com/mossipcams/ajax-cli/issues/525)) ([1c510ea](https://github.com/mossipcams/ajax-cli/commit/1c510eab968297240d5f537b9527ec41f549850d))
+
 ## [0.46.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.4...ajax-cli-v0.46.5) (2026-07-16)
 
 
