@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.0...ajax-cli-v0.47.1) (2026-07-16)
+
+
+### Reverts
+
+* **web:** restore mobile terminal cap after overly-tight height ([#537](https://github.com/mossipcams/ajax-cli/issues/537)) ([2a5eb05](https://github.com/mossipcams/ajax-cli/commit/2a5eb05cb5ed9ddce80241693b36f82d3b3988d3))
+
 ## [0.47.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.9...ajax-cli-v0.47.0) (2026-07-16)
 
 
