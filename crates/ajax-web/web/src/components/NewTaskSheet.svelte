@@ -273,7 +273,7 @@
   .sheet-card input:focus,
   .sheet-card select:focus {
     outline: none;
-    border-color: var(--teal-bright);
+    border-color: var(--accent-bright);
   }
 
   /* Segmented agent picker — all choices visible, one tap, no dropdown scroll. */
@@ -295,14 +295,14 @@
   }
 
   .agent-option.is-selected {
-    background: var(--teal-deep);
-    border-color: var(--teal);
-    color: var(--paper);
+    background: var(--accent-deep);
+    border-color: var(--accent);
+    color: var(--ink);
   }
 
   .agent-option:focus-visible {
     outline: none;
-    border-color: var(--teal-bright);
+    border-color: var(--accent-bright);
   }
 
   .sheet-actions {
@@ -314,7 +314,7 @@
 
   .sheet-error {
     margin: 12px 0 0;
-    color: var(--terracotta-bright);
+    color: var(--danger);
     font-size: 12px;
   }
 

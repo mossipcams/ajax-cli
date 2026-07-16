@@ -225,7 +225,7 @@
   .settings-note :global(code) {
     font-family: var(--mono);
     font-size: 12px;
-    color: var(--mustard-bright);
+    color: var(--warn);
   }
 
   .settings-status {

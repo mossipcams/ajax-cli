@@ -276,15 +276,15 @@
   }
 
   .project-pill.is-active {
-    background: var(--teal);
-    border-color: var(--teal);
+    background: var(--accent);
+    border-color: var(--accent);
     color: var(--ink);
     font-weight: 600;
   }
 
   .pill-badge {
-    background: var(--mustard);
-    color: #1c1714;
+    background: var(--warn);
+    color: var(--paper);
     border-radius: 999px;
     min-width: 16px;
     height: 16px;
@@ -325,7 +325,7 @@
   }
 
   .section-head.attention .section-head-title {
-    color: var(--mustard-bright);
+    color: var(--warn);
   }
 
   .section-head-count {
@@ -344,8 +344,8 @@
   }
 
   .section-head.attention .section-head-count {
-    background: var(--mustard);
-    color: #1c1714;
+    background: var(--warn);
+    color: var(--paper);
   }
 
   /* TASK LIST — light, glanceable rows shared by the inbox and calm groups - */

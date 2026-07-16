@@ -139,8 +139,8 @@ mod tests {
         assert!(compact.contains("height:var(--app-band-height"));
         // Inputs stay >= 16px so iOS Safari does not zoom on focus.
         assert!(compact.contains("font-size:16px"));
-        // Mid-century-modern walnut palette tokens.
-        for hex in ["#f4eee0", "#251e1a", "#c9a24a", "#367069", "#bc5c3e"] {
+        // CLI cockpit palette tokens (ajax-tui xterm 110/179/174/108 + grays).
+        for hex in ["#e6e6e6", "#87afd7", "#d7af5f", "#d78787", "#87af87"] {
             assert!(compact.contains(hex), "css missing palette token: {hex}");
         }
         // Full-height layouts must use dynamic units, never 100vh, on iOS.

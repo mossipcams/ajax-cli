@@ -867,9 +867,9 @@
       cursorBlink: true,
       scrollback: 2000,
       theme: {
-        background: "#1c1714",
-        foreground: "#f4eee0",
-        cursor: "#52a095",
+        background: "#161616",
+        foreground: "#e6e6e6",
+        cursor: "#87afd7",
       },
     });
     fitAddon = new FitAddon();
@@ -1140,7 +1140,7 @@
     overscroll-behavior: contain;
     touch-action: pan-y;
     width: 100%;
-    background: #1c1714;
+    background: #161616;
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
@@ -1158,7 +1158,7 @@
     width: 100%;
     min-height: 120px;
     overflow: hidden;
-    background: #1c1714;
+    background: #161616;
   }
 
   .terminal-scroll-spacer {
@@ -1170,7 +1170,7 @@
   .terminal-host :global(.xterm-viewport),
   .terminal-host :global(.xterm-screen) {
     height: 100%;
-    background: #1c1714;
+    background: #161616;
   }
 
   .terminal-host :global(.xterm-viewport) {
@@ -1295,9 +1295,9 @@
   }
 
   .terminal-expand-corner.is-armed {
-    background: var(--teal-deep);
-    border-color: var(--teal);
-    color: var(--paper);
+    background: var(--accent-deep);
+    border-color: var(--accent);
+    color: var(--ink);
   }
 
   .terminal-status {
@@ -1361,7 +1361,7 @@
   }
 
   .terminal-key.is-armed {
-    border-color: var(--mustard-bright);
+    border-color: var(--warn);
   }
 
   .terminal-key-armed-dot {
@@ -1370,7 +1370,7 @@
     height: 4px;
     margin-left: 2px;
     border-radius: 50%;
-    background: var(--mustard-bright);
+    background: var(--warn);
     vertical-align: middle;
   }
 
