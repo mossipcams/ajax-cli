@@ -633,7 +633,9 @@ the crate:
   When `[notify]` is configured it also spawns a background notify tick that
   reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
   and revision-checked commit) so attention webhooks fire without a browser
-  polling; the interval comes from `[notify] poll_seconds`.
+  polling; the interval comes from `[notify] poll_seconds`. The tick skips
+  webhook delivery while a browser has polled `/api/cockpit` within the last
+  90 seconds.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
