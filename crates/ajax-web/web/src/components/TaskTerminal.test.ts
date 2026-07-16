@@ -77,17 +77,25 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
   });
 
-  it("flex-fills the mobile inline terminal instead of capping at 38vh", () => {
+  it("caps the mobile inline terminal and only flex-fills when keyboard is open", () => {
     const mobileBlock =
       taskTerminalSource.match(
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
 
-    expect(mobileBlock).not.toMatch(/height:\s*min\(38vh,\s*300px\)/);
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*min\(38vh,\s*300px\)/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
+    );
+    expect(mobileBlock).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
     );
     expect(taskTerminalSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
+    expect(taskTerminalSource).toMatch(
+      /classList\.contains\(["']keyboard-open["']\)/,
+    );
     expect(taskTerminalSource).toMatch(/hostEl\.style\.height\s*=\s*next/);
     expect(taskTerminalSource).toMatch(/syncHostToWrap\(\)/);
   });
