@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.4...ajax-cli-v0.47.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** repair terminal history and touch controls ([#546](https://github.com/mossipcams/ajax-cli/issues/546)) ([49c447d](https://github.com/mossipcams/ajax-cli/commit/49c447dcbb8569e49a9a943f3c0b3a915a139289))
+
 ## [0.47.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.3...ajax-cli-v0.47.4) (2026-07-16)
 
 
