@@ -94,6 +94,7 @@
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_CANCEL_PX = 8;
   const DIRECTIONAL_DRAG_THRESHOLD_PX = 24;
+  const DIRECTIONAL_REPEAT_INTERVAL_MS = 75;
 
   const CONTROL_KEYS = [
     { label: "Esc", data: "\x1b" },
@@ -286,73 +287,6 @@
     const owned = toolbarPointerOwnedFocus && event.detail !== 0;
     toolbarPointerOwnedFocus = false;
     return owned;
-  };
-
-  // ponytail: ←-only hold repeat; ceiling is one control — generalize only if another key needs it
-  const BACK_REPEAT_DELAY_MS = 400;
-  const BACK_REPEAT_INTERVAL_MS = 75;
-  const BACK_KEY_DATA = "\x1b[D";
-  let backRepeatDelay: ReturnType<typeof setTimeout> | undefined;
-  let backRepeatInterval: ReturnType<typeof setInterval> | undefined;
-  let backRepeatPointerId: number | undefined;
-  let backRepeatListening = false;
-
-  const onBackVisibilityChange = () => {
-    if (document.visibilityState === "hidden") stopBackRepeat();
-  };
-
-  const onBackWindowBlur = () => {
-    stopBackRepeat();
-  };
-
-  const stopBackRepeat = () => {
-    if (backRepeatDelay) {
-      clearTimeout(backRepeatDelay);
-      backRepeatDelay = undefined;
-    }
-    if (backRepeatInterval) {
-      clearInterval(backRepeatInterval);
-      backRepeatInterval = undefined;
-    }
-    backRepeatPointerId = undefined;
-    if (backRepeatListening) {
-      window.removeEventListener("blur", onBackWindowBlur);
-      document.removeEventListener("visibilitychange", onBackVisibilityChange);
-      backRepeatListening = false;
-    }
-  };
-
-  const onBackPointerStop = (event: PointerEvent) => {
-    if (backRepeatPointerId !== undefined && event.pointerId !== backRepeatPointerId) return;
-    stopBackRepeat();
-  };
-
-  const onBackPointerDown = (event: PointerEvent) => {
-    if (!event.isPrimary) return;
-    if (backRepeatPointerId !== undefined) return;
-
-    onToolbarPointerDown(event);
-    const target = event.currentTarget;
-    if (target instanceof HTMLElement) {
-      try {
-        target.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic/inactive pointers cannot capture; real touch/pen still can.
-      }
-    }
-    backRepeatPointerId = event.pointerId;
-    if (!backRepeatListening) {
-      window.addEventListener("blur", onBackWindowBlur);
-      document.addEventListener("visibilitychange", onBackVisibilityChange);
-      backRepeatListening = true;
-    }
-    sendKey(consumeCtrl(BACK_KEY_DATA));
-    backRepeatDelay = setTimeout(() => {
-      backRepeatDelay = undefined;
-      backRepeatInterval = setInterval(() => {
-        sendKey(BACK_KEY_DATA);
-      }, BACK_REPEAT_INTERVAL_MS);
-    }, BACK_REPEAT_DELAY_MS);
   };
 
   const openPasteFallback = (ownedFocus: boolean, notice: string, text = "") => {
@@ -822,7 +756,7 @@
       stopDirectionalRepeat();
       directionalRepeatInterval = setInterval(() => {
         if (directionalArrow) sendKey(directionalArrow);
-      }, BACK_REPEAT_INTERVAL_MS);
+      }, DIRECTIONAL_REPEAT_INTERVAL_MS);
     };
 
     const fireLongPressSelect = (clientX: number, clientY: number) => {
@@ -1128,7 +1062,6 @@
         interactionEl.removeEventListener("touchcancel", onTouchEnd);
       }
       if (ctrlTimer) clearTimeout(ctrlTimer);
-      stopBackRepeat();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("orientationchange", onViewportChange);
@@ -1239,15 +1172,10 @@
         <button
           type="button"
           class="terminal-key"
-          onpointerdown={key.label === "←" ? onBackPointerDown : onToolbarPointerDown}
-          onpointerup={key.label === "←" ? onBackPointerStop : undefined}
-          onpointercancel={key.label === "←" ? onBackPointerStop : undefined}
-          onlostpointercapture={key.label === "←" ? onBackPointerStop : undefined}
+          onpointerdown={onToolbarPointerDown}
           onclick={(event) => {
             const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-            if (key.label !== "←" || event.detail === 0) {
-              sendKey(consumeCtrl(key.data));
-            }
+            sendKey(consumeCtrl(key.data));
             refocusTermIfOwned(ownedFocus);
           }}>{key.label}</button>
       {/each}
