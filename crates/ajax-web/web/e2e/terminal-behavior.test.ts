@@ -365,6 +365,23 @@ async function programTerminalSelection(
   return selected;
 }
 
+test.beforeEach(({ }, testInfo) => {
+  const desktopOnly =
+    testInfo.title ===
+    "desktop expanded mode keeps terminal bounded and task details summary reachable";
+  if (desktopOnly) {
+    test.skip(
+      testInfo.project.name !== "desktop-chromium",
+      "desktop expanded layout only",
+    );
+  } else {
+    test.skip(
+      testInfo.project.name !== "mobile-webkit",
+      "terminal acceptance is mobile-webkit only",
+    );
+  }
+});
+
 test("task route mounts one terminal surface and opens one socket", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);

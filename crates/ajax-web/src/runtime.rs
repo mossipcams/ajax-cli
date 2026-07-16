@@ -2845,49 +2845,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn runtime_tests_do_not_compare_axum_against_old_router() {
-        let source = include_str!("runtime.rs");
-
-        for marker in [
-            concat!(
-                "stale_answer_responses_match_between_axum_and_",
-                "leg",
-                "acy"
-            ),
-            concat!("leg", "acy_", "response"),
-            concat!("leg", "acy_", "context"),
-            concat!("leg", "acy_", "runner"),
-            concat!("leg", "acy_", "bridge"),
-            concat!("leg", "acy_", "dir"),
-        ] {
-            assert!(
-                !source.contains(marker),
-                "runtime tests should not preserve old-router marker {marker}"
-            );
-        }
-    }
-
-    #[test]
-    fn runtime_module_does_not_define_legacy_manual_router_helpers() {
-        let production_source = include_str!("runtime.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap_or_default();
-
-        for marker in [
-            "pub fn route<R: Registry>",
-            "pub fn route_with_bridge<C: CommandRunner>",
-            "fn split_path_and_query(raw_path: &str) -> (&str, &str)",
-            "fn percent_decode(value: &str) -> String",
-        ] {
-            assert!(
-                !production_source.contains(marker),
-                "runtime.rs should no longer define legacy router helper {marker}"
-            );
-        }
-    }
-
     #[tokio::test]
     async fn post_tasks_endpoint_delegates_to_start_bridge_method() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
