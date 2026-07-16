@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.2...ajax-cli-v0.47.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** suppress attention webhooks while cockpit is connected ([#542](https://github.com/mossipcams/ajax-cli/issues/542)) ([6ad2a67](https://github.com/mossipcams/ajax-cli/commit/6ad2a67df3f7aa8ba2b4297601471502b6b0161e))
+
 ## [0.47.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.1...ajax-cli-v0.47.2) (2026-07-16)
 
 
