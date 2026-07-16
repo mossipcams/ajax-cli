@@ -88,7 +88,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
     );
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?flex:\s*1\s+1\s+auto/,
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
     );
   });
 
@@ -108,10 +108,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /:global\(html\.keyboard-open\)\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
     );
-  });
-
-  it("refits on viewport resize while the keyboard band is open", () => {
-    expect(taskTerminalSource).toMatch(/if\s*\(\s*isKeyboardOpen\(\)\s*\)\s*\{[\s\S]*?scheduleImmediate\(true\)/);
   });
 
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {

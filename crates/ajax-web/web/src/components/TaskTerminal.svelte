@@ -416,7 +416,6 @@
     let lastSentCols = 0;
     let lastSentRows = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-    let keyboardResizeTimer: ReturnType<typeof setTimeout> | undefined;
     let fitFrame = 0;
     let pendingPostKeyboardResync = false;
     let disposed = false;
@@ -445,10 +444,6 @@
       if (resizeTimer) {
         clearTimeout(resizeTimer);
         resizeTimer = undefined;
-      }
-      if (keyboardResizeTimer) {
-        clearTimeout(keyboardResizeTimer);
-        keyboardResizeTimer = undefined;
       }
     };
 
@@ -569,18 +564,7 @@
     };
     schedulePostLayoutRef = schedulePostLayout;
 
-    const onViewportChange = () => {
-      if (isKeyboardOpen()) {
-        if (keyboardResizeTimer) clearTimeout(keyboardResizeTimer);
-        keyboardResizeTimer = setTimeout(() => {
-          keyboardResizeTimer = undefined;
-          if (!isActive() || !isKeyboardOpen()) return;
-          scheduleImmediate(true);
-        }, RESIZE_DEBOUNCE_MS);
-        return;
-      }
-      scheduleDebounced();
-    };
+    const onViewportChange = () => scheduleDebounced();
 
     const touchDistance = (touches: TouchList) =>
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -1375,18 +1359,17 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    /* Fill leftover task height; keep host at 100% of wrap so sticky host +
+       spacer scrollback still works (flex:1 host broke New output / Copy). */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      display: flex;
-      flex-direction: column;
       flex: 1 1 auto;
       min-height: 0;
       height: auto;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
-      flex: 1 1 auto;
+      height: 100%;
       min-height: 0;
-      height: auto;
     }
 
     :global([data-testid="terminal-bottom-controls"]) {
