@@ -114,11 +114,13 @@ describe("App shell", () => {
     expect(keyboardRule).toMatch(/position:\s*fixed/);
     expect(keyboardRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
     expect(keyboardRule).toMatch(
-      /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/,
+      /height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/,
     );
-    expect(keyboardRule).toMatch(/height:\s*auto/);
-    expect(keyboardRule).toMatch(/max-height:\s*none/);
-    expect(keyboardRule).not.toMatch(/height:\s*var\(--app-band-height/);
+    expect(keyboardRule).toMatch(
+      /max-height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/,
+    );
+    expect(keyboardRule).not.toMatch(/bottom:\s*max/);
+    expect(keyboardRule).not.toMatch(/bottom:\s*calc/);
   });
 
   it("zeros horizontal padding on the mobile task route-scroll", () => {
@@ -180,8 +182,10 @@ describe("App shell", () => {
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
-    expect(expandedRule).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
-    expect(expandedRule).toMatch(/height:\s*auto/);
+    expect(expandedRule).toMatch(
+      /height:\s*var\(--app-height,\s*var\(--app-band-height/,
+    );
+    expect(expandedRule).not.toMatch(/bottom:\s*max/);
     expect(expandedRule).toMatch(/overflow:\s*hidden/);
     expect(expandedRule).not.toMatch(/padding:\s*env\(safe-area-inset-top\)/);
   });
@@ -215,11 +219,13 @@ describe("App shell", () => {
     expect(taskDetailRule).toMatch(/position:\s*fixed/);
     expect(taskDetailRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
     expect(taskDetailRule).toMatch(
-      /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/,
+      /height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/,
     );
-    expect(taskDetailRule).toMatch(/height:\s*auto/);
-    expect(taskDetailRule).toMatch(/max-height:\s*none/);
-    expect(taskDetailRule).not.toMatch(/height:\s*var\(--app-band-height/);
+    expect(taskDetailRule).toMatch(
+      /max-height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/,
+    );
+    expect(taskDetailRule).not.toMatch(/bottom:\s*max/);
+    expect(taskDetailRule).not.toMatch(/bottom:\s*calc/);
   });
 
   it("does not pin task-detail under keyboard-open while terminal is expanded", () => {

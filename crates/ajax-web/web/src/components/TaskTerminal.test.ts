@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import taskTerminalSource from "./TaskTerminal.svelte?raw";
 
-const BAND_BOTTOM_CALC =
-  /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/;
-
 function extractBlock(source: string, startPattern: RegExp, endPattern: RegExp): string {
   const start = source.search(startPattern);
   if (start < 0) return "";
@@ -118,17 +115,20 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(onInteractionClick).not.toMatch(/terminal-expanded/);
   });
 
-  it("pins expanded panel with top and bottom to the live visual-viewport band", () => {
+  it("pins expanded panel with top and height to the live visual-viewport band", () => {
     const expandedRule =
       taskTerminalSource.match(
         /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
-    expect(expandedRule).toMatch(BAND_BOTTOM_CALC);
-    expect(expandedRule).toMatch(/height:\s*auto/);
-    expect(expandedRule).toMatch(/max-height:\s*none/);
-    expect(expandedRule).not.toMatch(/height:\s*var\(--app-/);
+    expect(expandedRule).toMatch(
+      /height:\s*var\(--app-height,\s*var\(--app-band-height/,
+    );
+    expect(expandedRule).toMatch(
+      /max-height:\s*var\(--app-height,\s*var\(--app-band-height/,
+    );
+    expect(expandedRule).not.toMatch(/bottom:\s*max/);
   });
 
   it("shows Copy beside expand on the panel, not centered in the scroll wrap", () => {

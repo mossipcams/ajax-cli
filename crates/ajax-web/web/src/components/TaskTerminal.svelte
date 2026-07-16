@@ -1379,20 +1379,15 @@
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
-      /* Pin both edges to the live visual-viewport band. Height-only sizing
-         lags mid keyboard animation after expand→tap; top+bottom stay glued. */
+      /* Height from --app-top / --app-height (visualViewport). */
       top: var(--app-top, var(--app-band-top, 0px));
       right: 0;
       left: 0;
-      bottom: max(
-        0px,
-        calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
-      );
       z-index: 45;
       display: flex;
       flex-direction: column;
-      height: auto;
-      max-height: none;
+      height: var(--app-height, var(--app-band-height, 100dvh));
+      max-height: var(--app-height, var(--app-band-height, 100dvh));
       min-height: 0;
       margin-top: 0;
       box-sizing: border-box;
