@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import taskTerminalSource from "./TaskTerminal.svelte?raw";
+
+const stylesSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../styles.css"),
+  "utf8",
+);
 
 function extractBlock(source: string, startPattern: RegExp, endPattern: RegExp): string {
   const start = source.search(startPattern);
@@ -77,21 +85,37 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
   });
 
-  it("caps the mobile inline terminal and only flex-fills when keyboard is open", () => {
+  it("flex-fills the mobile inline terminal so the details line sits at the page bottom", () => {
     const mobileBlock =
       taskTerminalSource.match(
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
 
-    expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*min\(38vh,\s*300px\)/,
-    );
+    const inlineWrapRule =
+      mobileBlock.match(
+        /\n    \.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(inlineWrapRule).toMatch(/flex:\s*1\s+1\s+0%/);
+    expect(inlineWrapRule).toMatch(/height:\s*auto/);
+    // No fixed cap: the inline terminal fills the task column down to the
+    // details line, same flex model as keyboard-open (no relayout jump).
+    expect(inlineWrapRule).not.toMatch(/height:\s*min\(/);
     expect(mobileBlock).toMatch(
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
     );
     expect(mobileBlock).toMatch(
       /:global\(html\.keyboard-open\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
     );
+
+    // The task column must hand the leftover height to the inline panel.
+    const stylesMobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+    expect(stylesMobileBlock).toMatch(
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\) \.task-detail \.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
+    );
+
     expect(taskTerminalSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
     expect(taskTerminalSource).toMatch(
       /classList\.contains\(["']keyboard-open["']\)/,
