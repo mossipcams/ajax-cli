@@ -84,7 +84,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       )?.[1] ?? "";
 
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*min\(38vh,\s*300px\)/,
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*min\(24vh,\s*180px\)/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
