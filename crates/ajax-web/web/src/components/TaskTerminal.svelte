@@ -472,8 +472,17 @@
       termEl.style.height = "";
     };
 
+    // WebKit often leaves height:100% unresolved on flex items; pin the sticky
+    // host to the wrap's used pixel height so the entry meets the hotbar.
+    const syncHostToWrap = () => {
+      if (!hostEl || !interactionEl) return;
+      const next = `${Math.max(0, interactionEl.clientHeight)}px`;
+      if (hostEl.style.height !== next) hostEl.style.height = next;
+    };
+
     const fitLocal = () => {
       if (!isActive() || !fitAddon || !term || !hostEl) return;
+      syncHostToWrap();
       const proposed = fitAddon.proposeDimensions();
       if (!proposed) return;
       if (
@@ -569,7 +578,10 @@
     };
     schedulePostLayoutRef = schedulePostLayout;
 
-    const onViewportChange = () => scheduleDebounced();
+    const onViewportChange = () => {
+      syncHostToWrap();
+      scheduleDebounced();
+    };
 
     const touchDistance = (touches: TouchList) =>
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -857,6 +869,7 @@
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
     hardenMobileTextarea();
+    syncHostToWrap();
     const viteDev =
       (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
     if (viteDev) {
@@ -968,6 +981,7 @@
       }
       connection = undefined;
       term = undefined;
+      if (hostEl) hostEl.style.height = "";
       resetResizeDedupe = undefined;
       schedulePostLayoutRef = undefined;
       jumpToBottomRef = undefined;
@@ -1364,15 +1378,15 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Fill leftover task height with a definite flex basis so host height:100%
-       resolves (height:auto flex basis was content-sized and raced with fit). */
+    /* Wrap fills leftover task height. Host height is set in px from the wrap
+       clientHeight (see syncHostToWrap) — height:100% fails on WebKit flex items
+       and display:flex on the wrap broke sticky scroll / resize settle. */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
       flex: 1 1 0%;
       min-height: 0;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
-      height: 100%;
       min-height: 0;
     }
 
@@ -1382,13 +1396,16 @@
     }
 
     .terminal-keys {
+      display: flex;
       width: 100%;
+      box-sizing: border-box;
       padding-bottom: max(2px, env(safe-area-inset-bottom));
     }
 
     .terminal-keys .terminal-key {
       flex: 1 1 0;
       min-width: 0;
+      width: 0;
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {

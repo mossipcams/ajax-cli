@@ -87,9 +87,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
     );
-    expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
-    );
+    expect(taskTerminalSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
+    expect(taskTerminalSource).toMatch(/hostEl\.style\.height\s*=\s*next/);
+    expect(taskTerminalSource).toMatch(/syncHostToWrap\(\)/);
   });
 
   it("skips ambient fits while a terminal selection is active", () => {
@@ -112,6 +112,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*width:\s*100%/);
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?flex:\s*1\s+1\s+0/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?width:\s*0/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
