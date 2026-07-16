@@ -526,10 +526,15 @@
       if (isKeyboardOpen() && !discreteIntent) {
         return;
       }
+      // term.resize clears selection; skip ambient fits while Copy/selection is live.
+      if (!discreteIntent && (term?.getSelection() ?? "").length > 0) {
+        return;
+      }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
+        if (!discreteIntent && (term?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });
@@ -1359,12 +1364,11 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Fill leftover task height; keep host at 100% of wrap so sticky host +
-       spacer scrollback still works (flex:1 host broke New output / Copy). */
+    /* Fill leftover task height with a definite flex basis so host height:100%
+       resolves (height:auto flex basis was content-sized and raced with fit). */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      flex: 1 1 auto;
+      flex: 1 1 0%;
       min-height: 0;
-      height: auto;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
@@ -1388,8 +1392,7 @@
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: auto;
-      flex: 1 1 auto;
+      flex: 1 1 0%;
       min-height: 0;
     }
 

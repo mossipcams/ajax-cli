@@ -85,10 +85,21 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
     expect(mobileBlock).not.toMatch(/height:\s*min\(38vh,\s*300px\)/);
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
+    );
+  });
+
+  it("skips ambient fits while a terminal selection is active", () => {
+    const scheduleFitBody =
+      taskTerminalSource.match(
+        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
+      )?.[1] ?? "";
+
+    expect(scheduleFitBody).toMatch(
+      /!discreteIntent\s*&&\s*\(term\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
     );
   });
 

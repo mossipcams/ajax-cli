@@ -155,7 +155,7 @@ describe("App shell", () => {
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+auto/,
     );
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+auto/,
+      /\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
   });
 
@@ -217,12 +217,14 @@ describe("App shell", () => {
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
 
-    expect(mobileBlock).toMatch(
-      /:global\(html\.keyboard-open\)[\s\S]*?\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*auto/,
-    );
-    expect(mobileBlock).toMatch(
-      /:global\(html\.keyboard-open\)[\s\S]*?\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
-    );
+    const keyboardWrapRule =
+      mobileBlock.match(
+        /:global\(html\.keyboard-open\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(keyboardWrapRule).toMatch(/flex:\s*1\s+1\s+0%/);
+    expect(keyboardWrapRule).toMatch(/min-height:\s*0/);
+    expect(keyboardWrapRule).not.toMatch(/height:\s*min\(38vh/);
   });
 
   it("keyboard-open pins task detail to the app band so hotkeys sit above the keyboard", () => {

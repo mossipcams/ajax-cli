@@ -420,7 +420,7 @@ header .bar h1 {
   }
 
   [data-testid="route-scroll"]:has([data-outlet="task"]) .terminal-panel:not(.is-expanded) {
-    flex: 1 1 auto;
+    flex: 1 1 0%;
     min-height: 0;
   }
 

@@ -17,8 +17,8 @@ Web e2e (mobile-webkit) failed on PR #527 after flex-fill:
 
 ## Checklist
 
-- [ ] Adjust TaskTerminal CSS + revert keyboard resize timer
-- [ ] Update unit contracts
-- [ ] Rebuild dist
-- [ ] Focused vitest
-- [ ] Push to PR #527
+- [x] Adjust TaskTerminal CSS + revert keyboard resize timer
+- [x] Update unit contracts
+- [x] Rebuild dist
+- [x] Focused vitest (44 passed)
+- [x] Push to PR #527 (`33fbc5c`)
