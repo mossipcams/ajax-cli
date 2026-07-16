@@ -442,7 +442,7 @@ Allowed types:
 | `perf` | yes | Performance Improvements | performance improvement |
 | `refactor` | yes | Code Refactoring | behavior-preserving restructure |
 | `revert` | yes | Reverts | revert of a prior change |
-| `chore` | yes | no (intentional) | tooling, tests-only cleanup, docs/agent hygiene, Release Please bumps |
+| `chore` | yes | no (intentional) | tooling, tests-only cleanup, docs/agent hygiene; does **not** bump a release |
 
 Format: `type(optional-scope): summary` — e.g. `fix(web): …`, `chore(test): …`.
 
@@ -452,6 +452,10 @@ Hard rules:
   outside the table. The `PR Title` check fails with `Unknown release type`
   and skips the rest of CI.
 - Tests-only or local-suite cleanup → `chore:` / `chore(test):`, never `test:`.
+- `chore:` passes the PR Title check but does **not** bump a version or open a
+  Release Please release PR. Use `feat:` / `fix:` / `perf:` / `revert:` when the
+  change should cut a product release. (`chore: release ajax-cli <version>` is
+  only the title pattern Release Please writes on its own release PRs.)
 - Prefer a scope when it helps (`web`, `cli`, `core`, `test`).
 - Before `gh pr create` or retitling, confirm the type is in the table above.
 
