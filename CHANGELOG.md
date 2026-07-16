@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.8...ajax-cli-v0.46.9) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** cap mobile terminal height to shrink empty PTY band ([#531](https://github.com/mossipcams/ajax-cli/issues/531)) ([887d7ec](https://github.com/mossipcams/ajax-cli/commit/887d7ec31991d2a092487d707cb97dbf02021157))
+
 ## [0.46.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.7...ajax-cli-v0.46.8) (2026-07-16)
 
 
