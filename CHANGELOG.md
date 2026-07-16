@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.9...ajax-cli-v0.47.0) (2026-07-16)
+
+
+### Features
+
+* **web:** adopt CLI cockpit palette and redesign task page ([#534](https://github.com/mossipcams/ajax-cli/issues/534)) ([0e3fc79](https://github.com/mossipcams/ajax-cli/commit/0e3fc792726b99ed28da0d7d0540424bbd98bc0f))
+
+
+### Bug Fixes
+
+* **web:** tighten mobile terminal cap for near-flush PTY rows ([#533](https://github.com/mossipcams/ajax-cli/issues/533)) ([5da1948](https://github.com/mossipcams/ajax-cli/commit/5da194899c098bb4a2cd52c74699ef0c867cc454))
+
 ## [0.46.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.8...ajax-cli-v0.46.9) (2026-07-16)
 
 
