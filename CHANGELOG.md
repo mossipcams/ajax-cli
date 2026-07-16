@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.3...ajax-cli-v0.46.4) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** stop nested fixed task-detail from offsetting fullscreen under keyboard ([#520](https://github.com/mossipcams/ajax-cli/issues/520)) ([86a9a31](https://github.com/mossipcams/ajax-cli/commit/86a9a315576d6bf13b3f7f0f6b64136d96f08058))
+
 ## [0.46.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.2...ajax-cli-v0.46.3) (2026-07-15)
 
 
