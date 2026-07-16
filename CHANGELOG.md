@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.1...ajax-cli-v0.47.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** flex-fill inline mobile terminal so details line sits at page bottom ([#540](https://github.com/mossipcams/ajax-cli/issues/540)) ([c615cbe](https://github.com/mossipcams/ajax-cli/commit/c615cbe5ba0c43cbc410ee672a158c92b836c8aa))
+
 ## [0.47.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.0...ajax-cli-v0.47.1) (2026-07-16)
 
 
