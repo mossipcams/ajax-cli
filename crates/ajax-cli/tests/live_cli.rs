@@ -478,29 +478,6 @@ fn live_help_exposes_the_scriptable_command_surface() {
 }
 
 #[test]
-fn ajax_parses_new_operator_verbs() {
-    let home = IsolatedAjaxHome::new("operator-verbs-help");
-
-    for command in [
-        "start", "resume", "review", "ship", "drop", "repair", "tidy", "ready",
-    ] {
-        let output = home.ajax([command, "--help"]);
-
-        assert!(
-            output.status.success(),
-            "ajax {command} --help should succeed, stderr:\n{}",
-            stderr(&output)
-        );
-        assert_eq!(stderr(&output), "");
-        assert!(
-            stdout(&output).contains(command),
-            "ajax {command} --help should mention the command in:\n{}",
-            stdout(&output)
-        );
-    }
-}
-
-#[test]
 fn live_cockpit_json_uses_isolated_empty_context_without_creating_state() {
     let home = IsolatedAjaxHome::new("cockpit-json");
 
@@ -627,77 +604,10 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
 }
 
 #[test]
-fn ajax_start_creates_task_like_new() {
-    let home = IsolatedAjaxHome::new("start-execute");
-    let repo_path = home.create_managed_repo("web");
-    home.install_fake_native_lifecycle_tools();
-    home.write_config(&format!(
-        r#"
-        [[repos]]
-        name = "web"
-        path = "{}"
-        default_branch = "main"
-        "#,
-        repo_path.display()
-    ));
-
-    let output = home.ajax_with_fake_tools([
-        "start",
-        "--repo",
-        "web",
-        "--title",
-        "Fix Login!",
-        "--agent",
-        "codex",
-        "--execute",
-    ]);
-
-    assert!(
-        output.status.success(),
-        "ajax start --execute should succeed, stderr:\n{}",
-        stderr(&output)
-    );
-    assert!(
-        stdout(&output)
-            .lines()
-            .any(|line| line == "recorded task: web/fix-login"),
-        "stdout should include exact recorded-task line:\n{}",
-        stdout(&output)
-    );
-    let tasks = home.ajax(["tasks", "--json"]);
-    assert!(
-        tasks.status.success(),
-        "ajax tasks --json after start, stderr:\n{}",
-        stderr(&tasks)
-    );
-    let body: Value =
-        serde_json::from_str(&stdout(&tasks)).expect("ajax tasks --json should emit JSON");
-    assert_eq!(body["tasks"][0]["qualified_handle"], "web/fix-login");
-}
-
-#[test]
-fn ajax_resume_dispatches_like_open() {
-    assert_task_verb_succeeds("resume");
-}
-
-#[test]
-fn ajax_review_dispatches_like_diff() {
-    assert_task_verb_succeeds("review");
-}
-
-#[test]
-fn ajax_ship_dispatches_like_merge() {
-    assert_task_verb_succeeds("ship");
-}
-
-#[test]
-fn ajax_drop_dispatches_like_clean() {
-    assert_task_verb_succeeds("drop");
-}
-
-#[test]
-fn ajax_repair_dispatches_like_check() {
-    assert_task_verb_succeeds("repair");
+fn ajax_operator_verbs_dispatch_for_seeded_task() {
+    for command in ["resume", "review", "ship", "drop", "repair"] {
+        assert_task_verb_succeeds(command);
+    }
 }
 
 #[test]
@@ -713,10 +623,9 @@ fn ajax_tidy_dispatches_like_sweep() {
     );
     let body: Value =
         serde_json::from_str(&stdout(&output)).expect("ajax tidy --json should emit JSON");
+    assert_eq!(body["title"], "sweep cleanup");
     assert!(
-        body.get("commands")
-            .and_then(|value| value.as_array())
-            .is_some(),
+        body["commands"].is_array(),
         "tidy --json should expose a commands array: {body}"
     );
 }

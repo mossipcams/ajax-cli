@@ -127,7 +127,8 @@ describe("NewTaskSheet", () => {
     expect(spy).toHaveBeenCalledOnce();
     const arg = spy.mock.calls[0][0];
     expect(arg.title).toBe("Fix login");
-    expect(arg.request_id).toBeTruthy();
+    expect(arg.request_id).toEqual(expect.any(String));
+    expect(arg.request_id.length).toBeGreaterThan(0);
     expect(onCockpit).toHaveBeenCalledWith(cockpit);
     expect(onClose).toHaveBeenCalledOnce();
   });
