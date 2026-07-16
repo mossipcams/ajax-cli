@@ -84,19 +84,23 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       )?.[1] ?? "";
 
     expect(mobileBlock).not.toMatch(/height:\s*min\(38vh,\s*300px\)/);
-    const wrapRule =
-      mobileBlock.match(
-        /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-    expect(wrapRule).toMatch(/display:\s*flex/);
-    expect(wrapRule).toMatch(/flex:\s*1\s+1\s+0%/);
+    expect(mobileBlock).toMatch(
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
+    );
+    expect(taskTerminalSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
+    expect(taskTerminalSource).toMatch(/hostEl\.style\.height\s*=\s*next/);
+    expect(taskTerminalSource).toMatch(/syncHostToWrap\(\)/);
+  });
 
-    const hostRule =
-      mobileBlock.match(
-        /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host\s*\{([^}]*)\}/,
+  it("skips ambient fits while a terminal selection is active", () => {
+    const scheduleFitBody =
+      taskTerminalSource.match(
+        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
       )?.[1] ?? "";
-    expect(hostRule).toMatch(/flex:\s*1\s+1\s+0%/);
-    expect(hostRule).not.toMatch(/height:\s*100%/);
+
+    expect(scheduleFitBody).toMatch(
+      /!discreteIntent\s*&&\s*\(term\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
+    );
   });
 
   it("distributes hotbar keys proportionally and drops safe-area pad when keyboard is open", () => {

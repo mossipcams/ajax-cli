@@ -2,34 +2,27 @@
 
 ## Misdiagnosis
 
-Earlier work flex-filled the panel/wrap and chased Copy e2e races. That did not
-fix the reported gap: on a new task the xterm **entry sits in a short host**
-while the wrap/panel is tall, leaving empty space between the entry
-(textarea at host bottom) and the hotbar.
+CSS-only `height: 100%` and `display:flex` host-in-wrap both failed: the
+former leaves a gap on WebKit; the latter broke sticky scroll / resize settle
+and Copy e2e.
 
 ## Root cause
 
-`.terminal-host { height: 100% }` only works when the wrap has a **definite**
-height. With flex layout, percentage height often fails to resolve on WebKit,
-so the host stays content/`min-height` sized while the wrap grows.
+The interaction wrap flexes tall, but the sticky host did not get a definite
+used height, so the entry stayed in a short host above empty space over the
+hotbar.
 
 ## Fix
 
-1. Flex chain all `flex: 1 1 0%` (outlet → detail → panel → wrap).
-2. Interaction wrap is a column flex container; host `flex: 1 1 0%`
-   (not `height: 100%`) so it consumes the wrap’s used height.
-3. Spacer stays `flex: none` for scrollback.
-4. Equal-width hotbar keys (`flex: 1 1 0` + `width: 0`).
-
-## Removed as useless
-
-- `ci-flex-fill-e2e-fix.md` (wrong diagnosis: restore `height: 100%`)
-- Ambient fit skip-while-selection (CI band-aid for layout thrash)
+1. Keep wrap `flex: 1 1 0%` in the task flex chain.
+2. `syncHostToWrap()` sets `host.style.height` to `wrap.clientHeight` px
+   before fit and on viewport change.
+3. Keep equal-width hotbar keys.
+4. Keep ambient fit skip while selection is active (Copy stability).
 
 ## Checklist
 
-- [x] CSS/host flex fill
+- [x] syncHostToWrap + selection-skip
 - [x] Unit contracts
-- [x] Strip useless CI band-aids
 - [x] Build + focused vitest
-- [x] Push
+- [ ] CI green on PR #529
