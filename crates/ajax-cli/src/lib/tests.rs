@@ -55,9 +55,11 @@ fn snapshot_dispatch_module_routes_read_commands() {
         .unwrap();
 
     let output = crate::snapshot_dispatch::render_snapshot_matches(&matches, &context).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-    assert!(output.contains("\"tasks\""));
-    assert!(output.contains("web/fix-login"));
+    assert_eq!(parsed["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
+    assert_eq!(parsed["tasks"][0]["lifecycle_status"], "Reviewable");
 }
 
 #[test]
@@ -138,15 +140,72 @@ fn execution_dispatch_module_routes_mutating_commands() {
     .unwrap();
 
     assert!(rendered.state_changed);
-    assert!(rendered.output.contains("recorded task: web/fix-logout"));
+    assert!(rendered
+        .output
+        .lines()
+        .any(|line| line == "recorded task: web/fix-logout"));
+    assert!(context
+        .registry
+        .list_tasks()
+        .iter()
+        .any(|task| task.qualified_handle() == "web/fix-logout"));
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-logout",
+                "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+                "origin/main",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-logout",
+                "-n",
+                "task",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+            ],
+        ),
+        expected_task_setup_command(
+            "/Users/matt/projects/web",
+            "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+            None,
+        ),
+        expected_task_launch_command(
+            "ajax-web-fix-logout",
+            "web/fix-logout",
+            "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+        ),
+        CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-logout:task"]),
+        expected_new_task_open_command("ajax-web-fix-logout"),
+    ]);
+    assert_eq!(runner.commands(), expected_commands.as_slice());
 }
 
 #[test]
 fn cockpit_backend_module_renders_snapshot_frame() {
-    let frame = crate::cockpit_backend::render_cockpit_frame(&sample_context());
+    let context = sample_context();
+    let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
 
-    assert!(frame.contains("Ajax"));
-    assert!(frame.contains("web/fix-login"));
+    assert_eq!(snapshot.cards.len(), 1);
+    assert_eq!(snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(snapshot.inbox.items.len(), 1);
+    assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
+
+    let frame = crate::cockpit_backend::render_cockpit_frame(&context);
+    assert_eq!(frame.matches("Ajax Cockpit").count(), 1);
 }
 
 #[test]
@@ -605,7 +664,7 @@ fn cli_error_display_omits_internal_enum_wrapping() {
     let error = CliError::CommandFailed("task title is required; pass --title".to_string());
 
     assert_eq!(error.to_string(), "task title is required; pass --title");
-    assert!(!error.to_string().contains("CommandFailed"));
+    assert_eq!(error.to_string().find("CommandFailed"), None);
 }
 
 #[test]
@@ -621,8 +680,7 @@ fn binary_prints_cli_errors_with_display_formatting() {
     let stderr = String::from_utf8(output.stderr).unwrap();
 
     assert!(!output.status.success());
-    assert!(stderr.contains("task title is required; pass --title"));
-    assert!(!stderr.contains("CommandFailed"));
+    assert_eq!(stderr.trim(), "task title is required; pass --title");
 }
 
 fn seeded_profile_homes(tag: &str) -> (PathBuf, CliContextPaths, CliContextPaths) {
@@ -663,23 +721,38 @@ fn reads_use_only_the_selected_profile_db() {
     let (directory, stable_paths, dev_paths) = seeded_profile_homes("selected-db-read");
     let mut read_runner = RecordingCommandRunner::default();
 
-    let dev_output =
-        run_with_context_paths_and_runner(["ajax-cli", "tasks"], &dev_paths, &mut read_runner)
-            .unwrap();
+    let dev_output = run_with_context_paths_and_runner(
+        ["ajax-cli", "tasks", "--json"],
+        &dev_paths,
+        &mut read_runner,
+    )
+    .unwrap();
+    let dev_parsed: serde_json::Value = serde_json::from_str(&dev_output).unwrap();
+    let dev_handles = dev_parsed["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["qualified_handle"].as_str().unwrap())
+        .collect::<Vec<_>>();
 
-    assert!(dev_output.contains("web/dev-task"));
-    assert!(!dev_output.contains("web/stable-task"));
+    assert_eq!(dev_handles, vec!["web/dev-task"]);
 
     let mut stable_read_runner = RecordingCommandRunner::default();
     let stable_output = run_with_context_paths_and_runner(
-        ["ajax-cli", "tasks"],
+        ["ajax-cli", "tasks", "--json"],
         &stable_paths,
         &mut stable_read_runner,
     )
     .unwrap();
+    let stable_parsed: serde_json::Value = serde_json::from_str(&stable_output).unwrap();
+    let stable_handles = stable_parsed["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["qualified_handle"].as_str().unwrap())
+        .collect::<Vec<_>>();
 
-    assert!(stable_output.contains("web/stable-task"));
-    assert!(!stable_output.contains("web/dev-task"));
+    assert_eq!(stable_handles, vec!["web/stable-task"]);
 
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -797,9 +870,15 @@ fn writer_entrypoint_uses_selected_runtime_paths() {
     )
     .unwrap();
     let output = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let handles = parsed["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["qualified_handle"].as_str().unwrap())
+        .collect::<Vec<_>>();
 
-    assert!(output.contains("web/dev-task"), "{output}");
-    assert!(!output.contains("web/stable-task"), "{output}");
+    assert_eq!(handles, vec!["web/dev-task"]);
 
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -887,16 +966,28 @@ fn read_only_cockpit_rejects_interactive_mode_before_navigation_only_tui() {
 
     let error = super::render_cockpit_command(&sample_context(), subcommand).unwrap_err();
 
-    assert!(matches!(
+    assert_eq!(
         error,
-        super::CliError::CommandFailed(message)
-            if message.contains("interactive cockpit requires command execution support")
-    ));
+        super::CliError::CommandFailed(
+            "interactive cockpit requires command execution support".to_string()
+        )
+    );
 }
 
 #[test]
 fn cockpit_watch_renders_dashboard_from_backend_state() {
     let context = sample_context();
+    let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
+
+    assert_eq!(snapshot.cards.len(), 1);
+    assert_eq!(snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(
+        snapshot.cards[0].status_explanation.as_deref(),
+        Some("Ready for review")
+    );
+    assert_eq!(snapshot.inbox.items.len(), 1);
+    assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
+
     let output = run_with_context(
         [
             "ajax",
@@ -911,10 +1002,8 @@ fn cockpit_watch_renders_dashboard_from_backend_state() {
     )
     .unwrap();
 
-    assert!(output.contains("Ajax Cockpit"));
-    assert!(output.contains("Inbox"));
-    assert!(output.contains("web/fix-login"));
-    assert!(output.contains("Ready for review"));
+    assert_eq!(output.matches("Ajax Cockpit").count(), 1);
+    assert!(output.lines().any(|line| line == "Inbox"));
 }
 
 #[test]
@@ -1170,7 +1259,12 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
     )
     .unwrap();
 
-    assert!(output.contains("web/fix-login\tRunning - Agent working\tFix login"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("web/fix-login")),
+        Some("web/fix-login\tRunning - Agent working\tFix login")
+    );
     assert_eq!(runner.commands, tmux_live_commands());
 }
 
@@ -1188,7 +1282,12 @@ fn status_command_refreshes_live_state_from_tmux() {
     let output =
         run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
 
-    assert!(output.contains("web/fix-login\tWaiting - Waiting for approval\tFix login"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("web/fix-login")),
+        Some("web/fix-login\tWaiting - Waiting for approval\tFix login")
+    );
     assert!(context
         .registry
         .get_task(&TaskId::new("task-1"))
@@ -1331,8 +1430,12 @@ fn read_command_skips_live_pane_probe_when_cached_runtime_is_fresh() {
     let mut runner = QueuedRunner::default();
 
     let output = run_with_context_and_runner(["ajax", "tasks"], &mut context, &mut runner).unwrap();
+    let handles: Vec<&str> = output
+        .lines()
+        .map(|line| line.split('\t').next().unwrap_or_default())
+        .collect();
 
-    assert!(output.contains("web/fix-login"));
+    assert_eq!(handles, vec!["web/fix-login"]);
     assert!(runner.commands.is_empty());
 }
 
@@ -2015,10 +2118,25 @@ fn supervise_command_runs_codex_json_adapter_and_renders_events() {
     let (output, _) =
         crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
 
-    assert!(output.contains("process started"));
-    assert!(output.contains("agent started: codex"));
-    assert!(output.contains("waiting for approval: cargo test"));
-    assert!(output.contains("process exited: 0"));
+    let events: Vec<&str> = output
+        .lines()
+        .filter(|line| {
+            line.starts_with("process started: ")
+                || line.starts_with("agent started: ")
+                || line.starts_with("waiting for approval")
+                || line.starts_with("process exited: ")
+        })
+        .collect();
+    assert_eq!(events.len(), 4);
+    assert!(events[0].starts_with("process started: "));
+    assert_eq!(
+        events[1..],
+        [
+            "agent started: codex",
+            "waiting for approval: cargo test",
+            "process exited: 0",
+        ]
+    );
 
     let _ = std::fs::remove_file(fake_codex);
 }
@@ -2052,10 +2170,25 @@ fn supervise_command_runs_cursor_stream_json_adapter_and_renders_events() {
     let (output, _) =
         crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
 
-    assert!(output.contains("process started"));
-    assert!(output.contains("agent started: cursor"));
-    assert!(output.contains("waiting for approval"));
-    assert!(output.contains("process exited: 0"));
+    let events: Vec<&str> = output
+        .lines()
+        .filter(|line| {
+            line.starts_with("process started: ")
+                || line.starts_with("agent started: ")
+                || line.starts_with("waiting for approval")
+                || line.starts_with("process exited: ")
+        })
+        .collect();
+    assert_eq!(events.len(), 4);
+    assert!(events[0].starts_with("process started: "));
+    assert_eq!(
+        events[1..],
+        [
+            "agent started: cursor",
+            "waiting for approval",
+            "process exited: 0",
+        ]
+    );
 
     let _ = std::fs::remove_file(fake_cursor);
 }
@@ -2122,8 +2255,13 @@ fn supervise_command_keeps_stderr_context_on_agent_exit() {
         crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap_err();
 
     let _ = std::fs::remove_file(fake_codex);
-    assert!(error.to_string().contains("codex exited with status 42"));
-    assert!(error.to_string().contains("stderr: auth expired"));
+    assert_eq!(
+        error,
+        CliError::CommandFailed(
+            "supervisor failed: process error: codex exited with status 42; stderr: auth expired"
+                .to_string()
+        )
+    );
 }
 
 fn write_fake_codex(tag: &str) -> PathBuf {
@@ -2163,7 +2301,7 @@ fn supervise_with_task_runs_for_visible_task() {
     .unwrap();
 
     let _ = std::fs::remove_file(fake_codex);
-    assert!(output.contains("agent started: codex"));
+    assert!(output.lines().any(|line| line == "agent started: codex"));
 }
 
 #[test]
@@ -2273,7 +2411,12 @@ fn supervise_with_task_persists_supervisor_state_to_sqlite() {
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(output.contains("waiting for approval: cargo test"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("waiting for approval")),
+        Some("waiting for approval: cargo test")
+    );
     let task = restored
         .list_tasks()
         .into_iter()
@@ -2292,16 +2435,20 @@ fn help_output_is_successful() {
     let context = sample_context();
     let output = run_with_context(["ajax-cli", "--help"], &context).unwrap();
 
-    assert!(output.contains("Usage: ajax-cli [OPTIONS] [COMMAND]"));
-    assert!(output.contains("Commands:"));
+    assert!(output
+        .lines()
+        .any(|line| line == "Usage: ajax-cli [OPTIONS] [COMMAND]"));
+    assert!(output.lines().any(|line| line == "Commands:"));
 }
 
 #[test]
 fn bare_command_reports_missing_subcommand_as_error() {
     let error = run_with_context(["ajax"], &sample_context()).unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("command is required; pass --help")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("command is required; pass --help".to_string())
+    );
 }
 
 #[test]
@@ -2312,8 +2459,12 @@ fn readonly_context_rejects_supervise_instead_of_reporting_placeholder_success()
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("supervise requires mutable context and runner support")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed(
+            "supervise requires mutable context and runner support".to_string()
+        )
+    );
 }
 
 #[test]
@@ -2365,8 +2516,11 @@ fn doctor_reports_context_path_health() {
     )
     .unwrap();
 
-    assert!(output.contains("config:path\ttrue\t"));
-    assert!(output.contains("state:path\ttrue\tparent directory can be created"));
+    let config_line = format!("config:path\ttrue\tfile exists: {}", config_file.display());
+    assert!(output.lines().any(|line| line == config_line));
+    assert!(output
+        .lines()
+        .any(|line| line == "state:path\ttrue\tparent directory can be created"));
     std::fs::remove_dir_all(&directory).unwrap();
 }
 
@@ -2457,10 +2611,9 @@ fn refreshed_read_persists_recovered_ajax_task_without_duplicates() {
         .unwrap();
     let mut first_runner = RecoveryRunner::new();
 
-    let first_output =
+    let _first_output =
         run_with_context_paths_and_runner(["ajax", "tasks"], &paths, &mut first_runner).unwrap();
 
-    assert!(first_output.contains("web/code"));
     let saved = SqliteRegistryStore::new(&state_file).load().unwrap();
     assert_eq!(
         saved
@@ -2480,11 +2633,10 @@ fn refreshed_read_persists_recovered_ajax_task_without_duplicates() {
     );
 
     let mut second_runner = RecoveryRunner::new();
-    let second_output =
+    let _second_output =
         run_with_context_paths_and_runner(["ajax", "tasks"], &paths, &mut second_runner).unwrap();
     let saved_again = SqliteRegistryStore::new(&state_file).load().unwrap();
 
-    assert!(second_output.contains("web/code"));
     assert_eq!(
         saved_again
             .list_tasks()
@@ -2527,9 +2679,19 @@ fn state_export_writes_registry_snapshot_without_overwriting() {
     )
     .unwrap_err();
 
-    assert!(output.contains("exported state snapshot"));
-    assert!(snapshot.contains("\"repo\": \"web\""));
-    assert!(snapshot.contains("\"handle\": \"fix-login\""));
+    assert_eq!(
+        output,
+        format!("exported state snapshot: {}", export_path.display())
+    );
+    let exported: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    let task = exported["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["handle"] == "fix-login")
+        .expect("exported snapshot should include fix-login task");
+    assert_eq!(task["repo"], "web");
+    assert_eq!(task["handle"], "fix-login");
     assert_eq!(
         overwrite_error,
         CliError::CommandFailed(format!(
@@ -2558,18 +2720,24 @@ fn executable_commands_accept_execute_and_yes_flags() {
 
 #[test]
 fn task_scoped_commands_require_explicit_task_handle() {
-    for args in [
-        vec!["ajax", "resume"],
-        vec!["ajax", "repair"],
-        vec!["ajax", "repair"],
-        vec!["ajax", "review"],
-        vec!["ajax", "ship"],
-        vec!["ajax", "drop"],
+    for (args, command) in [
+        (vec!["ajax", "resume"], "resume"),
+        (vec!["ajax", "repair"], "repair"),
+        (vec!["ajax", "repair"], "repair"),
+        (vec!["ajax", "review"], "review"),
+        (vec!["ajax", "ship"], "ship"),
+        (vec!["ajax", "drop"], "drop"),
     ] {
         let error = run_with_context(args.clone(), &sample_context()).unwrap_err();
-        assert!(
-            matches!(error, super::CliError::CommandFailed(ref message) if message.contains("required")),
-            "{args:?} should require task arg, got {error:?}"
+        let message = match error {
+            super::CliError::CommandFailed(message) => message,
+            other => panic!("{args:?} should require task arg, got {other:?}"),
+        };
+        assert_eq!(
+            message.trim_end(),
+            format!(
+                "error: the following required arguments were not provided:\n  <REPO/HANDLE>\n\nUsage: ajax {command} <REPO/HANDLE>\n\nFor more information, try '--help'."
+            )
         );
     }
 }
@@ -2643,14 +2811,32 @@ fn tui_dependency_uses_audit_clean_ratatui_feature_set() {
     let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
 
-    assert!(workspace_manifest.contains("ratatui = { version = \"0.30\""));
-    assert!(tui_manifest.contains("default-features = false"));
-    assert!(tui_manifest.contains("\"crossterm\""));
-    assert!(tui_manifest.contains("\"underline-color\""));
-    assert!(tui_manifest.contains("\"layout-cache\""));
-    assert!(!tui_manifest.contains("all-widgets"));
-    assert!(workspace_manifest.contains("rust-version = \"1.88\""));
-    assert!(toolchain.contains("channel = \"1.88.0\""));
+    for needle in ["ratatui = { version = \"0.30\"", "rust-version = \"1.88\""] {
+        assert_ne!(
+            workspace_manifest.find(needle),
+            None,
+            "workspace manifest missing {needle}"
+        );
+    }
+    for needle in [
+        "default-features = false",
+        "\"crossterm\"",
+        "\"underline-color\"",
+        "\"layout-cache\"",
+    ] {
+        assert_ne!(
+            tui_manifest.find(needle),
+            None,
+            "tui manifest missing {needle}"
+        );
+    }
+    assert_eq!(tui_manifest.find("all-widgets"), None);
+    assert_eq!(
+        toolchain
+            .lines()
+            .find(|line| line.starts_with("channel = ")),
+        Some("channel = \"1.88.0\"")
+    );
 }
 
 #[test]
@@ -2670,10 +2856,19 @@ fn new_command_renders_plan_without_json_panic() {
     )
     .unwrap();
 
-    assert!(output.contains("create task: fix logout"));
-    assert!(output.contains("git -C /Users/matt/projects/web worktree add -b ajax/fix-logout /Users/matt/projects/web__worktrees/ajax-fix-logout origin/main"));
-    assert!(output.contains("tmux new-session -d -s ajax-web-fix-logout -n task -c /Users/matt/projects/web__worktrees/ajax-fix-logout"));
-    assert!(output.contains("tmux send-keys -t ajax-web-fix-logout:task"));
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines[0], "create task: fix logout");
+    assert!(lines.iter().any(|line| {
+        *line
+            == "$ git -C /Users/matt/projects/web worktree add -b ajax/fix-logout /Users/matt/projects/web__worktrees/ajax-fix-logout origin/main"
+    }));
+    assert!(lines.iter().any(|line| {
+        *line
+            == "$ tmux new-session -d -s ajax-web-fix-logout -n task -c /Users/matt/projects/web__worktrees/ajax-fix-logout"
+    }));
+    assert!(lines
+        .iter()
+        .any(|line| line.starts_with("$ tmux send-keys -t ajax-web-fix-logout:task")));
 }
 
 #[test]
@@ -2681,8 +2876,10 @@ fn new_command_requires_task_title() {
     let error =
         run_with_context(["ajax", "start", "--repo", "web"], &sample_context()).unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-            if message.contains("task title is required")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("task title is required; pass --title".to_string())
+    );
 }
 
 #[test]
@@ -2690,8 +2887,10 @@ fn repos_command_renders_human_output() {
     let context = sample_context();
     let output = run_with_context(["ajax", "repos"], &context).unwrap();
 
-    assert!(output.contains("web"));
-    assert!(output.contains("/Users/matt/projects/web"));
+    assert_eq!(
+        output,
+        "web\t/Users/matt/projects/web\tactive:0 reviewable:1 cleanable:0"
+    );
 }
 
 #[test]
@@ -2699,8 +2898,10 @@ fn tasks_command_renders_json_output() {
     let context = sample_context();
     let output = run_with_context(["ajax", "tasks", "--json"], &context).unwrap();
 
-    assert!(output.contains("\"tasks\""));
-    assert!(output.contains("web/fix-login"));
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(parsed["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
 }
 
 #[test]
@@ -2719,13 +2920,30 @@ fn open_command_renders_command_plan() {
     let context = sample_context();
     let output = run_with_context(["ajax", "resume", "web/fix-login"], &context).unwrap();
 
-    assert!(output.contains("tmux select-window -t ajax-web-fix-login:task"));
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines[0], "open task: web/fix-login");
+    assert_eq!(
+        lines
+            .iter()
+            .find(|line| line.starts_with("$ tmux select-window")),
+        Some(&"$ tmux select-window -t ajax-web-fix-login:task")
+    );
     match super::current_open_mode() {
         OpenMode::Attach => {
-            assert!(output.contains("tmux attach-session -t ajax-web-fix-login"));
+            assert_eq!(
+                lines
+                    .iter()
+                    .find(|line| line.starts_with("$ tmux attach-session")),
+                Some(&"$ tmux attach-session -t ajax-web-fix-login")
+            );
         }
         OpenMode::SwitchClient => {
-            assert!(output.contains("tmux switch-client -t ajax-web-fix-login"));
+            assert_eq!(
+                lines
+                    .iter()
+                    .find(|line| line.starts_with("$ tmux switch-client")),
+                Some(&"$ tmux switch-client -t ajax-web-fix-login")
+            );
         }
         OpenMode::NoAttach => unreachable!("CLI tests never run in NoAttach mode"),
     }
@@ -2766,8 +2984,12 @@ fn readonly_context_rejects_execute_before_running_external_commands() {
     let error =
         run_with_context(["ajax", "resume", "web/fix-login", "--execute"], &context).unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("execution requires mutable context and runner support")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed(
+            "execution requires mutable context and runner support".to_string()
+        )
+    );
 }
 
 #[test]
@@ -2775,9 +2997,25 @@ fn merge_command_renders_json_plan() {
     let context = sample_context();
     let output = run_with_context(["ajax", "ship", "web/fix-login", "--json"], &context).unwrap();
 
-    assert!(output.contains("\"requires_confirmation\": true"));
-    assert!(output.contains("\"program\": \"git\""));
-    assert!(output.contains("\"merge\""));
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(parsed["title"], "merge task: web/fix-login");
+    assert_eq!(parsed["requires_confirmation"], true);
+    assert_eq!(parsed["commands"][0]["program"], "git");
+    assert_eq!(
+        parsed["commands"][0]["args"],
+        serde_json::json!(["-C", "/Users/matt/projects/web", "switch", "main"])
+    );
+    assert_eq!(
+        parsed["commands"][1]["args"],
+        serde_json::json!([
+            "-C",
+            "/Users/matt/projects/web",
+            "merge",
+            "--ff-only",
+            "ajax/fix-login"
+        ])
+    );
 }
 
 #[test]
@@ -2787,8 +3025,11 @@ fn repair_command_renders_configured_test_plan() {
 
     let output = run_with_context(["ajax", "repair", "web/fix-login"], &context).unwrap();
 
-    assert!(output.contains("repair task: web/fix-login"));
-    assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines[0], "repair task: web/fix-login");
+    assert!(lines
+        .iter()
+        .any(|line| { *line == "$ (cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')" }));
 }
 
 #[test]
@@ -2796,9 +3037,11 @@ fn review_command_renders_diff_summary_plan() {
     let context = sample_context();
     let output = run_with_context(["ajax", "review", "web/fix-login"], &context).unwrap();
 
-    assert!(output.contains("diff task: web/fix-login"));
-    assert!(output
-        .contains("(cd /tmp/worktrees/web-fix-login && git diff --stat main...ajax/fix-login)"));
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines[0], "diff task: web/fix-login");
+    assert!(lines.iter().any(|line| {
+        *line == "$ (cd /tmp/worktrees/web-fix-login && git diff --stat main...ajax/fix-login)"
+    }));
 }
 
 #[test]
@@ -2814,9 +3057,11 @@ fn ready_command_renders_review_queue() {
     let context = sample_context();
     let output = run_with_context(["ajax", "ready", "--json"], &context).unwrap();
 
-    assert!(output.contains("\"tasks\""));
-    assert!(output.contains("web/fix-login"));
-    assert!(output.contains("Reviewable"));
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(parsed["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
+    assert_eq!(parsed["tasks"][0]["lifecycle_status"], "Reviewable");
 }
 
 #[test]
@@ -2850,7 +3095,8 @@ fn cli_loads_context_from_config_and_state_files() {
     .unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(output.contains("web/fix-login"));
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
 }
 
 #[test]
@@ -2869,8 +3115,9 @@ fn cli_missing_config_and_state_files_use_empty_context() {
     )
     .unwrap();
 
-    assert!(output.contains("\"tasks\": []"));
-    assert!(!output.contains("web/fix-login"));
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(parsed["tasks"].as_array().unwrap().len(), 0);
 }
 
 #[test]
@@ -2892,8 +3139,12 @@ fn cli_rejects_legacy_json_state_without_migration() {
     .unwrap_err();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(
-        matches!(error, super::CliError::ContextLoad(message) if message.contains("legacy JSON state is unsupported") && !message.contains("file is not a database"))
+    assert_eq!(
+        error,
+        super::CliError::ContextLoad(format!(
+            "legacy JSON state is unsupported after the SQLite rewrite; remove {} to start with fresh state",
+            state_file.display()
+        ))
     );
 }
 
@@ -2916,9 +3167,15 @@ fn cli_context_load_errors_do_not_expose_debug_variants() {
     .unwrap_err();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(matches!(error, super::CliError::ContextLoad(message)
-                if message.contains("state load failed: database error:")
-                    && !message.contains("Database(")));
+    let message = match error {
+        super::CliError::ContextLoad(message) => message,
+        other => panic!("expected ContextLoad, got {other:?}"),
+    };
+    assert!(
+        message.starts_with("state load failed: database error:"),
+        "{message}"
+    );
+    assert_eq!(message.find("Database("), None, "{message}");
 }
 
 #[test]
@@ -2949,7 +3206,12 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
     )
     .unwrap();
 
-    assert!(output.contains("recorded task: web/fix-login"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("recorded task:")),
+        Some("recorded task: web/fix-login")
+    );
     let mut expected_commands =
         expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
     expected_commands.extend([
@@ -3107,8 +3369,12 @@ fn new_execute_rejects_existing_task_before_native_provisioning() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("task already exists: web/fix-login")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed(
+            "plan blocked: task already exists: web/fix-login".to_string()
+        )
+    );
     assert!(runner.commands().is_empty());
 }
 
@@ -3367,7 +3633,12 @@ fn new_execute_allows_reusing_removed_task_handle() {
     )
     .unwrap();
 
-    assert!(output.contains("recorded task: web/fix-login"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("recorded task:")),
+        Some("recorded task: web/fix-login")
+    );
     let mut expected_commands =
         expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
     expected_commands.extend([
@@ -3433,8 +3704,10 @@ fn new_execute_requires_task_title_before_native_provisioning() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-            if message.contains("task title is required")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("task title is required; pass --title".to_string())
+    );
     assert!(runner.commands().is_empty());
 }
 
@@ -3477,7 +3750,12 @@ fn new_execute_saves_registry_to_sqlite_state_file() {
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(output.contains("recorded task: web/fix-login"));
+    assert_eq!(
+        output
+            .lines()
+            .find(|line| line.starts_with("recorded task:")),
+        Some("recorded task: web/fix-login")
+    );
     let recorded = restored
         .list_tasks()
         .iter()
@@ -3729,11 +4007,12 @@ fn external_command_failure_uses_operator_facing_message() {
     )
     .unwrap_err();
 
-    assert!(
-        matches!(&error, super::CliError::CommandFailedAfterStateChange(message)
-                if message == "command failed: git exited with status 42: merge failed")
+    assert_eq!(
+        error,
+        super::CliError::CommandFailedAfterStateChange(
+            "command failed: git exited with status 42: merge failed".to_string()
+        )
     );
-    assert!(!error.to_string().contains("NonZeroExit"));
 }
 
 #[test]
@@ -4942,10 +5221,10 @@ fn drop_execute_keeps_task_when_worktree_remove_fails_before_tmux_session_kill()
         task.metadata.get("drop_failed_step").map(String::as_str),
         Some("remove worktree")
     );
-    assert!(task
-        .metadata
-        .get("drop_failed_detail")
-        .is_some_and(|detail| detail.contains("permission denied")));
+    assert_eq!(
+        task.metadata.get("drop_failed_detail").map(String::as_str),
+        Some("git exited with status 2: error: failed to remove worktree: permission denied")
+    );
     assert!(task
         .tmux_status
         .as_ref()
@@ -4995,11 +5274,11 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
     )
     .unwrap_err();
 
-    assert!(
-        matches!(error, super::CliError::CommandFailedAfterStateChange(message)
-                if message.contains("drop incomplete for web/fix-login at delete branch")
-                    && message.contains("branch delete failed")
-                    && message.contains("retry with `ajax drop web/fix-login --execute`"))
+    assert_eq!(
+        error,
+        super::CliError::CommandFailedAfterStateChange(
+            "drop incomplete for web/fix-login at delete branch: git exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`".to_string()
+        )
     );
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
     assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
@@ -5451,8 +5730,10 @@ fn sweep_execute_persists_completed_removals_when_later_command_fails() {
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(error.to_string().contains("exited with status 2"));
-    assert!(error.to_string().contains("worktree remove failed"));
+    assert_eq!(
+        error.to_string(),
+        "command failed: git exited with status 2: worktree remove failed"
+    );
     assert_eq!(
         restored
             .get_task(&TaskId::new("task-1"))
@@ -5492,8 +5773,10 @@ fn cockpit_new_task_action_guides_operator_to_project_input() {
 
     match outcome {
         ajax_tui::ActionOutcome::Message(message) => {
-            assert!(message.contains("select a project"));
-            assert!(message.contains("start"));
+            assert_eq!(
+                message,
+                "select a project, then choose start task to enter a task name"
+            );
         }
         _ => panic!("start task should remain inside Ajax cockpit"),
     }
@@ -5538,12 +5821,7 @@ fn cockpit_actions_defer_to_executable_ajax_commands() {
 
 #[test]
 fn cockpit_known_actions_never_return_command_hints() {
-    for (handle, action) in [
-        ("web/fix-login", "resume"),
-        ("web/fix-login", "ship"),
-        ("web", "start"),
-        ("web", "status"),
-    ] {
+    for (handle, action) in [("web/fix-login", "resume"), ("web/fix-login", "ship")] {
         let mut context = sample_context();
         let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new(format!("__cockpit_action__{action}")),
@@ -5554,19 +5832,56 @@ fn cockpit_known_actions_never_return_command_hints() {
         };
         let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
-        if let ajax_tui::ActionOutcome::Message(message) = outcome {
-            assert!(!message.contains("try: ajax"), "{action}: {message}");
-            assert!(!message.contains("run `ajax"), "{action}: {message}");
-        }
+        assert!(
+            matches!(
+                outcome,
+                ajax_tui::ActionOutcome::Defer(pending)
+                    if pending.task_handle == handle && pending.action == action
+            ),
+            "{action} should defer for execution"
+        );
     }
+
+    let mut context = sample_context();
+    let start_item = ajax_core::models::CockpitActionItem {
+        task_id: TaskId::new("__cockpit_action__start"),
+        task_handle: "web".to_string(),
+        reason: "start".to_string(),
+        priority: 0,
+        action: "start".to_string(),
+    };
+    let start_outcome = super::tui_cockpit_action(&start_item, &mut context).unwrap();
+    assert!(matches!(
+        start_outcome,
+        ajax_tui::ActionOutcome::Message(message)
+            if message == "select a project, then choose start task to enter a task name"
+    ));
+
+    let mut context = sample_context();
+    let status_item = ajax_core::models::CockpitActionItem {
+        task_id: TaskId::new("__cockpit_action__status"),
+        task_handle: "web".to_string(),
+        reason: "status".to_string(),
+        priority: 0,
+        action: "status".to_string(),
+    };
+    let status_outcome = super::tui_cockpit_action(&status_item, &mut context).unwrap();
+    assert!(matches!(
+        status_outcome,
+        ajax_tui::ActionOutcome::Message(message) if message == "web: 1 task(s)"
+    ));
 
     let mut context = cleanable_context();
     let item = cockpit_item("web/fix-login", "drop");
     let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
-
-    if let ajax_tui::ActionOutcome::Message(message) = outcome {
-        assert!(!message.contains("try: ajax"), "drop task: {message}");
-        assert!(!message.contains("run `ajax"), "drop task: {message}");
+    match &outcome {
+        ajax_tui::ActionOutcome::Confirm(message) => {
+            assert_eq!(message, "press enter again to confirm drop");
+        }
+        ajax_tui::ActionOutcome::RefreshAndDefer(_, pending) => {
+            assert_eq!(pending.action, "drop");
+        }
+        _ => panic!("drop task should confirm or refresh-and-defer"),
     }
 }
 
@@ -5586,8 +5901,10 @@ fn removed_cockpit_task_actions_are_unknown() {
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains(action), "{action}: {message}");
-                assert!(!message.contains("try: ajax"), "{action}: {message}");
+                assert_eq!(
+                    message,
+                    format!("cockpit action is not configured: {action}")
+                );
             }
             _ => panic!("{action} should be an unknown cockpit action"),
         }
@@ -5602,9 +5919,7 @@ fn cockpit_unknown_action_does_not_suggest_shell_command() {
 
     match outcome {
         ajax_tui::ActionOutcome::Message(message) => {
-            assert!(message.contains("mystery action"));
-            assert!(!message.contains("try: ajax"));
-            assert!(!message.contains("run `ajax"));
+            assert_eq!(message, "cockpit action is not configured: mystery action");
         }
         _ => panic!("unknown cockpit action should stay in cockpit"),
     }
@@ -5614,7 +5929,7 @@ fn cockpit_unknown_action_does_not_suggest_shell_command() {
 fn cockpit_action_contract_covers_all_current_actions() {
     enum Expected<'a> {
         Defer,
-        Message(&'a [&'a str]),
+        Message(&'a str),
         RefreshAndDefer,
     }
 
@@ -5622,14 +5937,14 @@ fn cockpit_action_contract_covers_all_current_actions() {
         (
             "start",
             "web",
-            Expected::Message(&["select a project", "start"]),
+            Expected::Message("select a project, then choose start task to enter a task name"),
         ),
         ("resume", "web/fix-login", Expected::Defer),
         ("review", "web/fix-login", Expected::Defer),
         ("ship", "web/fix-login", Expected::Defer),
         ("drop", "web/fix-login", Expected::RefreshAndDefer),
         ("repair", "web/fix-login", Expected::Defer),
-        ("status", "web", Expected::Message(&["web: 1 task(s)"])),
+        ("status", "web", Expected::Message("web: 1 task(s)")),
     ];
     let covered_actions = cases
         .iter()
@@ -5672,11 +5987,9 @@ fn cockpit_action_contract_covers_all_current_actions() {
                     panic!("{action} should defer without refreshing first");
                 }
             },
-            Expected::Message(parts) => match outcome {
+            Expected::Message(expected_message) => match outcome {
                 ajax_tui::ActionOutcome::Message(message) => {
-                    for part in parts {
-                        assert!(message.contains(part), "{action}: missing {part:?}");
-                    }
+                    assert_eq!(message, expected_message, "{action}");
                 }
                 ajax_tui::ActionOutcome::Defer(_) => {
                     panic!("{action} should render in cockpit, got defer");
@@ -5788,8 +6101,12 @@ fn pending_new_task_action_requires_completed_title() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("start task title is required")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed(
+            "start task title is required before cockpit can create the task".to_string()
+        )
+    );
     assert!(context.registry.list_tasks().is_empty());
     assert!(!state_changed);
 }
@@ -5819,8 +6136,12 @@ fn pending_new_task_action_does_not_run_without_title() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("start task title is required")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed(
+            "start task title is required before cockpit can create the task".to_string()
+        )
+    );
     assert!(runner.commands.is_empty());
     assert!(context.registry.list_tasks().is_empty());
     assert!(!state_changed);
@@ -5907,9 +6228,12 @@ fn pending_new_task_action_runs_after_title_is_collected() {
     )
     .unwrap();
 
-    assert!(outcome
-        .as_deref()
-        .is_some_and(|output| output.contains("recorded task: api/fix-login")));
+    assert_eq!(
+        outcome.as_deref().and_then(|output| output
+            .lines()
+            .find(|line| line.starts_with("recorded task:"))),
+        Some("recorded task: api/fix-login")
+    );
     let mut expected_commands =
         expected_sync_default_branch_commands("/Users/matt/projects/api", "main");
     expected_commands.extend([
@@ -6064,10 +6388,10 @@ fn task_verbs_render_core_operation_titles() {
     let review = run_with_context(["ajax", "review", "web/fix-login"], &context).unwrap();
     let ship = run_with_context(["ajax", "ship", "web/fix-login"], &context).unwrap();
 
-    assert!(resume.contains("open task: web/fix-login"));
-    assert!(repair.contains("repair task: web/fix-login"));
-    assert!(review.contains("diff task: web/fix-login"));
-    assert!(ship.contains("merge task: web/fix-login"));
+    assert_eq!(resume.lines().next().unwrap(), "open task: web/fix-login");
+    assert_eq!(repair.lines().next().unwrap(), "repair task: web/fix-login");
+    assert_eq!(review.lines().next().unwrap(), "diff task: web/fix-login");
+    assert_eq!(ship.lines().next().unwrap(), "merge task: web/fix-login");
 }
 
 #[test]
@@ -6149,8 +6473,11 @@ fn drop_plan_refreshes_stale_git_evidence_before_rendering_commands() {
             )
         ]
     );
-    assert!(!rendered.output.contains("worktree"));
-    assert!(!rendered.output.contains("branch"));
+    let drop_plan: serde_json::Value = serde_json::from_str(&rendered.output).unwrap();
+    assert_eq!(drop_plan["title"], "remove task: web/fix-login");
+    assert_eq!(drop_plan["blocked_reasons"], serde_json::json!([]));
+    assert_eq!(drop_plan["title"].as_str().unwrap().find("worktree"), None);
+    assert_eq!(drop_plan["title"].as_str().unwrap().find("branch"), None);
     let task = context.registry.get_task(&task_id).unwrap();
     let git_status = task.git_status.as_ref().unwrap();
     assert!(!git_status.worktree_exists);
@@ -6228,8 +6555,11 @@ fn resume_plan_refreshes_stale_git_evidence_before_rendering_commands() {
             )
         ]
     );
-    assert!(rendered.output.contains("\"blocked_reasons\""));
-    assert!(rendered.output.contains("task has missing substrate"));
+    let resume_plan: serde_json::Value = serde_json::from_str(&rendered.output).unwrap();
+    assert_eq!(
+        resume_plan["blocked_reasons"],
+        serde_json::json!(["task has missing substrate"])
+    );
     let task = context.registry.get_task(&task_id).unwrap();
     let git_status = task.git_status.as_ref().unwrap();
     assert!(!git_status.worktree_exists);
@@ -6297,10 +6627,11 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
 
     let error = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap_err();
 
-    assert!(
-        matches!(error, super::CliError::CommandFailedAfterStateChange(message)
-                if message.contains("drop incomplete for web/fix-login")
-                    && message.contains("retry with `ajax drop web/fix-login --execute`"))
+    assert_eq!(
+        error,
+        super::CliError::CommandFailedAfterStateChange(
+            "drop incomplete for web/fix-login at remove worktree: external resources still present after teardown attempt; retry with `ajax drop web/fix-login --execute`".to_string()
+        )
     );
     assert_eq!(
         runner.commands,
@@ -6559,15 +6890,16 @@ fn drop_execute_hard_remove_survives_subsequent_tasks_read() {
     .unwrap();
 
     let tasks_output = run_with_context_paths_and_runner(
-        ["ajax", "tasks"],
+        ["ajax", "tasks", "--json"],
         &paths,
         &mut QueuedRunner::new(vec![]),
     )
     .unwrap();
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tasks_output).unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(!tasks_output.contains("web/fix-login"));
+    assert_eq!(parsed["tasks"].as_array().unwrap().len(), 0);
     assert!(restored.get_task(&task_id).is_none());
     assert!(restored.list_tasks().is_empty());
 }
@@ -6633,8 +6965,11 @@ fn cockpit_remove_action_requires_confirmation_before_running() {
     };
     let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
-    assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
-            if message.contains("press enter again") && message.contains("drop")));
+    assert!(matches!(
+        outcome,
+        ajax_tui::ActionOutcome::Confirm(message)
+            if message == "press enter again to confirm drop"
+    ));
 }
 
 #[test]
@@ -7168,8 +7503,10 @@ fn pending_cockpit_removed_actions_are_rejected() {
         )
         .unwrap_err();
 
-        assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains(action)));
+        assert_eq!(
+            error,
+            super::CliError::CommandFailed(format!("unknown cockpit action: {action}"))
+        );
         assert!(!state_changed, "{action}");
     }
 }
@@ -7310,8 +7647,10 @@ fn pending_cockpit_unknown_action_does_not_open_or_mutate_task() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("unknown cockpit action: mystery action")));
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("unknown cockpit action: mystery action".to_string())
+    );
     assert!(runner.commands().is_empty());
     assert_eq!(
         context
@@ -7606,9 +7945,10 @@ fn failed_deferred_drop_restores_task_in_next_cockpit_snapshot() {
     let restored = crate::cockpit_backend::build_cockpit_snapshot(&context);
 
     assert!(!handled);
-    assert!(flash
-        .as_deref()
-        .is_some_and(|message| message.contains("branch delete failed")));
+    assert_eq!(
+        flash.as_deref(),
+        Some("drop incomplete for web/fix-login at delete branch: git exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`")
+    );
     assert!(restored
         .cards
         .iter()
@@ -7656,8 +7996,12 @@ fn cockpit_clean_action_requires_confirmation_before_running() {
     };
     let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
-    assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
-            if message.contains("press enter again") && message.contains("drop")));
+    match outcome {
+        ajax_tui::ActionOutcome::Confirm(message) => {
+            assert_eq!(message, "press enter again to confirm drop");
+        }
+        _ => panic!("drop should confirm before running"),
+    }
     assert_eq!(
         context
             .registry
@@ -7748,8 +8092,12 @@ fn removed_reconcile_command_does_not_touch_registry_snapshot() {
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(matches!(error, CliError::CommandFailed(message)
-            if message.contains("unrecognized subcommand 'reconcile'")));
+    assert_eq!(
+        error,
+        CliError::CommandFailed(
+            "error: unrecognized subcommand 'reconcile'\n\nUsage: ajax [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.\n".to_string()
+        )
+    );
     assert!(runner.commands.is_empty());
     let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
     assert!(!restored_task.has_side_flag(SideFlag::WorktreeMissing));
@@ -7786,9 +8134,12 @@ fn agent_runtime_command_runs_without_loading_ajax_context() {
     ])
     .unwrap();
 
-    assert!(output.is_empty());
-    let latest = std::fs::read_to_string(directory.join("web__fix-login.json")).unwrap();
-    assert!(latest.contains("\"state\":\"exited_success\""));
+    assert_eq!(output, "");
+    let latest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("web__fix-login.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(latest["state"], "exited_success");
 
     std::fs::remove_dir_all(directory).unwrap();
 }

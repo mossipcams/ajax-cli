@@ -657,7 +657,22 @@ fn ajax_start_creates_task_like_new() {
         "ajax start --execute should succeed, stderr:\n{}",
         stderr(&output)
     );
-    assert!(stdout(&output).contains("recorded task: web/fix-login"));
+    assert!(
+        stdout(&output)
+            .lines()
+            .any(|line| line == "recorded task: web/fix-login"),
+        "stdout should include exact recorded-task line:\n{}",
+        stdout(&output)
+    );
+    let tasks = home.ajax(["tasks", "--json"]);
+    assert!(
+        tasks.status.success(),
+        "ajax tasks --json after start, stderr:\n{}",
+        stderr(&tasks)
+    );
+    let body: Value =
+        serde_json::from_str(&stdout(&tasks)).expect("ajax tasks --json should emit JSON");
+    assert_eq!(body["tasks"][0]["qualified_handle"], "web/fix-login");
 }
 
 #[test]
@@ -696,7 +711,14 @@ fn ajax_tidy_dispatches_like_sweep() {
         "ajax tidy --json should dispatch like sweep, stderr:\n{}",
         stderr(&output)
     );
-    assert!(stdout(&output).contains("commands"));
+    let body: Value =
+        serde_json::from_str(&stdout(&output)).expect("ajax tidy --json should emit JSON");
+    assert!(
+        body.get("commands")
+            .and_then(|value| value.as_array())
+            .is_some(),
+        "tidy --json should expose a commands array: {body}"
+    );
 }
 
 #[test]
