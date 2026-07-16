@@ -111,10 +111,13 @@ describe("App shell", () => {
       /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*position:\s*fixed/,
     );
     expect(appViewportSource).toMatch(
-      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*top:\s*var\(--app-band-top/,
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*top:\s*var\(--app-top/,
     );
     expect(appViewportSource).toMatch(
-      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*height:\s*var\(--app-band-height/,
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*bottom:\s*max\([\s\S]*?calc\(/,
+    );
+    expect(appViewportSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*height:\s*auto/,
     );
   });
 
@@ -210,8 +213,9 @@ describe("App shell", () => {
       )?.[1] ?? "";
 
     expect(taskDetailRule).toMatch(/position:\s*fixed/);
-    expect(taskDetailRule).toMatch(/top:\s*var\(--app-band-top/);
-    expect(taskDetailRule).toMatch(/height:\s*var\(--app-band-height/);
+    expect(taskDetailRule).toMatch(/top:\s*var\(--app-top/);
+    expect(taskDetailRule).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
+    expect(taskDetailRule).toMatch(/height:\s*auto/);
   });
 
   it("does not pin task-detail under keyboard-open while terminal is expanded", () => {

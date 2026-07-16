@@ -996,6 +996,82 @@ test("expand then keyboard-open still pins panel bottom to the visual viewport b
   expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
 });
 
+test("inline keyboard-open pins task-detail to the visual viewport band", async ({ page }) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page);
+
+  const geometry = await page.evaluate(() => {
+    const detail = document.querySelector<HTMLElement>(".task-detail");
+    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
+    if (!detail || !keys) return null;
+    const top = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
+    );
+    const height = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
+    );
+    const detailBox = detail.getBoundingClientRect();
+    const keysBox = keys.getBoundingClientRect();
+    return {
+      bandTop: top,
+      bandBottom: top + height,
+      detailTop: detailBox.top,
+      detailBottom: detailBox.bottom,
+      keysBottom: keysBox.bottom,
+      expanded: document.documentElement.classList.contains("terminal-expanded"),
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry!.expanded).toBe(false);
+  expect(geometry!.detailTop).toBeCloseTo(geometry!.bandTop, 0);
+  expect(geometry!.detailBottom).toBeCloseTo(geometry!.bandBottom, 0);
+  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
+});
+
+test("exit fullscreen while keyboard-open pins inline task-detail to the band", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page);
+
+  const expand = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+
+  const geometry = await page.evaluate(() => {
+    const detail = document.querySelector<HTMLElement>(".task-detail");
+    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
+    if (!detail || !keys) return null;
+    const top = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
+    );
+    const height = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
+    );
+    const detailBox = detail.getBoundingClientRect();
+    const keysBox = keys.getBoundingClientRect();
+    return {
+      bandTop: top,
+      bandBottom: top + height,
+      detailTop: detailBox.top,
+      detailBottom: detailBox.bottom,
+      keysBottom: keysBox.bottom,
+      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+      expanded: document.documentElement.classList.contains("terminal-expanded"),
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry!.keyboardOpen).toBe(true);
+  expect(geometry!.expanded).toBe(false);
+  expect(geometry!.detailTop).toBeCloseTo(geometry!.bandTop, 0);
+  expect(geometry!.detailBottom).toBeCloseTo(geometry!.bandBottom, 0);
+  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
+});
+
 test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({ page }) => {
   await openTaskTerminal(page);
 
@@ -1878,6 +1954,36 @@ test("non-empty xterm selection shows Copy control in terminal panel", async ({ 
   await programTerminalSelection(page, COPY_SELECTION_TEXT);
 
   await expect(terminalPanel(page).getByRole("button", { name: "Copy" })).toBeVisible();
+});
+
+test("selection Copy sits beside the fullscreen expand control", async ({ page }) => {
+  await openTaskTerminalWithCopySpy(page);
+
+  await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
+  await programTerminalSelection(page, COPY_SELECTION_TEXT);
+
+  const copy = terminalPanel(page).getByTestId("terminal-copy-overlay");
+  const expand = terminalPanel(page).locator(".terminal-expand-corner");
+  await expect(copy).toBeVisible();
+  await expect(expand).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const copyEl = document.querySelector<HTMLElement>('[data-testid="terminal-copy-overlay"]');
+    const expandEl = document.querySelector<HTMLElement>(".terminal-expand-corner");
+    if (!copyEl || !expandEl) return null;
+    const copyBox = copyEl.getBoundingClientRect();
+    const expandBox = expandEl.getBoundingClientRect();
+    return {
+      copyRight: copyBox.right,
+      copyTop: copyBox.top,
+      expandLeft: expandBox.left,
+      expandTop: expandBox.top,
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry!.copyRight).toBeLessThanOrEqual(geometry!.expandLeft + 1);
+  expect(Math.abs(geometry!.copyTop - geometry!.expandTop)).toBeLessThanOrEqual(8);
 });
 
 test("Copy writes selected text to clipboard and shows Copied notice", async ({ page }) => {

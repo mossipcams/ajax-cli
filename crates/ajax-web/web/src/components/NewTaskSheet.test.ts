@@ -30,8 +30,9 @@ describe("NewTaskSheet", () => {
     expect(newTaskSheetSource).not.toMatch(/--app-height|--app-top/);
     expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*overflow-y:\s*auto/);
     expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*max-height:\s*calc\(100% - 40px\)/);
-    expect(fullscreenLayerSource).toMatch(/--app-band-top/);
-    expect(fullscreenLayerSource).toMatch(/--app-band-height/);
+    expect(fullscreenLayerSource).toMatch(/top:\s*var\(--app-top/);
+    expect(fullscreenLayerSource).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
+    expect(fullscreenLayerSource).toMatch(/height:\s*auto/);
   });
 
   it("offers every supported agent including opencode", () => {
