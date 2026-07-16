@@ -140,7 +140,7 @@
     }
   };
 
-  const scheduleExpandSettle = () => {
+  const scheduleBandSettle = () => {
     cancelExpandSettle();
     schedulePostLayoutRef?.(true);
     expandSettleFrame1 = requestAnimationFrame(() => {
@@ -399,11 +399,12 @@
     resetResizeDedupe?.();
     if (!entering) {
       blurTerm();
-      cancelExpandSettle();
-      schedulePostLayoutRef?.(false);
+      // Exit while keyboard-open used to call discreteIntent=false, which is a
+      // no-op under the fit freeze — inline band never refit. Always settle.
+      scheduleBandSettle();
       return;
     }
-    scheduleExpandSettle();
+    scheduleBandSettle();
   };
 
   onMount(() => {
@@ -666,6 +667,9 @@
       if (textarea) {
         resetDocumentScroll();
         textarea.focus({ preventScroll: true });
+        // Tap opens (or keeps) the iOS keyboard; settle so inline and fullscreen
+        // bands both track the animated visual viewport.
+        scheduleBandSettle();
         return;
       }
       term?.focus();
@@ -910,8 +914,25 @@
     const viewport = window.visualViewport;
     viewport?.addEventListener("resize", onViewportChange);
 
+    // Any keyboard-open class edge (open or close), in inline or fullscreen:
+    // re-run discreteIntent settle so the band tracks iOS visualViewport animation
+    // and exit-from-fullscreen-while-keyboard-up is not a frozen no-op.
+    let wasKeyboardOpen = isKeyboardOpen();
+    const keyboardClassObserver = new MutationObserver(() => {
+      const nowOpen = isKeyboardOpen();
+      if (nowOpen === wasKeyboardOpen) return;
+      wasKeyboardOpen = nowOpen;
+      resetDocumentScroll();
+      scheduleBandSettle();
+    });
+    keyboardClassObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     return () => {
       disposed = true;
+      keyboardClassObserver.disconnect();
       cancelExpandSettle();
       cancelLongPress();
       cancelScheduledWork();
@@ -966,22 +987,27 @@
         class="terminal-new-output"
         onclick={() => jumpToBottomRef?.()}>New output ↓</button>
     {/if}
-    {#if copyNotice}
-      <p class="terminal-copy-notice" role="status">{copyNotice}</p>
-    {/if}
-    {#if copyOverlayText}
-      <button type="button" class="terminal-copy-overlay" onclick={() => void copySelection()}
-        >Copy</button>
-    {/if}
   </div>
-  <button
-    type="button"
-    class="terminal-expand-corner"
-    class:is-armed={expanded}
-    aria-label="Expand terminal"
-    aria-pressed={expanded}
-    onpointerdown={(event) => event.preventDefault()}
-    onclick={() => toggleExpanded()}>⛶</button>
+  {#if copyNotice}
+    <p class="terminal-copy-notice" role="status">{copyNotice}</p>
+  {/if}
+  <div class="terminal-corner-actions">
+    {#if copyOverlayText}
+      <button
+        type="button"
+        class="terminal-copy-overlay"
+        data-testid="terminal-copy-overlay"
+        onclick={() => void copySelection()}>Copy</button>
+    {/if}
+    <button
+      type="button"
+      class="terminal-expand-corner"
+      class:is-armed={expanded}
+      aria-label="Expand terminal"
+      aria-pressed={expanded}
+      onpointerdown={(event) => event.preventDefault()}
+      onclick={() => toggleExpanded()}>⛶</button>
+  </div>
   <div
     class="terminal-status"
     class:is-empty={!statusVisible}
@@ -1190,12 +1216,19 @@
     color: var(--ink);
   }
 
-  .terminal-copy-overlay {
+  /* Panel-scoped (not inside the scroll wrap) so selection Copy stays visible
+     next to expand instead of at 50% of tall scroll content. */
+  .terminal-corner-actions {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 7;
+    top: 6px;
+    right: 6px;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .terminal-copy-overlay {
     min-width: 44px;
     min-height: 44px;
     padding: 6px 14px;
@@ -1224,10 +1257,6 @@
   }
 
   .terminal-expand-corner {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    z-index: 8;
     min-width: 44px;
     min-height: 44px;
     padding: 4px;
@@ -1350,16 +1379,20 @@
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
-      /* Use html --app-* directly (not --app-band-* from .app-viewport) so the
-         fixed panel cannot fall back to 100dvh when aliases fail to inherit. */
+      /* Pin both edges to the live visual-viewport band. Height-only sizing
+         lags mid keyboard animation after expand→tap; top+bottom stay glued. */
       top: var(--app-top, var(--app-band-top, 0px));
       right: 0;
       left: 0;
+      bottom: max(
+        0px,
+        calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
+      );
       z-index: 45;
       display: flex;
       flex-direction: column;
-      height: var(--app-height, var(--app-band-height, 100dvh));
-      max-height: var(--app-height, var(--app-band-height, 100dvh));
+      height: auto;
+      max-height: none;
       min-height: 0;
       margin-top: 0;
       box-sizing: border-box;

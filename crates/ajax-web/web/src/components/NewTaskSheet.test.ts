@@ -30,8 +30,15 @@ describe("NewTaskSheet", () => {
     expect(newTaskSheetSource).not.toMatch(/--app-height|--app-top/);
     expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*overflow-y:\s*auto/);
     expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*max-height:\s*calc\(100% - 40px\)/);
-    expect(fullscreenLayerSource).toMatch(/--app-band-top/);
-    expect(fullscreenLayerSource).toMatch(/--app-band-height/);
+    const layerCss =
+      fullscreenLayerSource.match(/\.fullscreen-layer\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(layerCss).toMatch(/position:\s*fixed/);
+    expect(layerCss).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
+    expect(layerCss).toMatch(
+      /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/,
+    );
+    expect(layerCss).toMatch(/height:\s*auto/);
+    expect(layerCss).not.toMatch(/height:\s*var\(--app-band-height/);
   });
 
   it("offers every supported agent including opencode", () => {
