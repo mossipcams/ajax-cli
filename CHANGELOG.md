@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.4...ajax-cli-v0.46.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** unify keyboard-band settle and pin Copy beside expand ([#522](https://github.com/mossipcams/ajax-cli/issues/522)) ([572714f](https://github.com/mossipcams/ajax-cli/commit/572714fdc141dc006c4647c41d2447cfe996bdce))
+
 ## [0.46.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.3...ajax-cli-v0.46.4) (2026-07-16)
 
 
