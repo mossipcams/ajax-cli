@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.6...ajax-cli-v0.47.7) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** stabilize terminal Back and Space input ([#551](https://github.com/mossipcams/ajax-cli/issues/551)) ([f313bf6](https://github.com/mossipcams/ajax-cli/commit/f313bf6f1591996ad4eac441a60905f6e829d32a))
+
 ## [0.47.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.5...ajax-cli-v0.47.6) (2026-07-16)
 
 
