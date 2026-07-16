@@ -59,4 +59,23 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /:global\(html\.keyboard-open\)[\s\S]*?terminal-bottom-controls[\s\S]*?flex:\s*none/,
     );
   });
+
+  it("re-settles the expanded band when the keyboard opens after fullscreen", () => {
+    expect(taskTerminalSource).toMatch(/MutationObserver/);
+    expect(taskTerminalSource).toMatch(/scheduleExpandSettle\(\)/);
+    expect(taskTerminalSource).toMatch(
+      /nowOpen[\s\S]*?EXPANDED_CLASS[\s\S]*?scheduleExpandSettle|EXPANDED_CLASS[\s\S]*?scheduleExpandSettle\(\)/,
+    );
+  });
+
+  it("pins expanded panel with top and bottom to the live visual-viewport band", () => {
+    const expandedRule =
+      taskTerminalSource.match(
+        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
+      )?.[1] ?? "";
+
+    expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
+    expect(expandedRule).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
+    expect(expandedRule).toMatch(/height:\s*auto/);
+  });
 });

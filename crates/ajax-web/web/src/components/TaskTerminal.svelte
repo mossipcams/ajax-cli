@@ -666,6 +666,11 @@
       if (textarea) {
         resetDocumentScroll();
         textarea.focus({ preventScroll: true });
+        // Fullscreen → then tap: iOS animates the keyboard after focus. Re-settle
+        // the fixed band so the panel bottom tracks the visual viewport.
+        if (document.documentElement.classList.contains(EXPANDED_CLASS)) {
+          scheduleExpandSettle();
+        }
         return;
       }
       term?.focus();
@@ -910,8 +915,30 @@
     const viewport = window.visualViewport;
     viewport?.addEventListener("resize", onViewportChange);
 
+    // Expand-then-keyboard: viewport.ts flips keyboard-open after focus, but
+    // fit is frozen unless discreteIntent. Re-run the expand settle window on
+    // the rising edge so the fixed panel tracks the animated keyboard band.
+    let wasKeyboardOpen = isKeyboardOpen();
+    const keyboardClassObserver = new MutationObserver(() => {
+      const nowOpen = isKeyboardOpen();
+      if (
+        nowOpen &&
+        !wasKeyboardOpen &&
+        document.documentElement.classList.contains(EXPANDED_CLASS)
+      ) {
+        resetDocumentScroll();
+        scheduleExpandSettle();
+      }
+      wasKeyboardOpen = nowOpen;
+    });
+    keyboardClassObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     return () => {
       disposed = true;
+      keyboardClassObserver.disconnect();
       cancelExpandSettle();
       cancelLongPress();
       cancelScheduledWork();
@@ -1350,16 +1377,20 @@
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
-      /* Use html --app-* directly (not --app-band-* from .app-viewport) so the
-         fixed panel cannot fall back to 100dvh when aliases fail to inherit. */
+      /* Pin both edges to the live visual-viewport band. Height-only sizing
+         lags mid keyboard animation after expand→tap; top+bottom stay glued. */
       top: var(--app-top, var(--app-band-top, 0px));
       right: 0;
       left: 0;
+      bottom: max(
+        0px,
+        calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
+      );
       z-index: 45;
       display: flex;
       flex-direction: column;
-      height: var(--app-height, var(--app-band-height, 100dvh));
-      max-height: var(--app-height, var(--app-band-height, 100dvh));
+      height: auto;
+      max-height: none;
       min-height: 0;
       margin-top: 0;
       box-sizing: border-box;

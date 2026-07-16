@@ -173,12 +173,12 @@ describe("App shell", () => {
   it("expanded terminal panel matches fullscreen band without safe-area top padding", () => {
     const expandedRule =
       taskTerminalSource.match(
-        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([^}]*)\}/,
+        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
-    expect(expandedRule).toMatch(/height:\s*var\(--app-height/);
-    expect(expandedRule).toMatch(/max-height:\s*var\(--app-height/);
+    expect(expandedRule).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
+    expect(expandedRule).toMatch(/height:\s*auto/);
     expect(expandedRule).toMatch(/overflow:\s*hidden/);
     expect(expandedRule).not.toMatch(/padding:\s*env\(safe-area-inset-top\)/);
   });
