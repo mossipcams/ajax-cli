@@ -77,6 +77,43 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
   });
 
+  it("flex-fills the mobile inline terminal instead of capping at 38vh", () => {
+    const mobileBlock =
+      taskTerminalSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).not.toMatch(/height:\s*min\(38vh,\s*300px\)/);
+    expect(mobileBlock).toMatch(
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?flex:\s*1\s+1\s+auto/,
+    );
+  });
+
+  it("distributes hotbar keys proportionally and drops safe-area pad when keyboard is open", () => {
+    const mobileBlock =
+      taskTerminalSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*width:\s*100%/);
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?flex:\s*1\s+1\s+0/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
+    );
+    expect(mobileBlock).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
+    );
+  });
+
+  it("refits on viewport resize while the keyboard band is open", () => {
+    expect(taskTerminalSource).toMatch(/if\s*\(\s*isKeyboardOpen\(\)\s*\)\s*\{[\s\S]*?scheduleImmediate\(true\)/);
+  });
+
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {
     const observerBody = extractBlock(
       taskTerminalSource,

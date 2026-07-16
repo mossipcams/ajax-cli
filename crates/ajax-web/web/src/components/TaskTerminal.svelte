@@ -416,6 +416,7 @@
     let lastSentCols = 0;
     let lastSentRows = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let keyboardResizeTimer: ReturnType<typeof setTimeout> | undefined;
     let fitFrame = 0;
     let pendingPostKeyboardResync = false;
     let disposed = false;
@@ -444,6 +445,10 @@
       if (resizeTimer) {
         clearTimeout(resizeTimer);
         resizeTimer = undefined;
+      }
+      if (keyboardResizeTimer) {
+        clearTimeout(keyboardResizeTimer);
+        keyboardResizeTimer = undefined;
       }
     };
 
@@ -564,7 +569,18 @@
     };
     schedulePostLayoutRef = schedulePostLayout;
 
-    const onViewportChange = () => scheduleDebounced();
+    const onViewportChange = () => {
+      if (isKeyboardOpen()) {
+        if (keyboardResizeTimer) clearTimeout(keyboardResizeTimer);
+        keyboardResizeTimer = setTimeout(() => {
+          keyboardResizeTimer = undefined;
+          if (!isActive() || !isKeyboardOpen()) return;
+          scheduleImmediate(true);
+        }, RESIZE_DEBOUNCE_MS);
+        return;
+      }
+      scheduleDebounced();
+    };
 
     const touchDistance = (touches: TouchList) =>
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -1360,11 +1376,32 @@
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: min(38vh, 300px);
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
-      height: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
+    }
+
+    :global([data-testid="terminal-bottom-controls"]) {
+      flex: none;
+      width: 100%;
+    }
+
+    .terminal-keys {
+      width: 100%;
+      padding-bottom: max(2px, env(safe-area-inset-bottom));
+    }
+
+    .terminal-keys .terminal-key {
+      flex: 1 1 0;
+      min-width: 0;
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
@@ -1375,6 +1412,10 @@
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) :global([data-testid="terminal-bottom-controls"]) {
       flex: none;
+    }
+
+    :global(html.keyboard-open) .terminal-keys {
+      padding-bottom: 6px;
     }
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
