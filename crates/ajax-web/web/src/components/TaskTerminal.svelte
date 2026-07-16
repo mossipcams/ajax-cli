@@ -526,15 +526,10 @@
       if (isKeyboardOpen() && !discreteIntent) {
         return;
       }
-      // term.resize clears selection; skip ambient fits while Copy/selection is live.
-      if (!discreteIntent && (term?.getSelection() ?? "").length > 0) {
-        return;
-      }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
-        if (!discreteIntent && (term?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });
@@ -1364,16 +1359,23 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Fill leftover task height with a definite flex basis so host height:100%
-       resolves (height:auto flex basis was content-sized and raced with fit). */
+    /* Wrap gets a definite flex height; host flexes into it (height:100% often
+       fails to resolve on WebKit flex items → short host + gap above hotbar). */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+      display: flex;
+      flex-direction: column;
       flex: 1 1 0%;
       min-height: 0;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
-      height: 100%;
+      flex: 1 1 0%;
       min-height: 0;
+      height: auto;
+    }
+
+    .terminal-panel:not(.is-expanded) .terminal-scroll-spacer {
+      flex: none;
     }
 
     :global([data-testid="terminal-bottom-controls"]) {
@@ -1382,13 +1384,16 @@
     }
 
     .terminal-keys {
+      display: flex;
       width: 100%;
+      box-sizing: border-box;
       padding-bottom: max(2px, env(safe-area-inset-bottom));
     }
 
     .terminal-keys .terminal-key {
       flex: 1 1 0;
       min-width: 0;
+      width: 0;
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
