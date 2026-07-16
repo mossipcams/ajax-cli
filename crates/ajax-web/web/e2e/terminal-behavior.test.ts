@@ -1639,7 +1639,7 @@ test("keyboard-open resize burst does not storm PTY resize; closing eventually s
   expect(hasAdjacentDuplicateSizes(afterCloseFrames)).toBe(false);
 });
 
-test("keyboard-open expand enters fullscreen with one fresh PTY resize while keyboard stays open", async ({
+test("keyboard-open expand enters fullscreen with a bounded discreteIntent settle while keyboard stays open", async ({
   page,
 }) => {
   await openTaskTerminal(page);
@@ -1665,19 +1665,35 @@ test("keyboard-open expand enters fullscreen with one fresh PTY resize while key
   await expand.click();
   await expect(expand).toHaveAttribute("aria-pressed", "true");
 
+  // First fresh size from expand enter.
   await expect
     .poll(async () => {
       const frames = await terminalResizeFrames(page);
-      const slice = frames.slice(countBeforeExpand);
       const last = frames.at(-1);
-      return slice.length === 1 && !!last && !sizesEqual(last, settledBefore);
+      return frames.length > countBeforeExpand && !!last && !sizesEqual(last, settledBefore);
     })
     .toBe(true);
 
+  // scheduleBandSettle: immediate + 2 rAF + EXPAND_REWRAP_MS (280) discreteIntent.
+  // Wait until the settle window stops emitting, then assert the budget.
+  const SETTLE_BUDGET = 4;
+  await expect
+    .poll(
+      async () => {
+        const before = (await terminalResizeFrames(page)).length;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return (await terminalResizeFrames(page)).length === before;
+      },
+      { timeout: 1500 },
+    )
+    .toBe(true);
+
   const expandFrames = (await terminalResizeFrames(page)).slice(countBeforeExpand);
-  expect(expandFrames.length).toBe(1);
+  expect(expandFrames.length).toBeGreaterThanOrEqual(1);
+  expect(expandFrames.length).toBeLessThanOrEqual(SETTLE_BUDGET);
   expect(hasAdjacentDuplicateSizes(expandFrames)).toBe(false);
-  const expandFrame = expandFrames[0]!;
+  const expandFrame = expandFrames.at(-1)!;
+  expect(sizesEqual(expandFrame, settledBefore!)).toBe(false);
   expect(expandFrame.cols).toBeGreaterThan(0);
   expect(expandFrame.rows).toBeGreaterThan(0);
   expect(Number.isInteger(expandFrame.cols)).toBe(true);
