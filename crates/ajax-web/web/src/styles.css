@@ -416,8 +416,11 @@ header .bar h1 {
 
   /* Pin the whole task page to the visual-viewport band so the terminal
      hotkey bar lands on the band bottom (flush above the iOS keyboard),
-     matching fullscreen geometry while keeping back/status visible. */
-  html.keyboard-open .task-detail {
+     matching fullscreen geometry while keeping back/status visible.
+     Skip while terminal-expanded: the expanded panel owns the band, and a
+     fixed overflow parent becomes the containing block on iOS Safari so a
+     nested fixed panel is double-offset under the keyboard. */
+  html.keyboard-open:not(.terminal-expanded) .task-detail {
     position: fixed;
     top: var(--app-band-top, 0px);
     left: 0;
@@ -434,12 +437,12 @@ header .bar h1 {
     background: var(--paper);
   }
 
-  html.keyboard-open .task-detail .detail-header,
-  html.keyboard-open .task-detail .interact-panel {
+  html.keyboard-open:not(.terminal-expanded) .task-detail .detail-header,
+  html.keyboard-open:not(.terminal-expanded) .task-detail .interact-panel {
     flex: none;
   }
 
-  html.keyboard-open .task-detail .terminal-panel:not(.is-expanded) {
+  html.keyboard-open:not(.terminal-expanded) .task-detail .terminal-panel:not(.is-expanded) {
     flex: 1 1 auto;
     min-height: 0;
     margin-top: 0;
