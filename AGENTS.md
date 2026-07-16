@@ -420,6 +420,41 @@ Do not let `AGENTS.md` become a substitute for real documentation.
 
 A completed change should be easy to review.
 
+### Naming conventions (commits and PR titles)
+
+Ajax uses Conventional Commits. **PR titles** are enforced by CI; commit
+messages should use the same vocabulary so Release Please can build
+`CHANGELOG.md`.
+
+Sources of truth (keep this section aligned when either changes):
+
+- Allowed PR types: `.github/workflows/ci.yml` → `pr-title` job `types`
+- Changelog types: `release-please-config.json` → `changelog-sections`
+- Release PR title pattern: `release-please-config.json` →
+  `pull-request-title-pattern` (`chore: release ajax-cli <version>`)
+
+Allowed types:
+
+| Type | PR title | Release Please changelog | Use for |
+| --- | --- | --- | --- |
+| `feat` | yes | Features | user-visible feature |
+| `fix` | yes | Bug Fixes | bug fix |
+| `perf` | yes | Performance Improvements | performance improvement |
+| `refactor` | yes | Code Refactoring | behavior-preserving restructure |
+| `revert` | yes | Reverts | revert of a prior change |
+| `chore` | yes | no (intentional) | tooling, tests-only cleanup, docs/agent hygiene, Release Please bumps |
+
+Format: `type(optional-scope): summary` — e.g. `fix(web): …`, `chore(test): …`.
+
+Hard rules:
+
+- Do **not** use `test:`, `docs:`, `ci:`, `build:`, `style:`, or any type
+  outside the table. The `PR Title` check fails with `Unknown release type`
+  and skips the rest of CI.
+- Tests-only or local-suite cleanup → `chore:` / `chore(test):`, never `test:`.
+- Prefer a scope when it helps (`web`, `cli`, `core`, `test`).
+- Before `gh pr create` or retitling, confirm the type is in the table above.
+
 ### Local verify gate (blocking)
 
 Do not create a pull request until local tests have passed in this worktree.

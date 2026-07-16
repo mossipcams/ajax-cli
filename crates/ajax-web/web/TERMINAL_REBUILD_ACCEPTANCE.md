@@ -1,8 +1,13 @@
 # Terminal rebuild acceptance matrix
 
-**Status:** Task 12 complete — old browser surfaces removed; matrix rows that
-require a mounted terminal are **red** until the rebuild lands. This file is
-**pre-removal acceptance evidence**; preserve the full matrix and checklist.
+**Status (2026-07-16):** Task 12 removal is **done**. The old Ghostty/xterm
+production surfaces and their test seams have been deleted. Every matrix cell
+marked **"Red after Task 12"** below is **historical pre-removal evidence** —
+it documents the pre-removal pass on the former Ghostty surface, not current CI
+status. The rebuild has not landed; rows that the rebuild must satisfy are
+**not** currently passing automated coverage and are not run in CI. The matrix
+itself is preserved here for the rebuild; do not infer live status from any
+"Red after Task 12" cell.
 
 Acceptance criteria for the ground-up iOS Safari terminal rebuild. Rows map
 permanent automated coverage, backend boundaries, and physical-iPhone checks.

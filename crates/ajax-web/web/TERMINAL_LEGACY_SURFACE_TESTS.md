@@ -1,19 +1,25 @@
-# Removable terminal surface characterization
+# Removable terminal surface characterization (historical inventory)
 
-**Status:** Task 12 complete — the listed Ghostty/Surface V2 surfaces below were
-removed. This file is **pre-removal evidence**; preserve the inventory for the
-ground-up rebuild.
+**Status:** Task 12 complete. The Ghostty and Surface V2 files and test seams
+listed below are **already deleted** from the tree. This file is preserved as
+**historical evidence** of the removed surface, not as a live inventory. Do not
+re-add the listed files; do not re-enable the listed suites.
 
-Index of tests and seams tied to the current Ghostty default and experimental
-xterm Surface V2 rollout. **Removable after the ground-up rebuild** (Task 12).
-These are **not** acceptance criteria and **not** a shared adapter contract.
+Permanent suites that remain the contract for the (post-rebuild) terminal
+surface:
 
-Permanent replacement: `e2e/terminal-behavior.test.ts` (`mobile-webkit` only).
+- `e2e/terminal-behavior.test.ts` — mobile-webkit only automated regression
+  proxy for the rebuilt terminal surface
+- `src/terminalConnection.test.ts` — frontend socket / seed / resize boundary
+  unit tests
+- Rust PTY / runtime tests in `crates/ajax-web/src/slices/terminal.rs`,
+  `crates/ajax-web/src/adapters/terminal_pty.rs`, and
+  `crates/ajax-web/src/runtime.rs` (see `TERMINAL_BEHAVIOR_CONTRACT.md` §8)
+- `src/legacyTerminalRemoval.test.ts` — living hygiene guard that fails if any
+  of the removed legacy surfaces or test seams reappear
 
-Backend/boundary tests to **keep**: `terminalConnection.test.ts`; Rust PTY/runtime
-tests in `crates/ajax-web/src/slices/terminal.rs`,
-`adapters/terminal_pty.rs`, and `runtime.rs` (see
-`TERMINAL_BEHAVIOR_CONTRACT.md` §8).
+These are **not** acceptance criteria and **not** a shared adapter contract for
+the new surface. See `TERMINAL_REBUILD_ACCEPTANCE.md` for the rebuild matrix.
 
 ## Ghostty integration, component, probe, and workaround tests
 
@@ -25,9 +31,9 @@ tests in `crates/ajax-web/src/slices/terminal.rs`,
 | `e2e/terminal-scroll-garble.test.ts` | `__ajaxTerminalProbe`, `__ajaxTerminalProbeEnable`, canvas buffer reads | scroll-follow / no-yank outcomes in `terminal-behavior.test.ts` |
 | `e2e/terminal-scroll.test.ts` | `terminalPanel`, `.terminal-host`, canvas locators, scroll-follow via probe | `terminal-behavior.test.ts` (`New output ↓`, scrollback read) |
 | `e2e/terminal-zero-lag.test.ts` | canvas + `[data-testid='terminal-zero-lag-input']` overlay | typed-echo product row; overlay mechanics are Legacy Ghostty |
-| `e2e/smoke.test.ts` (terminal rows) | `terminalPanel`, visible canvas assertions | `terminal-behavior.test.ts` surface visibility |
+| `e2e/smoke.test.ts` (terminal rows) | ~~`terminalPanel`, visible canvas assertions~~ — terminal canvas rows already removed in Task 12; smoke no longer asserts the terminal | `terminal-behavior.test.ts` surface visibility |
 | `e2e/fullscreen-refit.test.ts` | `terminalPanel`, canvas, `.is-expanded` class | `terminal-behavior.test.ts` fullscreen resize + input continuity |
-| `e2e/actions.test.ts` (terminal row) | canvas visibility via `terminalPanel` | `terminal-behavior.test.ts` |
+| `e2e/actions.test.ts` (terminal row) | ~~canvas visibility via `terminalPanel`~~ — terminal canvas assertion already removed; actions covers chrome/buttons only | `terminal-behavior.test.ts` |
 
 Production test seams (delete with renderer):
 
@@ -75,14 +81,15 @@ the `mobile-webkit` compatibility contract.
 | `e2e/terminal-zero-lag.test.ts` | canvas, zero-lag overlay test id |
 | `e2e/fullscreen-refit.test.ts` | canvas, `.is-expanded` |
 | `e2e/layout-scroll.test.ts` | `TERMINAL_PLACEHOLDER_KEY`, terminal placeholder |
-| `e2e/smoke.test.ts` | `terminalPanel`, canvas |
-| `e2e/actions.test.ts` | `terminalPanel`, canvas |
+| `e2e/smoke.test.ts` | ~~`terminalPanel`, canvas~~ — terminal rows already removed in Task 12 |
+| `e2e/actions.test.ts` | ~~`terminalPanel`, canvas~~ — no longer asserts terminal canvas |
 | `e2e/visual.test.ts` | dashboard visual baselines (not terminal contract) |
 
 ## Marker
 
-> **Removable after ground-up rebuild.** Delete this index, the listed suites,
-> Ghostty/xterm production paths, WASM assets, Surface V2 settings, and test
-> seams together in Task 12. Keep `e2e/terminal-behavior.test.ts`,
-> `terminalConnection.test.ts`, and Rust PTY/runtime tests as the permanent
+> **Status note (post-Task 12):** the index, listed suites, Ghostty/xterm
+> production paths, WASM assets, Surface V2 settings, and test seams were
+> removed together in Task 12. This file is retained as historical evidence
+> only. Keep `e2e/terminal-behavior.test.ts`, `terminalConnection.test.ts`,
+> Rust PTY/runtime tests, and `legacyTerminalRemoval.test.ts` as the permanent
 > boundary contract.

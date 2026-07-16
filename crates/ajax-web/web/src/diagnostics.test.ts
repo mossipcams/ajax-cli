@@ -25,7 +25,7 @@ describe("diagnosticFetch", () => {
     expect(result.ok).toBe(true);
     expect(result.status).toBe(200);
     expect(result.error).toBeNull();
-    expect(result.body).toContain("version");
+    expect(result.body).toBe(JSON.stringify({ version: "0.1" }, null, 2));
   });
 
   it("returns ok=false for a non-2xx response", async () => {

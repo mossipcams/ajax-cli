@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { initViewport, isKeyboardOpen, resetDocumentScroll } from "./viewport";
 
-// Drive a fake visualViewport the way TerminalPanel.test.ts does: capture the
-// handlers it registers and replay them after mutating the height.
+// Drive a fake visualViewport: capture the handlers it registers and replay
+// them after mutating the height. The keyboard band pin contract that consumes
+// these values is covered separately in `components/keyboardBandPin.test.ts`.
 const vvListeners: Record<string, Array<() => void>> = {};
 let vvHeight = 800;
 let vvOffsetTop = 0;

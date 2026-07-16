@@ -7,7 +7,8 @@
 // OS-independent on purpose: we assert computed colors/box metrics, not pixel
 // screenshots, so there are no platform-specific baselines to maintain.
 
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
+import { mockFetch } from "./fixtures";
 
 // ---- design tokens (must match styles.css :root) -------------------------
 
@@ -15,92 +16,6 @@ const ACCENT = "rgb(135, 175, 215)"; // --accent (CLI xterm 110)
 const WARN = "rgb(215, 175, 95)"; // --warn (CLI xterm 179)
 const DANGER = "rgb(215, 135, 135)"; // --danger (CLI xterm 174)
 const TRANSPARENT = "rgba(0, 0, 0, 0)";
-
-// ---- fixtures ------------------------------------------------------------
-
-const COCKPIT_FIXTURE = {
-  backend: { authority: "host-native", control_enabled: true, warning: null },
-  repos: { repos: [{ name: "web" }, { name: "api" }] },
-  cards: [
-    {
-      id: "web/fix-login",
-      qualified_handle: "web/fix-login",
-      repo: "web",
-      title: "Fix login",
-      status: "waiting",
-      status_explanation: "Waiting for review",
-      actions: [
-        { action: "review", label: "Review", destructive: false, confirmation_required: false },
-        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-      ],
-    },
-    {
-      id: "api/add-auth",
-      qualified_handle: "api/add-auth",
-      repo: "api",
-      title: "Add auth",
-      status: "running",
-      status_explanation: null,
-      actions: [],
-    },
-  ],
-  inbox: { items: [{ task_handle: "web/fix-login", severity: 2 }] },
-};
-
-const DETAIL_FIXTURE = {
-  qualified_handle: "web/fix-login",
-  repo: "web",
-  title: "Fix login",
-  branch: "ajax/fix-login",
-  base_branch: "main",
-  worktree_path: "/repo/web/ajax-fix-login",
-  tmux_session: "ajax-web-fix-login",
-  lifecycle: "reviewable",
-  agent: "codex",
-  agent_status: "idle",
-  status: "waiting",
-  status_explanation: "Waiting for review",
-  runtime_observation_error: null,
-  actions: [
-    { action: "review", label: "Review", destructive: false, confirmation_required: false },
-    { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-  ],
-  live_status_kind: null,
-  live_status_summary: null,
-  agent_activity: null,
-  git: { unpushed_commits: 1 },
-  tmux: null,
-  annotations: [],
-  created_unix_secs: 1700000000,
-  last_activity_unix_secs: 1700001000,
-  agent_attempts: [],
-};
-
-// ---- fetch mock (boots before the app, same shape as smoke.test.ts) ------
-
-async function mockFetch(page: Page) {
-  await page.addInitScript(({ cockpit, detail }) => {
-    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
-      const url =
-        typeof input === "string" ? input
-        : input instanceof URL ? input.href
-        : (input as Request).url;
-      const path = new URL(url, "http://localhost").pathname;
-      const json = (body: unknown) =>
-        new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      if (path === "/api/cockpit") return json(cockpit);
-      if (path === "/api/version") return json({ version: "0.20.5" });
-      if (path === "/api/health") return json({ status: "ok" });
-      if (/^\/api\/tasks\/[^/]+\/pane$/.test(path))
-        return json({ sequence: 0, lines: [], tmux_exists: true, state: null });
-      if (/^\/api\/tasks\/[^/]+$/.test(path)) return json(detail);
-      return json({});
-    };
-  }, { cockpit: COCKPIT_FIXTURE, detail: DETAIL_FIXTURE });
-}
 
 function bg(locator: Locator) {
   return locator.evaluate((el) => getComputedStyle(el).backgroundColor);
