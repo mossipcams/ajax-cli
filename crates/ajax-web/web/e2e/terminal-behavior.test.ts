@@ -559,6 +559,36 @@ test("printable, control, and navigation keys produce ordered PTY input", async 
     ]);
 });
 
+test("held terminal back sends repeated left-arrow frames until release", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const baseline = await inputFrameCount(page);
+  const back = terminalToolbar(page).getByRole("button", { name: "←" });
+  const box = await back.boundingBox();
+  if (!box) throw new Error("← toolbar button box missing");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await inputFrameCount(page)) - baseline)
+    .toBeGreaterThanOrEqual(2);
+  const heldFrames = (await terminalInputFrames(page)).slice(baseline);
+  expect(heldFrames.every((frame) => frame.data === "\x1b[D")).toBe(true);
+  const heldCount = heldFrames.length;
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await expect.poll(async () => inputFrameCount(page)).toBe(baseline + heldCount);
+
+  await back.focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(heldCount + 1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe("\x1b[D");
+});
+
 test("repeated printable browser events produce exact cardinality", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
@@ -2006,6 +2036,174 @@ test("long press on the interaction surface sends no PTY input", async ({ page }
 
   await longPressInteractionSurface(page);
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+});
+
+test("held terminal directional drag repeats its locked arrow without stealing normal scroll", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+
+  const surface = terminalInteractionSurface(page);
+  const touchAction = await surface.evaluate((el) => getComputedStyle(el).touchAction);
+  expect(touchAction).toBe("pan-y");
+
+  const baselineEarly = await inputFrameCount(page);
+  const earlyMove = await surface.evaluate(async (el) => {
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const makeTouch = (clientX: number, clientY: number) => ({
+      clientX,
+      clientY,
+      identifier: 0,
+      target: el,
+    });
+    const dispatch = (type: string, touches: ReturnType<typeof makeTouch>[]) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: touches });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    dispatch("touchstart", [makeTouch(x, y)]);
+    const cancelled = dispatch("touchmove", [makeTouch(x, y + 40)]);
+    dispatch("touchend", []);
+    return cancelled;
+  });
+  expect(earlyMove).toBe(false);
+  await expect.poll(async () => inputFrameCount(page)).toBe(baselineEarly);
+
+  const directions: Array<{
+    name: string;
+    dx: number;
+    dy: number;
+    arrow: string;
+    endWith: "touchend" | "touchcancel";
+  }> = [
+    { name: "up", dx: 0, dy: -40, arrow: "\x1b[A", endWith: "touchend" },
+    { name: "right", dx: 40, dy: 0, arrow: "\x1b[C", endWith: "touchend" },
+    { name: "down", dx: 0, dy: 40, arrow: "\x1b[B", endWith: "touchend" },
+    { name: "left", dx: -40, dy: 0, arrow: "\x1b[D", endWith: "touchcancel" },
+  ];
+
+  for (const dir of directions) {
+    const baseline = await inputFrameCount(page);
+    const cancelled = await surface.evaluate(
+      async (el, spec: { dx: number; dy: number; endWith: string }) => {
+        const rect = el.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const makeTouch = (clientX: number, clientY: number) => ({
+          clientX,
+          clientY,
+          identifier: 0,
+          target: el,
+        });
+        const dispatch = (type: string, touches: ReturnType<typeof makeTouch>[]) => {
+          const event = new Event(type, { bubbles: true, cancelable: true });
+          Object.defineProperty(event, "touches", { value: touches });
+          Object.defineProperty(event, "changedTouches", { value: touches });
+          el.dispatchEvent(event);
+          return event.defaultPrevented;
+        };
+        dispatch("touchstart", [makeTouch(x, y)]);
+        // Hold past LONG_PRESS_MS with headroom for CI timer delay.
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        const moveCancelled = dispatch("touchmove", [makeTouch(x + spec.dx, y + spec.dy)]);
+        // Allow short repeat cadence to emit at least one more frame.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        dispatch(spec.endWith, []);
+        return moveCancelled;
+      },
+      { dx: dir.dx, dy: dir.dy, endWith: dir.endWith },
+    );
+    expect(cancelled, `${dir.name} move should be cancelled`).toBe(true);
+
+    await expect
+      .poll(async () => (await inputFrameCount(page)) - baseline)
+      .toBeGreaterThanOrEqual(2);
+    const heldFrames = (await terminalInputFrames(page)).slice(baseline);
+    expect(
+      heldFrames.every((frame) => frame.data === dir.arrow),
+      `${dir.name} frames must be only ${JSON.stringify(dir.arrow)}`,
+    ).toBe(true);
+    const heldCount = heldFrames.length;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await expect.poll(async () => inputFrameCount(page)).toBe(baseline + heldCount);
+  }
+
+  const baselineNativeScroll = await inputFrameCount(page);
+  const nativeScrollMove = await surface.evaluate(async (el) => {
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const makeTouch = (clientX: number, clientY: number) => ({
+      clientX,
+      clientY,
+      identifier: 0,
+      target: el,
+    });
+    const dispatch = (type: string, touches: ReturnType<typeof makeTouch>[], cancelable: boolean) => {
+      const event = new Event(type, { bubbles: true, cancelable });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: touches });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    dispatch("touchstart", [makeTouch(x, y)], true);
+    // Hold past LONG_PRESS_MS with headroom for CI timer delay.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    // Native pan-y scroll can deliver a non-cancelable vertical move.
+    const cancelled = dispatch("touchmove", [makeTouch(x, y + 40)], false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    dispatch("touchend", [], true);
+    return cancelled;
+  });
+  expect(nativeScrollMove).toBe(false);
+  await expect.poll(async () => inputFrameCount(page)).toBe(baselineNativeScroll);
+
+  const baselineHandoff = await inputFrameCount(page);
+  const handoff = await surface.evaluate(async (el) => {
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const makeTouch = (clientX: number, clientY: number) => ({
+      clientX,
+      clientY,
+      identifier: 0,
+      target: el,
+    });
+    const dispatch = (type: string, touches: ReturnType<typeof makeTouch>[], cancelable: boolean) => {
+      const event = new Event(type, { bubbles: true, cancelable });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: touches });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    dispatch("touchstart", [makeTouch(x, y)], true);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const armedCancelled = dispatch("touchmove", [makeTouch(x, y - 40)], true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const afterArmCount = (
+      (window as unknown as { __terminalFrames?: Array<{ type?: string }> }).__terminalFrames ?? []
+    ).filter((frame) => frame?.type === "input").length;
+    const laterCancelled = dispatch("touchmove", [makeTouch(x, y - 80)], false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const afterHandoffCount = (
+      (window as unknown as { __terminalFrames?: Array<{ type?: string }> }).__terminalFrames ?? []
+    ).filter((frame) => frame?.type === "input").length;
+    dispatch("touchend", [], true);
+    return { armedCancelled, laterCancelled, afterArmCount, afterHandoffCount };
+  });
+  expect(handoff.armedCancelled).toBe(true);
+  expect(handoff.afterArmCount).toBeGreaterThan(baselineHandoff);
+  expect(handoff.laterCancelled).toBe(false);
+  expect(handoff.afterHandoffCount).toBe(handoff.afterArmCount);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await expect.poll(async () => inputFrameCount(page)).toBe(handoff.afterHandoffCount);
+
+  expect(await surface.evaluate((el) => getComputedStyle(el).touchAction)).toBe("pan-y");
 });
 
 test("long press on known output text selects word and shows Copy control", async ({ page }) => {

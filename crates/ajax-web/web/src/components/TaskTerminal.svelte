@@ -93,6 +93,7 @@
   const PINCH_ACTIVATION_PX = 12;
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_CANCEL_PX = 8;
+  const DIRECTIONAL_DRAG_THRESHOLD_PX = 24;
 
   const CONTROL_KEYS = [
     { label: "Esc", data: "\x1b" },
@@ -287,6 +288,40 @@
     return owned;
   };
 
+  // ponytail: ←-only hold repeat; ceiling is one control — generalize only if another key needs it
+  const BACK_REPEAT_DELAY_MS = 400;
+  const BACK_REPEAT_INTERVAL_MS = 75;
+  const BACK_KEY_DATA = "\x1b[D";
+  let backRepeatDelay: ReturnType<typeof setTimeout> | undefined;
+  let backRepeatInterval: ReturnType<typeof setInterval> | undefined;
+
+  const stopBackRepeat = () => {
+    if (backRepeatDelay) {
+      clearTimeout(backRepeatDelay);
+      backRepeatDelay = undefined;
+    }
+    if (backRepeatInterval) {
+      clearInterval(backRepeatInterval);
+      backRepeatInterval = undefined;
+    }
+  };
+
+  const onBackPointerDown = (event: PointerEvent) => {
+    onToolbarPointerDown(event);
+    const target = event.currentTarget;
+    if (target instanceof HTMLElement) {
+      target.setPointerCapture(event.pointerId);
+    }
+    sendKey(consumeCtrl(BACK_KEY_DATA));
+    stopBackRepeat();
+    backRepeatDelay = setTimeout(() => {
+      backRepeatDelay = undefined;
+      backRepeatInterval = setInterval(() => {
+        sendKey(BACK_KEY_DATA);
+      }, BACK_REPEAT_INTERVAL_MS);
+    }, BACK_REPEAT_DELAY_MS);
+  };
+
   const openPasteFallback = (ownedFocus: boolean, notice: string, text = "") => {
     pasteFallbackOwnedFocus = ownedFocus;
     pasteNotice = notice;
@@ -429,6 +464,10 @@
     let longPressStartedAt = 0;
     let longPressActive = false;
     let longPressSelected = false;
+    // ponytail: one-finger held cardinal drag only; ceiling is component-local touch state
+    let directionalArmed = false;
+    let directionalArrow: string | undefined;
+    let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
     let syncingScroll = false;
     let wrapperDroveScroll = false;
 
@@ -718,6 +757,41 @@
       }
     };
 
+    const stopDirectionalRepeat = () => {
+      if (directionalRepeatInterval) {
+        clearInterval(directionalRepeatInterval);
+        directionalRepeatInterval = undefined;
+      }
+    };
+
+    const clearDirectionalGesture = () => {
+      stopDirectionalRepeat();
+      directionalArmed = false;
+      directionalArrow = undefined;
+    };
+
+    const armDirectionalGesture = (arrow: string, event: TouchEvent) => {
+      if (directionalArmed) return;
+      // Only steal the gesture when we can actually cancel native pan-y scroll.
+      if (!event.cancelable) {
+        cancelLongPress();
+        return;
+      }
+      event.preventDefault();
+      if (!event.defaultPrevented) {
+        cancelLongPress();
+        return;
+      }
+      directionalArmed = true;
+      directionalArrow = arrow;
+      cancelLongPress();
+      sendKey(arrow);
+      stopDirectionalRepeat();
+      directionalRepeatInterval = setInterval(() => {
+        if (directionalArrow) sendKey(directionalArrow);
+      }, BACK_REPEAT_INTERVAL_MS);
+    };
+
     const fireLongPressSelect = (clientX: number, clientY: number) => {
       if (longPressSelected) return;
       selectWordAtClient(clientX, clientY);
@@ -774,21 +848,20 @@
 
     const onTouchStart = (event: TouchEvent) => {
       if (event.touches.length === 1) {
+        clearDirectionalGesture();
         const touch = event.touches[0];
         longPressStartX = touch.clientX;
         longPressStartY = touch.clientY;
         longPressStartedAt = performance.now();
         longPressActive = true;
         longPressSelected = false;
-        if (longPressTimer) clearTimeout(longPressTimer);
-        longPressTimer = setTimeout(() => {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
           longPressTimer = undefined;
-          if (!longPressActive || !term) return;
-          fireLongPressSelect(longPressStartX, longPressStartY);
-          longPressActive = false;
-        }, LONG_PRESS_MS);
+        }
       } else {
         cancelLongPress();
+        clearDirectionalGesture();
       }
 
       if (event.touches.length !== 2) {
@@ -803,14 +876,47 @@
     };
 
     const onTouchMove = (event: TouchEvent) => {
-      if (longPressActive) {
+      if (directionalArmed) {
+        if (event.touches.length !== 1) {
+          clearDirectionalGesture();
+          cancelLongPress();
+        } else if (!event.cancelable) {
+          clearDirectionalGesture();
+          cancelLongPress();
+        } else {
+          event.preventDefault();
+          if (!event.defaultPrevented) {
+            clearDirectionalGesture();
+            cancelLongPress();
+          }
+        }
+      } else if (longPressActive) {
         if (event.touches.length !== 1) {
           cancelLongPress();
         } else {
           const touch = event.touches[0];
           const dx = touch.clientX - longPressStartX;
           const dy = touch.clientY - longPressStartY;
-          if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
+          const holdMatured =
+            longPressStartedAt > 0 &&
+            performance.now() - longPressStartedAt >= LONG_PRESS_MS;
+          if (!holdMatured) {
+            if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
+          } else {
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+            if (Math.max(absDx, absDy) >= DIRECTIONAL_DRAG_THRESHOLD_PX) {
+              const arrow =
+                absDx > absDy
+                  ? dx > 0
+                    ? "\x1b[C"
+                    : "\x1b[D"
+                  : dy > 0
+                    ? "\x1b[B"
+                    : "\x1b[A";
+              armDirectionalGesture(arrow, event);
+            }
+          }
         }
       }
 
@@ -833,8 +939,10 @@
 
     const onTouchEnd = () => {
       // CI WebKit can delay the 500ms timer past a short hold; still select when
-      // the finger lifted after a qualifying hold without movement cancel.
+      // the finger lifted after a qualifying hold without movement cancel or
+      // directional drag.
       if (
+        !directionalArmed &&
         longPressActive &&
         !longPressSelected &&
         longPressStartedAt > 0 &&
@@ -843,6 +951,7 @@
         fireLongPressSelect(longPressStartX, longPressStartY);
       }
       cancelLongPress();
+      clearDirectionalGesture();
       if (pinchStartDistance > 0 && pinchEngaged && term) {
         persistFontSize(term.options.fontSize ?? DEFAULT_FONT_SIZE);
         resetDedupe();
@@ -960,6 +1069,7 @@
       keyboardClassObserver.disconnect();
       cancelExpandSettle();
       cancelLongPress();
+      clearDirectionalGesture();
       cancelScheduledWork();
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
@@ -974,6 +1084,7 @@
         interactionEl.removeEventListener("touchcancel", onTouchEnd);
       }
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      stopBackRepeat();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("orientationchange", onViewportChange);
@@ -1084,10 +1195,15 @@
         <button
           type="button"
           class="terminal-key"
-          onpointerdown={onToolbarPointerDown}
+          onpointerdown={key.label === "←" ? onBackPointerDown : onToolbarPointerDown}
+          onpointerup={key.label === "←" ? stopBackRepeat : undefined}
+          onpointercancel={key.label === "←" ? stopBackRepeat : undefined}
+          onlostpointercapture={key.label === "←" ? stopBackRepeat : undefined}
           onclick={(event) => {
             const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-            sendKey(consumeCtrl(key.data));
+            if (key.label !== "←" || event.detail === 0) {
+              sendKey(consumeCtrl(key.data));
+            }
             refocusTermIfOwned(ownedFocus);
           }}>{key.label}</button>
       {/each}

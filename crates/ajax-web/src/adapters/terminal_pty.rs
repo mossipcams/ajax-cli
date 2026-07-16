@@ -333,6 +333,19 @@ fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
+/// Captured-history seed bytes for xterm: bare LF becomes CRLF so each row
+/// starts at column zero. Live PTY output must keep using `output_frame_bytes`.
+fn captured_history_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    for &byte in &bytes {
+        if byte == b'\n' && normalized.last().copied() != Some(b'\r') {
+            normalized.push(b'\r');
+        }
+        normalized.push(byte);
+    }
+    output_frame_bytes(normalized)
+}
+
 /// `seed=0` in a WS URL query opts out of the history seed; anything else
 /// (absent query, other params, seed=1) keeps the default seed.
 pub fn seed_history_from_query(query: Option<&str>) -> bool {
@@ -507,7 +520,7 @@ pub async fn bridge_task_terminal_socket(
     if seed_history {
         if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
             if output.status.success() {
-                if let Some(payload) = output_frame_bytes(output.stdout) {
+                if let Some(payload) = captured_history_frame_bytes(output.stdout) {
                     if socket.send(Message::Binary(payload.into())).await.is_err() {
                         cleanup_spawned_child_async(child).await;
                         for command in &isolated.teardown {
@@ -1006,6 +1019,20 @@ mod tests {
         assert!(!String::from_utf8_lossy(&bytes).contains("\"type\""));
         assert!(!String::from_utf8_lossy(&bytes).contains("output"));
         assert!(output_frame_bytes(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn captured_history_frame_bytes_converts_lf_to_crlf_without_doubling_crlf() {
+        // Mixed ANSI, bare LF, CRLF, consecutive bare LF, and lone CR.
+        let input = b"\x1b[31mred\x1b[0m\ncrlf\r\n\n\rkeep".to_vec();
+        let out = captured_history_frame_bytes(input).expect("non-empty history");
+        assert_eq!(out, b"\x1b[31mred\x1b[0m\r\ncrlf\r\n\r\n\rkeep");
+        // Bare LF -> CRLF; existing CRLF stays one CRLF; consecutive lines start at col 0.
+        assert_eq!(&out[12..14], b"\r\n");
+        assert_eq!(&out[18..20], b"\r\n");
+        assert_eq!(&out[20..22], b"\r\n");
+        assert_eq!(out[22], b'\r');
+        assert!(captured_history_frame_bytes(Vec::new()).is_none());
     }
 
     #[test]
