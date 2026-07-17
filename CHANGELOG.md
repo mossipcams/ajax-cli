@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.3...ajax-cli-v0.50.4) (2026-07-17)
+
+
+### Code Refactoring
+
+* **web:** migrate NewTaskSheet and FullscreenLayer to React (react S4) ([#577](https://github.com/mossipcams/ajax-cli/issues/577)) ([4672466](https://github.com/mossipcams/ajax-cli/commit/4672466db08bd97e98d869988dfee68cec483324))
+* **web:** migrate SettingsView and ResultPanel to React islands (react S3) ([#575](https://github.com/mossipcams/ajax-cli/issues/575)) ([5b14879](https://github.com/mossipcams/ajax-cli/commit/5b1487945e584ebce4fd1ba656263005123d0429))
+
 ## [0.50.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.2...ajax-cli-v0.50.3) (2026-07-17)
 
 
