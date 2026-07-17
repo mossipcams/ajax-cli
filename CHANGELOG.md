@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.2...ajax-cli-v0.50.3) (2026-07-17)
+
+
+### Code Refactoring
+
+* **web:** migrate TaskList and ActionBar to React islands (react S2) ([#573](https://github.com/mossipcams/ajax-cli/issues/573)) ([2e5322a](https://github.com/mossipcams/ajax-cli/commit/2e5322a5850f3aef7c5ff9b2261f910dbba2a7a3))
+
 ## [0.50.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.1...ajax-cli-v0.50.2) (2026-07-17)
 
 
