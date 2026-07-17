@@ -90,7 +90,7 @@ typography:
     lineHeight: 1
     letterSpacing: "normal"
   mono:
-    fontFamily: "ui-monospace, SF Mono, Menlo, monospace"
+    fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, monospace"
     fontSize: "12px"
     fontWeight: 400
     lineHeight: 1.45
@@ -208,7 +208,7 @@ Restrained dark console palette: neutrals do the work; semantic accents speak on
 
 **Display Font:** none (product UI — no display face)
 **Body Font:** UI sans (`ui-sans-serif`, Avenir Next, Helvetica Neue, system-ui) — Inter removed
-**Label/Mono Font:** SF Mono / Menlo stack for terminal-adjacent output (xterm may also list `SFMono-Regular`)
+**Label/Mono Font:** `ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, monospace` for terminal-adjacent output (xterm stack)
 
 **Character:** One technical sans for all chrome; mono only where the CLI would speak. Fixed rem product scale, not fluid marketing type.
 
@@ -242,7 +242,7 @@ Restrained dark console palette: neutrals do the work; semantic accents speak on
 
 ## 4. Elevation
 
-Mostly flat. Depth comes from the Soft Charcoal paper steps (`paper` → `tint` → `raised` → `high`) and 1px rules. Shadows exist only for floating chrome.
+Mostly flat. Depth comes from the Soft Charcoal paper steps (`--soft-charcoal` → tint → raised → high; legacy aliases `--paper` / `--paper-tint` / …) and 1px rules. Shadows exist only for floating chrome.
 
 ### Shadow Vocabulary
 - **Chrome lift** (`0 -6px 20px rgba(0,0,0,0.28)` / similar): Bottom nav and result panel — surfaces that sit above the scroll canvas.

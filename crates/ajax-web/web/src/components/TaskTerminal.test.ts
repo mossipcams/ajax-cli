@@ -254,4 +254,12 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(overlayCss).toMatch(/min-width:\s*44px/);
     expect(overlayCss).toMatch(/min-height:\s*44px/);
   });
+
+  it("names terminal control keys for assistive tech", () => {
+    expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
+    expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Control C"/);
+    expect(taskTerminalSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
+    expect(taskTerminalSource).toMatch(/aria-label="Control modifier"/);
+    expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
+  });
 });

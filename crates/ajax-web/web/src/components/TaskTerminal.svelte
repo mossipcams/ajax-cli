@@ -101,13 +101,13 @@
   const DIRECTIONAL_REPEAT_INTERVAL_MS = 75;
 
   const CONTROL_KEYS = [
-    { label: "Esc", data: "\x1b" },
-    { label: "Tab", data: "\t" },
-    { label: "⌃C", data: "\x03" },
-    { label: "←", data: "\x1b[D" },
-    { label: "↑", data: "\x1b[A" },
-    { label: "↓", data: "\x1b[B" },
-    { label: "→", data: "\x1b[C" },
+    { label: "Esc", ariaLabel: "Escape", data: "\x1b" },
+    { label: "Tab", ariaLabel: "Tab", data: "\t" },
+    { label: "⌃C", ariaLabel: "Control C", data: "\x03" },
+    { label: "←", ariaLabel: "Left arrow", data: "\x1b[D" },
+    { label: "↑", ariaLabel: "Up arrow", data: "\x1b[A" },
+    { label: "↓", ariaLabel: "Down arrow", data: "\x1b[B" },
+    { label: "→", ariaLabel: "Right arrow", data: "\x1b[C" },
   ];
 
   const CTRL_ARM_TIMEOUT_MS = 4000;
@@ -1191,6 +1191,7 @@
         <button
           type="button"
           class="terminal-key"
+          aria-label={key.ariaLabel}
           onpointerdown={onToolbarPointerDown}
           onclick={(event) => {
             const ownedFocus = consumeToolbarPointerOwnedFocus(event);
@@ -1202,6 +1203,7 @@
         type="button"
         class="terminal-key"
         class:is-armed={ctrlArmed}
+        aria-label="Control modifier"
         aria-pressed={ctrlArmed}
         onpointerdown={onToolbarPointerDown}
         onclick={(event) => {
@@ -1212,6 +1214,7 @@
       <button
         type="button"
         class="terminal-key"
+        aria-label="Paste"
         onpointerdown={onToolbarPointerDown}
         onclick={(event) => {
           const ownedFocus = consumeToolbarPointerOwnedFocus(event);

@@ -241,7 +241,11 @@
             <h1>Ajax</h1>
             <p class="status-line" aria-live="polite">{statusText}</p>
             <button class="settings-link" type="button" onclick={() => go(settingsHash())}>Settings</button>
-            <span class="live-dot" aria-hidden="true"></span>
+            <span
+              class="live-dot"
+              class:is-live={connection === "connected"}
+              aria-hidden="true"
+            ></span>
           </div>
           <ConnectionStatus
             state={connection}
