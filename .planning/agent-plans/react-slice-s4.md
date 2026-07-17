@@ -57,7 +57,7 @@ npm run web:smoke -- crates/ajax-web/web/e2e/actions.test.ts crates/ajax-web/web
 
 - [x] **Task 3 — on-device + PR.**
   - Matt: keyboard band, drag-dismiss, submit — **validated 2026-07-17**.
-  - PR: opening.
+  - PR: https://github.com/mossipcams/ajax-cli/pull/577 (opened 2026-07-17). CI/review/merge/baseline-restore still pending.
 
 ## Escalate instead of guessing
 

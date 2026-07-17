@@ -417,7 +417,7 @@ You orchestrate; you do not implement. Per `AGENTS.md`: model-router chooses the
 | S1 | Foundation + ConnectionStatus/Skeleton | merged | #571 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s1.md` |
 | S2 | Dashboard (TaskList + ActionBar) | merged | #573 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
 | S3 | Settings + ResultPanel | merged | #575 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s3.md` |
-| S4 | New-task sheet + FullscreenLayer | open | TBD | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s4.md` |
+| S4 | New-task sheet + FullscreenLayer | open | #577 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s4.md` |
 | S5 | Terminal (TaskTerminal) | not-started | — | — | — |
 | S6 | Task detail + TestInDevPanel | not-started | — | — | — |
 | S7 | Shell inversion + Svelte removal | not-started | — | — | — |
