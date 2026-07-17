@@ -1,4 +1,5 @@
 <script lang="ts">
+  // Frozen duplicate for TaskDetail until S6 deletes this file; keep bugfixes in sync with ActionBar.tsx.
   import type { BrowserCockpitView, WebAction } from "../types";
   import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "../polling";
   import { postOperation, requestId } from "../api";

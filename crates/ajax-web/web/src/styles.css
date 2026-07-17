@@ -822,6 +822,245 @@ header .bar h1 {
   .status-line { font-size: var(--text-label); }
 }
 
+/* TASK LIST (dashboard) --------------------------------------------------- */
+.project-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 14px;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.project-nav-label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-right: 4px;
+}
+
+.project-pill {
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  min-height: 28px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.project-pill:hover,
+.project-pill:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.project-pill.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pill-badge {
+  background: var(--warn);
+  color: var(--paper);
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  margin-left: 6px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.group:first-of-type .section-head {
+  margin-top: 6px;
+}
+
+.section-head::after {
+  content: "";
+  flex: 1 1 auto;
+}
+
+.section-head-title {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.section-head.attention .section-head-title {
+  color: var(--warn);
+}
+
+.section-head-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--paper-high);
+  color: var(--ink-soft);
+  font-size: var(--text-label);
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}
+
+.section-head.attention .section-head-count {
+  background: var(--warn);
+  color: var(--paper);
+}
+
+.task-group + .task-group {
+  margin-top: 12px;
+}
+
+.task-group-title {
+  margin: 0 0 6px;
+  padding-left: 2px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.task-list {
+  display: grid;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--paper-tint);
+  box-shadow: var(--elev-1);
+}
+
+.task-row-wrap {
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid var(--rule);
+}
+
+.task-row-wrap:first-child {
+  border-top: none;
+}
+
+.task-row-reveal {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-right: var(--space-2);
+}
+
+.task-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 48px;
+  padding: 10px var(--space-4);
+  background: var(--paper-tint);
+  border: none;
+  color: var(--ink);
+  text-align: left;
+  transition: background 120ms var(--ease), transform 220ms var(--ease-spring);
+  touch-action: pan-y;
+}
+
+.task-row:hover,
+.task-row:focus-visible {
+  background: var(--paper-raised);
+  outline: none;
+}
+
+.task-row:active {
+  background: var(--paper-high);
+}
+
+.task-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.task-row-handle {
+  font-size: var(--text-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+
+.task-row-sub {
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-row-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.task-row-status {
+  flex: none;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--tone, var(--ink-muted));
+}
+
+.task-row-time {
+  font-size: var(--text-micro);
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+}
+
+.task-row-chevron {
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--ink-faint);
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

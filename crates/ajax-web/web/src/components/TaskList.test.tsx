@@ -1,8 +1,15 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
-import TaskList from "./TaskList.svelte";
-import taskListSource from "./TaskList.svelte?raw";
+import { render, fireEvent } from "@testing-library/react";
+import TaskList from "./TaskList";
 import type { BrowserCockpitView } from "../types";
+
+const stylesSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../styles.css"),
+  "utf8",
+);
 
 const NOW_SECS = Math.floor(Date.now() / 1000);
 
@@ -56,7 +63,7 @@ const cockpit: BrowserCockpitView = {
 
 describe("TaskList", () => {
   it("shows relative last-activity time on task rows and omits it when unset", () => {
-    const { container } = render(TaskList, { props: { cockpit } });
+    const { container } = render(<TaskList cockpit={cockpit} />);
     const rowB = container.querySelector(".task-row[data-handle='web/b']");
     expect(rowB!.textContent).toContain("5m ago");
     const rowC = container.querySelector(".task-row[data-handle='api/c']");
@@ -64,12 +71,10 @@ describe("TaskList", () => {
   });
 
   it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
-    const { container, getByText, queryByText } = render(TaskList, { props: { cockpit } });
+    const { container, getByText, queryByText } = render(<TaskList cockpit={cockpit} />);
     const inboxRow = container.querySelector(".task-row.is-inbox[data-handle='web/a']");
     expect(inboxRow).not.toBeNull();
     expect(getByText("CI failed")).toBeInTheDocument();
-    // The first non-resume action is reachable via swipe-reveal, same affordance
-    // as calm rows — no permanently-visible action-button row.
     const wrap = container.querySelector(".task-row-wrap[data-handle='web/a']");
     expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
     expect(getByText("Fix CI")).toBeInTheDocument();
@@ -78,16 +83,15 @@ describe("TaskList", () => {
   });
 
   it("renders calm task rows excluding inbox tasks", () => {
-    const { container } = render(TaskList, { props: { cockpit } });
+    const { container } = render(<TaskList cockpit={cockpit} />);
     expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
     expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
-    // web/a renders inside the "Needs you" group, not the calm "Tasks" group.
     expect(container.querySelector(".group.tasks [data-handle='web/a']")).toBeNull();
     expect(container.querySelector(".group.inbox [data-handle='web/a']")).not.toBeNull();
   });
 
   it("shows per-repo attention counts on project pills", () => {
-    const { container } = render(TaskList, { props: { cockpit } });
+    const { container } = render(<TaskList cockpit={cockpit} />);
     const pills = [...container.querySelectorAll(".project-pill")];
     const webPill = pills.find((pill) => pill.textContent?.includes("web"))!;
     expect(webPill.querySelector(".pill-badge")).toHaveTextContent("2");
@@ -97,9 +101,7 @@ describe("TaskList", () => {
   });
 
   it("marks the active project pill for assistive tech", () => {
-    const { container } = render(TaskList, {
-      props: { cockpit, selectedProject: "api" },
-    });
+    const { container } = render(<TaskList cockpit={cockpit} selectedProject="api" />);
     const pills = [...container.querySelectorAll(".project-pill")];
     const allPill = pills.find((pill) => pill.textContent?.trim().startsWith("All"))!;
     const apiPill = pills.find((pill) => pill.textContent?.includes("api"))!;
@@ -109,7 +111,9 @@ describe("TaskList", () => {
 
   it("offers project pills and reports selection", async () => {
     const onSelectProject = vi.fn();
-    const { getByText, container } = render(TaskList, { props: { cockpit, onSelectProject } });
+    const { getByText, container } = render(
+      <TaskList cockpit={cockpit} onSelectProject={onSelectProject} />,
+    );
     expect(getByText("All")).toBeInTheDocument();
     const pills = [...container.querySelectorAll(".project-pill")];
     const webPill = pills.find((pill) => pill.getAttribute("aria-label")?.startsWith("web"))!;
@@ -118,9 +122,7 @@ describe("TaskList", () => {
   });
 
   it("filters by the selected project", () => {
-    const { container } = render(TaskList, {
-      props: { cockpit, selectedProject: "api" },
-    });
+    const { container } = render(<TaskList cockpit={cockpit} selectedProject="api" />);
     expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
     expect(container.querySelector(".task-row[data-handle='web/b']")).toBeNull();
   });
@@ -130,9 +132,9 @@ describe("TaskList", () => {
       ...cockpit,
       repos: { repos: [...cockpit.repos.repos, { name: "docs" }] },
     };
-    const { getByText: getDocsEmpty } = render(TaskList, {
-      props: { cockpit: docsCockpit, selectedProject: "docs" },
-    });
+    const { getByText: getDocsEmpty } = render(
+      <TaskList cockpit={docsCockpit} selectedProject="docs" />,
+    );
     expect(getDocsEmpty("No tasks in docs yet — start one below.")).toBeInTheDocument();
 
     const emptyCockpit: BrowserCockpitView = {
@@ -140,28 +142,26 @@ describe("TaskList", () => {
       cards: [],
       inbox: { items: [] },
     };
-    const { getByText: getAllEmpty } = render(TaskList, {
-      props: { cockpit: emptyCockpit },
-    });
+    const { getByText: getAllEmpty } = render(<TaskList cockpit={emptyCockpit} />);
     expect(getAllEmpty("All quiet — start a new task below.")).toBeInTheDocument();
   });
 
   it("opens a task when a row is tapped", async () => {
     const onOpenTask = vi.fn();
-    const { container } = render(TaskList, { props: { cockpit, onOpenTask } });
+    const { container } = render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
     await fireEvent.click(container.querySelector(".task-row[data-handle='api/c']")!);
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
 
   it("opens an inbox task when the row is tapped", async () => {
     const onOpenTask = vi.fn();
-    const { container } = render(TaskList, { props: { cockpit, onOpenTask } });
+    const { container } = render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
     await fireEvent.click(container.querySelector(".task-row[data-handle='web/a']")!);
     expect(onOpenTask).toHaveBeenCalledWith("web/a");
   });
 
   it("does not reveal resume as a calm-row action", () => {
-    const { container } = render(TaskList, { props: { cockpit } });
+    const { container } = render(<TaskList cockpit={cockpit} />);
     const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
     expect(wrap).not.toBeNull();
     expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
@@ -185,16 +185,15 @@ describe("TaskList", () => {
       ],
       inbox: { items: [] },
     };
-    const { container } = render(TaskList, { props: { cockpit: withAction } });
+    const { container } = render(<TaskList cockpit={withAction} />);
     const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
     expect(wrap).not.toBeNull();
     expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
-    // The row itself must remain present and tappable.
     expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
   });
 
   it("renders no reveal for a calm row without non-resume actions", () => {
-    const { container } = render(TaskList, { props: { cockpit } });
+    const { container } = render(<TaskList cockpit={cockpit} />);
     const wrap = container.querySelector(".task-row-wrap[data-handle='api/c']");
     expect(wrap).not.toBeNull();
     expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
@@ -202,20 +201,20 @@ describe("TaskList", () => {
 
   it("keeps is-inbox semantics without a left border stripe", () => {
     const inboxRule =
-      taskListSource.match(/\.task-row\.is-inbox\s*\{([^}]*)\}/)?.[1] ?? "";
+      stylesSource.match(/\.task-row\.is-inbox\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(inboxRule).not.toMatch(/border-left/);
     expect(inboxRule).not.toMatch(/padding-left:\s*calc/);
   });
 
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
-      taskListSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
-    const pillBadgeRule = taskListSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
+      stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
+    const pillBadgeRule = stylesSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
     const attentionTitleRule =
-      taskListSource.match(/\.section-head\.attention \.section-head-title\s*\{([^}]*)\}/)?.[1] ??
+      stylesSource.match(/\.section-head\.attention \.section-head-title\s*\{([^}]*)\}/)?.[1] ??
       "";
     const attentionCountRule =
-      taskListSource.match(/\.section-head\.attention \.section-head-count\s*\{([^}]*)\}/)?.[1] ??
+      stylesSource.match(/\.section-head\.attention \.section-head-count\s*\{([^}]*)\}/)?.[1] ??
       "";
 
     expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
