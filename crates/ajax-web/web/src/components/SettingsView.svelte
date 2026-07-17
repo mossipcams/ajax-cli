@@ -136,7 +136,7 @@
 
   .settings-header h2 {
     margin: 0;
-    font-size: 21px;
+    font-size: var(--text-display);
     font-weight: 700;
     letter-spacing: 0.01em;
     line-height: 1.25;
@@ -150,8 +150,9 @@
     flex: none;
     min-height: 44px;
     padding: 7px 16px;
-    font-size: 11px;
-    letter-spacing: 0.08em;
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-soft);
   }
@@ -164,18 +165,18 @@
 
   .settings-section h3 {
     margin: 0 0 10px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
 
   .settings-subheading {
     margin: 16px 0 8px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-micro);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-soft);
   }
@@ -186,7 +187,7 @@
 
   .settings-debug {
     margin: 0 0 14px;
-    font-size: 12px;
+    font-size: var(--text-label);
     line-height: 1.5;
     color: var(--ink-soft);
   }
@@ -217,20 +218,20 @@
 
   .settings-note {
     margin: 0 0 14px;
-    font-size: 13px;
+    font-size: var(--text-body-sm);
     line-height: 1.5;
     color: var(--ink-soft);
   }
 
   .settings-note :global(code) {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--text-label);
     color: var(--warn);
   }
 
   .settings-status {
     margin: 12px 0 0;
-    font-size: 13px;
+    font-size: var(--text-body-sm);
     color: var(--ink-muted);
     font-family: var(--mono);
     white-space: pre-wrap;

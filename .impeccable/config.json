@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "rgba(0, 0, 0, 0.28)",
+        "reason": "Chrome lift shadow opacity",
+        "createdAt": "2026-07-17T03:13:41.600Z"
+      }
+    ]
+  }
+}

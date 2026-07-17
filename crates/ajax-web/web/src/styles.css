@@ -36,10 +36,26 @@
   --ok: #87af87; /* success / done (xterm 108) */
   --ok-bright: #a5c8a5;
 
-  --sans: ui-sans-serif, "Avenir Next", "Helvetica Neue", "Inter", system-ui,
+  --sans: ui-sans-serif, "Avenir Next", "Helvetica Neue", system-ui,
     -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --label-tracking: 0.18em;
+
+  /* Type ramp — fixed rem scale (px noted). Form controls and the xterm pane
+     keep literal sizes: inputs must stay 16px so iOS Safari does not zoom, and
+     the terminal font is user-pinch-controlled outside this ramp. Icon glyphs
+     (⟳ ⛶ + ›) also stay literal — they are drawings, not type. */
+  --text-micro: 0.65625rem; /* 10.5px — row status/time, copy chips, subheads */
+  --text-label: 0.75rem; /* 12px — buttons, pills, nav, labels, mono output */
+  --text-data: 0.78125rem; /* 12.5px — status line, tabular data values */
+  --text-body-sm: 0.8125rem; /* 13px — summaries, notes, toast messages */
+  --text-body: 0.9375rem; /* 15px — base */
+  --text-heading: 1rem; /* 16px — task detail title */
+  --text-title: 1.0625rem; /* 17px — cockpit wordmark */
+  --text-display: 1.25rem; /* 20px — page-level heading (settings) */
+
+  /* Uppercase tracking — two tiers only: display chrome vs working labels. */
+  --tracking-display: 0.18em; /* wordmark, empty-state chrome */
+  --tracking-label: 0.08em; /* every working label */
   --shell: 560px;
 
   /* Spacing scale — 4px rhythm. Use in place of ad-hoc pixel values. */
@@ -116,7 +132,7 @@ body::-webkit-scrollbar {
 
 body {
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: var(--text-body);
   line-height: 1.5;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -164,9 +180,9 @@ header .bar {
 
 header .bar h1 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--text-title);
   font-weight: 700;
-  letter-spacing: var(--label-tracking);
+  letter-spacing: var(--tracking-display);
   text-transform: uppercase;
   color: var(--ink);
   flex: none;
@@ -176,7 +192,7 @@ header .bar h1 {
   margin: 0;
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--text-data);
   color: var(--ink-muted);
   font-feature-settings: "tnum";
   white-space: nowrap;
@@ -190,8 +206,9 @@ header .bar h1 {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   padding: 4px 12px;
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--ink-soft);
   transition: border-color 140ms ease, color 140ms ease;
@@ -225,7 +242,7 @@ header .bar h1 {
   gap: 8px;
   padding: 8px 0 10px;
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: var(--text-label);
 }
 
 .connection-status[data-state="connected"] {
@@ -261,7 +278,9 @@ header .bar h1 {
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-decoration: none;
 }
 
@@ -272,6 +291,19 @@ header .bar h1 {
   border-color: var(--ink-soft);
   color: var(--ink);
   outline: none;
+}
+
+.connection-actions button.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.connection-actions button.is-primary:hover,
+.connection-actions button.is-primary:focus-visible {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+  color: var(--paper);
 }
 
 /* RESULT PANEL ------------------------------------------------------------ */
@@ -298,7 +330,7 @@ header .bar h1 {
 
 .result-message {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   color: var(--ink);
 }
 
@@ -309,7 +341,7 @@ header .bar h1 {
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--text-label);
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -324,7 +356,6 @@ header .bar h1 {
 }
 
 .result-panel .pill {
-  font-size: 11px;
   min-height: 28px;
   padding: 5px 12px;
 }
@@ -353,7 +384,7 @@ header .bar h1 {
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-align: left;
@@ -496,8 +527,9 @@ header .bar h1 {
   margin: 72px 0;
   text-align: center;
   color: var(--ink-faint);
-  font-size: 12px;
-  letter-spacing: var(--label-tracking);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: var(--tracking-display);
   text-transform: uppercase;
 }
 
@@ -521,7 +553,7 @@ header .bar h1 {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   padding: 10px 16px;
@@ -593,7 +625,7 @@ header .bar h1 {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   padding: 8px 16px;
@@ -671,7 +703,7 @@ header .bar h1 {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   transition: background 140ms ease, color 140ms ease;
@@ -731,8 +763,9 @@ header .bar h1 {
 }
 
 /* NARROW PHONES (shared chrome) ------------------------------------------- */
+/* DESIGN.md-documented narrow-phone steps: 14px body, 16px title. */
 @media (max-width: 380px) {
   body { font-size: 14px; }
   header .bar h1 { font-size: 16px; }
-  .status-line { font-size: 12px; }
+  .status-line { font-size: var(--text-label); }
 }

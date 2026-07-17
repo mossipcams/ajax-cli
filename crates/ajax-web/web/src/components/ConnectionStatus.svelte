@@ -25,7 +25,7 @@
 <div class="connection-status" data-state={state}>
   <span class="connection-label">{label}</span>
   <div class="connection-actions" aria-label="Connection actions">
-    <button type="button" onclick={() => onRetry?.()}>Retry</button>
+    <button type="button" class="is-primary" onclick={() => onRetry?.()}>Retry</button>
     <button type="button" onclick={() => onReload?.()}>Reload</button>
     <button type="button" onclick={() => onCopyDiagnostics?.()}>Copy Diagnostics</button>
     <a href={healthHref} target="_blank" rel="noreferrer">Open Health URL</a>

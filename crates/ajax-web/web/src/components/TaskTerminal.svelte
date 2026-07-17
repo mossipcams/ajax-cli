@@ -1311,7 +1311,7 @@
 
   .terminal-paste-notice {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--text-label);
     color: var(--ink-muted);
   }
 
@@ -1324,7 +1324,7 @@
     background: var(--paper);
     color: var(--ink);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 16px;
     resize: vertical;
   }
 
@@ -1344,7 +1344,7 @@
     border-radius: 999px;
     background: var(--paper-raised);
     border: 1px solid var(--rule-strong);
-    font-size: 12px;
+    font-size: var(--text-label);
     font-weight: 600;
     color: var(--ink);
   }
@@ -1369,7 +1369,7 @@
     border-radius: 999px;
     background: var(--paper-raised);
     color: var(--ink);
-    font-size: 12px;
+    font-size: var(--text-label);
     font-weight: 600;
   }
 
@@ -1385,7 +1385,7 @@
     border-radius: 999px;
     background: var(--paper-raised);
     color: var(--ink);
-    font-size: 12px;
+    font-size: var(--text-label);
     font-weight: 600;
   }
 
@@ -1413,7 +1413,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    font-size: 12px;
+    font-size: var(--text-label);
     color: var(--ink-muted);
   }
 
@@ -1428,7 +1428,7 @@
 
   .terminal-status-reconnect {
     min-height: 44px;
-    font-size: 11px;
+    font-size: var(--text-label);
     padding: 2px 8px;
     border-radius: 6px;
     border: 1px solid var(--rule);
@@ -1454,7 +1454,7 @@
     min-width: 44px;
     min-height: 44px;
     padding: 1px 7px;
-    font-size: 11px;
+    font-size: var(--text-label);
     border-radius: 6px;
     border: 1px solid var(--rule);
     background: var(--paper-raised);

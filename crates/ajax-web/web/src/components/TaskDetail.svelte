@@ -157,8 +157,9 @@
     border: none;
     padding: 4px 10px 4px 0;
     font-family: var(--mono);
-    font-size: 12px;
-    letter-spacing: 0.08em;
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -172,7 +173,7 @@
   .detail-title {
     margin: 0;
     font-family: var(--mono);
-    font-size: 16px;
+    font-size: var(--text-heading);
     font-weight: 700;
     letter-spacing: 0.01em;
     line-height: 1.3;
@@ -195,9 +196,9 @@
     align-items: center;
     gap: 7px;
     font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--tone, var(--ink-muted));
   }
@@ -231,7 +232,7 @@
   .interact-summary {
     margin: 0 0 12px;
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: var(--text-body-sm);
     line-height: 1.5;
     color: var(--ink-soft);
     white-space: nowrap;
@@ -248,7 +249,7 @@
   .interact-warning {
     margin: 0 0 12px;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--text-label);
     line-height: 1.5;
     color: var(--danger);
     overflow-wrap: anywhere;
@@ -256,7 +257,7 @@
 
   .interact-activity {
     color: var(--ink-muted);
-    font-size: 12px;
+    font-size: var(--text-label);
   }
 
   /* META DETAILS ---------------------------------------------------------- */
@@ -268,18 +269,18 @@
 
   .meta-details summary {
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
 
   .meta-group-label {
     margin: 14px 0 8px;
-    font-size: 11px;
+    font-size: var(--text-label);
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-faint);
   }
@@ -288,21 +289,21 @@
     display: grid;
     grid-template-columns: 104px 1fr;
     gap: 8px 14px;
-    font-size: 13px;
+    font-size: var(--text-body-sm);
   }
 
   .detail-grid dt {
     color: var(--ink-muted);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 11px;
+    letter-spacing: var(--tracking-label);
+    font-size: var(--text-label);
     font-weight: 600;
   }
 
   .detail-grid dd {
     margin: 0;
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: var(--text-data);
     color: var(--ink);
     overflow-wrap: anywhere;
     font-feature-settings: "tnum";
@@ -326,9 +327,9 @@
     background: transparent;
     border: 1px solid var(--rule-strong);
     border-radius: 999px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: var(--text-micro);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -345,7 +346,7 @@
     margin: 0;
     padding-left: 18px;
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: var(--text-data);
     color: var(--ink);
   }
 
@@ -386,7 +387,7 @@
       flex: 1;
       min-width: 0;
       margin: 0;
-      font-size: 12px;
+      font-size: var(--text-label);
       line-height: 1.2;
       white-space: nowrap;
       overflow: hidden;
@@ -395,7 +396,7 @@
 
     .interact-warning {
       margin: 0;
-      font-size: 12px;
+      font-size: var(--text-label);
       line-height: 1.2;
     }
 
@@ -419,13 +420,11 @@
       min-height: 28px;
       min-width: 0;
       padding: 2px 8px;
-      font-size: 11px;
-      letter-spacing: 0.02em;
     }
 
     .detail-header { margin-bottom: 8px; }
     .detail-header .back { min-height: 32px; padding: 4px 10px 4px 0; }
-    .detail-title { font-size: 14px; line-height: 1.2; }
+    .detail-title { font-size: var(--text-body-sm); line-height: 1.2; }
 
     /* The details hairline sits flush under the terminal hotbar. */
     .meta-details {
@@ -437,7 +436,6 @@
   }
 
   @media (max-width: 380px) {
-    .detail-title { font-size: 13px; }
     .detail-grid { grid-template-columns: 92px 1fr; }
   }
 </style>

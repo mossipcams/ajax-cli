@@ -36,20 +36,18 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const activePill = page.locator(".project-pill.is-active").first();
   expect(await bg(activePill)).toBe(ACCENT);
 
-  // Inbox row: a compact task-row (same shape as the calm list) with a tone
-  // (warn for "waiting") left accent instead of separate card chrome.
+  // Inbox row: same compact task-row shape as the calm list — opaque bg, no
+  // left stripe; status label carries the tone color instead.
   const inboxRow = page.locator(".task-row.is-inbox").first();
   const rowStyle = await inboxRow.evaluate((el) => {
     const s = getComputedStyle(el);
     return {
       bg: s.backgroundColor,
       leftWidth: s.borderLeftWidth,
-      leftColor: s.borderLeftColor,
     };
   });
   expect(rowStyle.bg).not.toBe(TRANSPARENT);
-  expect(rowStyle.leftWidth).toBe("3px");
-  expect(rowStyle.leftColor).toBe(WARN);
+  expect(rowStyle.leftWidth).not.toBe("3px");
 
   // Status label paints with the tone color (waiting -> warn), not default ink.
   const status = page.locator(".task-row-status").first();
@@ -59,9 +57,9 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const row = page.locator(".task-row").first();
   expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("10px");
 
-  // New-task row is the dashed CTA.
-  const newTaskRow = page.locator(".new-task-row");
-  expect(await newTaskRow.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("dashed");
+  // Single new-task entry: bottom-nav only (no in-list dashed CTA).
+  await expect(page.locator(".new-task-row")).toHaveCount(0);
+  await expect(newButton).toBeVisible();
 });
 
 test("task detail panels and action buttons are styled", async ({ page }, testInfo) => {

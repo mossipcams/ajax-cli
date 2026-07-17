@@ -200,6 +200,13 @@ describe("TaskList", () => {
     expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
   });
 
+  it("keeps is-inbox semantics without a left border stripe", () => {
+    const inboxRule =
+      taskListSource.match(/\.task-row\.is-inbox\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(inboxRule).not.toMatch(/border-left/);
+    expect(inboxRule).not.toMatch(/padding-left:\s*calc/);
+  });
+
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       taskListSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";

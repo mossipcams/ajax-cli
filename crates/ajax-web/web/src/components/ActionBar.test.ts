@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ActionBar from "./ActionBar.svelte";
 import * as api from "../api";
+import { DROP_UNDO_MS } from "../polling";
 import type { WebAction } from "../types";
 
 const review: WebAction = {
@@ -32,14 +33,58 @@ describe("ActionBar", () => {
     expect(container.querySelectorAll("button[data-action]")).toHaveLength(2);
   });
 
-  it("requires two taps for a destructive action", async () => {
+  it("requires two taps for a destructive action then commits after the undo window", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const { getByText } = render(ActionBar, { props: { actions: [drop], handle: "web/x" } });
     await fireEvent.click(getByText("Drop"));
     expect(spy).not.toHaveBeenCalled();
     expect(getByText("Tap to confirm")).toBeInTheDocument();
     await fireEvent.click(getByText("Tap to confirm"));
+    // Drop is now delayed by the undo window — no API call yet.
+    expect(spy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    await vi.runAllTimersAsync();
     expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it("delays the Drop API until the undo window elapses, then dismisses", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onResult = vi.fn();
+    const onDismiss = vi.fn();
+    const { getByText } = render(ActionBar, {
+      props: { actions: [drop], handle: "web/x", onResult, onDismiss },
+    });
+    await fireEvent.click(getByText("Drop"));
+    await fireEvent.click(getByText("Tap to confirm"));
+    // After confirm, the API is not called yet; an undo toast is surfaced.
+    expect(spy).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(
+      "Dropping web/x…",
+      null,
+      false,
+      expect.objectContaining({ onUndo: expect.any(Function), onCommit: expect.any(Function) }),
+    );
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("Undo cancels the pending Drop without calling the API", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onResult = vi.fn();
+    const onDismiss = vi.fn();
+    const { getByText } = render(ActionBar, {
+      props: { actions: [drop], handle: "web/x", onResult, onDismiss },
+    });
+    await fireEvent.click(getByText("Drop"));
+    await fireEvent.click(getByText("Tap to confirm"));
+    const options = onResult.mock.calls[0][3] as { onUndo: () => void };
+    options.onUndo();
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    await vi.runAllTimersAsync();
+    expect(spy).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it("expires the confirmation after the timeout", async () => {

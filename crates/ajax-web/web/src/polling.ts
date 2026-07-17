@@ -10,6 +10,9 @@ export const VERSION_POLL_TERMINAL_MS = 120_000;
 export const VERSION_POLL_HIDDEN_MS = 300_000;
 
 export const CONFIRM_TIMEOUT_MS = 8000;
+// Pre-commit undo window: a confirmed Drop waits this long before calling the
+// API, giving the operator a chance to cancel from the result toast.
+export const DROP_UNDO_MS = 5000;
 export const RESULT_AUTO_DISMISS_MS = 12000;
 // Success toasts (e.g. Drop) are informational — dismiss fast so they can't
 // linger. Errors keep the longer window so failure output stays readable.
