@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.1...ajax-cli-v0.50.2) (2026-07-17)
+
+
+### Code Refactoring
+
+* **web:** React island seam with ConnectionStatus and Skeleton (react S1) ([#571](https://github.com/mossipcams/ajax-cli/issues/571)) ([960b9af](https://github.com/mossipcams/ajax-cli/commit/960b9af2ff8c3c96c802bbbbff8b72edb5274714))
+
 ## [0.50.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.0...ajax-cli-v0.50.1) (2026-07-17)
 
 
