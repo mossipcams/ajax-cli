@@ -30,7 +30,13 @@
   let connectionDetail = $state<string | null>(null);
   let updateAvailable = $state(false);
   let sheetOpen = $state(false);
-  let result = $state<{ message: string; output?: string | null; isError: boolean } | null>(null);
+  let result = $state<{
+    message: string;
+    output?: string | null;
+    isError: boolean;
+    onUndo?: () => void;
+    onCommit?: () => void;
+  } | null>(null);
   let pullDistance = $state(0);
   let documentVisibility = $state<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
@@ -43,8 +49,13 @@
   const cockpitApplyGate = createCockpitApplyGate();
   const cockpitPollGuard = createInFlightGuard();
 
-  function showResult(message: string, output: string | null | undefined, isError: boolean) {
-    result = { message, output, isError };
+  function showResult(
+    message: string,
+    output: string | null | undefined,
+    isError: boolean,
+    options?: { onUndo?: () => void; onCommit?: () => void },
+  ) {
+    result = { message, output, isError, onUndo: options?.onUndo, onCommit: options?.onCommit };
   }
 
   function applyCockpit(next: BrowserCockpitView) {
@@ -311,15 +322,6 @@
             {:else}
               <Skeleton testid="dashboard-skeleton" rows={4} />
             {/if}
-            <button
-              class="new-task-row"
-              type="button"
-              data-bottom-action="new-task"
-              onclick={() => (sheetOpen = true)}
-            >
-              <span class="new-task-glyph" aria-hidden="true">+</span>
-              <span class="new-task-label">{selectedProject ? `New task in ${selectedProject}` : "New task"}</span>
-            </button>
           </section>
         {/if}
       </RouteScroll>
@@ -345,6 +347,8 @@
       message={result.message}
       output={result.output}
       isError={result.isError}
+      onUndo={result.onUndo}
+      onCommit={result.onCommit}
       onDismiss={() => (result = null)}
     />
   {/if}
@@ -384,52 +388,5 @@
   .pull-indicator.armed .pull-spinner {
     opacity: 1;
     transform: rotate(180deg);
-  }
-
-  /* NEW TASK ROW — dashed call-to-action below the calm task list. */
-  .new-task-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    margin-top: 16px;
-    padding: 13px 16px;
-    background: transparent;
-    border: 1px dashed var(--rule-strong);
-    border-radius: var(--radius);
-    color: var(--ink-soft);
-    text-align: left;
-    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-  }
-
-  .new-task-row:hover,
-  .new-task-row:focus-visible {
-    background: var(--paper-tint);
-    border-color: var(--accent);
-    color: var(--ink);
-    outline: none;
-  }
-
-  .new-task-glyph {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--paper);
-    font-size: 17px;
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .new-task-label {
-    flex: 1 1 auto;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
   }
 </style>

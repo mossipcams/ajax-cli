@@ -240,9 +240,9 @@
 
   .sheet-card h2 {
     margin: 0 0 16px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -251,9 +251,9 @@
   .sheet-card .field-label {
     display: block;
     margin-top: 14px;
-    font-size: 11px;
+    font-size: var(--text-label);
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -286,7 +286,7 @@
 
   .agent-option {
     padding: 10px 12px;
-    font-size: 14px;
+    font-size: var(--text-body);
     font-weight: 600;
     background: var(--paper);
     color: var(--ink-muted);
@@ -315,7 +315,7 @@
   .sheet-error {
     margin: 12px 0 0;
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--text-label);
   }
 
   @keyframes sheet-rise {

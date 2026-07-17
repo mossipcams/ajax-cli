@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ResultPanel from "./ResultPanel.svelte";
+import { DROP_UNDO_MS } from "../polling";
 
 describe("ResultPanel", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -58,5 +59,27 @@ describe("ResultPanel", () => {
     rerender({ message: "ok", isError: false });
     expect(panel).toHaveAttribute("role", "status");
     expect(panel).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("shows an Undo button when onUndo is set and calls it on click", async () => {
+    const onUndo = vi.fn();
+    const { getByText } = render(ResultPanel, {
+      props: { message: "Dropping web/x…", onUndo },
+    });
+    expect(getByText("Undo")).toBeInTheDocument();
+    await fireEvent.click(getByText("Undo"));
+    expect(onUndo).toHaveBeenCalledOnce();
+  });
+
+  it("auto-dismisses and calls onCommit after the undo window when armed", () => {
+    const onCommit = vi.fn();
+    const onDismiss = vi.fn();
+    render(ResultPanel, {
+      props: { message: "Dropping web/x…", onCommit, onDismiss },
+    });
+    expect(onCommit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
   });
 });

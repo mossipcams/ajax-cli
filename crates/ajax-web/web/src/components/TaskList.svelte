@@ -247,9 +247,9 @@
   }
 
   .project-nav-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-micro);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-faint);
     margin-right: 4px;
@@ -260,7 +260,7 @@
     border: 1px solid var(--rule-strong);
     border-radius: 999px;
     color: var(--ink-soft);
-    font-size: 11.5px;
+    font-size: var(--text-label);
     font-weight: 500;
     letter-spacing: 0.04em;
     padding: 5px 12px;
@@ -288,8 +288,9 @@
     border-radius: 999px;
     min-width: 16px;
     height: 16px;
-    font-size: 10px;
-    font-weight: 700;
+    font-size: var(--text-micro);
+    font-weight: 600;
+    font-feature-settings: "tnum";
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -317,9 +318,9 @@
   }
 
   .section-head-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
+    font-size: var(--text-label);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-muted);
   }
@@ -338,8 +339,8 @@
     border-radius: 999px;
     background: var(--paper-high);
     color: var(--ink-soft);
-    font-size: 11px;
-    font-weight: 700;
+    font-size: var(--text-label);
+    font-weight: 600;
     font-feature-settings: "tnum";
   }
 
@@ -356,9 +357,9 @@
   .task-group-title {
     margin: 0 0 6px;
     padding-left: 2px;
-    font-size: 11px;
+    font-size: var(--text-label);
     font-weight: 600;
-    letter-spacing: 0.12em;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--ink-faint);
   }
@@ -420,15 +421,6 @@
     background: var(--paper-high);
   }
 
-  /* "Needs you" rows get a tone-colored left accent instead of separate card
-     chrome — one compact row style shared with the calm list. Background stays
-     the same opaque --paper-tint as calm rows (not tone-bg mixed in, which is
-     translucent and would let the swipe-hidden action bleed through). */
-  .task-row.is-inbox {
-    padding-left: calc(var(--space-4) - 3px);
-    border-left: 3px solid var(--tone, var(--rule-strong));
-  }
-
   .task-row-main {
     display: flex;
     flex-direction: column;
@@ -438,7 +430,7 @@
   }
 
   .task-row-handle {
-    font-size: 14.5px;
+    font-size: var(--text-body);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -447,7 +439,7 @@
   }
 
   .task-row-sub {
-    font-size: 12px;
+    font-size: var(--text-label);
     color: var(--ink-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -464,15 +456,16 @@
 
   .task-row-status {
     flex: none;
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: var(--text-micro);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--tone, var(--ink-muted));
   }
 
   .task-row-time {
-    font-size: 10.5px;
+    font-size: var(--text-micro);
+    font-weight: 500;
     color: var(--ink-faint);
     font-feature-settings: "tnum";
     white-space: nowrap;

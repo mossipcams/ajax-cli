@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ConnectionStatus from "./ConnectionStatus.svelte";
+import connectionStatusSource from "./ConnectionStatus.svelte?raw";
 
 describe("ConnectionStatus", () => {
   it("shows the connection state label", () => {
@@ -18,6 +19,21 @@ describe("ConnectionStatus", () => {
       props: { state: "backend unreachable", detail: "HTTP 503" },
     });
     expect(getByText("backend unreachable: HTTP 503")).toBeInTheDocument();
+  });
+
+  it("marks Retry as the sole primary connection action", () => {
+    const { container } = render(ConnectionStatus, {
+      props: { state: "disconnected" },
+    });
+    const retry = container.querySelector(".connection-actions button.is-primary");
+    expect(retry).not.toBeNull();
+    expect(retry).toHaveTextContent("Retry");
+    const primaries = container.querySelectorAll(".connection-actions .is-primary");
+    expect(primaries).toHaveLength(1);
+    expect(connectionStatusSource).toMatch(/Retry[\s\S]*class="is-primary"/);
+    expect(connectionStatusSource).toMatch(/Reload/);
+    expect(connectionStatusSource).toMatch(/Copy Diagnostics/);
+    expect(connectionStatusSource).toMatch(/Open Health URL/);
   });
 
   it("fires recovery callbacks", async () => {

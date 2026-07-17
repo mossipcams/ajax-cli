@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BrowserCockpitView, WebAction } from "../types";
-  import { CONFIRM_TIMEOUT_MS } from "../polling";
+  import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "../polling";
   import { postOperation, requestId } from "../api";
 
   interface Props {
@@ -9,7 +9,12 @@
     /** Refreshed cockpit projection returned by a mutation. */
     onCockpit?: (cockpit: BrowserCockpitView) => void;
     /** Surface the operation result for the result banner. */
-    onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
+    onResult?: (
+      message: string,
+      output: string | null | undefined,
+      isError: boolean,
+      options?: { onUndo?: () => void; onCommit?: () => void },
+    ) => void;
     /** Notify the parent a mutation finished (e.g. to refresh detail). */
     onMutated?: () => void;
     /** The task no longer exists (e.g. after Drop) — leave the detail page. */
@@ -21,9 +26,13 @@
   let pendingAction = $state<string | null>(null);
   let runningAction = $state<string | null>(null);
   let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+  // Delayed-Drop state: the API is not called until the undo window elapses.
+  let dropTimer: ReturnType<typeof setTimeout> | null = null;
+  let dropResolved = false;
 
   $effect(() => () => {
     if (confirmTimer) clearTimeout(confirmTimer);
+    if (dropTimer) clearTimeout(dropTimer);
   });
 
   const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
@@ -32,6 +41,11 @@
     if (confirmTimer) clearTimeout(confirmTimer);
     confirmTimer = null;
     pendingAction = null;
+  }
+
+  function clearDropTimer() {
+    if (dropTimer) clearTimeout(dropTimer);
+    dropTimer = null;
   }
 
   function label(action: WebAction): string {
@@ -68,6 +82,27 @@
     }
   }
 
+  // Arm the delayed-Drop undo window. The toast's Undo cancels (no API); the
+  // timer or the toast's auto-dismiss commits by running the real Drop.
+  function armDrop(action: WebAction) {
+    dropResolved = false;
+    runningAction = "drop";
+    const commit = () => {
+      if (dropResolved) return;
+      dropResolved = true;
+      clearDropTimer();
+      void run(action);
+    };
+    const undo = () => {
+      if (dropResolved) return;
+      dropResolved = true;
+      clearDropTimer();
+      runningAction = null;
+    };
+    dropTimer = setTimeout(commit, DROP_UNDO_MS);
+    onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });
+  }
+
   function handleClick(action: WebAction) {
     if (runningAction) return;
     const needsConfirm = action.destructive || action.confirmation_required;
@@ -78,6 +113,11 @@
       return;
     }
     clearConfirm();
+    // Only Drop is delayed for pre-commit undo; other actions run immediately.
+    if (action.action === "drop") {
+      armDrop(action);
+      return;
+    }
     void run(action);
   }
 </script>
