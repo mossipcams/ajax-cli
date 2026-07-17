@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.49.0...ajax-cli-v0.50.0) (2026-07-17)
+
+
+### Features
+
+* acknowledge web terminal input and surface GitHub CI in task status ([#565](https://github.com/mossipcams/ajax-cli/issues/565)) ([e63ef9f](https://github.com/mossipcams/ajax-cli/commit/e63ef9f2a43e26244682d48b8b1a7e5d9823e92f))
+* **web:** add shared Test in Dev deployment for ajax-cli tasks ([#567](https://github.com/mossipcams/ajax-cli/issues/567)) ([ccfe21f](https://github.com/mossipcams/ajax-cli/commit/ccfe21f96b80ca5c023eca52e27195649b0e5561))
+
 ## [0.49.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.48.0...ajax-cli-v0.49.0) (2026-07-17)
 
 
