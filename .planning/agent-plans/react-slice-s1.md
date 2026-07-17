@@ -65,6 +65,7 @@ Delegation decision: delegated via model-router.
   - Test: confirm all local and on-device rows are recorded green before opening a PR; monitor required CI to completion.
   - Implement: only review-requested fixes through the same delegated TDD loop.
   - Verify: merge only after CI/review pass, restore baseline with `scripts/dev-web-restart.sh`, complete the phone smoke, and update the S1 row in `docs/react-migration-plan.md` with the PR/date/ledger and any explicitly approved behavior delta.
+  - PR: https://github.com/mossipcams/ajax-cli/pull/571 (opened 2026-07-17). CI/review/merge/baseline-restore still pending.
 
 ## Escalate instead of guessing
 
@@ -166,4 +167,4 @@ Delegation decision: delegated via model-router.
   - `cargo build --release -p ajax-cli` (exit 0); `cargo install --path crates/ajax-cli --locked --force` (exit 0; replaced global binary; `num-bigint` yanked-in-lockfile warning is informational, install succeeded under `--locked`).
 - NOTE — Task 5's build leaves `dist/app.js` + `dist/app.css` genuinely modified: the shippable bundle now contains the React island seam (`createRoot`/`flushSync`, 3 hits) and Tailwind `@layer utilities` (1), still 0 `serviceWorker`. Left as-built for the Task 7 PR (Rust embed contract requires the rebuilt bundle); no restore this time.
 - PASS — **Task 6 on-device gate (Matt, 2026-07-17):** dev worktree deployed via `scripts/dev-web-restart.sh --worktree …`; restart marker and changed `/api/version` confirmed; backend-unreachable banner + Retry recovery green; banner and skeleton visual parity vs stable `:8787`; 20× dashboard↔settings navigation with no console errors.
-- IN-PROGRESS — Task 7: PR opened; CI/review/merge/baseline-restore pending.
+- IN-PROGRESS — Task 7: PR #571 opened; CI/review/merge/baseline-restore pending.
