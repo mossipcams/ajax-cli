@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -31,7 +33,12 @@ function renameAppHtml() {
 export default defineConfig({
   root,
   base: "/",
-  plugins: [svelte(), svelteTesting(), renameAppHtml()],
+  plugins: [svelte(), react(), tailwindcss(), svelteTesting(), renameAppHtml()],
+  resolve: {
+    alias: {
+      "@": join(root, "src"),
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -63,7 +70,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["src/test-setup.ts"],
   },
 });

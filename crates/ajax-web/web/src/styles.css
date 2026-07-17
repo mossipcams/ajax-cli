@@ -8,6 +8,7 @@
    result, update banner, bottom nav), and selectors used by more than one
    component (.action, .pill, .empty, .status-dot, .interact-panel). Every
    single-component selector lives in that component's scoped <style> block. */
+@import "tailwindcss/utilities" layer(utilities);
 :root {
   color-scheme: dark;
 
@@ -781,10 +782,56 @@ header .bar h1 {
   }
 }
 
+/* SKELETON (loading placeholder) ------------------------------------------ */
+.skeleton {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.skeleton-row {
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+    100deg,
+    var(--paper-tint) 30%,
+    var(--paper-raised) 50%,
+    var(--paper-tint) 70%
+  );
+  background-size: 220% 100%;
+  animation: skeleton-sweep 1.4s var(--ease) infinite;
+}
+
+@keyframes skeleton-sweep {
+  0% { background-position: 180% 0; }
+  100% { background-position: -80% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-row {
+    animation: none;
+    background: var(--paper-tint);
+  }
+}
+
 /* NARROW PHONES (shared chrome) ------------------------------------------- */
 /* DESIGN.md-documented narrow-phone steps: 14px body, 16px title. */
 @media (max-width: 380px) {
   body { font-size: 14px; }
   header .bar h1 { font-size: 16px; }
   .status-line { font-size: var(--text-label); }
+}
+
+/* TAILWIND THEME ---------------------------------------------------------- */
+/* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
+   onto the existing Ajax custom properties so utility classes (bg-*, text-*,
+   border-*) reuse the design tokens above — never duplicates hex values, and
+   keeps the utilities layer preflight-free. */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-accent: var(--accent);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
 }
