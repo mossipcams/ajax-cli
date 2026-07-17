@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import taskTerminalSource from "./TaskTerminal.svelte?raw";
+import taskTerminalSource from "./TaskTerminal.tsx?raw";
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../styles.css"),
@@ -17,11 +17,26 @@ function extractBlock(source: string, startPattern: RegExp, endPattern: RegExp):
   return end < 0 ? from : from.slice(0, end);
 }
 
+function terminalMobileBlock(): string {
+  const tail = taskTerminalStylesSection();
+  const match = tail.match(
+    /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*)\n\}\s*$/,
+  );
+  return match?.[1] ?? "";
+}
+
+function taskTerminalStylesSection(): string {
+  const start = stylesSource.indexOf("/* TaskTerminal");
+  const end = stylesSource.indexOf("/* TAILWIND THEME");
+  if (start < 0 || end <= start) return "";
+  return stylesSource.slice(start, end);
+}
+
 describe("TaskTerminal iOS keyboard geometry", () => {
   it("anchors the xterm helper textarea to the host bottom for iOS keyboard placement", () => {
     const textareaCss =
-      taskTerminalSource.match(
-        /\.terminal-host\s+:global\(textarea\.xterm-helper-textarea\)\s*\{([^}]*)\}/,
+      stylesSource.match(
+        /\.terminal-host\s+textarea\.xterm-helper-textarea\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     expect(textareaCss).toMatch(/bottom:\s*0/);
@@ -32,8 +47,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("softens textarea clip/opacity so iOS treats it as an edit target", () => {
     const textareaCss =
-      taskTerminalSource.match(
-        /\.terminal-host\s+:global\(textarea\.xterm-helper-textarea\)\s*\{([^}]*)\}/,
+      stylesSource.match(
+        /\.terminal-host\s+textarea\.xterm-helper-textarea\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     expect(textareaCss).toMatch(/opacity:\s*0\.01/);
@@ -66,48 +81,39 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(settleBody).toMatch(/cancelExpandSettle\s*\(\s*\)/);
     expect(settleBody).toMatch(/requestAnimationFrame[\s\S]*?requestAnimationFrame/);
     expect(settleBody).toMatch(
-      /setTimeout\([\s\S]*?schedulePostLayoutRef\?\.\(true\)[\s\S]*?EXPAND_REWRAP_MS/,
+      /setTimeout\([\s\S]*?schedulePostLayoutRef(?:\.current)?\?\.\(true\)[\s\S]*?EXPAND_REWRAP_MS/,
     );
-    const discreteCalls = settleBody.match(/schedulePostLayoutRef\?\.\(true\)/g) ?? [];
+    const discreteCalls = settleBody.match(/schedulePostLayoutRef(?:\.current)?\?\.\(true\)/g) ?? [];
     expect(discreteCalls).toHaveLength(4);
-    expect(settleBody).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
-    expect(settleBody).not.toMatch(/schedulePostLayoutRef\?\.\(\s*\)/);
+    expect(settleBody).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
+    expect(settleBody).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(\s*\)/);
   });
 
   it("pins bottom controls so hotkeys stay above the keyboard band", () => {
-    const mobileBlock =
-      taskTerminalSource.match(
-        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
-      )?.[1] ?? "";
+    const mobileBlock = terminalMobileBlock();
 
     expect(mobileBlock).toMatch(
-      /:global\(html\.keyboard-open\)[\s\S]*?terminal-bottom-controls[\s\S]*?flex:\s*none/,
+      /html\.keyboard-open[\s\S]*?terminal-bottom-controls[\s\S]*?flex:\s*none/,
     );
   });
 
   it("flex-fills the mobile inline terminal so the details line sits at the page bottom", () => {
-    const mobileBlock =
-      taskTerminalSource.match(
-        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
-      )?.[1] ?? "";
+    const mobileBlock = terminalMobileBlock();
 
     const inlineWrapRule =
       mobileBlock.match(
-        /\n    \.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+        /\n  \.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     expect(inlineWrapRule).toMatch(/flex:\s*1\s+1\s+0%/);
     expect(inlineWrapRule).toMatch(/height:\s*auto/);
-    // No fixed cap: the inline terminal fills the task column down to the
-    // details line, same flex model as keyboard-open (no relayout jump).
     expect(inlineWrapRule).not.toMatch(/height:\s*min\(/);
     expect(mobileBlock).toMatch(
       /\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-host[\s\S]*?height:\s*100%/,
     );
     expect(mobileBlock).toMatch(
-      /:global\(html\.keyboard-open\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
+      /html\.keyboard-open\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+0%/,
     );
 
-    // The task column must hand the leftover height to the inline panel.
     const stylesMobileBlock =
       stylesSource.match(
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
@@ -131,15 +137,12 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       )?.[1] ?? "";
 
     expect(scheduleFitBody).toMatch(
-      /!discreteIntent\s*&&\s*\(term\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
+      /!discreteIntent\s*&&\s*\(term(?:Ref\.current)?\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
     );
   });
 
   it("distributes hotbar keys proportionally and drops safe-area pad when keyboard is open", () => {
-    const mobileBlock =
-      taskTerminalSource.match(
-        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
-      )?.[1] ?? "";
+    const mobileBlock = terminalMobileBlock();
 
     expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*width:\s*100%/);
     expect(mobileBlock).toMatch(
@@ -148,17 +151,15 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?width:\s*0/,
     );
-    // Inline hotbar sits mid-page (details line + nav below it), so it gets no
-    // safe-area pad; only the fullscreen hotbar touches the screen edge.
     expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding-bottom:\s*2px/);
     expect(mobileBlock).not.toMatch(
-      /\n    \.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
+      /\n  \.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
     );
     expect(mobileBlock).toMatch(
-      /:global\(html\.keyboard-open\)\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
+      /html\.keyboard-open\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
     );
   });
 
@@ -188,8 +189,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(toggleBody).toMatch(/if\s*\(\s*!entering\s*\)\s*\{[\s\S]*?scheduleBandSettle\s*\(\s*\)[\s\S]*?return/);
     expect(toggleBody).toMatch(/scheduleBandSettle\s*\(\s*\)\s*;\s*$/);
     expect(toggleBody.match(/scheduleBandSettle\s*\(\s*\)/g)?.length).toBe(2);
-    expect(toggleBody).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
-    expect(taskTerminalSource).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
+    expect(toggleBody).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
+    expect(taskTerminalSource).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
 
     const onInteractionClick =
       taskTerminalSource.match(
@@ -202,8 +203,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("pins expanded panel with top and height to the live visual-viewport band", () => {
     const expandedRule =
-      taskTerminalSource.match(
-        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
+      taskTerminalStylesSection().match(
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
@@ -219,8 +220,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   it("shows Copy beside expand on the panel, not centered in the scroll wrap", () => {
     const cornerMarkup = extractBlock(
       taskTerminalSource,
-      /class="terminal-corner-actions"/,
-      /<\/div>\s*<div\s+class="terminal-status"/,
+      /className="terminal-corner-actions"/,
+      /<\/div>\s*<div\s+className="terminal-status"/,
     );
 
     expect(cornerMarkup).toMatch(/data-testid="terminal-copy-overlay"/);
@@ -229,8 +230,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       cornerMarkup.indexOf("terminal-expand-corner"),
     );
 
-    const interactionOpen = taskTerminalSource.indexOf('class="terminal-interaction-wrap"');
-    const interactionClose = taskTerminalSource.indexOf("{#if copyNotice}");
+    const interactionOpen = taskTerminalSource.indexOf('className="terminal-interaction-wrap"');
+    const interactionClose = taskTerminalSource.indexOf("{copyNotice ?");
     expect(interactionOpen).toBeGreaterThan(-1);
     expect(interactionClose).toBeGreaterThan(interactionOpen);
     const interactionMarkup = taskTerminalSource.slice(interactionOpen, interactionClose);
@@ -239,7 +240,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(interactionMarkup).not.toMatch(/copyNotice/);
 
     const cornerCss =
-      taskTerminalSource.match(/\.terminal-corner-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+      stylesSource.match(/\.terminal-corner-actions\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(cornerCss).toMatch(/position:\s*absolute/);
     expect(cornerCss).toMatch(/top:\s*6px/);
     expect(cornerCss).toMatch(/right:\s*6px/);
@@ -247,7 +248,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(cornerCss).toMatch(/z-index:\s*8/);
 
     const overlayCss =
-      taskTerminalSource.match(/\.terminal-copy-overlay\s*\{([^}]*)\}/)?.[1] ?? "";
+      stylesSource.match(/\.terminal-copy-overlay\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(overlayCss).not.toMatch(/position:\s*absolute/);
     expect(overlayCss).not.toMatch(/left:\s*50%/);
     expect(overlayCss).not.toMatch(/top:\s*50%/);

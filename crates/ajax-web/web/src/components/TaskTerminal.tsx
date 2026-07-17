@@ -1,74 +1,87 @@
-<script lang="ts">
-  import { onMount } from "svelte";
-  import { Terminal } from "@xterm/xterm";
-  import { FitAddon } from "@xterm/addon-fit";
-  import "@xterm/xterm/css/xterm.css";
-  import { copyText } from "../diagnostics";
-  import { resetDocumentScroll } from "../viewport";
-  import {
-    connectTaskTerminal,
-    type TerminalConnection,
-    type TerminalConnectionStatus,
-  } from "../terminalConnection";
-  import {
-    MIN_TERMINAL_COLS,
-    DEFAULT_FONT_SIZE,
-    MIN_FONT_SIZE,
-    MAX_FONT_SIZE,
-    FONT_STORAGE_KEY,
-    parsePersistedFontSize,
-    computeTerminalGeometry,
-  } from "../terminalGeometry";
-  import { createRefitController } from "../terminalRefit";
+import { useState, useEffect, useRef } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+import { copyText } from "../diagnostics";
+import { resetDocumentScroll } from "../viewport";
+import {
+  connectTaskTerminal,
+  type TerminalConnection,
+  type TerminalConnectionStatus,
+} from "../terminalConnection";
+import {
+  MIN_TERMINAL_COLS,
+  DEFAULT_FONT_SIZE,
+  MIN_FONT_SIZE,
+  MAX_FONT_SIZE,
+  FONT_STORAGE_KEY,
+  parsePersistedFontSize,
+  computeTerminalGeometry,
+} from "../terminalGeometry";
+import { createRefitController } from "../terminalRefit";
 
-  interface Props {
-    handle: string;
-  }
+interface Props {
+  handle: string;
+}
 
-  let { handle }: Props = $props();
+export default function TaskTerminal({ handle }: Props) {
+  const hostElRef = useRef<HTMLDivElement | null>(null);
+  const interactionElRef = useRef<HTMLDivElement | null>(null);
+  const spacerElRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | undefined>(undefined);
+  const connectionRef = useRef<TerminalConnection | undefined>(undefined);
+  const schedulePostLayoutRef = useRef<((discreteIntent?: boolean) => void) | undefined>(
+    undefined,
+  );
+  const resetResizeDedupeRef = useRef<(() => void) | undefined>(undefined);
+  const jumpToBottomRef = useRef<(() => void) | undefined>(undefined);
+  const inertedElementsRef = useRef<HTMLElement[]>([]);
+  const copyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const expandSettleFrame1Ref = useRef(0);
+  const expandSettleFrame2Ref = useRef(0);
+  const expandSettleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pasteFallbackOwnedFocusRef = useRef(false);
+  const toolbarPointerOwnedFocusRef = useRef(false);
+  const ctrlArmedRef = useRef(false);
 
-  let hostEl: HTMLDivElement | undefined = $state();
-  let interactionEl: HTMLDivElement | undefined = $state();
-  let spacerEl: HTMLDivElement | undefined = $state();
-  let term: Terminal | undefined = $state();
-  let connection: TerminalConnection | undefined = $state();
-  let status = $state<TerminalConnectionStatus>("connecting");
-  let statusDetail = $state("");
-  let ctrlArmed = $state(false);
-  let expanded = $state(false);
-  let hasUnseenOutput = $state(false);
-  let pasteFallbackOpen = $state(false);
-  let pasteFallbackText = $state("");
-  let pasteNotice = $state("");
-  let copyOverlayText = $state("");
-  let copyNotice = $state("");
-  let copyFallbackOpen = $state(false);
-  let copyFallbackText = $state("");
-  let pasteFallbackOwnedFocus = false;
-  let copyNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-  let inertedElements: HTMLElement[] = [];
+  const [status, setStatus] = useState<TerminalConnectionStatus>("connecting");
+  const [statusDetail, setStatusDetail] = useState("");
+  const [ctrlArmed, setCtrlArmed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [hasUnseenOutput, setHasUnseenOutput] = useState(false);
+  const [pasteFallbackOpen, setPasteFallbackOpen] = useState(false);
+  const [pasteFallbackText, setPasteFallbackText] = useState("");
+  const [pasteNotice, setPasteNotice] = useState("");
+  const [copyOverlayText, setCopyOverlayText] = useState("");
+  const [copyNotice, setCopyNotice] = useState("");
+  const [copyFallbackOpen, setCopyFallbackOpen] = useState(false);
+  const [copyFallbackText, setCopyFallbackText] = useState("");
+
+  const statusVisible = status !== "connected" || statusDetail.length > 0;
+  const showReconnect = status === "reconnecting" || status === "unavailable";
 
   const isPhoneTerminalLayout = () =>
     window.matchMedia("(max-width: 767px), (pointer: coarse) and (max-height: 500px)").matches;
 
   const clearExpandedInert = () => {
-    for (const el of inertedElements) {
+    for (const el of inertedElementsRef.current) {
       el.inert = false;
     }
-    inertedElements = [];
+    inertedElementsRef.current = [];
   };
 
   const applyExpandedInert = () => {
     clearExpandedInert();
     if (!isPhoneTerminalLayout()) return;
 
-    const panel = hostEl?.closest<HTMLElement>('[data-testid="task-terminal-panel"]');
-    const taskDetail = panel?.parentElement;
+    const panel = hostElRef.current?.closest<HTMLElement>('[data-testid="task-terminal-panel"]');
+    const taskDetail = panel?.closest<HTMLElement>(".task-detail");
     const next: HTMLElement[] = [];
 
-    if (taskDetail) {
+    if (taskDetail && panel) {
       for (const child of taskDetail.children) {
-        if (child instanceof HTMLElement && child !== panel) {
+        if (child instanceof HTMLElement && !child.contains(panel)) {
           next.push(child);
         }
       }
@@ -83,7 +96,7 @@
     for (const el of next) {
       if (el.inert) continue;
       el.inert = true;
-      inertedElements.push(el);
+      inertedElementsRef.current.push(el);
     }
   };
 
@@ -111,7 +124,6 @@
   ];
 
   const CTRL_ARM_TIMEOUT_MS = 4000;
-  let ctrlTimer: ReturnType<typeof setTimeout> | undefined;
 
   const STATUS_LABELS: Record<TerminalConnectionStatus, string> = {
     connecting: "Connecting…",
@@ -120,46 +132,35 @@
     unavailable: "Unavailable",
   };
 
-  let statusVisible = $derived(status !== "connected" || statusDetail.length > 0);
-  let showReconnect = $derived(status === "reconnecting" || status === "unavailable");
-
-  let resetResizeDedupe: (() => void) | undefined;
-  let schedulePostLayoutRef: ((discreteIntent?: boolean) => void) | undefined;
-  let jumpToBottomRef: (() => void) | undefined;
-
-  let expandSettleFrame1 = 0;
-  let expandSettleFrame2 = 0;
-  let expandSettleTimer: ReturnType<typeof setTimeout> | undefined;
-
   const cancelExpandSettle = () => {
-    if (expandSettleFrame1) {
-      cancelAnimationFrame(expandSettleFrame1);
-      expandSettleFrame1 = 0;
+    if (expandSettleFrame1Ref.current) {
+      cancelAnimationFrame(expandSettleFrame1Ref.current);
+      expandSettleFrame1Ref.current = 0;
     }
-    if (expandSettleFrame2) {
-      cancelAnimationFrame(expandSettleFrame2);
-      expandSettleFrame2 = 0;
+    if (expandSettleFrame2Ref.current) {
+      cancelAnimationFrame(expandSettleFrame2Ref.current);
+      expandSettleFrame2Ref.current = 0;
     }
-    if (expandSettleTimer) {
-      clearTimeout(expandSettleTimer);
-      expandSettleTimer = undefined;
+    if (expandSettleTimerRef.current) {
+      clearTimeout(expandSettleTimerRef.current);
+      expandSettleTimerRef.current = undefined;
     }
   };
 
   const scheduleBandSettle = () => {
     cancelExpandSettle();
-    schedulePostLayoutRef?.(true);
-    expandSettleFrame1 = requestAnimationFrame(() => {
-      expandSettleFrame1 = 0;
-      schedulePostLayoutRef?.(true);
-      expandSettleFrame2 = requestAnimationFrame(() => {
-        expandSettleFrame2 = 0;
-        schedulePostLayoutRef?.(true);
+    schedulePostLayoutRef.current?.(true);
+    expandSettleFrame1Ref.current = requestAnimationFrame(() => {
+      expandSettleFrame1Ref.current = 0;
+      schedulePostLayoutRef.current?.(true);
+      expandSettleFrame2Ref.current = requestAnimationFrame(() => {
+        expandSettleFrame2Ref.current = 0;
+        schedulePostLayoutRef.current?.(true);
       });
     });
-    expandSettleTimer = setTimeout(() => {
-      expandSettleTimer = undefined;
-      schedulePostLayoutRef?.(true);
+    expandSettleTimerRef.current = setTimeout(() => {
+      expandSettleTimerRef.current = undefined;
+      schedulePostLayoutRef.current?.(true);
     }, EXPAND_REWRAP_MS);
   };
 
@@ -180,21 +181,23 @@
   }
 
   const disarmCtrl = () => {
-    ctrlArmed = false;
-    if (ctrlTimer) {
-      clearTimeout(ctrlTimer);
-      ctrlTimer = undefined;
+    ctrlArmedRef.current = false;
+    setCtrlArmed(false);
+    if (ctrlTimerRef.current) {
+      clearTimeout(ctrlTimerRef.current);
+      ctrlTimerRef.current = undefined;
     }
   };
 
   const toggleCtrl = () => {
-    if (ctrlArmed) {
+    if (ctrlArmedRef.current) {
       disarmCtrl();
       return;
     }
-    ctrlArmed = true;
-    if (ctrlTimer) clearTimeout(ctrlTimer);
-    ctrlTimer = setTimeout(disarmCtrl, CTRL_ARM_TIMEOUT_MS);
+    ctrlArmedRef.current = true;
+    setCtrlArmed(true);
+    if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
+    ctrlTimerRef.current = setTimeout(disarmCtrl, CTRL_ARM_TIMEOUT_MS);
   };
 
   const controlModify = (data: string): string => {
@@ -208,29 +211,29 @@
   };
 
   const consumeCtrl = (data: string): string => {
-    if (!ctrlArmed) return data;
+    if (!ctrlArmedRef.current) return data;
     disarmCtrl();
     return controlModify(data);
   };
 
   const sendKey = (data: string) => {
-    if (!connection?.isOpen()) return;
-    connection.sendInput(data);
+    if (!connectionRef.current?.isOpen()) return;
+    connectionRef.current.sendInput(data);
   };
 
   const PASTE_DISCONNECTED_NOTICE = "Terminal disconnected — paste kept below.";
 
   const pasteToPty = (text: string): boolean => {
-    if (!text || !connection?.isOpen()) return false;
-    const payload = term?.modes.bracketedPasteMode
+    if (!text || !connectionRef.current?.isOpen()) return false;
+    const payload = termRef.current?.modes.bracketedPasteMode
       ? `\x1b[200~${text}\x1b[201~`
       : text;
-    connection.sendInput(payload);
+    connectionRef.current.sendInput(payload);
     return true;
   };
 
   const termTextarea = (): HTMLTextAreaElement | null => {
-    const el = term?.element?.querySelector("textarea.xterm-helper-textarea");
+    const el = termRef.current?.element?.querySelector("textarea.xterm-helper-textarea");
     return el instanceof HTMLTextAreaElement ? el : null;
   };
 
@@ -267,31 +270,29 @@
       textarea.focus({ preventScroll: true });
       return;
     }
-    term?.focus();
+    termRef.current?.focus();
   };
 
   const blurTerm = () => {
     termTextarea()?.blur();
   };
 
-  let toolbarPointerOwnedFocus = false;
-
-  const onToolbarPointerDown = (event: PointerEvent) => {
+  const onToolbarPointerDown = (event: React.PointerEvent) => {
     event.preventDefault();
-    toolbarPointerOwnedFocus = termOwnedFocus();
+    toolbarPointerOwnedFocusRef.current = termOwnedFocus();
   };
 
-  const consumeToolbarPointerOwnedFocus = (event: MouseEvent): boolean => {
-    const owned = toolbarPointerOwnedFocus && event.detail !== 0;
-    toolbarPointerOwnedFocus = false;
+  const consumeToolbarPointerOwnedFocus = (event: React.MouseEvent): boolean => {
+    const owned = toolbarPointerOwnedFocusRef.current && event.detail !== 0;
+    toolbarPointerOwnedFocusRef.current = false;
     return owned;
   };
 
   const openPasteFallback = (ownedFocus: boolean, notice: string, text = "") => {
-    pasteFallbackOwnedFocus = ownedFocus;
-    pasteNotice = notice;
-    pasteFallbackText = text;
-    pasteFallbackOpen = true;
+    pasteFallbackOwnedFocusRef.current = ownedFocus;
+    setPasteNotice(notice);
+    setPasteFallbackText(text);
+    setPasteFallbackOpen(true);
   };
 
   const retainUnsentPaste = (text: string, ownedFocus: boolean) => {
@@ -299,11 +300,11 @@
   };
 
   const dismissPasteFallback = (): boolean => {
-    const ownedFocus = pasteFallbackOwnedFocus;
-    pasteFallbackOpen = false;
-    pasteFallbackText = "";
-    pasteNotice = "";
-    pasteFallbackOwnedFocus = false;
+    const ownedFocus = pasteFallbackOwnedFocusRef.current;
+    setPasteFallbackOpen(false);
+    setPasteFallbackText("");
+    setPasteNotice("");
+    pasteFallbackOwnedFocusRef.current = false;
     return ownedFocus;
   };
 
@@ -312,7 +313,7 @@
   };
 
   const pasteThroughTerm = (text: string, ownedFocus = true): boolean => {
-    if (!text || !term) return false;
+    if (!text || !termRef.current) return false;
     if (!pasteToPty(text)) {
       retainUnsentPaste(text, ownedFocus);
       return false;
@@ -341,13 +342,13 @@
 
   const sendPasteFallback = () => {
     const text = pasteFallbackText;
-    const ownedFocus = pasteFallbackOwnedFocus;
+    const ownedFocus = pasteFallbackOwnedFocusRef.current;
     if (!text) {
       closePasteFallback();
       return;
     }
     if (!pasteToPty(text)) {
-      pasteNotice = PASTE_DISCONNECTED_NOTICE;
+      setPasteNotice(PASTE_DISCONNECTED_NOTICE);
       return;
     }
     dismissPasteFallback();
@@ -359,44 +360,45 @@
   };
 
   const syncCopyOverlay = () => {
-    copyOverlayText = term?.getSelection() ?? "";
-    if (!copyOverlayText && !copyNoticeTimer) copyNotice = "";
+    const selection = termRef.current?.getSelection() ?? "";
+    setCopyOverlayText(selection);
+    if (!selection && !copyNoticeTimerRef.current) setCopyNotice("");
   };
 
   const dismissCopyFallback = () => {
-    copyFallbackOpen = false;
-    copyFallbackText = "";
+    setCopyFallbackOpen(false);
+    setCopyFallbackText("");
   };
 
   const copySelection = async () => {
-    const text = copyOverlayText || term?.getSelection() || "";
+    const text = copyOverlayText || termRef.current?.getSelection() || "";
     if (!text) return;
     const copied = await copyText(text);
     if (copied) {
-      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
-      copyNotice = "Copied";
-      copyNoticeTimer = setTimeout(() => {
-        copyNotice = "";
-        copyNoticeTimer = undefined;
+      if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
+      setCopyNotice("Copied");
+      copyNoticeTimerRef.current = setTimeout(() => {
+        setCopyNotice("");
+        copyNoticeTimerRef.current = undefined;
       }, 1500);
-      term?.clearSelection();
-      copyOverlayText = "";
+      termRef.current?.clearSelection();
+      setCopyOverlayText("");
       return;
     }
-    copyFallbackText = text;
-    copyFallbackOpen = true;
+    setCopyFallbackText(text);
+    setCopyFallbackOpen(true);
   };
 
   const requestReconnect = () => {
-    connection?.reconnectNow();
+    connectionRef.current?.reconnectNow();
   };
 
   const toggleExpanded = () => {
     const entering = !expanded;
-    expanded = entering;
-    document.documentElement.classList.toggle(EXPANDED_CLASS, expanded);
+    setExpanded(entering);
+    document.documentElement.classList.toggle(EXPANDED_CLASS, entering);
     syncExpandedInert(entering);
-    resetResizeDedupe?.();
+    resetResizeDedupeRef.current?.();
     if (!entering) {
       blurTerm();
       // Exit while keyboard-open used to call discreteIntent=false, which is a
@@ -407,7 +409,14 @@
     scheduleBandSettle();
   };
 
-  onMount(() => {
+  useEffect(() => {
+    const hostEl = hostElRef.current;
+    const interactionEl = interactionElRef.current;
+    const spacerEl = spacerElRef.current;
+    if (!hostEl || !interactionEl || typeof window.matchMedia !== "function") {
+      return;
+    }
+
     let fitAddon: FitAddon | undefined;
     let dataDisposable: { dispose(): void } | undefined;
     let scrollDisposable: { dispose(): void } | undefined;
@@ -453,18 +462,18 @@
       lastSentRows = 0;
       refitController?.noteReconnect();
     };
-    resetResizeDedupe = resetDedupe;
+    resetResizeDedupeRef.current = resetDedupe;
 
     const sendResizeNow = (discreteIntent = false) => {
-      if (!isActive() || !connection?.isOpen() || !term) return;
+      if (!isActive() || !connectionRef.current?.isOpen() || !termRef.current) return;
       if (isKeyboardOpen() && !discreteIntent) return;
-      const cols = term.cols;
-      const rows = term.rows;
+      const cols = termRef.current.cols;
+      const rows = termRef.current.rows;
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return;
       if (cols === lastSentCols && rows === lastSentRows) return;
       lastSentCols = cols;
       lastSentRows = rows;
-      connection.sendResize(cols, rows);
+      connectionRef.current.sendResize(cols, rows);
     };
 
     const clearTermScale = (termEl: HTMLElement) => {
@@ -490,29 +499,29 @@
     };
 
     const fitLocal = () => {
-      if (!isActive() || !fitAddon || !term || !hostEl) return;
+      if (!isActive() || !fitAddon || !termRef.current || !hostEl) return;
       syncHostToWrap();
       const proposed = fitAddon.proposeDimensions();
       if (!proposed) return;
 
-      const termEl = term.element;
+      const termEl = termRef.current.element;
       if (!termEl) return;
 
       const hostWidth = hostEl.clientWidth;
       const hostHeight = hostEl.clientHeight;
-      const currentFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+      const currentFontSize = termRef.current.options.fontSize ?? DEFAULT_FONT_SIZE;
 
       let cellWidth = 1;
       let cellHeight = 1;
       if (proposed.cols < MIN_TERMINAL_COLS) {
         const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
         cellWidth =
-          screenEl && term.cols > 0
-            ? screenEl.offsetWidth / term.cols
+          screenEl && termRef.current.cols > 0
+            ? screenEl.offsetWidth / termRef.current.cols
             : hostWidth / proposed.cols;
         cellHeight =
-          screenEl && term.rows > 0
-            ? screenEl.offsetHeight / term.rows
+          screenEl && termRef.current.rows > 0
+            ? screenEl.offsetHeight / termRef.current.rows
             : hostHeight / proposed.rows;
       }
 
@@ -529,13 +538,13 @@
 
       if (proposed.cols >= MIN_TERMINAL_COLS) {
         clearTermScale(termEl);
-        if (term.cols !== proposed.cols || term.rows !== proposed.rows) {
-          term.resize(proposed.cols, proposed.rows);
+        if (termRef.current.cols !== proposed.cols || termRef.current.rows !== proposed.rows) {
+          termRef.current.resize(proposed.cols, proposed.rows);
         }
         return;
       }
 
-      term.resize(result.cols, result.rows);
+      termRef.current.resize(result.cols, result.rows);
       termEl.style.width = `${result.logicalWidth}px`;
       termEl.style.height = `${result.logicalHeight}px`;
       termEl.style.transformOrigin = "0 0";
@@ -548,21 +557,21 @@
       // clears the selection, and unmounts the Copy overlay under the tap.
       fit: () => {
         if (isKeyboardOpen()) return;
-        if ((term?.getSelection() ?? "").length > 0) return;
+        if ((termRef.current?.getSelection() ?? "").length > 0) return;
         fitLocal();
       },
       readSize: () => {
-        if (!term) return null;
-        return { cols: term.cols, rows: term.rows };
+        if (!termRef.current) return null;
+        return { cols: termRef.current.cols, rows: termRef.current.rows };
       },
       // Ambient sends share the discrete path's dedupe memory and fire-time
       // keyboard check, so the two paths can never double-send one grid.
       sendResize: (cols, rows) => {
-        if (!isActive() || !connection?.isOpen() || isKeyboardOpen()) return;
+        if (!isActive() || !connectionRef.current?.isOpen() || isKeyboardOpen()) return;
         if (cols === lastSentCols && rows === lastSentRows) return;
         lastSentCols = cols;
         lastSentRows = rows;
-        connection.sendResize(cols, rows);
+        connectionRef.current.sendResize(cols, rows);
       },
     });
 
@@ -572,14 +581,14 @@
         return;
       }
       // term.resize clears selection; skip ambient fits while Copy/selection is live.
-      if (!discreteIntent && (term?.getSelection() ?? "").length > 0) {
+      if (!discreteIntent && (termRef.current?.getSelection() ?? "").length > 0) {
         return;
       }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
-        if (!discreteIntent && (term?.getSelection() ?? "").length > 0) return;
+        if (!discreteIntent && (termRef.current?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });
@@ -599,7 +608,7 @@
         pendingPostKeyboardResync = false;
         resetDedupe();
       }
-      if ((term?.getSelection() ?? "").length > 0) return;
+      if ((termRef.current?.getSelection() ?? "").length > 0) return;
       refitController?.requestRefit();
     };
 
@@ -607,7 +616,7 @@
       if (!isActive()) return;
       scheduleImmediate(discreteIntent);
     };
-    schedulePostLayoutRef = schedulePostLayout;
+    schedulePostLayoutRef.current = schedulePostLayout;
 
     const onViewportChange = () => {
       syncHostToWrap();
@@ -618,19 +627,19 @@
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 
     const cellHeightPx = () => {
-      if (!term || !interactionEl || term.rows <= 0) return 18;
-      return Math.max(1, interactionEl.clientHeight / term.rows);
+      if (!termRef.current || !interactionEl || termRef.current.rows <= 0) return 18;
+      return Math.max(1, interactionEl.clientHeight / termRef.current.rows);
     };
 
     const scrollbackLines = () => {
-      if (!term) return 0;
-      return Math.max(0, term.buffer.active.length - term.rows);
+      if (!termRef.current) return 0;
+      return Math.max(0, termRef.current.buffer.active.length - termRef.current.rows);
     };
 
-    const viewportTopLine = () => term?.buffer.active.viewportY ?? 0;
+    const viewportTopLine = () => termRef.current?.buffer.active.viewportY ?? 0;
 
     const syncSpacer = () => {
-      if (!term || !spacerEl || !interactionEl) return;
+      if (!termRef.current || !spacerEl || !interactionEl) return;
       spacerEl.style.height = `${scrollbackLines() * cellHeightPx()}px`;
     };
 
@@ -645,11 +654,11 @@
         interactionEl.scrollHeight <= interactionEl.clientHeight + 1 ||
         interactionEl.scrollTop + interactionEl.clientHeight >= interactionEl.scrollHeight - 1;
       followLive = atBottom;
-      if (atBottom) hasUnseenOutput = false;
+      if (atBottom) setHasUnseenOutput(false);
     };
 
     const syncWrapperFromTerm = () => {
-      if (!term || !interactionEl) return;
+      if (!termRef.current || !interactionEl) return;
       const maxTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
       const linesUpFromBottom = Math.max(0, scrollbackLines() - viewportTopLine());
       const nextTop = Math.max(0, maxTop - linesUpFromBottom * cellHeightPx());
@@ -664,22 +673,28 @@
     };
 
     const syncTermFromWrapper = () => {
-      if (!term || !interactionEl) return;
+      if (!termRef.current || !interactionEl) return;
       const maxTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
       if (interactionEl.scrollTop < maxTop - 1) {
         followLive = false;
       }
       const fromBottomPx = Math.max(0, maxTop - interactionEl.scrollTop);
       const linesUpFromBottom = Math.floor(fromBottomPx / cellHeightPx());
-      const targetLine = Math.max(0, term.buffer.active.length - term.rows - linesUpFromBottom);
-      const clampedLine = Math.min(targetLine, Math.max(0, term.buffer.active.length - 1));
+      const targetLine = Math.max(
+        0,
+        termRef.current.buffer.active.length - termRef.current.rows - linesUpFromBottom,
+      );
+      const clampedLine = Math.min(
+        targetLine,
+        Math.max(0, termRef.current.buffer.active.length - 1),
+      );
       if (viewportTopLine() === clampedLine) {
         refreshFollow();
         return;
       }
       syncingScroll = true;
       wrapperDroveScroll = true;
-      term.scrollToLine(clampedLine);
+      termRef.current.scrollToLine(clampedLine);
       syncingScroll = false;
       wrapperDroveScroll = false;
       refreshFollow();
@@ -689,12 +704,12 @@
       syncSpacer();
       if (followLive) {
         syncingScroll = true;
-        term?.scrollToBottom();
+        termRef.current?.scrollToBottom();
         scrollInteractionToBottom();
         syncingScroll = false;
         refreshFollow();
       } else {
-        hasUnseenOutput = true;
+        setHasUnseenOutput(true);
       }
     };
 
@@ -720,14 +735,14 @@
         scheduleBandSettle();
         return;
       }
-      term?.focus();
+      termRef.current?.focus();
     };
 
-    jumpToBottomRef = () => {
+    jumpToBottomRef.current = () => {
       followLive = true;
-      hasUnseenOutput = false;
+      setHasUnseenOutput(false);
       syncingScroll = true;
-      term?.scrollToBottom();
+      termRef.current?.scrollToBottom();
       scrollInteractionToBottom();
       syncingScroll = false;
       refreshFollow();
@@ -797,9 +812,9 @@
     };
 
     const selectWordAtClient = (clientX: number, clientY: number) => {
-      if (!term || !hostEl) return;
-      const termEl = term.element;
-      if (!termEl || term.cols <= 0 || term.rows <= 0) return;
+      if (!termRef.current || !hostEl) return;
+      const termEl = termRef.current.element;
+      if (!termEl || termRef.current.cols <= 0 || termRef.current.rows <= 0) return;
 
       const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
       const bounds = screenEl?.getBoundingClientRect() ?? hostEl.getBoundingClientRect();
@@ -809,12 +824,12 @@
       const relY = clientY - bounds.top;
       if (relX < 0 || relY < 0 || relX > bounds.width || relY > bounds.height) return;
 
-      const cellWidth = bounds.width / term.cols;
-      const cellHeight = bounds.height / term.rows;
-      const col = Math.min(term.cols - 1, Math.max(0, Math.floor(relX / cellWidth)));
-      const rowInView = Math.min(term.rows - 1, Math.max(0, Math.floor(relY / cellHeight)));
-      const bufferRow = term.buffer.active.viewportY + rowInView;
-      const line = term.buffer.active.getLine(bufferRow);
+      const cellWidth = bounds.width / termRef.current.cols;
+      const cellHeight = bounds.height / termRef.current.rows;
+      const col = Math.min(termRef.current.cols - 1, Math.max(0, Math.floor(relX / cellWidth)));
+      const rowInView = Math.min(termRef.current.rows - 1, Math.max(0, Math.floor(relY / cellHeight)));
+      const bufferRow = termRef.current.buffer.active.viewportY + rowInView;
+      const line = termRef.current.buffer.active.getLine(bufferRow);
       if (!line) return;
 
       const lineStr = line.translateToString(false);
@@ -828,7 +843,7 @@
 
       const length = end - start;
       if (length <= 0) return;
-      term.select(start, bufferRow, length);
+      termRef.current.select(start, bufferRow, length);
     };
 
     const onTouchStart = (event: TouchEvent) => {
@@ -857,7 +872,7 @@
       if (event.cancelable) event.preventDefault();
       pinchEngaged = false;
       pinchStartDistance = touchDistance(event.touches);
-      pinchBaseFontSize = term?.options.fontSize ?? DEFAULT_FONT_SIZE;
+      pinchBaseFontSize = termRef.current?.options.fontSize ?? DEFAULT_FONT_SIZE;
     };
 
     const onTouchMove = (event: TouchEvent) => {
@@ -883,8 +898,7 @@
           const dx = touch.clientX - longPressStartX;
           const dy = touch.clientY - longPressStartY;
           const holdMatured =
-            longPressStartedAt > 0 &&
-            performance.now() - longPressStartedAt >= LONG_PRESS_MS;
+            longPressStartedAt > 0 && performance.now() - longPressStartedAt >= LONG_PRESS_MS;
           if (!holdMatured) {
             if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
           } else {
@@ -905,7 +919,7 @@
         }
       }
 
-      if (event.touches.length !== 2 || pinchStartDistance <= 0 || !term) return;
+      if (event.touches.length !== 2 || pinchStartDistance <= 0 || !termRef.current) return;
       if (event.cancelable) event.preventDefault();
       const distance = touchDistance(event.touches);
       if (!pinchEngaged && Math.abs(distance - pinchStartDistance) >= PINCH_ACTIVATION_PX) {
@@ -916,8 +930,8 @@
       const next = Math.round(
         Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, pinchBaseFontSize * ratio)),
       );
-      if (next !== term.options.fontSize) {
-        term.options.fontSize = next;
+      if (next !== termRef.current.options.fontSize) {
+        termRef.current.options.fontSize = next;
         if (!isKeyboardOpen()) fitLocal();
       }
     };
@@ -937,22 +951,14 @@
       }
       cancelLongPress();
       clearDirectionalGesture();
-      if (pinchStartDistance > 0 && pinchEngaged && term) {
-        persistFontSize(term.options.fontSize ?? DEFAULT_FONT_SIZE);
+      if (pinchStartDistance > 0 && pinchEngaged && termRef.current) {
+        persistFontSize(termRef.current.options.fontSize ?? DEFAULT_FONT_SIZE);
         resetDedupe();
         schedulePostLayout(true);
       }
       pinchStartDistance = 0;
       pinchEngaged = false;
     };
-
-    if (!hostEl || !interactionEl) {
-      return;
-    }
-
-    if (typeof window.matchMedia !== "function") {
-      return;
-    }
 
     const initialFontSize = loadPersistedFontSize();
     const liveTerm = new Terminal({
@@ -987,7 +993,7 @@
     if (viteDev) {
       (hostEl as unknown as { __xterm?: Terminal }).__xterm = liveTerm;
     }
-    term = liveTerm;
+    termRef.current = liveTerm;
     selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
     fitLocal();
     syncSpacer();
@@ -1004,29 +1010,29 @@
     interactionEl.addEventListener("touchend", onTouchEnd, { passive: true });
     interactionEl.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    connection = connectTaskTerminal(handle, {
+    const connection = connectTaskTerminal(handle, {
       onOutput: (text) => {
-        term?.write(text, applyOutput);
+        termRef.current?.write(text, applyOutput);
       },
       onServerError: (message) => {
-        statusDetail = message;
+        setStatusDetail(message);
       },
       onStatus: (next) => {
-        status = next;
+        setStatus(next);
         if (next === "connected") {
-          statusDetail = "";
+          setStatusDetail("");
         }
       },
       onOpen: (isReconnect, seeded) => {
-        statusDetail = "";
+        setStatusDetail("");
         resetDedupe();
-        if (isReconnect && seeded && term) {
+        if (isReconnect && seeded && termRef.current) {
           followLive = true;
-          hasUnseenOutput = false;
+          setHasUnseenOutput(false);
           syncingScroll = true;
-          term.reset();
+          termRef.current.reset();
           syncSpacer();
-          term.scrollToBottom();
+          termRef.current.scrollToBottom();
           scrollInteractionToBottom();
           syncingScroll = false;
           refreshFollow();
@@ -1034,6 +1040,7 @@
         scheduleImmediate();
       },
     });
+    connectionRef.current = connection;
 
     resizeObserver = new ResizeObserver(onViewportChange);
     resizeObserver.observe(hostEl);
@@ -1071,529 +1078,195 @@
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();
-      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
-      if (interactionEl) {
-        interactionEl.removeEventListener("scroll", onInteractionScroll);
-        interactionEl.removeEventListener("click", onInteractionClick);
-        interactionEl.removeEventListener("touchstart", onTouchStart);
-        interactionEl.removeEventListener("touchmove", onTouchMove);
-        interactionEl.removeEventListener("touchend", onTouchEnd);
-        interactionEl.removeEventListener("touchcancel", onTouchEnd);
-      }
-      if (ctrlTimer) clearTimeout(ctrlTimer);
+      if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
+      interactionEl.removeEventListener("scroll", onInteractionScroll);
+      interactionEl.removeEventListener("click", onInteractionClick);
+      interactionEl.removeEventListener("touchstart", onTouchStart);
+      interactionEl.removeEventListener("touchmove", onTouchMove);
+      interactionEl.removeEventListener("touchend", onTouchEnd);
+      interactionEl.removeEventListener("touchcancel", onTouchEnd);
+      if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("orientationchange", onViewportChange);
       viewport?.removeEventListener("resize", onViewportChange);
       clearExpandedInert();
       document.documentElement.classList.remove(EXPANDED_CLASS);
-      connection?.dispose();
+      connection.dispose();
+      if (connectionRef.current === connection) {
+        connectionRef.current = undefined;
+      }
       fitAddon?.dispose();
-      term?.dispose();
+      termRef.current?.dispose();
       if (viteDev && hostEl) {
         delete (hostEl as unknown as { __xterm?: Terminal }).__xterm;
       }
-      connection = undefined;
-      term = undefined;
-      if (hostEl) hostEl.style.height = "";
-      resetResizeDedupe = undefined;
-      schedulePostLayoutRef = undefined;
-      jumpToBottomRef = undefined;
+      termRef.current = undefined;
+      hostEl.style.height = "";
+      resetResizeDedupeRef.current = undefined;
+      schedulePostLayoutRef.current = undefined;
+      jumpToBottomRef.current = undefined;
     };
-  });
-</script>
+  }, [handle]);
 
-<section
-  class="terminal-panel"
-  class:is-expanded={expanded}
-  data-testid="task-terminal-panel"
-  aria-label="Task terminal">
-  <div
-    class="terminal-interaction-wrap"
-    data-testid="terminal-interaction-surface"
-    bind:this={interactionEl}>
-    <div class="terminal-host" bind:this={hostEl}></div>
-    <div class="terminal-scroll-spacer" bind:this={spacerEl} aria-hidden="true"></div>
-    {#if hasUnseenOutput}
-      <button
-        type="button"
-        class="terminal-new-output"
-        onclick={() => jumpToBottomRef?.()}>New output ↓</button>
-    {/if}
-  </div>
-  {#if copyNotice}
-    <p class="terminal-copy-notice" role="status">{copyNotice}</p>
-  {/if}
-  <div class="terminal-corner-actions">
-    {#if copyOverlayText}
-      <button
-        type="button"
-        class="terminal-copy-overlay"
-        data-testid="terminal-copy-overlay"
-        onclick={() => void copySelection()}>Copy</button>
-    {/if}
-    <button
-      type="button"
-      class="terminal-expand-corner"
-      class:is-armed={expanded}
-      aria-label="Expand terminal"
-      aria-pressed={expanded}
-      onpointerdown={(event) => event.preventDefault()}
-      onclick={() => toggleExpanded()}>⛶</button>
-  </div>
-  <div
-    class="terminal-status"
-    class:is-empty={!statusVisible}
-    data-testid="terminal-status"
-    aria-hidden={statusVisible ? "false" : "true"}>
-    {#if statusVisible}
-      <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
-      {#if statusDetail}
-        <span class="terminal-status-detail">{statusDetail}</span>
-      {/if}
-      {#if showReconnect}
+  return (
+    <section
+      className={`terminal-panel${expanded ? " is-expanded" : ""}`}
+      data-testid="task-terminal-panel"
+      aria-label="Task terminal">
+      <div
+        className="terminal-interaction-wrap"
+        data-testid="terminal-interaction-surface"
+        ref={interactionElRef}>
+        <div className="terminal-host" ref={hostElRef}></div>
+        <div className="terminal-scroll-spacer" ref={spacerElRef} aria-hidden="true"></div>
+        {hasUnseenOutput ? (
+          <button
+            type="button"
+            className="terminal-new-output"
+            onClick={() => jumpToBottomRef.current?.()}>
+            New output ↓
+          </button>
+        ) : null}
+      </div>
+      {copyNotice ? (
+        <p className="terminal-copy-notice" role="status">
+          {copyNotice}
+        </p>
+      ) : null}
+      <div className="terminal-corner-actions">
+        {copyOverlayText ? (
+          <button
+            type="button"
+            className="terminal-copy-overlay"
+            data-testid="terminal-copy-overlay"
+            onClick={() => void copySelection()}>
+            Copy
+          </button>
+        ) : null}
         <button
           type="button"
-          class="terminal-status-reconnect"
-          onclick={() => requestReconnect()}>Reconnect</button>
-      {/if}
-    {/if}
-  </div>
-  {#if copyFallbackOpen}
-    <div class="terminal-paste-fallback">
-      <p class="terminal-paste-notice" role="status">Clipboard unavailable — copy below.</p>
-      <textarea
-        class="terminal-paste-input"
-        readonly
-        aria-label="Copy text"
-        value={copyFallbackText}></textarea>
-      <div class="terminal-paste-actions">
-        <button type="button" class="terminal-key" onclick={() => dismissCopyFallback()}>Done</button>
+          className={`terminal-expand-corner${expanded ? " is-armed" : ""}`}
+          aria-label="Expand terminal"
+          aria-pressed={expanded}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => toggleExpanded()}>
+          ⛶
+        </button>
       </div>
-    </div>
-  {/if}
-  {#if pasteFallbackOpen}
-    <div class="terminal-paste-fallback">
-      <p class="terminal-paste-notice" role="status">{pasteNotice}</p>
-      <textarea
-        class="terminal-paste-input"
-        aria-label="Paste text"
-        bind:value={pasteFallbackText}></textarea>
-      <div class="terminal-paste-actions">
-        <button type="button" class="terminal-key" onclick={() => sendPasteFallback()}>Send</button>
-        <button type="button" class="terminal-key" onclick={() => cancelPasteFallback()}>Cancel</button>
+      <div
+        className={`terminal-status${statusVisible ? "" : " is-empty"}`}
+        data-testid="terminal-status"
+        aria-hidden={statusVisible ? "false" : "true"}>
+        {statusVisible ? (
+          <>
+            <span className="terminal-status-label">{STATUS_LABELS[status]}</span>
+            {statusDetail ? (
+              <span className="terminal-status-detail">{statusDetail}</span>
+            ) : null}
+            {showReconnect ? (
+              <button
+                type="button"
+                className="terminal-status-reconnect"
+                onClick={() => requestReconnect()}>
+                Reconnect
+              </button>
+            ) : null}
+          </>
+        ) : null}
       </div>
-    </div>
-  {/if}
-  <div data-testid="terminal-bottom-controls">
-    <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
-      {#each CONTROL_KEYS as key (key.label)}
-        <button
-          type="button"
-          class="terminal-key"
-          aria-label={key.ariaLabel}
-          onpointerdown={onToolbarPointerDown}
-          onclick={(event) => {
-            const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-            sendKey(consumeCtrl(key.data));
-            refocusTermIfOwned(ownedFocus);
-          }}>{key.label}</button>
-      {/each}
-      <button
-        type="button"
-        class="terminal-key"
-        class:is-armed={ctrlArmed}
-        aria-label="Control modifier"
-        aria-pressed={ctrlArmed}
-        onpointerdown={onToolbarPointerDown}
-        onclick={(event) => {
-          const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-          toggleCtrl();
-          refocusTermIfOwned(ownedFocus);
-        }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
-      <button
-        type="button"
-        class="terminal-key"
-        aria-label="Paste"
-        onpointerdown={onToolbarPointerDown}
-        onclick={(event) => {
-          const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-          void requestPaste(ownedFocus);
-        }}>Paste</button>
-      <button
-        type="button"
-        class="terminal-key"
-        aria-label="Hide keyboard"
-        onclick={() => {
-          (document.activeElement as HTMLElement | null)?.blur();
-        }}>⌄</button>
-    </div>
-  </div>
-</section>
-
-<style>
-  .terminal-panel {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    margin-top: 12px;
-    overflow: hidden;
-  }
-
-  .terminal-interaction-wrap {
-    position: relative;
-    flex: 1 1 auto;
-    min-height: 120px;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
-    width: 100%;
-    background: #161616;
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
-  .terminal-interaction-wrap::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
-
-  .terminal-host {
-    position: sticky;
-    top: 0;
-    left: 0;
-    width: 100%;
-    min-height: 120px;
-    overflow: hidden;
-    background: #161616;
-  }
-
-  .terminal-scroll-spacer {
-    width: 1px;
-    pointer-events: none;
-  }
-
-  .terminal-host :global(.xterm),
-  .terminal-host :global(.xterm-viewport),
-  .terminal-host :global(.xterm-screen) {
-    height: 100%;
-    background: #161616;
-  }
-
-  .terminal-host :global(.xterm-viewport) {
-    overflow: hidden !important;
-  }
-
-  .terminal-host :global(textarea.xterm-helper-textarea) {
-    position: absolute !important;
-    left: 0 !important;
-    top: auto !important;
-    bottom: 0 !important;
-    height: 44px !important;
-    width: 100% !important;
-    opacity: 0.01 !important;
-    clip-path: none !important;
-    -webkit-clip-path: none !important;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-    caret-color: transparent;
-    z-index: 1;
-  }
-
-  .terminal-paste-fallback {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 6px 8px;
-    border-top: 1px solid var(--rule);
-    background: var(--paper-raised);
-  }
-
-  .terminal-paste-notice {
-    margin: 0;
-    font-size: var(--text-label);
-    color: var(--ink-muted);
-  }
-
-  .terminal-paste-input {
-    width: 100%;
-    min-height: 72px;
-    padding: 6px 8px;
-    border: 1px solid var(--rule);
-    border-radius: 6px;
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--mono);
-    font-size: 16px;
-    resize: vertical;
-  }
-
-  .terminal-paste-actions {
-    display: flex;
-    gap: 6px;
-  }
-
-  .terminal-copy-notice {
-    position: absolute;
-    left: 50%;
-    top: 8px;
-    transform: translateX(-50%);
-    z-index: 7;
-    margin: 0;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: var(--paper-raised);
-    border: 1px solid var(--rule-strong);
-    font-size: var(--text-label);
-    font-weight: 600;
-    color: var(--ink);
-  }
-
-  /* Panel-scoped (not inside the scroll wrap) so selection Copy stays visible
-     next to expand instead of at 50% of tall scroll content. */
-  .terminal-corner-actions {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    z-index: 8;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .terminal-copy-overlay {
-    min-width: 44px;
-    min-height: 44px;
-    padding: 6px 14px;
-    border: 1px solid var(--rule-strong);
-    border-radius: 999px;
-    background: var(--paper-raised);
-    color: var(--ink);
-    font-size: var(--text-label);
-    font-weight: 600;
-  }
-
-  .terminal-new-output {
-    position: absolute;
-    left: 50%;
-    bottom: 8px;
-    transform: translateX(-50%);
-    z-index: 6;
-    min-height: 44px;
-    padding: 6px 12px;
-    border: 1px solid var(--rule-strong);
-    border-radius: 999px;
-    background: var(--paper-raised);
-    color: var(--ink);
-    font-size: var(--text-label);
-    font-weight: 600;
-  }
-
-  .terminal-expand-corner {
-    min-width: 44px;
-    min-height: 44px;
-    padding: 4px;
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--paper) 72%, transparent);
-    color: var(--ink-soft);
-    font-size: 16px;
-    line-height: 1;
-  }
-
-  .terminal-expand-corner.is-armed {
-    background: var(--accent-deep);
-    border-color: var(--accent);
-    color: var(--ink);
-  }
-
-  .terminal-status {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    font-size: var(--text-label);
-    color: var(--ink-muted);
-  }
-
-  .terminal-status.is-empty {
-    display: none;
-  }
-
-  .terminal-status-detail {
-    font-family: var(--mono);
-    overflow-wrap: anywhere;
-  }
-
-  .terminal-status-reconnect {
-    min-height: 44px;
-    font-size: var(--text-label);
-    padding: 2px 8px;
-    border-radius: 6px;
-    border: 1px solid var(--rule);
-    background: var(--paper-raised);
-    color: var(--ink);
-  }
-
-  .terminal-keys {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 4px;
-    padding: 2px 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .terminal-keys::-webkit-scrollbar {
-    display: none;
-  }
-
-  .terminal-key {
-    flex: none;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 1px 7px;
-    font-size: var(--text-label);
-    border-radius: 6px;
-    border: 1px solid var(--rule);
-    background: var(--paper-raised);
-    color: var(--ink);
-  }
-
-  .terminal-keys .terminal-key {
-    min-width: 32px;
-    min-height: 32px;
-    padding: 1px 5px;
-  }
-
-  .terminal-key.is-armed {
-    border-color: var(--warn);
-  }
-
-  .terminal-key-armed-dot {
-    display: inline-block;
-    width: 4px;
-    height: 4px;
-    margin-left: 2px;
-    border-radius: 50%;
-    background: var(--warn);
-    vertical-align: middle;
-  }
-
-  @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
-    .terminal-panel .terminal-interaction-wrap {
-      height: min(58vh, 560px);
-    }
-
-    .terminal-panel .terminal-host {
-      height: 100%;
-    }
-  }
-
-  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Inline terminal flex-fills the task column so the details line sits at
-       the page bottom. Same flex model keyboard-open uses, so opening the
-       keyboard only shrinks the band instead of switching layouts. */
-    .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: auto;
-      flex: 1 1 0%;
-    }
-
-    .terminal-panel:not(.is-expanded) .terminal-host {
-      height: 100%;
-      min-height: 0;
-    }
-
-    :global([data-testid="terminal-bottom-controls"]) {
-      flex: none;
-      width: 100%;
-    }
-
-    /* Inline hotbar sits mid-page (details line + nav below), no safe-area
-       pad; the fullscreen hotbar touches the screen edge and needs it. */
-    .terminal-keys {
-      display: flex;
-      width: 100%;
-      box-sizing: border-box;
-      padding-bottom: 2px;
-    }
-
-    .terminal-panel.is-expanded .terminal-keys {
-      padding-bottom: max(2px, env(safe-area-inset-bottom));
-    }
-
-    .terminal-keys .terminal-key {
-      flex: 1 1 0;
-      min-width: 0;
-      width: 0;
-    }
-
-    :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: auto;
-      flex: 1 1 0%;
-      min-height: 0;
-    }
-
-    :global(html.keyboard-open) .terminal-panel:not(.is-expanded) :global([data-testid="terminal-bottom-controls"]) {
-      flex: none;
-    }
-
-    :global(html.keyboard-open) .terminal-keys {
-      padding-bottom: 6px;
-    }
-
-    /* Keyboard covers the home indicator, so the fullscreen safe-area pad is
-       dead space between the hotbar and the keyboard while it is open. */
-    :global(html.keyboard-open) .terminal-panel.is-expanded .terminal-keys {
-      padding-bottom: 6px;
-    }
-
-    :global(html.terminal-expanded) .terminal-panel.is-expanded {
-      position: fixed;
-      /* Height from --app-top / --app-height (visualViewport). */
-      top: var(--app-top, var(--app-band-top, 0px));
-      right: 0;
-      left: 0;
-      z-index: 45;
-      display: flex;
-      flex-direction: column;
-      height: var(--app-height, var(--app-band-height, 100dvh));
-      max-height: var(--app-height, var(--app-band-height, 100dvh));
-      min-height: 0;
-      margin-top: 0;
-      box-sizing: border-box;
-      overflow: hidden;
-      background: var(--paper);
-      border-left: none;
-      border-right: none;
-      border-bottom: none;
-      border-radius: 0;
-    }
-
-    .terminal-panel.is-expanded .terminal-interaction-wrap {
-      flex: 1 1 auto;
-      min-height: 0;
-      height: auto;
-    }
-
-    .terminal-panel.is-expanded :global([data-testid="terminal-bottom-controls"]) {
-      flex: none;
-    }
-
-    .terminal-panel.is-expanded .terminal-host {
-      height: 100%;
-      min-height: 0;
-    }
-
-    /* Fullscreen pins the panel to the layout-viewport top (--app-top is 0 with
-       the keyboard closed), so the floating corner button must clear the status
-       bar / notch or it sits under the Dynamic Island and can't be tapped. */
-    .terminal-panel.is-expanded .terminal-corner-actions {
-      top: calc(6px + env(safe-area-inset-top));
-    }
-  }
-</style>
+      {copyFallbackOpen ? (
+        <div className="terminal-paste-fallback">
+          <p className="terminal-paste-notice" role="status">
+            Clipboard unavailable — copy below.
+          </p>
+          <textarea
+            className="terminal-paste-input"
+            readOnly
+            aria-label="Copy text"
+            value={copyFallbackText}></textarea>
+          <div className="terminal-paste-actions">
+            <button type="button" className="terminal-key" onClick={() => dismissCopyFallback()}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {pasteFallbackOpen ? (
+        <div className="terminal-paste-fallback">
+          <p className="terminal-paste-notice" role="status">
+            {pasteNotice}
+          </p>
+          <textarea
+            className="terminal-paste-input"
+            aria-label="Paste text"
+            value={pasteFallbackText}
+            onChange={(event) => setPasteFallbackText(event.target.value)}></textarea>
+          <div className="terminal-paste-actions">
+            <button type="button" className="terminal-key" onClick={() => sendPasteFallback()}>
+              Send
+            </button>
+            <button type="button" className="terminal-key" onClick={() => cancelPasteFallback()}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <div data-testid="terminal-bottom-controls">
+        <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
+          {CONTROL_KEYS.map((key) => (
+            <button
+              key={key.label}
+              type="button"
+              className="terminal-key"
+              aria-label={key.ariaLabel}
+              onPointerDown={onToolbarPointerDown}
+              onClick={(event) => {
+                const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+                sendKey(consumeCtrl(key.data));
+                refocusTermIfOwned(ownedFocus);
+              }}>
+              {key.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`terminal-key${ctrlArmed ? " is-armed" : ""}`}
+            aria-label="Control modifier"
+            aria-pressed={ctrlArmed}
+            onPointerDown={onToolbarPointerDown}
+            onClick={(event) => {
+              const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+              toggleCtrl();
+              refocusTermIfOwned(ownedFocus);
+            }}>
+            Ctrl
+            {ctrlArmed ? (
+              <span className="terminal-key-armed-dot" aria-hidden="true"></span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className="terminal-key"
+            aria-label="Paste"
+            onPointerDown={onToolbarPointerDown}
+            onClick={(event) => {
+              const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+              void requestPaste(ownedFocus);
+            }}>
+            Paste
+          </button>
+          <button
+            type="button"
+            className="terminal-key"
+            aria-label="Hide keyboard"
+            onClick={() => {
+              (document.activeElement as HTMLElement | null)?.blur();
+            }}>
+            ⌄
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}

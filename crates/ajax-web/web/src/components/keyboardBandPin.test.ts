@@ -2,11 +2,17 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import taskTerminalSource from "./TaskTerminal.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../styles.css"), "utf8");
+
+function taskTerminalStylesSection(): string {
+  const start = stylesSource.indexOf("/* TaskTerminal");
+  const end = stylesSource.indexOf("/* TAILWIND THEME");
+  if (start < 0 || end <= start) return "";
+  return stylesSource.slice(start, end);
+}
 
 /** Exact height-based visualViewport band pin (flush above iOS keyboard). */
 const HEIGHT_PIN_TOP = /top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/;
@@ -66,8 +72,8 @@ describe("keyboard band height pin contract", () => {
 
   it("pins expanded terminal panel with visualViewport height (not 100lvh bottom)", () => {
     const rule =
-      taskTerminalSource.match(
-        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
+      taskTerminalStylesSection().match(
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
     expectHeightBandPin(rule);
   });
@@ -76,7 +82,7 @@ describe("keyboard band height pin contract", () => {
     for (const [name, source] of [
       ["styles.css", stylesSource],
       ["AppViewport.svelte", appViewportSource],
-      ["TaskTerminal.svelte", taskTerminalSource],
+      ["TaskTerminal styles", taskTerminalStylesSection()],
     ] as const) {
       expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
     }
@@ -84,8 +90,8 @@ describe("keyboard band height pin contract", () => {
 
   it("drops the fullscreen safe-area hotbar pad while the keyboard is open", () => {
     const ruleBody =
-      taskTerminalSource.match(
-        /:global\(html\.keyboard-open\)\s+\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{([^}]*)\}/,
+      taskTerminalStylesSection().match(
+        /html\.keyboard-open\s+\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     const body = stripCssComments(ruleBody);
     expect(body).toMatch(/padding-bottom:\s*6px/);

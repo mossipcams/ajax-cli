@@ -589,6 +589,13 @@ header .bar h1 {
 
   /* Inline terminal takes the leftover column height so the collapsed
      task-details line lands at the page bottom. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail > div:has([data-testid="task-terminal-panel"]) {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail .terminal-panel:not(.is-expanded) {
     flex: 1 1 0%;
     min-height: 0;
@@ -633,6 +640,13 @@ header .bar h1 {
   html.keyboard-open:not(.terminal-expanded) .task-detail .detail-header,
   html.keyboard-open:not(.terminal-expanded) .task-detail .interact-panel {
     flex: none;
+  }
+
+  html.keyboard-open:not(.terminal-expanded) .task-detail > div:has([data-testid="task-terminal-panel"]) {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
   }
 
   html.keyboard-open:not(.terminal-expanded) .task-detail .terminal-panel:not(.is-expanded) {
@@ -1327,6 +1341,372 @@ header .bar h1 {
 
 @media (max-width: 380px) {
   .sheet-card { padding: 18px; }
+}
+
+/* TaskTerminal ---------------------------------------------------------- */
+.terminal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.terminal-interaction-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  width: 100%;
+  background: #161616;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.terminal-interaction-wrap::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.terminal-host {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 120px;
+  overflow: hidden;
+  background: #161616;
+}
+
+.terminal-scroll-spacer {
+  width: 1px;
+  pointer-events: none;
+}
+
+.terminal-host .xterm,
+.terminal-host .xterm-viewport,
+.terminal-host .xterm-screen {
+  height: 100%;
+  background: #161616;
+}
+
+.terminal-host .xterm-viewport {
+  overflow: hidden !important;
+}
+
+.terminal-host textarea.xterm-helper-textarea {
+  position: absolute !important;
+  left: 0 !important;
+  top: auto !important;
+  bottom: 0 !important;
+  height: 44px !important;
+  width: 100% !important;
+  opacity: 0.01 !important;
+  clip-path: none !important;
+  -webkit-clip-path: none !important;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: transparent;
+  z-index: 1;
+}
+
+.terminal-paste-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-raised);
+}
+
+.terminal-paste-notice {
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+}
+
+.terminal-paste-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 16px;
+  resize: vertical;
+}
+
+.terminal-paste-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.terminal-copy-notice {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  z-index: 7;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Panel-scoped (not inside the scroll wrap) so selection Copy stays visible
+   next to expand instead of at 50% of tall scroll content. */
+.terminal-corner-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-copy-overlay {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+}
+
+.terminal-new-output {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  z-index: 6;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+}
+
+.terminal-expand-corner {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--paper) 72%, transparent);
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.terminal-expand-corner.is-armed {
+  background: var(--accent-deep);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.terminal-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+}
+
+.terminal-status.is-empty {
+  display: none;
+}
+
+.terminal-status-detail {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.terminal-status-reconnect {
+  min-height: 44px;
+  font-size: var(--text-label);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+
+.terminal-keys {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 2px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.terminal-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-key {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 1px 7px;
+  font-size: var(--text-label);
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+
+.terminal-keys .terminal-key {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 1px 5px;
+}
+
+.terminal-key.is-armed {
+  border-color: var(--warn);
+}
+
+.terminal-key-armed-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: middle;
+}
+
+@media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
+  .terminal-panel .terminal-interaction-wrap {
+    height: min(58vh, 560px);
+  }
+
+  .terminal-panel .terminal-host {
+    height: 100%;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  /* Inline terminal flex-fills the task column so the details line sits at
+     the page bottom. Same flex model keyboard-open uses, so opening the
+     keyboard only shrinks the band instead of switching layouts. */
+  .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+    height: auto;
+    flex: 1 1 0%;
+  }
+
+  .terminal-panel:not(.is-expanded) .terminal-host {
+    height: 100%;
+    min-height: 0;
+  }
+
+  [data-testid="terminal-bottom-controls"] {
+    flex: none;
+    width: 100%;
+  }
+
+  /* Inline hotbar sits mid-page (details line + nav below), no safe-area
+     pad; the fullscreen hotbar touches the screen edge and needs it. */
+  .terminal-keys {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    padding-bottom: 2px;
+  }
+
+  .terminal-panel.is-expanded .terminal-keys {
+    padding-bottom: max(2px, env(safe-area-inset-bottom));
+  }
+
+  .terminal-keys .terminal-key {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0;
+  }
+
+  html.keyboard-open .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+    height: auto;
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  html.keyboard-open .terminal-panel:not(.is-expanded) [data-testid="terminal-bottom-controls"] {
+    flex: none;
+  }
+
+  html.keyboard-open .terminal-keys {
+    padding-bottom: 6px;
+  }
+
+  /* Keyboard covers the home indicator, so the fullscreen safe-area pad is
+     dead space between the hotbar and the keyboard while it is open. */
+  html.keyboard-open .terminal-panel.is-expanded .terminal-keys {
+    padding-bottom: 6px;
+  }
+
+  html.terminal-expanded .terminal-panel.is-expanded {
+    position: fixed;
+    /* Height from --app-top / --app-height (visualViewport). */
+    top: var(--app-top, var(--app-band-top, 0px));
+    right: 0;
+    left: 0;
+    z-index: 45;
+    display: flex;
+    flex-direction: column;
+    height: var(--app-height, var(--app-band-height, 100dvh));
+    max-height: var(--app-height, var(--app-band-height, 100dvh));
+    min-height: 0;
+    margin-top: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    background: var(--paper);
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    border-radius: 0;
+  }
+
+  .terminal-panel.is-expanded .terminal-interaction-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  .terminal-panel.is-expanded [data-testid="terminal-bottom-controls"] {
+    flex: none;
+  }
+
+  .terminal-panel.is-expanded .terminal-host {
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* Fullscreen pins the panel to the layout-viewport top (--app-top is 0 with
+     the keyboard closed), so the floating corner button must clear the status
+     bar / notch or it sits under the Dynamic Island and can't be tapped. */
+  .terminal-panel.is-expanded .terminal-corner-actions {
+    top: calc(6px + env(safe-area-inset-top));
+  }
 }
 
 /* TAILWIND THEME ---------------------------------------------------------- */

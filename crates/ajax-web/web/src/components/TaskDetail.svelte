@@ -4,7 +4,8 @@
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
-  import TaskTerminal from "./TaskTerminal.svelte";
+  import ReactIsland from "../react/ReactIsland.svelte";
+  import TaskTerminal from "./TaskTerminal";
   import TestInDevPanel from "./TestInDevPanel.svelte";
 
   interface Props {
@@ -69,7 +70,7 @@
     {/if}
   </section>
 
-  <TaskTerminal handle={detail.qualified_handle} />
+  <ReactIsland component={TaskTerminal} props={{ handle: detail.qualified_handle }} />
 
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>
