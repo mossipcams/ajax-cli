@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { sheetDrag } from "./sheetDragAction";
+import { render } from "@testing-library/react";
+import { useRef } from "react";
+import { useSheetDrag } from "./useSheetDrag";
 
 function touch(type: string, clientY: number): Event {
   const event = new Event(type, { bubbles: true });
@@ -7,11 +9,23 @@ function touch(type: string, clientY: number): Event {
   return event;
 }
 
-describe("sheetDrag action", () => {
+function Harness({
+  onDismiss,
+  onOffset,
+}: {
+  onDismiss?: () => void;
+  onOffset?: (offset: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useSheetDrag(ref, { onDismiss: onDismiss ?? (() => {}), onOffset });
+  return <div ref={ref} />;
+}
+
+describe("useSheetDrag", () => {
   it("dismisses after a downward drag past the threshold", () => {
-    const node = document.createElement("div");
     const onDismiss = vi.fn();
-    sheetDrag(node, { onDismiss });
+    const { container } = render(<Harness onDismiss={onDismiss} />);
+    const node = container.querySelector("div")!;
 
     node.dispatchEvent(touch("touchstart", 0));
     node.dispatchEvent(touch("touchmove", 200));
@@ -21,10 +35,12 @@ describe("sheetDrag action", () => {
   });
 
   it("springs back (no dismiss) on a small drag and resets offset", () => {
-    const node = document.createElement("div");
     const onDismiss = vi.fn();
     const offsets: number[] = [];
-    sheetDrag(node, { onDismiss, onOffset: (o) => offsets.push(o) });
+    const { container } = render(
+      <Harness onDismiss={onDismiss} onOffset={(o) => offsets.push(o)} />,
+    );
+    const node = container.querySelector("div")!;
 
     node.dispatchEvent(touch("touchstart", 0));
     node.dispatchEvent(touch("touchmove", 20));

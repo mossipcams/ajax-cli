@@ -1178,6 +1178,157 @@ header .bar h1 {
   color: var(--ink-faint);
 }
 
+/* FULLSCREEN LAYER — fixed band pin for modals/sheets above the keyboard. */
+.fullscreen-layer {
+  position: fixed;
+  /* Same visualViewport height pin as task/app keyboard bands. */
+  top: var(--app-top, var(--app-band-top, 0px));
+  left: 0;
+  right: 0;
+  height: var(--app-height, var(--app-band-height, 100dvh));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* NEW TASK SHEET — bottom-rising modal inside FullscreenLayer's app band. */
+#new-task-sheet {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.sheet-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 22px;
+  width: min(440px, 100%);
+  max-height: calc(100% - 40px);
+  margin-bottom: max(8px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: sheet-rise 220ms var(--ease-spring);
+}
+
+/* Spring the card back to rest when a drag is released below threshold. */
+.sheet-card:not(.is-dragging) {
+  transition: transform 220ms var(--ease-spring);
+}
+
+/* Grabber — the touch target for drag-to-dismiss. */
+.sheet-grab {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 12px;
+  margin: -8px 0 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheet-grabber {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--rule-strong);
+}
+
+.sheet-card h2 {
+  margin: 0 0 16px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.sheet-card label,
+.sheet-card .field-label {
+  display: block;
+  margin-top: 14px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.sheet-card input,
+.sheet-card select {
+  width: 100%;
+  margin-top: 5px;
+  padding: 10px 12px;
+  font-size: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+}
+
+.sheet-card input:focus,
+.sheet-card select:focus {
+  outline: none;
+  border-color: var(--accent-bright);
+}
+
+/* Segmented agent picker — all choices visible, one tap, no dropdown scroll. */
+.agent-picker {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-option {
+  padding: 10px 12px;
+  font-size: var(--text-body);
+  font-weight: 600;
+  background: var(--paper);
+  color: var(--ink-muted);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+}
+
+.agent-option.is-selected {
+  background: var(--accent-deep);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.agent-option:focus-visible {
+  outline: none;
+  border-color: var(--accent-bright);
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.sheet-error {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: var(--text-label);
+}
+
+@keyframes sheet-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 380px) {
+  .sheet-card { padding: 18px; }
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

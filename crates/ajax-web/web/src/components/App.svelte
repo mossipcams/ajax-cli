@@ -14,7 +14,7 @@
   import TaskList from "./TaskList";
   import TaskDetail from "./TaskDetail.svelte";
   import SettingsView from "./SettingsView";
-  import NewTaskSheet from "./NewTaskSheet.svelte";
+  import NewTaskSheet from "./NewTaskSheet";
   import Skeleton from "./Skeleton";
   import AppViewport from "./AppViewport.svelte";
   import AppShell from "./AppShell.svelte";
@@ -372,13 +372,16 @@
   {/if}
 
   {#if sheetOpen}
-    <NewTaskSheet
-      repos={cockpit?.repos?.repos ?? []}
-      {selectedProject}
-      onClose={() => (sheetOpen = false)}
-      onCockpit={applyCockpit}
-      onResult={showResult}
-      onOpenTask={(handle) => go(taskHash(handle))}
+    <ReactIsland
+      component={NewTaskSheet}
+      props={{
+        repos: cockpit?.repos?.repos ?? [],
+        selectedProject,
+        onClose: () => (sheetOpen = false),
+        onCockpit: applyCockpit,
+        onResult: showResult,
+        onOpenTask: (handle: string) => go(taskHash(handle)),
+      }}
     />
   {/if}
 </AppViewport>

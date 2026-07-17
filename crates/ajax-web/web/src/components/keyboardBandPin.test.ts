@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import taskTerminalSource from "./TaskTerminal.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
-import fullscreenLayerSource from "./FullscreenLayer.svelte?raw";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../styles.css"), "utf8");
@@ -60,8 +59,7 @@ describe("keyboard band height pin contract", () => {
   });
 
   it("pins fullscreen layer with visualViewport height (not 100lvh bottom)", () => {
-    const rule =
-      fullscreenLayerSource.match(/\.fullscreen-layer\s*\{([^}]*)\}/)?.[1] ?? "";
+    const rule = stylesSource.match(/\.fullscreen-layer\s*\{([^}]*)\}/)?.[1] ?? "";
     // FullscreenLayer does not set max-height; height alone is enough.
     expectHeightBandPin(rule, { requireMaxHeight: false });
   });
@@ -78,7 +76,6 @@ describe("keyboard band height pin contract", () => {
     for (const [name, source] of [
       ["styles.css", stylesSource],
       ["AppViewport.svelte", appViewportSource],
-      ["FullscreenLayer.svelte", fullscreenLayerSource],
       ["TaskTerminal.svelte", taskTerminalSource],
     ] as const) {
       expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
