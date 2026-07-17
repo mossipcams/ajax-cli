@@ -551,11 +551,11 @@ test("printable, control, and navigation keys produce ordered PTY input", async 
   await page.keyboard.press("Enter");
 
   await toolbar.getByRole("button", { name: "Tab" }).click();
-  await toolbar.getByRole("button", { name: "Esc" }).click();
-  await toolbar.getByRole("button", { name: "←" }).click();
-  await toolbar.getByRole("button", { name: "↑" }).click();
-  await toolbar.getByRole("button", { name: "↓" }).click();
-  await toolbar.getByRole("button", { name: "→" }).click();
+  await toolbar.getByRole("button", { name: "Escape" }).click();
+  await toolbar.getByRole("button", { name: "Left arrow" }).click();
+  await toolbar.getByRole("button", { name: "Up arrow" }).click();
+  await toolbar.getByRole("button", { name: "Down arrow" }).click();
+  await toolbar.getByRole("button", { name: "Right arrow" }).click();
 
   await expect
     .poll(async () => {
@@ -588,7 +588,7 @@ async function settleNoNewFrames(
 
 test("held terminal back sends one left-arrow frame per activation", async ({ page }) => {
   await openTaskTerminal(page);
-  const back = terminalToolbar(page).getByRole("button", { name: "←" });
+  const back = terminalToolbar(page).getByRole("button", { name: "Left arrow" });
   const baseline = await inputFrameCount(page);
 
   await back.click({ delay: 550 });
@@ -1460,7 +1460,7 @@ test("keyboard activation does not reuse pointer focus ownership", async ({ page
   await openTaskTerminal(page);
   const toolbar = terminalToolbar(page);
   const tab = toolbar.getByRole("button", { name: "Tab" });
-  const esc = toolbar.getByRole("button", { name: "Esc" });
+  const esc = toolbar.getByRole("button", { name: "Escape" });
 
   await clickTerminalSurfaceInterior(page);
   await tab.click();
@@ -2539,14 +2539,14 @@ test("supported Ctrl toolbar combinations send exact control codes and disarm st
 
   const baseline = await inputFrameCount(page);
   const toolbar = terminalToolbar(page);
-  const ctrl = toolbar.getByRole("button", { name: /Ctrl/ });
+  const ctrl = toolbar.getByRole("button", { name: "Control modifier" });
 
-  await toolbar.getByRole("button", { name: "⌃C" }).click();
+  await toolbar.getByRole("button", { name: "Control C" }).click();
   await expect(ctrl).toHaveAttribute("aria-pressed", "false");
 
   await ctrl.click();
   await expect(ctrl).toHaveAttribute("aria-pressed", "true");
-  await toolbar.getByRole("button", { name: "←" }).click();
+  await toolbar.getByRole("button", { name: "Left arrow" }).click();
   await expect(ctrl).toHaveAttribute("aria-pressed", "false");
 
   await ctrl.click();
