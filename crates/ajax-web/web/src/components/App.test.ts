@@ -74,6 +74,17 @@ describe("App shell", () => {
     expect(container.querySelector("[data-testid='route-scroll']")).toBeInTheDocument();
   });
 
+  it("live-dot pulses only when connected", () => {
+    expect(appSource).toMatch(/class:is-live=\{connection === "connected"\}/);
+    const stylesSource = loadStylesSource();
+    expect(stylesSource).toMatch(
+      /\.live-dot\s*\{[^}]*background:\s*var\(--ink-faint\)/,
+    );
+    expect(stylesSource).toMatch(
+      /\.live-dot\.is-live\s*\{[^}]*animation:\s*pulse/,
+    );
+  });
+
   it("syncs --app-height from the visual viewport on mount", () => {
     vi.stubGlobal("visualViewport", {
       height: 712,

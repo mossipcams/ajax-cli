@@ -11,30 +11,43 @@
 :root {
   color-scheme: dark;
 
-  --paper: #161616;
-  --paper-tint: #1d1d1d;
-  --paper-raised: #242424;
-  --paper-high: #2d2d2d;
-
+  /* DESIGN.md colors — source of truth (CLI lockstep: ajax-tui xterm 110/179/174/108). */
+  --soft-charcoal: #161616;
+  --soft-charcoal-tint: #1d1d1d;
+  --soft-charcoal-raised: #242424;
+  --soft-charcoal-high: #2d2d2d;
   --ink: #e6e6e6;
   --ink-soft: #c6c6c6;
   --ink-muted: #a8a8a8; /* CLI text_data (xterm 248) */
   --ink-faint: #808080; /* CLI text_chrome (xterm 244) */
-
   --rule: #2a2a2a;
   --rule-strong: #454545;
+  --soft-steel-blue: #87afd7; /* primary / running (xterm 110) */
+  --soft-steel-blue-bright: #a3c6e8;
+  --soft-steel-blue-deep: #24384c;
+  --attention-amber: #d7af5f; /* warning / waiting (xterm 179) */
+  --attention-amber-bright: #e5c88a;
+  --fault-rose: #d78787; /* danger / error (xterm 174) */
+  --fault-rose-bright: #e3a5a5;
+  --fault-rose-deep: #5f3535;
+  --done-sage: #87af87; /* success / done (xterm 108) */
+  --done-sage-bright: #a5c8a5;
 
-  /* CLI cockpit accents — must stay in lockstep with ajax-tui/src/palette.rs */
-  --accent: #87afd7; /* primary / running (xterm 110) */
-  --accent-bright: #a3c6e8;
-  --accent-deep: #24384c;
-  --warn: #d7af5f; /* warning / waiting (xterm 179) */
-  --warn-bright: #e5c88a;
-  --danger: #d78787; /* danger / error (xterm 174) */
-  --danger-bright: #e3a5a5;
-  --danger-deep: #5f3535;
-  --ok: #87af87; /* success / done (xterm 108) */
-  --ok-bright: #a5c8a5;
+  /* Legacy role aliases — same values; prefer DESIGN.md names in new code. */
+  --paper: var(--soft-charcoal);
+  --paper-tint: var(--soft-charcoal-tint);
+  --paper-raised: var(--soft-charcoal-raised);
+  --paper-high: var(--soft-charcoal-high);
+  --accent: var(--soft-steel-blue);
+  --accent-bright: var(--soft-steel-blue-bright);
+  --accent-deep: var(--soft-steel-blue-deep);
+  --warn: var(--attention-amber);
+  --warn-bright: var(--attention-amber-bright);
+  --danger: var(--fault-rose);
+  --danger-bright: var(--fault-rose-bright);
+  --danger-deep: var(--fault-rose-deep);
+  --ok: var(--done-sage);
+  --ok-bright: var(--done-sage-bright);
 
   --sans: ui-sans-serif, "Avenir Next", "Helvetica Neue", system-ui,
     -apple-system, sans-serif;
@@ -226,8 +239,14 @@ header .bar h1 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--ink-faint);
   align-self: center;
+  box-shadow: none;
+}
+
+/* Pulse only when the fleet link is healthy — never while ConnectionStatus shouts. */
+.live-dot.is-live {
+  background: var(--accent);
   box-shadow: 0 0 0 0 rgba(135, 175, 215, 0.5);
   animation: pulse 2.4s ease-in-out infinite;
 }

@@ -93,7 +93,7 @@
   </div>
 
   <div class="settings-section" data-testid="dev-settings">
-    <h3>Dev settings</h3>
+    <h3>Diagnostics</h3>
 
     <h4 class="settings-subheading">Debug info</h4>
     <dl class="settings-debug" data-testid="dev-settings-debug">

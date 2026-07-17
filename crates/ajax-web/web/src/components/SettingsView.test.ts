@@ -63,10 +63,10 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders Dev settings debug info", () => {
+  it("renders Diagnostics debug info", () => {
     const { getByText, getByTestId } = render(SettingsView);
     expect(getByTestId("dev-settings")).toBeInTheDocument();
-    expect(getByText("Dev settings")).toBeInTheDocument();
+    expect(getByText("Diagnostics")).toBeInTheDocument();
   });
 
   it("shows live debug info with origin and app version", () => {
