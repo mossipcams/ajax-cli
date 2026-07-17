@@ -292,8 +292,22 @@ fn same_git_common_dir(repo_path: &Path, worktree_path: &Path) -> bool {
     }
 }
 
+/// `git` for probing an arbitrary worktree path. Clears the ambient git
+/// environment (`GIT_DIR` et al. are exported when this process runs inside a
+/// git hook, e.g. husky's pre-commit) so `-C <path>` discovery is honoured
+/// instead of silently resolving to the hook's repository — otherwise a path
+/// outside the worktrees tree validates as a real worktree.
+fn git_probe() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    cmd
+}
+
 fn git_common_dir(path: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
+    let output = git_probe()
         .args([
             "-C",
             path.to_str()?,
@@ -335,7 +349,7 @@ fn short_sha_from_last_commit(last_commit: &str) -> Option<String> {
 }
 
 fn git_short_sha(worktree: &Path) -> Option<String> {
-    let output = Command::new("git")
+    let output = git_probe()
         .args(["-C", worktree.to_str()?, "rev-parse", "--short=12", "HEAD"])
         .output()
         .ok()?;
@@ -347,7 +361,7 @@ fn git_short_sha(worktree: &Path) -> Option<String> {
 }
 
 fn worktree_is_dirty(worktree: &Path) -> bool {
-    let output = Command::new("git")
+    let output = git_probe()
         .args([
             "-C",
             worktree.to_str().unwrap_or(""),
