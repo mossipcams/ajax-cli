@@ -7,7 +7,7 @@ use crate::{
         server, tls,
     },
     slices::actions::supported_web_action,
-    slices::{cockpit, install},
+    slices::{cockpit, dev_deploy, install},
     WebError,
 };
 use ajax_core::{
@@ -29,9 +29,12 @@ use axum::{
 use serde::Deserialize;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
+    io::{BufRead, BufReader},
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
+    process::{Command as ProcessCommand, Stdio},
     sync::{Arc, Mutex},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -57,6 +60,7 @@ pub struct WebAppState<C, B> {
     browser_session: Arc<BrowserSession>,
     cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
     last_browser_cockpit_at: Arc<Mutex<Option<Instant>>>,
+    dev_deploy: Arc<dev_deploy::SharedDevDeploySlot>,
 }
 
 struct WebSharedState<C, B> {
@@ -84,6 +88,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             browser_session: Arc::clone(&self.browser_session),
             cloudflare_access: Arc::clone(&self.cloudflare_access),
             last_browser_cockpit_at: Arc::clone(&self.last_browser_cockpit_at),
+            dev_deploy: Arc::clone(&self.dev_deploy),
         }
     }
 }
@@ -167,6 +172,7 @@ impl<C, B> WebAppState<C, B> {
             browser_session: Arc::new(BrowserSession::test_default()),
             cloudflare_access: Arc::new(None),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
+            dev_deploy: Arc::new(Mutex::new(dev_deploy::DevDeploySlot::default())),
         }
     }
 
@@ -214,6 +220,7 @@ impl<C, B> WebAppState<C, B> {
             browser_session: Arc::new(browser_session),
             cloudflare_access: Arc::new(cloudflare_access),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
+            dev_deploy: Arc::new(Mutex::new(dev_deploy::DevDeploySlot::default())),
         })
     }
 
@@ -346,6 +353,7 @@ where
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
+        .route("/api/dev-deploy", get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
@@ -585,6 +593,196 @@ fn handle_server_restart() -> Response {
         status_code: 200,
         content_type: "application/json; charset=utf-8",
         body: br#"{"ok":true,"restarting":true}"#.to_vec(),
+    }
+}
+
+#[derive(Deserialize)]
+struct DevDeployRequest {
+    task_handle: String,
+}
+
+async fn axum_dev_deploy_status<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let status = dev_deploy::lock_slot(&state.dev_deploy).status();
+    json_value_response(200, serde_json::json!({ "ok": true, "deploy": status }))
+}
+
+async fn axum_dev_deploy_start<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    handle_dev_deploy_start(&state, &body).into_axum_response()
+}
+
+fn handle_dev_deploy_start<C, B>(state: &WebAppState<C, B>, body: &[u8]) -> Response
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let request: DevDeployRequest = match serde_json::from_slice(body) {
+        Ok(request) => request,
+        Err(_) => {
+            return json_response(
+                400,
+                serde_json::json!({ "ok": false, "error": "invalid JSON body" }),
+            )
+            .unwrap_or_else(|error| response_from_web_error(error, None));
+        }
+    };
+
+    let source = {
+        let guard = state.shared();
+        match dev_deploy::resolve_ajax_dev_deploy_source(&guard.context, &request.task_handle) {
+            Ok(source) => source,
+            Err(error) => {
+                let status = match &error {
+                    dev_deploy::DevDeployError::Busy => 409,
+                    dev_deploy::DevDeployError::TaskNotFound(_) => 404,
+                    _ => 400,
+                };
+                return json_response(
+                    status,
+                    serde_json::json!({ "ok": false, "error": error.to_string() }),
+                )
+                .unwrap_or_else(|error| response_from_web_error(error, None));
+            }
+        }
+    };
+
+    let script = match dev_deploy::resolve_restart_script(&source.worktree_path) {
+        Ok(script) => script,
+        Err(error) => {
+            return json_response(
+                500,
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            )
+            .unwrap_or_else(|error| response_from_web_error(error, None));
+        }
+    };
+
+    {
+        let mut slot = dev_deploy::lock_slot(&state.dev_deploy);
+        if let Err(error) = slot.begin(&source) {
+            let status = if matches!(error, dev_deploy::DevDeployError::Busy) {
+                409
+            } else {
+                400
+            };
+            return json_response(
+                status,
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            )
+            .unwrap_or_else(|error| response_from_web_error(error, None));
+        }
+    }
+
+    let slot = Arc::clone(&state.dev_deploy);
+    let worktree = source.worktree_path.clone();
+    thread::spawn(move || {
+        run_test_in_dev_job(slot, script, source, worktree);
+    });
+
+    let status = dev_deploy::lock_slot(&state.dev_deploy).status();
+    json_response(
+        202,
+        serde_json::json!({
+            "ok": true,
+            "deploy": status,
+            "message": "Test in Dev started for the shared Ajax Dev slot"
+        }),
+    )
+    .unwrap_or_else(|error| response_from_web_error(error, None))
+}
+
+fn run_test_in_dev_job(
+    slot: Arc<dev_deploy::SharedDevDeploySlot>,
+    script: PathBuf,
+    source: dev_deploy::DevDeploySource,
+    worktree: PathBuf,
+) {
+    let mut child = match ProcessCommand::new(&script)
+        .args(dev_deploy::test_in_dev_command_args(&worktree))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            dev_deploy::lock_slot(&slot)
+                .set_failed(format!("could not spawn restart script: {error}"));
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let slot_for_stdout = Arc::clone(&slot);
+    let stdout_thread = stdout.map(|stdout| {
+        thread::spawn(move || {
+            let mut log = String::new();
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.contains("AJAX_DEV_DEPLOY_PHASE=restarting") {
+                    dev_deploy::lock_slot(&slot_for_stdout).set_restarting();
+                }
+                log.push_str(&line);
+                log.push('\n');
+            }
+            log
+        })
+    });
+    let stderr_thread = stderr.map(|stderr| {
+        thread::spawn(move || {
+            let mut log = String::new();
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                log.push_str(&line);
+                log.push('\n');
+            }
+            log
+        })
+    });
+
+    let status = child.wait();
+    let stdout_log = stdout_thread
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let stderr_log = stderr_thread
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let combined = format!("{stdout_log}{stderr_log}");
+
+    match status {
+        Ok(status) if status.success() => {
+            dev_deploy::lock_slot(&slot).set_ready(&source);
+        }
+        Ok(status) => {
+            let tail = combined
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let message = if tail.is_empty() {
+                format!("dev deploy failed with status {status}")
+            } else {
+                format!("dev deploy failed with status {status}\n{tail}")
+            };
+            // Build/restart failure leaves the previous running instance (script
+            // restores the prior slot binary when restart fails after install).
+            dev_deploy::lock_slot(&slot).set_failed(message);
+        }
+        Err(error) => {
+            dev_deploy::lock_slot(&slot).set_failed(format!("dev deploy wait failed: {error}"));
+        }
     }
 }
 
@@ -1467,6 +1665,8 @@ mod tests {
             ("GET", "/api/cockpit"),
             ("GET", "/api/version"),
             ("POST", "/api/server/restart"),
+            ("GET", "/api/dev-deploy"),
+            ("POST", "/api/dev-deploy"),
             ("POST", "/api/operations"),
             ("POST", "/api/tasks"),
             ("GET", "/api/tasks/web%2Ffix-login"),
@@ -2636,6 +2836,68 @@ mod tests {
         let body = json_of(response).await;
         assert_eq!(body["ok"], true);
         assert_eq!(body["restarting"], true);
+    }
+
+    #[tokio::test]
+    async fn dev_deploy_status_and_reject_non_ajax_paths() {
+        use ajax_core::{
+            config::ManagedRepo,
+            models::{AgentClient, Task, TaskId},
+            registry::Registry as _,
+        };
+
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(Task::new(
+                TaskId::new("autosnooze/other"),
+                "autosnooze",
+                "other",
+                "Other",
+                "feat/other",
+                "main",
+                "/tmp/other",
+                "ajax-autosnooze-other",
+                "task",
+                AgentClient::Codex,
+            ))
+            .unwrap();
+        let context = CommandContext::new(
+            Config {
+                repos: vec![
+                    ManagedRepo::new("ajax-cli", "/Users/matt/Desktop/Projects/ajax-cli", "main"),
+                    ManagedRepo::new("autosnooze", "/tmp/autosnooze", "main"),
+                ],
+                ..Config::default()
+            },
+            registry,
+        );
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "dev-deploy");
+
+        let status = get(&app, &cookie, "/api/dev-deploy").await;
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_body = json_of(status).await;
+        assert_eq!(status_body["ok"], true);
+        assert_eq!(status_body["deploy"]["shared_slot"], true);
+        assert_eq!(
+            status_body["deploy"]["open_url"],
+            "https://ajaxdev.mossyhome.net:8788"
+        );
+        assert_eq!(status_body["deploy"]["phase"], "ready_to_deploy");
+
+        let rejected = post_json(
+            &app,
+            &cookie,
+            "/api/dev-deploy",
+            r#"{"task_handle":"autosnooze/other"}"#,
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        let rejected_body = json_of(rejected).await;
+        assert_eq!(rejected_body["ok"], false);
+        assert!(rejected_body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ajax-cli"));
     }
 
     #[tokio::test]
