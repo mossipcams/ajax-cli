@@ -1,6 +1,6 @@
 # Ajax Web: Svelte → React + TypeScript + shadcn/ui Migration Blueprint
 
-Status: S1 open for review.
+Status: S2 open for review.
 Grounded against: branch `ajax/react-migration`, forked from `main` @ `c547918` (0.50.0), 2026-07-17.
 Orchestrator: GPT-5.6 Sol (see §13). Implementation: delegated per slice via `model-router` → `tdd-implementation-packet` per `AGENTS.md`.
 
@@ -414,8 +414,8 @@ You orchestrate; you do not implement. Per `AGENTS.md`: model-router chooses the
 
 | Slice | Name | Status | PR | Validated | Approved behavior deltas |
 |---|---|---|---|---|---|
-| S1 | Foundation + ConnectionStatus/Skeleton | open | #571 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s1.md` |
-| S2 | Dashboard (TaskList + ActionBar) | not-started | — | — | — |
+| S1 | Foundation + ConnectionStatus/Skeleton | merged | #571 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s1.md` |
+| S2 | Dashboard (TaskList + ActionBar) | open | #573 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
 | S3 | Settings + ResultPanel | not-started | — | — | — |
 | S4 | New-task sheet + FullscreenLayer | not-started | — | — | — |
 | S5 | Terminal (TaskTerminal) | not-started | — | — | — |

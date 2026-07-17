@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { swipeReveal } from "./swipeRevealAction";
-import { SWIPE_REVEAL_WIDTH } from "./swipeReveal";
+import { render } from "@testing-library/react";
+import { useRef } from "react";
+import { useSwipeReveal } from "./useSwipeReveal";
+import { SWIPE_REVEAL_WIDTH } from "../gestures/swipeReveal";
 
 function touch(type: string, clientX: number, clientY: number): Event {
   const event = new Event(type, { bubbles: true });
@@ -8,12 +10,24 @@ function touch(type: string, clientX: number, clientY: number): Event {
   return event;
 }
 
-describe("swipeReveal action", () => {
+function Harness({
+  onOffset,
+  onOpenChange,
+}: {
+  onOffset?: (offset: number) => void;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useSwipeReveal(ref, { onOffset, onOpenChange });
+  return <button ref={ref} type="button" />;
+}
+
+describe("useSwipeReveal", () => {
   it("reports a settled-open offset after a horizontal left swipe", () => {
-    const node = document.createElement("div");
     const onOffset = vi.fn();
     const onOpenChange = vi.fn();
-    swipeReveal(node, { onOffset, onOpenChange });
+    const { container } = render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
+    const node = container.querySelector("button")!;
 
     node.dispatchEvent(touch("touchstart", 200, 100));
     node.dispatchEvent(touch("touchmove", 80, 100));
@@ -24,10 +38,10 @@ describe("swipeReveal action", () => {
   });
 
   it("settles closed when the swipe is mostly vertical", () => {
-    const node = document.createElement("div");
     const onOpenChange = vi.fn();
     const onOffset = vi.fn();
-    swipeReveal(node, { onOffset, onOpenChange });
+    const { container } = render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
+    const node = container.querySelector("button")!;
 
     node.dispatchEvent(touch("touchstart", 200, 100));
     node.dispatchEvent(touch("touchmove", 180, 260));

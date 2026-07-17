@@ -11,7 +11,7 @@
   import ReactIsland from "../react/ReactIsland.svelte";
   import ConnectionStatus from "./ConnectionStatus";
   import ResultPanel from "./ResultPanel.svelte";
-  import TaskList from "./TaskList.svelte";
+  import TaskList from "./TaskList";
   import TaskDetail from "./TaskDetail.svelte";
   import SettingsView from "./SettingsView.svelte";
   import NewTaskSheet from "./NewTaskSheet.svelte";
@@ -318,14 +318,18 @@
               <span class="pull-spinner"></span>
             </div>
             {#if cockpit}
-              <TaskList
-                {cockpit}
-                {selectedProject}
-                onSelectProject={(project) => go(project ? projectHash(project) : dashboardHash())}
-                onOpenTask={(handle) => go(taskHash(handle))}
-                onCockpit={applyCockpit}
-                onResult={showResult}
-                onMutated={() => loadCockpit()}
+              <ReactIsland
+                component={TaskList}
+                props={{
+                  cockpit,
+                  selectedProject,
+                  onSelectProject: (project: string | null) =>
+                    go(project ? projectHash(project) : dashboardHash()),
+                  onOpenTask: (handle: string) => go(taskHash(handle)),
+                  onCockpit: applyCockpit,
+                  onResult: showResult,
+                  onMutated: () => loadCockpit(),
+                }}
               />
             {:else}
               <ReactIsland component={Skeleton} props={{ testid: "dashboard-skeleton", rows: 4 }} />
