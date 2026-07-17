@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.48.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.10...ajax-cli-v0.48.0) (2026-07-17)
+
+
+### Features
+
+* **web:** typeset Cockpit ramp and harden Drop undo ([#561](https://github.com/mossipcams/ajax-cli/issues/561)) ([575aef6](https://github.com/mossipcams/ajax-cli/commit/575aef631e1bf66ca123bc268f6093a3bf0ab6af))
+
 ## [0.47.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.9...ajax-cli-v0.47.10) (2026-07-17)
 
 
