@@ -5,6 +5,7 @@
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
   import TaskTerminal from "./TaskTerminal.svelte";
+  import TestInDevPanel from "./TestInDevPanel.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -62,6 +63,9 @@
         {onMutated}
         {onDismiss}
       />
+    {/if}
+    {#if detail.repo === "ajax-cli"}
+      <TestInDevPanel taskHandle={detail.qualified_handle} {onResult} />
     {/if}
   </section>
 

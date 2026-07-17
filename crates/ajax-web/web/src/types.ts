@@ -136,3 +136,36 @@ export interface OperationResponse {
 export interface VersionResponse {
   version: string;
 }
+
+export type DevDeployPhase =
+  | "ready_to_deploy"
+  | "building"
+  | "restarting"
+  | "dev_ready"
+  | "failed";
+
+export interface DevSlotOccupant {
+  task_handle: string;
+  title: string;
+  branch: string;
+  commit_sha: string;
+  dirty: boolean;
+  deployed_at_unix_secs: number;
+}
+
+export interface DevDeployStatus {
+  phase: DevDeployPhase;
+  phase_label: string;
+  shared_slot: boolean;
+  open_url: string;
+  active: boolean;
+  error?: string | null;
+  occupant?: DevSlotOccupant | null;
+}
+
+export interface DevDeployResponse {
+  ok: boolean;
+  deploy: DevDeployStatus;
+  message?: string;
+  error?: string;
+}

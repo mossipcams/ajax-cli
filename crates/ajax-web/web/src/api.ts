@@ -12,6 +12,7 @@ import { RESTART_POLL_MS, RESTART_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
   BrowserTaskDetail,
+  DevDeployResponse,
   OperationRequest,
   OperationResponse,
   StartTaskRequest,
@@ -242,6 +243,26 @@ export async function restartServer(): Promise<OperationResponse> {
     throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
   }
   return payload;
+}
+
+export async function fetchDevDeploy(): Promise<DevDeployResponse> {
+  const value = await getJson("/api/dev-deploy");
+  return value as DevDeployResponse;
+}
+
+export async function startDevDeploy(taskHandle: string): Promise<DevDeployResponse> {
+  const { response, payload } = await postJson("/api/dev-deploy", {
+    task_handle: taskHandle,
+  });
+  const body = payload as DevDeployResponse;
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      body.error || `HTTP ${response.status}`,
+      response.status,
+    );
+  }
+  return body;
 }
 
 export function taskTerminalWebSocketUrl(handle: string, seedHistory = true): string {

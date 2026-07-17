@@ -2,7 +2,7 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 4] = ["cockpit", "install", "operate", "terminal"];
+    const SLICES: [&str; 5] = ["cockpit", "dev_deploy", "install", "operate", "terminal"];
     const ADAPTERS: [&str; 8] = [
         "assets",
         "browser_session",
