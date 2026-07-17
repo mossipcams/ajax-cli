@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.49.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.48.0...ajax-cli-v0.49.0) (2026-07-17)
+
+
+### Features
+
+* **web:** polish Cockpit alignment and lock DESIGN.md colors ([#563](https://github.com/mossipcams/ajax-cli/issues/563)) ([5ae780f](https://github.com/mossipcams/ajax-cli/commit/5ae780f773934f628e4c1f1dc2b20c70186879f4))
+
 ## [0.48.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.10...ajax-cli-v0.48.0) (2026-07-17)
 
 
