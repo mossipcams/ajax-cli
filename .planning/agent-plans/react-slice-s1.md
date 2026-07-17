@@ -56,7 +56,7 @@ Delegation decision: delegated via model-router.
   - Implement: none when green. Any fix requires a new focused failing-test task and another approval checkpoint.
   - Verify in order: `npm run web:build`; service-worker grep; `npm run web:check`; `npm run web:test -- --run`; `npm run web:build:check`; `npm run web:smoke`; `cargo nextest run -p ajax-web`; `npm run verify`; and, if hooks did not already do so, `cargo build --release -p ajax-cli` plus `cargo install --path crates/ajax-cli --locked --force`.
 
-- [ ] **Task 6 — shared-dev and real-iPhone validation (manual gate).**
+- [x] **Task 6 — shared-dev and real-iPhone validation (manual gate).**
   - Test: deploy this worktree with `scripts/dev-web-restart.sh --worktree /Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-react-migration`, confirm the restart marker and changed `/api/version`, then execute the S1 phone checklist.
   - Implement: none; failures route back to a focused test-first delegated task.
   - Verify: backend-unreachable banner/Retry recovery, banner and skeleton parity against stable `:8787`, and 20 dashboard/settings navigations without console errors.
@@ -165,4 +165,5 @@ Delegation decision: delegated via model-router.
   - `npm run verify`: fmt/check/clippy clean, **1628 Rust tests passed**, doctests pass, web:check clean, web:test **319 passed** (jsdom xterm `getContext` warnings are the known non-fatal WebGL probe).
   - `cargo build --release -p ajax-cli` (exit 0); `cargo install --path crates/ajax-cli --locked --force` (exit 0; replaced global binary; `num-bigint` yanked-in-lockfile warning is informational, install succeeded under `--locked`).
 - NOTE — Task 5's build leaves `dist/app.js` + `dist/app.css` genuinely modified: the shippable bundle now contains the React island seam (`createRoot`/`flushSync`, 3 hits) and Tailwind `@layer utilities` (1), still 0 `serviceWorker`. Left as-built for the Task 7 PR (Rust embed contract requires the rebuilt bundle); no restore this time.
-- BLOCKED-ON-USER — Task 6 (real-iPhone shared-dev gate) and Task 7 (PR/CI/merge) require Matt: on-device S1 checklist, then PR creation/CI/merge/baseline-restore.
+- PASS — **Task 6 on-device gate (Matt, 2026-07-17):** dev worktree deployed via `scripts/dev-web-restart.sh --worktree …`; restart marker and changed `/api/version` confirmed; backend-unreachable banner + Retry recovery green; banner and skeleton visual parity vs stable `:8787`; 20× dashboard↔settings navigation with no console errors.
+- IN-PROGRESS — Task 7: PR opened; CI/review/merge/baseline-restore pending.
