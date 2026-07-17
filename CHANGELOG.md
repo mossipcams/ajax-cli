@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.0...ajax-cli-v0.50.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **web:** clear fullscreen terminal expand button below the notch ([#569](https://github.com/mossipcams/ajax-cli/issues/569)) ([0e61c99](https://github.com/mossipcams/ajax-cli/commit/0e61c9954e3c080b1945fe7fd8c643206e634317))
+* **web:** don't inherit ambient GIT_DIR in dev-deploy git probes ([#568](https://github.com/mossipcams/ajax-cli/issues/568)) ([b633ff3](https://github.com/mossipcams/ajax-cli/commit/b633ff3a646591c9b06f542c9a2d7299156030b2))
+
 ## [0.50.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.49.0...ajax-cli-v0.50.0) (2026-07-17)
 
 
