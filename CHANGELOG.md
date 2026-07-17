@@ -2,6 +2,20 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.9...ajax-cli-v0.47.10) (2026-07-17)
+
+
+### Bug Fixes
+
+* **web:** ship rebuilt dist for fullscreen hotbar keyboard gap ([#559](https://github.com/mossipcams/ajax-cli/issues/559)) ([cc527cd](https://github.com/mossipcams/ajax-cli/commit/cc527cd40e689f772db7b05e4562f313fe036e48))
+
+## [0.47.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.8...ajax-cli-v0.47.9) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** drop fullscreen safe-area hotbar pad while the keyboard is open ([#557](https://github.com/mossipcams/ajax-cli/issues/557)) ([7fe16a5](https://github.com/mossipcams/ajax-cli/commit/7fe16a54a49170cce71d7d2f127c8a0125a02d11))
+
 ## [0.47.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.7...ajax-cli-v0.47.8) (2026-07-16)
 
 

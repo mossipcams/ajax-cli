@@ -84,4 +84,22 @@ describe("keyboard band height pin contract", () => {
       expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
     }
   });
+
+  it("drops the fullscreen safe-area hotbar pad while the keyboard is open", () => {
+    const ruleBody =
+      taskTerminalSource.match(
+        /:global\(html\.keyboard-open\)\s+\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const body = stripCssComments(ruleBody);
+    expect(body).toMatch(/padding-bottom:\s*6px/);
+    expect(body).not.toMatch(/env\(safe-area-inset-bottom\)/);
+  });
+
+  // Embedded shell is dist/app.css (include_bytes!), not the .svelte source.
+  it("ships the expanded keyboard-open hotbar pad override in dist/app.css", () => {
+    const distCss = readFileSync(join(here, "../../dist/app.css"), "utf8");
+    expect(distCss).toMatch(
+      /html\.keyboard-open\s+\.terminal-panel\.is-expanded[^{]*\.terminal-keys[^{]*\{[^}]*padding-bottom:6px/,
+    );
+  });
 });

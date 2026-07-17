@@ -1543,6 +1543,12 @@
       padding-bottom: 6px;
     }
 
+    /* Keyboard covers the home indicator, so the fullscreen safe-area pad is
+       dead space between the hotbar and the keyboard while it is open. */
+    :global(html.keyboard-open) .terminal-panel.is-expanded .terminal-keys {
+      padding-bottom: 6px;
+    }
+
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
       /* Height from --app-top / --app-height (visualViewport). */
