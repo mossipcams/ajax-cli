@@ -94,7 +94,10 @@ impl std::fmt::Display for DevDeployError {
         match self {
             Self::TaskNotFound(handle) => write!(f, "task not found: {handle}"),
             Self::NotAjaxRepo { repo } => {
-                write!(f, "Test in Dev is only available for {AJAX_SELF_REPO} tasks (got {repo})")
+                write!(
+                    f,
+                    "Test in Dev is only available for {AJAX_SELF_REPO} tasks (got {repo})"
+                )
             }
             Self::RepoNotConfigured => {
                 write!(f, "{AJAX_SELF_REPO} is not configured in this Ajax runtime")
@@ -189,7 +192,8 @@ impl DevDeploySlot {
 pub type SharedDevDeploySlot = Mutex<DevDeploySlot>;
 
 pub fn lock_slot(slot: &SharedDevDeploySlot) -> MutexGuard<'_, DevDeploySlot> {
-    slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    slot.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Resolve a trusted Ajax-managed ajax-cli worktree from registry state.
@@ -282,10 +286,7 @@ fn legacy_worktrees_root(repo_path: &Path) -> PathBuf {
 }
 
 fn same_git_common_dir(repo_path: &Path, worktree_path: &Path) -> bool {
-    match (
-        git_common_dir(repo_path),
-        git_common_dir(worktree_path),
-    ) {
+    match (git_common_dir(repo_path), git_common_dir(worktree_path)) {
         (Some(left), Some(right)) => left == right,
         _ => false,
     }
@@ -347,7 +348,12 @@ fn git_short_sha(worktree: &Path) -> Option<String> {
 
 fn worktree_is_dirty(worktree: &Path) -> bool {
     let output = Command::new("git")
-        .args(["-C", worktree.to_str().unwrap_or(""), "status", "--porcelain"])
+        .args([
+            "-C",
+            worktree.to_str().unwrap_or(""),
+            "status",
+            "--porcelain",
+        ])
         .output();
     match output {
         Ok(output) if output.status.success() => !output.stdout.is_empty(),
@@ -619,14 +625,15 @@ mod tests {
 
     #[test]
     fn resolve_rejects_path_outside_ajax_worktrees_even_if_directory_exists() {
-        let scratch = std::env::temp_dir().join(format!(
-            "ajax-dev-deploy-reject-{}",
-            std::process::id()
-        ));
+        let scratch =
+            std::env::temp_dir().join(format!("ajax-dev-deploy-reject-{}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
         fs::create_dir_all(&scratch).unwrap();
         let task = ajax_task(scratch.clone());
-        let context = context_with(vec![task], PathBuf::from("/Users/matt/Desktop/Projects/ajax-cli"));
+        let context = context_with(
+            vec![task],
+            PathBuf::from("/Users/matt/Desktop/Projects/ajax-cli"),
+        );
         let err = resolve_ajax_dev_deploy_source(&context, "ajax-cli/test-in-dev").unwrap_err();
         assert!(
             matches!(err, DevDeployError::WorktreeNotManaged { .. }),

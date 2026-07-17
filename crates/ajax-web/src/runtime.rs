@@ -353,7 +353,10 @@ where
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
-        .route("/api/dev-deploy", get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>))
+        .route(
+            "/api/dev-deploy",
+            get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>),
+        )
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
