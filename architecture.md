@@ -313,6 +313,19 @@ that require rediscovery. Native Cockpit uses in-memory context and saves on
 change; web reloads SQLite only when the state file mtime advances or after a
 mutating operation persisted to disk.
 
+`refresh_runtime_context_with_tier` also observes GitHub PR checks through
+`CommandRunner` and `adapters::github::GithubChecksAdapter`. The adapter runs
+`gh pr checks --json name,state,link`. Failed checks reduce to
+`LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from
+local `check failed` evidence.
+Passing checks clear only GitHub-sourced CI evidence. Probes are rate-limited
+by the per-task `ci_checks_probed_at` metadata timestamp, using a fixed
+300-second interval shared by Live and Full tiers. Unobservable probes
+(missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
+never project the task to Error. Notification dedup keys on canonical
+`status|explanation`, so distinct error reasons re-fire while identical
+evidence stays deduped.
+
 ### Live Status
 
 `live.rs` reduces observations into live-status classifications.
@@ -365,6 +378,14 @@ accepted and becomes visible normally. Acknowledgment never clears failures,
 missing substrate, flags, agent state, or live status, and it never fabricates
 shell/process state. Reviewable and mergeable lifecycle also remain intact so
 their valid Review or Ship capabilities survive acknowledgment.
+
+Web Cockpit terminal input is a second attention acknowledgment source. The PTY
+adapter (`ajax-web::adapters::terminal_pty`) reports only validated input
+frames, binary or JSON `input`, through an injected sink; it never mutates
+registry or core state. The runtime bridge
+(`RuntimeBridge::acknowledge_operator_input`, implemented by the CLI backend)
+calls core `mark_task_opened_at` and persists, coalescing per episode by
+re-acknowledging only when live evidence is newer than the last acknowledgment.
 
 Agent-deck inspired this status model, but Ajax retains its own lifecycle,
 substrate, task-operation, and operator-projection boundaries.

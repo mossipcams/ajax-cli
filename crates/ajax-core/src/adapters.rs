@@ -2,6 +2,7 @@ pub mod agent;
 pub mod command;
 pub mod environment;
 pub mod git;
+pub mod github;
 pub mod process;
 pub mod tmux;
 
@@ -11,6 +12,7 @@ pub use command::{
 };
 pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
 pub use git::GitAdapter;
+pub use github::{CiChecksObservation, GithubChecksAdapter};
 pub use process::ProcessCommandRunner;
 pub use tmux::TmuxAdapter;
 

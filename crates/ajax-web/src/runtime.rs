@@ -238,6 +238,39 @@ impl<C, B> WebAppState<C, B> {
     }
 }
 
+/// Construct the per-attach terminal input acknowledgment sink. The sink
+/// locks shared state, split-borrows `context` and `bridge`, and calls
+/// `bridge.acknowledge_operator_input(context, task_handle)`. On `Ok(true)`
+/// it bumps `revision` (saturating) and clears `cockpit_cache` so the next
+/// cockpit fetch observes the acknowledgment. On `Ok(false)` or error,
+/// revision and cache are left untouched (errors are dropped: the terminal
+/// adapter must not propagate core failures back into the wire loop).
+pub fn operator_input_sink<C, B>(
+    state: &WebAppState<C, B>,
+    task_handle: String,
+) -> Arc<dyn Fn() + Send + Sync>
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    let state = state.clone();
+    Arc::new(move || {
+        let mut guard = state.shared();
+        let acknowledged = {
+            let WebSharedState {
+                context, bridge, ..
+            } = &mut *guard;
+            bridge
+                .acknowledge_operator_input(context, &task_handle)
+                .unwrap_or(false)
+        };
+        if acknowledged {
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+        }
+    })
+}
+
 #[derive(Default)]
 struct OperationCoordinator {
     completed: HashMap<String, Response>,
@@ -333,8 +366,8 @@ fn api_access_policy(method: &str, path: &str) -> ApiAccess {
 
 pub fn axum_app<C, B>(state: WebAppState<C, B>) -> Router
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     let session_state = state.clone();
     Router::new()
@@ -364,8 +397,8 @@ where
 
 pub fn serve_axum_web<C, B>(host: &str, port: u16, state: WebAppState<C, B>) -> Result<(), WebError>
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     let identity = tls::load_or_create_identity(&state.state_dir)?;
     let address = resolve_bind_address(host, port)?;
@@ -682,8 +715,8 @@ async fn axum_task_get<C, B>(
     req: AxumRequest,
 ) -> AxumResponse
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     if req.uri().path().ends_with("/terminal") {
         let Some(task_handle) = handle.strip_suffix("/terminal") else {
@@ -709,8 +742,8 @@ async fn axum_task_terminal<C, B>(
     req: AxumRequest,
 ) -> AxumResponse
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     if !req
         .headers()
@@ -744,6 +777,7 @@ where
     };
 
     let seed_history = crate::adapters::terminal_pty::seed_history_from_query(req.uri().query());
+    let on_operator_input = operator_input_sink(&state, plan.qualified_handle.clone());
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -751,8 +785,13 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan, seed_history)
-            .await;
+        crate::adapters::terminal_pty::bridge_task_terminal_socket(
+            socket,
+            plan,
+            seed_history,
+            on_operator_input,
+        )
+        .await;
     })
 }
 
@@ -959,6 +998,20 @@ pub trait RuntimeBridge<C: CommandRunner> {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
+
+    /// Acknowledge operator attention for `task_handle` (e.g. the operator typed
+    /// in the Web Cockpit terminal). Returns `true` when the acknowledgment
+    /// advanced the task state and so callers should invalidate any cached
+    /// cockpit projection; `Ok(false)` means no-ack (recently acknowledged, no
+    /// newer live evidence, etc.). Errors are dropped by the sink caller; the
+    /// default body preserves existing (pre-ack) behavior.
+    fn acknowledge_operator_input(
+        &mut self,
+        _context: &mut CommandContext<InMemoryRegistry>,
+        _task_handle: &str,
+    ) -> Result<bool, WebError> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -1101,6 +1154,8 @@ mod tests {
         refresh_calls: Arc<AtomicUsize>,
         refresh_entered: Option<Arc<Notify>>,
         refresh_release: Option<Arc<(Mutex<bool>, Condvar)>>,
+        acknowledge_calls: Arc<AtomicUsize>,
+        acknowledge_result: Result<bool, crate::WebError>,
     }
 
     impl Default for TestBridge {
@@ -1133,6 +1188,8 @@ mod tests {
                 refresh_calls: Arc::new(AtomicUsize::new(0)),
                 refresh_entered: None,
                 refresh_release: None,
+                acknowledge_calls: Arc::new(AtomicUsize::new(0)),
+                acknowledge_result: Ok(false),
             }
         }
     }
@@ -1219,6 +1276,15 @@ mod tests {
             wait_for_release(&self.start_release, call_index);
             self.start = Some(request);
             self.start_result.clone()
+        }
+
+        fn acknowledge_operator_input(
+            &mut self,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _task_handle: &str,
+        ) -> Result<bool, crate::WebError> {
+            self.acknowledge_calls.fetch_add(1, Ordering::SeqCst);
+            self.acknowledge_result.clone()
         }
     }
 
@@ -3093,5 +3159,79 @@ mod tests {
             1,
             "refresh state must be committed, not discarded by the racing mutation"
         );
+    }
+
+    fn state_with_bridge_and_task(bridge: TestBridge) -> super::WebAppState<OkRunner, TestBridge> {
+        super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            bridge,
+            scratch_dir("operator-input-sink"),
+        )
+    }
+
+    #[test]
+    fn operator_input_sink_calls_bridge_once_and_bumps_revision_and_clears_cache_when_acknowledged()
+    {
+        let bridge = TestBridge {
+            acknowledge_result: Ok(true),
+            ..TestBridge::default()
+        };
+        let acknowledge_calls = Arc::clone(&bridge.acknowledge_calls);
+        let state = state_with_bridge_and_task(bridge);
+        {
+            let mut guard = state.shared();
+            guard.cockpit_cache = Some(super::CockpitCacheEntry {
+                response: super::Response {
+                    status_code: 200,
+                    content_type: "application/json; charset=utf-8",
+                    body: Vec::new(),
+                },
+                cached_at: Instant::now(),
+                revision: 0,
+            });
+        }
+        let base_revision = state.shared().revision;
+
+        let sink = super::operator_input_sink(&state, "web/fix-login".to_string());
+        sink();
+        sink();
+
+        assert_eq!(acknowledge_calls.load(Ordering::SeqCst), 2);
+        let guard = state.shared();
+        assert_eq!(guard.revision, base_revision + 2);
+        assert!(guard.cockpit_cache.is_none());
+    }
+
+    #[test]
+    fn operator_input_sink_leaves_revision_and_cache_untouched_when_bridge_returns_false() {
+        let bridge = TestBridge {
+            acknowledge_result: Ok(false),
+            ..TestBridge::default()
+        };
+        let acknowledge_calls = Arc::clone(&bridge.acknowledge_calls);
+        let state = state_with_bridge_and_task(bridge);
+        {
+            let mut guard = state.shared();
+            guard.cockpit_cache = Some(super::CockpitCacheEntry {
+                response: super::Response {
+                    status_code: 200,
+                    content_type: "application/json; charset=utf-8",
+                    body: Vec::new(),
+                },
+                cached_at: Instant::now(),
+                revision: 0,
+            });
+        }
+        let base_revision = state.shared().revision;
+        let cache_was = state.shared().cockpit_cache.is_some();
+
+        let sink = super::operator_input_sink(&state, "web/fix-login".to_string());
+        sink();
+
+        assert_eq!(acknowledge_calls.load(Ordering::SeqCst), 1);
+        let guard = state.shared();
+        assert_eq!(guard.revision, base_revision);
+        assert_eq!(guard.cockpit_cache.is_some(), cache_was);
     }
 }

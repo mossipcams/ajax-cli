@@ -570,6 +570,23 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
     ]
 }
 
+/// Runtime refresh now ends with a GitHub PR check probe for the fixture
+/// task; sequence-asserting tests append this to `tmux_live_commands()`.
+fn expected_ci_probe_command() -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "checks",
+            "ajax/fix-login",
+            "--json",
+            "name,state,link",
+        ],
+    )
+    .with_cwd("/tmp/worktrees/web-fix-login")
+    .with_timeout(std::time::Duration::from_secs(30))
+}
+
 fn expected_new_task_open_command(session: &str) -> CommandSpec {
     CommandSpec::new("tmux", ["attach-session", "-t", session]).with_mode(CommandMode::InheritStdio)
 }
@@ -1102,7 +1119,9 @@ fn cockpit_json_refreshes_live_status_from_tmux() {
         "waiting for approval"
     );
     assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -1150,6 +1169,7 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
         first_refresh[1].clone(),
         first_refresh[2].clone(),
         output(0, ""),
+        output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#),
         second_refresh[0].clone(),
         second_refresh[1].clone(),
         second_refresh[2].clone(),
@@ -1202,6 +1222,7 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
         first_refresh[1].clone(),
         first_refresh[2].clone(),
         output(0, ""),
+        output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#),
         second_refresh[0].clone(),
         second_refresh[1].clone(),
         second_refresh[2].clone(),
@@ -1265,7 +1286,9 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
             .find(|line| line.starts_with("web/fix-login")),
         Some("web/fix-login\tRunning - Agent working\tFix login")
     );
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -1293,7 +1316,9 @@ fn status_command_refreshes_live_state_from_tmux() {
         .get_task(&TaskId::new("task-1"))
         .unwrap()
         .has_side_flag(SideFlag::NeedsInput));
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -1317,7 +1342,9 @@ fn status_command_renders_json_from_refreshed_live_state() {
         parsed["tasks"][0]["live_status"]["summary"],
         "agent running"
     );
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -1359,11 +1386,9 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
 
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
         assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
-        assert_eq!(
-            runner.commands,
-            tmux_probe_and_orphan_scan_commands(),
-            "{command:?}"
-        );
+        let mut expected = tmux_probe_and_orphan_scan_commands();
+        expected.push(expected_ci_probe_command());
+        assert_eq!(runner.commands, expected, "{command:?}");
     }
 }
 
@@ -1391,7 +1416,9 @@ fn read_commands_share_live_refresh_contract() {
             .unwrap_or_else(|error| panic!("{args:?} failed: {error}"));
 
         assert!(!output.is_empty(), "{args:?} should render a response");
-        assert_eq!(runner.commands, tmux_live_commands(), "{args:?}");
+        let mut expected = tmux_live_commands();
+        expected.push(expected_ci_probe_command());
+        assert_eq!(runner.commands, expected, "{args:?}");
     }
 }
 
@@ -1478,6 +1505,7 @@ fn read_refresh_failure_keeps_task_visible_with_missing_tmux_attention() {
                     "--porcelain"
                 ]
             ),
+            expected_ci_probe_command(),
         ]
     );
 }
@@ -1585,7 +1613,9 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
         Some("Waiting for approval")
     );
     assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -1775,6 +1805,19 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "--porcelain",
                 ],
             ),
+            expected_ci_probe_command(),
+            CommandSpec::new(
+                "gh",
+                [
+                    "pr",
+                    "checks",
+                    "ajax/fix-sidebar",
+                    "--json",
+                    "name,state,link",
+                ],
+            )
+            .with_cwd("/tmp/worktrees/web-fix-sidebar")
+            .with_timeout(std::time::Duration::from_secs(30)),
         ]
     );
 }
@@ -1801,7 +1844,14 @@ fn live_refresh_nonzero_window_listing_preserves_evidence_and_stops_before_pane_
 
     assert!(changed);
     let expected_commands = tmux_live_commands();
-    assert_eq!(runner.commands, expected_commands[..2]);
+    assert_eq!(
+        runner.commands,
+        vec![
+            expected_commands[0].clone(),
+            expected_commands[1].clone(),
+            expected_ci_probe_command(),
+        ]
+    );
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     assert!(task.task_window_status.is_none());
     assert_eq!(
@@ -1832,7 +1882,9 @@ fn live_refresh_nonzero_pane_capture_reports_probe_failure() {
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
     assert!(changed);
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
     assert!(task.live_status.is_none());
     assert_eq!(
         task.runtime_projection.observation_error.as_deref(),
@@ -1864,7 +1916,15 @@ fn live_refresh_updates_changed_tmux_status_before_window_failure() {
             .map(|status| status.session_name.as_str()),
         Some("ajax-web-fix-login")
     );
-    assert_eq!(runner.commands, tmux_live_commands()[..2]);
+    let expected_commands = tmux_live_commands();
+    assert_eq!(
+        runner.commands,
+        vec![
+            expected_commands[0].clone(),
+            expected_commands[1].clone(),
+            expected_ci_probe_command(),
+        ]
+    );
 }
 
 #[test]
@@ -1968,7 +2028,9 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
     assert!(changed);
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -2012,7 +2074,9 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
         .task_window_status
         .as_ref()
         .is_some_and(|status| status.points_at_expected_path));
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -2054,7 +2118,9 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
 
     assert!(changed);
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
-    assert_eq!(runner.commands, tmux_live_commands());
+    let mut expected = tmux_live_commands();
+    expected.push(expected_ci_probe_command());
+    assert_eq!(runner.commands, expected);
 }
 
 #[test]
@@ -5608,7 +5674,7 @@ fn repair_execute_failure_records_tests_failed_attention_without_lifecycle_corru
         task.live_status
             .as_ref()
             .map(|status| (status.kind, status.summary.as_str())),
-        Some((LiveStatusKind::CommandFailed, "check failed"))
+        Some((LiveStatusKind::CiFailed, "check failed"))
     );
 }
 

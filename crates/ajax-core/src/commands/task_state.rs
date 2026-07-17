@@ -46,7 +46,7 @@ pub(crate) fn mark_task_check_failed<R: Registry>(
     };
     task.add_side_flag(SideFlag::TestsFailed);
     task.live_status = Some(LiveObservation::new(
-        LiveStatusKind::CommandFailed,
+        LiveStatusKind::CiFailed,
         "check failed",
     ));
     Ok(())
@@ -61,7 +61,9 @@ pub(crate) fn mark_task_merged<R: Registry>(
     };
     task.remove_side_flag(SideFlag::Conflicted);
     if task.live_status.as_ref().is_some_and(|status| {
-        status.kind == LiveStatusKind::CommandFailed && status.summary == "merge failed"
+        (status.kind == LiveStatusKind::CommandFailed
+            || status.kind == LiveStatusKind::MergeConflict)
+            && status.summary == "merge failed"
     }) {
         task.live_status = None;
     }
@@ -76,13 +78,15 @@ pub(crate) fn mark_task_merge_failed<R: Registry>(
     let Some(task) = registry.get_task_mut(task_id) else {
         return Err(RegistryError::TaskNotFound(task_id.clone()));
     };
+    let kind = if conflicted {
+        LiveStatusKind::MergeConflict
+    } else {
+        LiveStatusKind::CommandFailed
+    };
     if conflicted {
         task.add_side_flag(SideFlag::Conflicted);
     }
-    task.live_status = Some(LiveObservation::new(
-        LiveStatusKind::CommandFailed,
-        "merge failed",
-    ));
+    task.live_status = Some(LiveObservation::new(kind, "merge failed"));
     Ok(())
 }
 

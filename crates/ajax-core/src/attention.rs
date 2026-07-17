@@ -49,16 +49,16 @@ pub fn take_attention_transition_at(
             }
             // Still in (or back in) attention: cancel any quiet countdown.
             task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
-            let stamp = operator_status.status.as_str();
+            let stamp = episode_stamp(&operator_status);
             if task
                 .metadata
                 .get(LAST_NOTIFIED_STATUS_KEY)
-                .is_some_and(|last| last == stamp)
+                .is_some_and(|last| last == &stamp)
             {
                 return None;
             }
             task.metadata
-                .insert(LAST_NOTIFIED_STATUS_KEY.to_string(), stamp.to_string());
+                .insert(LAST_NOTIFIED_STATUS_KEY.to_string(), stamp);
             task.metadata.insert(
                 LAST_NOTIFIED_AT_KEY.to_string(),
                 unix_seconds(now).to_string(),
@@ -86,13 +86,21 @@ pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
     }
     task.metadata.insert(
         LAST_NOTIFIED_STATUS_KEY.to_string(),
-        operator_status.status.as_str().to_string(),
+        episode_stamp(&operator_status),
     );
     task.metadata.insert(
         LAST_NOTIFIED_AT_KEY.to_string(),
         unix_seconds(now).to_string(),
     );
     task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
+}
+
+fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
+    format!(
+        "{}|{}",
+        status.status.as_str(),
+        status.explanation.as_deref().unwrap_or("")
+    )
 }
 
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
@@ -560,6 +568,12 @@ mod tests {
         task
     }
 
+    fn active_task(handle: &str) -> Task {
+        let mut task = task_with_flags(handle, &[]);
+        mark_active(&mut task).unwrap();
+        task
+    }
+
     #[test]
     fn idle_to_waiting_fires_once() {
         let mut task = waiting_task("notify");
@@ -674,6 +688,75 @@ mod tests {
     }
 
     #[test]
+    fn repeated_identical_ci_evidence_fires_once() {
+        let mut task = active_task("ci");
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
+            at(1_000),
+        );
+        let first = super::take_attention_transition_at(&mut task, at(1_001));
+        assert_eq!(
+            first.as_ref().map(|t| (t.status, t.explanation.as_deref())),
+            Some((TaskStatus::Error, Some("CI failed")))
+        );
+
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed again"),
+            at(1_010),
+        );
+        let second = super::take_attention_transition_at(&mut task, at(1_011));
+        assert_eq!(second, None);
+    }
+
+    #[test]
+    fn distinct_error_reason_fires_again() {
+        let mut task = active_task("err");
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
+            at(1_000),
+        );
+        assert!(super::take_attention_transition_at(&mut task, at(1_001)).is_some());
+
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::MergeConflict, "merge conflict"),
+            at(1_010),
+        );
+        let second = super::take_attention_transition_at(&mut task, at(1_011));
+        assert_eq!(
+            second
+                .as_ref()
+                .map(|t| (t.status, t.explanation.as_deref())),
+            Some((TaskStatus::Error, Some("Merge conflict")))
+        );
+    }
+
+    #[test]
+    fn acknowledgment_stamp_matches_current_reason() {
+        let mut task = active_task("ack-reason");
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
+            at(1_000),
+        );
+        assert!(super::take_attention_transition_at(&mut task, at(1_001)).is_some());
+        crate::live::acknowledge_attention(&mut task, at(1_010));
+        assert_eq!(
+            task.metadata
+                .get(super::LAST_NOTIFIED_STATUS_KEY)
+                .map(String::as_str),
+            Some("Error|CI failed")
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_011)),
+            None
+        );
+    }
+
+    #[test]
     fn ready_for_review_does_not_notify() {
         let mut task = task_with_flags("review", &[]);
         mark_active(&mut task).unwrap();
@@ -698,7 +781,7 @@ mod tests {
             task.metadata
                 .get(super::LAST_NOTIFIED_STATUS_KEY)
                 .map(String::as_str),
-            Some("Waiting")
+            Some("Waiting|Waiting for input")
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_011)),
