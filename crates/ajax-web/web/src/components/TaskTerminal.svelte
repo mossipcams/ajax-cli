@@ -1588,5 +1588,12 @@
       height: 100%;
       min-height: 0;
     }
+
+    /* Fullscreen pins the panel to the layout-viewport top (--app-top is 0 with
+       the keyboard closed), so the floating corner button must clear the status
+       bar / notch or it sits under the Dynamic Island and can't be tapped. */
+    .terminal-panel.is-expanded .terminal-corner-actions {
+      top: calc(6px + env(safe-area-inset-top));
+    }
   }
 </style>
