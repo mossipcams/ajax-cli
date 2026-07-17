@@ -10,10 +10,10 @@
   } from "../polling";
   import ReactIsland from "../react/ReactIsland.svelte";
   import ConnectionStatus from "./ConnectionStatus";
-  import ResultPanel from "./ResultPanel.svelte";
+  import ResultPanel from "./ResultPanel";
   import TaskList from "./TaskList";
   import TaskDetail from "./TaskDetail.svelte";
-  import SettingsView from "./SettingsView.svelte";
+  import SettingsView from "./SettingsView";
   import NewTaskSheet from "./NewTaskSheet.svelte";
   import Skeleton from "./Skeleton";
   import AppViewport from "./AppViewport.svelte";
@@ -277,13 +277,16 @@
       <RouteScroll>
         {#if route.kind === "settings"}
           <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
-            <SettingsView
-              detailHandle={null}
-              onResult={showResult}
-              onBack={() => go(dashboardHash())}
-              onRestarted={() => {
-                go(dashboardHash());
-                void loadCockpit();
+            <ReactIsland
+              component={SettingsView}
+              props={{
+                detailHandle: null,
+                onResult: showResult,
+                onBack: () => go(dashboardHash()),
+                onRestarted: () => {
+                  go(dashboardHash());
+                  void loadCockpit();
+                },
               }}
             />
           </section>
@@ -355,13 +358,16 @@
   </AppShell>
 
   {#if result}
-    <ResultPanel
-      message={result.message}
-      output={result.output}
-      isError={result.isError}
-      onUndo={result.onUndo}
-      onCommit={result.onCommit}
-      onDismiss={() => (result = null)}
+    <ReactIsland
+      component={ResultPanel}
+      props={{
+        message: result.message,
+        output: result.output,
+        isError: result.isError,
+        onUndo: result.onUndo,
+        onCommit: result.onCommit,
+        onDismiss: () => (result = null),
+      }}
     />
   {/if}
 

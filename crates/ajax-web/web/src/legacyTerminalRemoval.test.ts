@@ -78,7 +78,7 @@ describe("legacy terminal removal hygiene", () => {
         "terminalPreload",
       ]),
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/components/SettingsView.svelte",
+        "crates/ajax-web/web/src/components/SettingsView.tsx",
         ["surfaceV2", "Terminal Surface V2"],
       ),
       ...collectSymbolViolations("crates/ajax-web/web/src/diagnostics.ts", [

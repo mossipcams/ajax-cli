@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
-import SettingsView from "./SettingsView.svelte";
+import { render, fireEvent } from "@testing-library/react";
+import SettingsView from "./SettingsView";
 import * as api from "../api";
 import * as diagnostics from "../diagnostics";
 
@@ -14,7 +14,7 @@ describe("SettingsView", () => {
   it("requires confirmation before restarting", async () => {
     const spy = vi.spyOn(api, "restartServer").mockResolvedValue({});
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
-    const { getByText } = render(SettingsView);
+    const { getByText } = render(<SettingsView />);
     await fireEvent.click(getByText("Restart server"));
     expect(spy).not.toHaveBeenCalled();
     expect(getByText("Tap to confirm")).toBeInTheDocument();
@@ -25,11 +25,15 @@ describe("SettingsView", () => {
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
     const onResult = vi.fn();
     const onRestarted = vi.fn();
-    const { getByText } = render(SettingsView, { props: { onResult, onRestarted } });
+    const { getByText } = render(
+      <SettingsView onResult={onResult} onRestarted={onRestarted} />,
+    );
     await fireEvent.click(getByText("Restart server"));
     await fireEvent.click(getByText("Tap to confirm"));
-    expect(spy).toHaveBeenCalledOnce();
-    expect(onResult).toHaveBeenCalledWith("Server restarted", null, false);
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(onResult).toHaveBeenCalledWith("Server restarted", null, false),
+    );
     expect(onRestarted).toHaveBeenCalledOnce();
   });
 
@@ -37,15 +41,19 @@ describe("SettingsView", () => {
     vi.spyOn(api, "restartServer").mockResolvedValue({});
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);
     const onResult = vi.fn();
-    const { getByText } = render(SettingsView, { props: { onResult } });
+    const { getByText } = render(<SettingsView onResult={onResult} />);
     await fireEvent.click(getByText("Restart server"));
     await fireEvent.click(getByText("Tap to confirm"));
-    expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true);
+    await vi.waitFor(() =>
+      expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
+    );
   });
 
   it("renders the diagnostics report", async () => {
-    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({ browser_mode: "Safari/browser" });
-    const { getByText, container } = render(SettingsView);
+    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({
+      browser_mode: "Safari/browser",
+    });
+    const { getByText, container } = render(<SettingsView />);
     await fireEvent.click(getByText("Run diagnostics"));
     await vi.waitFor(() =>
       expect(container.querySelector(".settings-status")?.textContent).toContain("Safari/browser"),
@@ -56,7 +64,7 @@ describe("SettingsView", () => {
     vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({ ok: true });
     vi.spyOn(diagnostics, "copyText").mockResolvedValue(false);
     const onResult = vi.fn();
-    const { getByText } = render(SettingsView, { props: { onResult } });
+    const { getByText } = render(<SettingsView onResult={onResult} />);
     await fireEvent.click(getByText("Copy Diagnostics"));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Diagnostics ready to copy", null, false),
@@ -64,7 +72,7 @@ describe("SettingsView", () => {
   });
 
   it("renders Diagnostics debug info", () => {
-    const { getByText, getByTestId } = render(SettingsView);
+    const { getByText, getByTestId } = render(<SettingsView />);
     expect(getByTestId("dev-settings")).toBeInTheDocument();
     expect(getByText("Diagnostics")).toBeInTheDocument();
   });
@@ -75,7 +83,7 @@ describe("SettingsView", () => {
     meta.content = "0.42.0-test";
     document.head.appendChild(meta);
 
-    const { getByTestId } = render(SettingsView);
+    const { getByTestId } = render(<SettingsView />);
     const debug = getByTestId("dev-settings-debug");
     expect(debug.textContent).toContain(window.location.origin);
     expect(debug.textContent).toContain("0.42.0-test");
@@ -89,7 +97,7 @@ describe("SettingsView", () => {
     const reload = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload });
 
-    const { getByText } = render(SettingsView);
+    const { getByText } = render(<SettingsView />);
     await fireEvent.click(getByText("Reload app"));
     await vi.waitFor(() => expect(restartSpy).toHaveBeenCalledOnce());
     expect(reload).toHaveBeenCalledOnce();
@@ -104,7 +112,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("location", { ...window.location, reload });
     const onResult = vi.fn();
 
-    const { getByText } = render(SettingsView, { props: { onResult } });
+    const { getByText } = render(<SettingsView onResult={onResult} />);
     await fireEvent.click(getByText("Reload app"));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
