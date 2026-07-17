@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TestInDevPanel from "./TestInDevPanel.svelte";
 
@@ -39,9 +39,13 @@ describe("TestInDevPanel", () => {
 
     render(TestInDevPanel, { props: { taskHandle: "ajax-cli/demo" } });
 
+    const panel = screen.getByTestId("test-in-dev");
+
     await waitFor(() => {
       expect(screen.getByTestId("test-in-dev-phase")).toHaveTextContent("Ready to deploy");
     });
+    expect(within(panel).queryByText(/Shared Ajax Dev slot/)).toBeNull();
+    expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(screen.getByTestId("test-in-dev-button")).toBeEnabled();
 
     await fireEvent.click(screen.getByTestId("open-dev-button"));
@@ -114,6 +118,8 @@ describe("TestInDevPanel", () => {
       expect(screen.getByTestId("test-in-dev-phase")).toHaveTextContent("Building");
       expect(screen.getByTestId("test-in-dev-button")).toBeDisabled();
     });
+    expect(screen.queryByText(/Shared Ajax Dev slot/)).toBeNull();
+    expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(startDevDeploy).toHaveBeenCalledWith("ajax-cli/demo");
   });
 });

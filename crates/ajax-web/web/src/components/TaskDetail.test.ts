@@ -1,12 +1,23 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
+import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
 import routeScrollSource from "./RouteScroll.svelte?raw";
 import appSource from "./App.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
+const fetchDevDeploy = vi.fn();
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    fetchDevDeploy: (...args: unknown[]) => fetchDevDeploy(...args),
+  };
+});
+
 beforeEach(() => {
+  fetchDevDeploy.mockReset();
   vi.stubGlobal(
     "ResizeObserver",
     class MockResizeObserver {
@@ -224,6 +235,34 @@ describe("TaskDetail projection surface", () => {
     expect(interactPanelCss).toMatch(/flex-direction:\s*row/);
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?min-width:\s*0/);
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
+  });
+
+  it("places Test in Dev inside Task details for ajax-cli tasks", async () => {
+    fetchDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "ready_to_deploy",
+        phase_label: "Ready to deploy",
+        shared_slot: true,
+        open_url: "https://ajaxdev.mossyhome.net:8788",
+        active: false,
+        error: null,
+        occupant: null,
+      },
+    });
+
+    const { container } = render(TaskDetail, {
+      props: {
+        detail: detail({ repo: "ajax-cli", qualified_handle: "ajax-cli/demo" }),
+      },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(".meta-details [data-testid='test-in-dev']")).toBeInTheDocument();
+    });
+    expect(
+      container.querySelector("[data-mobile-chrome='actions'] [data-testid='test-in-dev']"),
+    ).toBeNull();
   });
 
   it("compacts the mobile status panel and action buttons", () => {
