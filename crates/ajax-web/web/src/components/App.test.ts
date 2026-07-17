@@ -6,9 +6,23 @@ import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
-import taskTerminalSource from "./TaskTerminal.svelte?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
+
+function taskTerminalStylesSection(stylesSource: string): string {
+  const start = stylesSource.indexOf("/* TaskTerminal");
+  const end = stylesSource.indexOf("/* TAILWIND THEME");
+  if (start < 0 || end <= start) return "";
+  return stylesSource.slice(start, end);
+}
+
+function taskTerminalMobileBlock(stylesSource: string): string {
+  const tail = taskTerminalStylesSection(stylesSource);
+  const match = tail.match(
+    /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*)\n\}\s*$/,
+  );
+  return match?.[1] ?? "";
+}
 
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
@@ -213,9 +227,10 @@ describe("App shell", () => {
   });
 
   it("expanded terminal panel matches fullscreen band without safe-area top padding", () => {
+    const stylesSource = loadStylesSource();
     const expandedRule =
-      taskTerminalSource.match(
-        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
+      taskTerminalStylesSection(stylesSource).match(
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
@@ -228,14 +243,12 @@ describe("App shell", () => {
   });
 
   it("keyboard-open non-expanded terminal fills remaining band", () => {
-    const mobileBlock =
-      taskTerminalSource.match(
-        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
-      )?.[1] ?? "";
+    const stylesSource = loadStylesSource();
+    const mobileBlock = taskTerminalMobileBlock(stylesSource);
 
     const keyboardWrapRule =
       mobileBlock.match(
-        /:global\(html\.keyboard-open\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+        /html\.keyboard-open\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     expect(keyboardWrapRule).toMatch(/flex:\s*1\s+1\s+0%/);

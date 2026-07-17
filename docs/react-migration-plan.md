@@ -1,6 +1,6 @@
 # Ajax Web: Svelte → React + TypeScript + shadcn/ui Migration Blueprint
 
-Status: S4 open for review.
+Status: S4 merged. S5 verify green + on-device §9 passed — PR open.
 Grounded against: branch `ajax/react-migration`, forked from `main` @ `c547918` (0.50.0), 2026-07-17.
 Orchestrator: GPT-5.6 Sol (see §13). Implementation: delegated per slice via `model-router` → `tdd-implementation-packet` per `AGENTS.md`.
 
@@ -417,8 +417,8 @@ You orchestrate; you do not implement. Per `AGENTS.md`: model-router chooses the
 | S1 | Foundation + ConnectionStatus/Skeleton | merged | #571 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s1.md` |
 | S2 | Dashboard (TaskList + ActionBar) | merged | #573 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
 | S3 | Settings + ResultPanel | merged | #575 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s3.md` |
-| S4 | New-task sheet + FullscreenLayer | open | #577 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s4.md` |
-| S5 | Terminal (TaskTerminal) | not-started | — | — | — |
+| S4 | New-task sheet + FullscreenLayer | merged | #577 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s4.md` |
+| S5 | Terminal (TaskTerminal) | review | — | verify+on-device 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s5.md` |
 | S6 | Task detail + TestInDevPanel | not-started | — | — | — |
 | S7 | Shell inversion + Svelte removal | not-started | — | — | — |
 
