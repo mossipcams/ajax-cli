@@ -3036,7 +3036,7 @@ mod tests {
             .unwrap();
         task.lifecycle_status = LifecycleStatus::Mergeable;
         task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
+            LiveStatusKind::CiFailed,
             "check failed",
         ));
 
@@ -3044,8 +3044,68 @@ mod tests {
 
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(task.live_status.as_ref().is_some_and(|status| {
-            status.kind == LiveStatusKind::CommandFailed && status.summary == "check failed"
+            status.kind == LiveStatusKind::CiFailed && status.summary == "check failed"
         }));
+    }
+
+    #[test]
+    fn mark_task_check_failed_records_ci_failed_attention() {
+        let mut context = context_with_tasks();
+
+        super::mark_task_check_failed(&mut context, "web/fix-login").unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(task.has_side_flag(SideFlag::TestsFailed));
+        assert!(task.live_status.as_ref().is_some_and(|status| {
+            status.kind == LiveStatusKind::CiFailed && status.summary == "check failed"
+        }));
+    }
+
+    #[test]
+    fn mark_task_merge_failed_conflicted_records_merge_conflict_attention() {
+        let mut context = context_with_tasks();
+
+        super::mark_task_merge_failed(&mut context, "web/fix-login", true).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.live_status.as_ref().is_some_and(|status| {
+            status.kind == LiveStatusKind::MergeConflict && status.summary == "merge failed"
+        }));
+    }
+
+    #[test]
+    fn mark_task_merge_failed_nonconflicted_keeps_command_failed_attention() {
+        let mut context = context_with_tasks();
+
+        super::mark_task_merge_failed(&mut context, "web/fix-login", false).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.live_status.as_ref().is_some_and(|status| {
+            status.kind == LiveStatusKind::CommandFailed && status.summary == "merge failed"
+        }));
+    }
+
+    #[test]
+    fn mark_task_merged_clears_conflicted_merge_failure_attention() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Mergeable;
+        task.add_side_flag(SideFlag::Conflicted);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::MergeConflict,
+            "merge failed",
+        ));
+
+        super::mark_task_merged(&mut context, "web/fix-login").unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.live_status.is_none());
     }
 
     #[rstest]
@@ -4242,7 +4302,7 @@ mod tests {
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(task.has_side_flag(SideFlag::TestsFailed));
         assert!(task.live_status.as_ref().is_some_and(|status| {
-            status.kind == LiveStatusKind::CommandFailed && status.summary == "check failed"
+            status.kind == LiveStatusKind::CiFailed && status.summary == "check failed"
         }));
     }
 
@@ -4274,7 +4334,7 @@ mod tests {
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(task.has_side_flag(SideFlag::Conflicted));
         assert!(task.live_status.as_ref().is_some_and(|status| {
-            status.kind == LiveStatusKind::CommandFailed && status.summary == "merge failed"
+            status.kind == LiveStatusKind::MergeConflict && status.summary == "merge failed"
         }));
 
         let task = context

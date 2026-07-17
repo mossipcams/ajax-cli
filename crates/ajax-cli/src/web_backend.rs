@@ -2,7 +2,7 @@ use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
     models::OperatorAction,
-    registry::InMemoryRegistry,
+    registry::{InMemoryRegistry, Registry},
     runtime_refresh::RefreshTier,
 };
 #[cfg(test)]
@@ -68,7 +68,7 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     path: &str,
     body: &str,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut (impl CommandRunner + Clone + Send + 'static),
+    runner: &mut (impl CommandRunner + Clone + Send + Sync + 'static),
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
@@ -85,8 +85,8 @@ fn dispatch_axum_request<C, B>(
     body: &str,
 ) -> HttpResponse
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     let cookie = "ajax_browser_session=ajax-test-browser-session";
     let app = runtime::axum_app(state);
@@ -289,6 +289,43 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         }
         self.persist_operate(result, context)
     }
+
+    fn acknowledge_operator_input(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        qualified_handle: &str,
+    ) -> Result<bool, WebError> {
+        // Coalesce per episode: only acknowledge when there is live waiting
+        // evidence observed strictly after the last acknowledgment, so repeat
+        // operator typing without newer evidence does not re-persist the
+        // registry. (Some(_), None) means the task has live evidence and was
+        // never acknowledged; that is actionable. No live evidence yet means
+        // there is nothing for the operator to acknowledge.
+        let needs_ack = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == qualified_handle)
+            .map(
+                |task| match (task.live_status_observed_at, task.attention_acknowledged_at) {
+                    (Some(observed), Some(ack)) => observed > ack,
+                    (Some(_), None) => true,
+                    _ => false,
+                },
+            )
+            .unwrap_or(false);
+
+        if !needs_ack {
+            return Ok(false);
+        }
+
+        ajax_core::commands::mark_task_opened_at(context, qualified_handle, SystemTime::now())
+            .map_err(command_error)
+            .map_err(web_error_from_cli)?;
+        self.persist_changed_state(context)
+            .map_err(web_error_from_cli)?;
+        Ok(true)
+    }
 }
 
 impl CliRuntimeBridge {
@@ -411,6 +448,7 @@ mod tests {
     };
     use ajax_web::runtime::{self, RuntimeBridge};
     use axum::{body::Body, http::Request as AxumRequest};
+    use std::time::SystemTime;
     use tower::util::ServiceExt;
 
     #[test]
@@ -1124,5 +1162,111 @@ mod tests {
         ));
         context.registry.create_task(task).unwrap();
         context
+    }
+
+    #[test]
+    fn acknowledge_operator_input_marks_attention_and_persists_across_reload() {
+        let dir = scratch_dir("ack-operator-input");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let mut context = reviewable_context();
+        // Make the task waiting & un-acknowledged: live evidence observed after
+        // the last acknowledgment (which is None), so the bridge acknowledges.
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .expect("task present");
+            task.live_status_observed_at = Some(SystemTime::now());
+            task.attention_acknowledged_at = None;
+        }
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+        let acked =
+            <super::CliRuntimeBridge as RuntimeBridge<super::NoopRunner>>::acknowledge_operator_input(
+                &mut bridge,
+                &mut context,
+                "web/fix-login",
+            )
+            .expect("ack ok");
+        assert!(acked, "first operator input acknowledges and persists");
+        assert!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .attention_acknowledged_at
+                .is_some(),
+            "in-context task stamped with attention_acknowledged_at"
+        );
+
+        // Persisted across reload: the saved state carries the acknowledgment.
+        let reloaded = crate::context::load_context(&paths).expect("reload saved state");
+        assert!(
+            reloaded
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .attention_acknowledged_at
+                .is_some(),
+            "acknowledgment survived reload"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn acknowledge_operator_input_skips_persist_without_newer_evidence() {
+        let dir = scratch_dir("ack-no-newer-evidence");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let mut context = reviewable_context();
+        // Stamp live evidence strictly before the last ack, so needs_ack is
+        // false: the operator has already acknowledged everything newer.
+        let earlier = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let later = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000);
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .expect("task present");
+            task.live_status_observed_at = Some(earlier);
+            task.attention_acknowledged_at = Some(later);
+        }
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        let revision_before = store.current_revision().unwrap();
+
+        let acked =
+            <super::CliRuntimeBridge as RuntimeBridge<super::NoopRunner>>::acknowledge_operator_input(
+                &mut bridge,
+                &mut context,
+                "web/fix-login",
+            )
+            .expect("ack ok");
+        assert!(!acked, "no newer evidence => no ack");
+
+        let revision_after = store.current_revision().unwrap();
+        assert_eq!(
+            revision_before, revision_after,
+            "idempotent call did not persist a new revision"
+        );
+        // The in-context acknowledgment is unchanged too.
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .attention_acknowledged_at,
+            Some(later),
+            "in-context acknowledgment unchanged"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

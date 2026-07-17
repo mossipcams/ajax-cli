@@ -338,10 +338,12 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{acknowledge_attention, apply_observation, apply_observation_at};
+    use crate::attention::take_attention_transition_at;
     use crate::models::{
         AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
         SideFlag, Task, TaskId,
     };
+    use crate::ui_state::{derive_operator_status, TaskStatus};
     use std::time::{Duration, UNIX_EPOCH};
 
     fn claude_active_task() -> Task {
@@ -417,6 +419,67 @@ mod tests {
             );
             assert_eq!(task.live_status, live_before, "{status:?}");
         }
+    }
+
+    #[test]
+    fn acknowledgment_round_trip_gates_actionability_until_new_evidence() {
+        let mut task = claude_active_task();
+        let observed_at = UNIX_EPOCH + Duration::from_secs(400);
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            observed_at,
+        );
+        assert_eq!(
+            derive_operator_status(&task).status,
+            TaskStatus::Waiting,
+            "actionable before acknowledgment"
+        );
+
+        let acknowledged_at = UNIX_EPOCH + Duration::from_secs(500);
+        acknowledge_attention(&mut task, acknowledged_at);
+
+        assert_eq!(
+            derive_operator_status(&task).status,
+            TaskStatus::Idle,
+            "non-actionable after acknowledgment"
+        );
+        assert!(
+            take_attention_transition_at(&mut task, UNIX_EPOCH + Duration::from_secs(501))
+                .is_none(),
+            "notify episode silenced after acknowledgment"
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput),
+            "live_status kind preserved"
+        );
+        assert_eq!(
+            task.live_status_observed_at,
+            Some(observed_at),
+            "live_status_observed_at unchanged"
+        );
+        assert_eq!(
+            task.agent_status,
+            AgentRuntimeStatus::Waiting,
+            "agent_status preserved"
+        );
+        assert!(
+            task.has_side_flag(SideFlag::NeedsInput),
+            "NeedsInput side flag preserved"
+        );
+
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "still waiting for input"),
+            UNIX_EPOCH + Duration::from_secs(600),
+        );
+        assert_eq!(
+            derive_operator_status(&task).status,
+            TaskStatus::Waiting,
+            "newer evidence re-actionable in projection"
+        );
     }
 
     fn active_task() -> Task {

@@ -206,6 +206,12 @@ Notifications fire from CLI/cockpit refreshes and from a background poll inside
 open. Webhooks stay quiet while a browser is actively polling Web Cockpit.
 `poll_seconds` defaults to 30 when `[notify]` is present.
 
+GitHub CI failure surfacing requires the `gh` CLI installed and authenticated
+(`gh auth login`) in the task worktree's repo. When `gh` is missing,
+unauthenticated, or the branch has no PR, Ajax keeps the last known task state
+and skips CI evidence: no error status, no notification. Checks are polled at
+most every 5 minutes per task.
+
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).

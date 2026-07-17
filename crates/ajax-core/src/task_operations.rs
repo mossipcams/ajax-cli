@@ -855,7 +855,7 @@ mod tests {
             task.live_status
                 .as_ref()
                 .map(|status| (status.kind, status.summary.as_str())),
-            Some((LiveStatusKind::CommandFailed, "merge failed"))
+            Some((LiveStatusKind::MergeConflict, "merge failed"))
         );
     }
 
@@ -956,7 +956,7 @@ mod tests {
             task.live_status
                 .as_ref()
                 .map(|status| (status.kind, status.summary.as_str())),
-            Some((LiveStatusKind::CommandFailed, "check failed"))
+            Some((LiveStatusKind::CiFailed, "check failed"))
         );
     }
 

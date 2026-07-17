@@ -303,6 +303,102 @@ struct TerminalInputFrame {
     rows: u16,
 }
 
+/// Outcome of a parsed *text* input frame. Reported by `handle_input_frame`
+/// and folded into `FrameOutcome` by `process_client_frame`. Only `InputWritten`
+/// advances operator acknowledgment: resize and ignored frames do not.
+#[derive(Debug)]
+pub enum TextFrameOutcome {
+    /// An `input` frame whose data was written to the PTY writer.
+    InputWritten,
+    /// A `resize` frame with positive cols/rows.
+    Resize(PtySize),
+    /// Anything else (parse failure, unsupported type, resize with zero size).
+    Ignored,
+}
+
+/// Outcome of routing a single client WebSocket frame through the helper used
+/// by both socket loops. `Resize` carries the requested PTY size for the
+/// caller to apply; `Abort` requests the loop terminate; `Handled` is a no-op
+/// keeper (the frame was consumed, ignored, or successfully written).
+#[derive(Debug)]
+pub enum FrameOutcome {
+    Handled,
+    Resize(PtySize),
+    Abort,
+}
+
+/// Decode a JSON text frame, write any input bytes to `writer`, and report
+/// whether it was an input write, a resize, or ignored. Errors abort the loop.
+pub fn handle_input_frame(
+    text: &str,
+    writer: &mut impl Write,
+) -> std::io::Result<TextFrameOutcome> {
+    let frame: TerminalInputFrame = match serde_json::from_str(text) {
+        Ok(frame) => frame,
+        Err(_) => return Ok(TextFrameOutcome::Ignored),
+    };
+
+    match frame.frame_type.as_str() {
+        "input" => {
+            let data = frame.data.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "input frame missing data")
+            })?;
+            if data.len() > MAX_INPUT_FRAME_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "input frame too large",
+                ));
+            }
+            writer.write_all(data.as_bytes())?;
+            writer.flush()?;
+            Ok(TextFrameOutcome::InputWritten)
+        }
+        "resize" if frame.cols > 0 && frame.rows > 0 => Ok(TextFrameOutcome::Resize(PtySize {
+            rows: frame.rows,
+            cols: frame.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })),
+        _ => Ok(TextFrameOutcome::Ignored),
+    }
+}
+
+/// Route a single client WebSocket frame through the shared input path used by
+/// both socket loops: oversized binary or write error aborts; validated input
+/// frames fire `on_operator_input` exactly once; resize is returned to the
+/// caller; everything else is ignored. Only `Message::Text` and `Binary` are
+/// expected here; other frame kinds fall back to `Handled` so the loop owns
+/// their side effects (ping/pong/close) directly.
+pub fn process_client_frame(
+    frame: &Message,
+    writer: &mut impl Write,
+    on_operator_input: &Arc<dyn Fn() + Send + Sync>,
+) -> FrameOutcome {
+    match frame {
+        Message::Binary(bytes) => {
+            if bytes.len() > MAX_INPUT_FRAME_BYTES {
+                return FrameOutcome::Abort;
+            }
+            if writer.write_all(bytes).is_err() {
+                return FrameOutcome::Abort;
+            }
+            let _ = writer.flush();
+            on_operator_input();
+            FrameOutcome::Handled
+        }
+        Message::Text(text) => match handle_input_frame(text, writer) {
+            Ok(TextFrameOutcome::InputWritten) => {
+                on_operator_input();
+                FrameOutcome::Handled
+            }
+            Ok(TextFrameOutcome::Resize(size)) => FrameOutcome::Resize(size),
+            Ok(TextFrameOutcome::Ignored) => FrameOutcome::Handled,
+            Err(_) => FrameOutcome::Abort,
+        },
+        _ => FrameOutcome::Handled,
+    }
+}
+
 fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<u8> {
     let mut buf = std::mem::take(carry);
     buf.extend_from_slice(chunk);
@@ -389,6 +485,7 @@ pub async fn bridge_task_terminal_socket(
     mut socket: WebSocket,
     plan: TerminalAttachPlan,
     seed_history: bool,
+    on_operator_input: Arc<dyn Fn() + Send + Sync>,
 ) {
     let isolated = build_isolated_attach_plan(&plan);
 
@@ -471,28 +568,34 @@ pub async fn bridge_task_terminal_socket(
                 pre_loop_abort = true;
                 break;
             }
-            Ok(Some(Ok(Message::Text(text)))) => match handle_input_frame(&text, &mut writer) {
-                Ok(Some(size)) => {
-                    let _ = pty_pair.master.resize(size);
-                    resize_applied = true;
-                    break;
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match process_client_frame(&Message::Text(text), &mut writer, &on_operator_input) {
+                    FrameOutcome::Resize(size) => {
+                        let _ = pty_pair.master.resize(size);
+                        resize_applied = true;
+                        break;
+                    }
+                    FrameOutcome::Abort => {
+                        pre_loop_abort = true;
+                        break;
+                    }
+                    FrameOutcome::Handled => {}
                 }
-                Err(_) => {
-                    pre_loop_abort = true;
-                    break;
-                }
-                Ok(None) => {}
-            },
+            }
             Ok(Some(Ok(Message::Binary(bytes)))) => {
-                if bytes.len() > MAX_INPUT_FRAME_BYTES {
-                    pre_loop_abort = true;
-                    break;
+                match process_client_frame(&Message::Binary(bytes), &mut writer, &on_operator_input)
+                {
+                    FrameOutcome::Resize(size) => {
+                        let _ = pty_pair.master.resize(size);
+                        resize_applied = true;
+                        break;
+                    }
+                    FrameOutcome::Abort => {
+                        pre_loop_abort = true;
+                        break;
+                    }
+                    FrameOutcome::Handled => {}
                 }
-                if writer.write_all(&bytes).is_err() {
-                    pre_loop_abort = true;
-                    break;
-                }
-                let _ = writer.flush();
             }
             Ok(Some(Ok(Message::Ping(payload)))) => {
                 if socket.send(Message::Pong(payload)).await.is_err() {
@@ -615,24 +718,28 @@ pub async fn bridge_task_terminal_socket(
             }
             incoming = socket.recv() => {
                 match incoming {
-                    Some(Ok(Message::Text(text))) => {
-                        match handle_input_frame(&text, &mut writer) {
-                            Ok(Some(size)) => {
-                                let _ = pty_pair.master.resize(size);
-                            }
-                            Err(_) => break,
-                            Ok(None) => {}
+                    Some(Ok(Message::Text(text))) => match process_client_frame(
+                        &Message::Text(text),
+                        &mut writer,
+                        &on_operator_input,
+                    ) {
+                        FrameOutcome::Resize(size) => {
+                            let _ = pty_pair.master.resize(size);
                         }
-                    }
-                    Some(Ok(Message::Binary(bytes))) => {
-                        if bytes.len() > MAX_INPUT_FRAME_BYTES {
-                            break;
+                        FrameOutcome::Abort => break,
+                        FrameOutcome::Handled => {}
+                    },
+                    Some(Ok(Message::Binary(bytes))) => match process_client_frame(
+                        &Message::Binary(bytes),
+                        &mut writer,
+                        &on_operator_input,
+                    ) {
+                        FrameOutcome::Resize(size) => {
+                            let _ = pty_pair.master.resize(size);
                         }
-                        if writer.write_all(&bytes).is_err() {
-                            break;
-                        }
-                        let _ = writer.flush();
-                    }
+                        FrameOutcome::Abort => break,
+                        FrameOutcome::Handled => {}
+                    },
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(Message::Ping(payload))) => {
                         if socket.send(Message::Pong(payload)).await.is_err() {
@@ -661,40 +768,6 @@ pub async fn bridge_task_terminal_socket(
     .await;
 
     let _ = socket.send(Message::Close(None)).await;
-}
-
-fn handle_input_frame(
-    text: &str,
-    writer: &mut Box<dyn Write + Send>,
-) -> std::io::Result<Option<PtySize>> {
-    let frame: TerminalInputFrame = match serde_json::from_str(text) {
-        Ok(frame) => frame,
-        Err(_) => return Ok(None),
-    };
-
-    match frame.frame_type.as_str() {
-        "input" => {
-            let data = frame.data.ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "input frame missing data")
-            })?;
-            if data.len() > MAX_INPUT_FRAME_BYTES {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "input frame too large",
-                ));
-            }
-            writer.write_all(data.as_bytes())?;
-            writer.flush()?;
-            Ok(None)
-        }
-        "resize" if frame.cols > 0 && frame.rows > 0 => Ok(Some(PtySize {
-            rows: frame.rows,
-            cols: frame.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })),
-        _ => Ok(None),
-    }
 }
 
 #[cfg(test)]
@@ -1099,16 +1172,104 @@ mod tests {
         assert!(carry.is_empty());
     }
 
+    fn counting_sink() -> (
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter_clone = std::sync::Arc::clone(&counter);
+        let sink: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(move || {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        });
+        (counter, sink)
+    }
+
     #[test]
     fn handle_input_frame_accepts_resize_without_data() {
-        let mut writer: Box<dyn Write + Send> = Box::new(Vec::<u8>::new());
+        let mut writer: Vec<u8> = Vec::new();
 
-        let size = handle_input_frame(r#"{"type":"resize","cols":132,"rows":40}"#, &mut writer)
-            .expect("resize frame should parse")
-            .expect("resize frame should return a pty size");
+        let outcome = handle_input_frame(r#"{"type":"resize","cols":132,"rows":40}"#, &mut writer)
+            .expect("resize frame should parse");
+        let size = match outcome {
+            TextFrameOutcome::Resize(size) => size,
+            _ => panic!("resize frame should return a pty size"),
+        };
 
         assert_eq!(size.cols, 132);
         assert_eq!(size.rows, 40);
+    }
+
+    #[test]
+    fn process_client_frame_fires_sink_once_for_binary_input_within_limit() {
+        let (counter, sink) = counting_sink();
+        let mut writer: Vec<u8> = Vec::new();
+        let frame = Message::Binary(axum::body::Bytes::from(b"hello".to_vec()));
+
+        let outcome = process_client_frame(&frame, &mut writer, &sink);
+
+        assert!(matches!(outcome, FrameOutcome::Handled), "{outcome:?}");
+        assert_eq!(writer, b"hello");
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn process_client_frame_fires_sink_once_for_text_input_frame() {
+        let (counter, sink) = counting_sink();
+        let mut writer: Vec<u8> = Vec::new();
+        let frame = Message::Text(r#"{"type":"input","data":"x"}"#.into());
+
+        let outcome = process_client_frame(&frame, &mut writer, &sink);
+
+        assert!(matches!(outcome, FrameOutcome::Handled), "{outcome:?}");
+        assert_eq!(writer, b"x");
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn process_client_frame_resize_does_not_fire_sink() {
+        let (counter, sink) = counting_sink();
+        let mut writer: Vec<u8> = Vec::new();
+        let frame = Message::Text(r#"{"type":"resize","cols":80,"rows":24}"#.into());
+
+        let outcome = process_client_frame(&frame, &mut writer, &sink);
+
+        match outcome {
+            FrameOutcome::Resize(size) => {
+                assert_eq!(size.cols, 80);
+                assert_eq!(size.rows, 24);
+            }
+            _ => panic!("expected resize outcome, got {outcome:?}"),
+        }
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn process_client_frame_malformed_text_does_not_fire_sink() {
+        let (counter, sink) = counting_sink();
+        let mut writer: Vec<u8> = Vec::new();
+        let frame = Message::Text("not json".into());
+
+        let outcome = process_client_frame(&frame, &mut writer, &sink);
+
+        assert!(matches!(outcome, FrameOutcome::Handled), "{outcome:?}");
+        assert!(writer.is_empty());
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn process_client_frame_oversized_binary_aborts_without_firing_sink() {
+        let (counter, sink) = counting_sink();
+        let mut writer: Vec<u8> = Vec::new();
+        let big = vec![b'a'; MAX_INPUT_FRAME_BYTES + 1];
+        let frame = Message::Binary(axum::body::Bytes::from(big));
+
+        let outcome = process_client_frame(&frame, &mut writer, &sink);
+
+        assert!(matches!(outcome, FrameOutcome::Abort), "{outcome:?}");
+        assert!(writer.is_empty());
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]
