@@ -63,3 +63,44 @@ describe("DESIGN.md color lock", () => {
     expect(css.ok).toBe(css["done-sage"]);
   });
 });
+
+describe("Tailwind contract", () => {
+  it("imports only Tailwind utilities (preflight and theme off)", () => {
+    expect(stylesCss).toMatch(
+      /@import\s+"tailwindcss\/utilities"(?:\s+layer\([^)]*\))?\s*;/,
+    );
+    expect(stylesCss).not.toMatch(/@import\s+"tailwindcss"\s*;/);
+    expect(stylesCss).not.toMatch(/tailwindcss\/preflight/);
+    expect(stylesCss).not.toMatch(/tailwindcss\/theme/);
+  });
+
+  it("declares a single @theme inline block mapped only to existing tokens", () => {
+    const blocks = stylesCss.match(/@theme\s+inline\s*\{[\s\S]*?\n\}/g) ?? [];
+    expect(blocks).toHaveLength(1);
+    const inner = blocks[0].replace(/^[\s\S]*?\{/, "").replace(/\n\}[\s\S]*$/, "");
+    expect(inner).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    const decls = inner.match(/--color-[a-z0-9-]+\s*:\s*[^;\n]+;/g) ?? [];
+    expect(decls.length).toBeGreaterThanOrEqual(6);
+    for (const decl of decls) {
+      expect(decl.trim()).toMatch(
+        /^--color-[a-z0-9-]+\s*:\s*var\(--[a-z0-9-]+\)\s*;$/,
+      );
+    }
+  });
+
+  it("maps the locked role tokens onto existing custom properties", () => {
+    const block = stylesCss.match(/@theme\s+inline\s*\{([\s\S]*?)\n\}/)![1];
+    const required: Array<[string, string]> = [
+      ["color-paper", "paper"],
+      ["color-ink", "ink"],
+      ["color-accent", "accent"],
+      ["color-warn", "warn"],
+      ["color-danger", "danger"],
+      ["color-ok", "ok"],
+    ];
+    for (const [name, ref] of required) {
+      const re = new RegExp(`--${name}\\s*:\\s*var\\(--${ref}\\)\\s*;`);
+      expect(block, `--color-${name} → var(--${ref}) missing`).toMatch(re);
+    }
+  });
+});

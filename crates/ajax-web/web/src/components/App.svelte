@@ -8,13 +8,14 @@
     versionPollIntervalMs,
     type PollingRouteKind,
   } from "../polling";
-  import ConnectionStatus from "./ConnectionStatus.svelte";
+  import ReactIsland from "../react/ReactIsland.svelte";
+  import ConnectionStatus from "./ConnectionStatus";
   import ResultPanel from "./ResultPanel.svelte";
   import TaskList from "./TaskList.svelte";
   import TaskDetail from "./TaskDetail.svelte";
   import SettingsView from "./SettingsView.svelte";
   import NewTaskSheet from "./NewTaskSheet.svelte";
-  import Skeleton from "./Skeleton.svelte";
+  import Skeleton from "./Skeleton";
   import AppViewport from "./AppViewport.svelte";
   import AppShell from "./AppShell.svelte";
   import RouteScroll from "./RouteScroll.svelte";
@@ -247,12 +248,15 @@
               aria-hidden="true"
             ></span>
           </div>
-          <ConnectionStatus
-            state={connection}
-            detail={connectionDetail}
-            onRetry={() => loadCockpit()}
-            onReload={() => location.reload()}
-            onCopyDiagnostics={() => go(settingsHash())}
+          <ReactIsland
+            component={ConnectionStatus}
+            props={{
+              state: connection,
+              detail: connectionDetail,
+              onRetry: () => loadCockpit(),
+              onReload: () => location.reload(),
+              onCopyDiagnostics: () => go(settingsHash()),
+            }}
           />
         </header>
 
@@ -295,7 +299,7 @@
                 onDismiss={() => go(dashboardHash())}
               />
             {:else}
-              <Skeleton testid="task-skeleton" rows={6} />
+              <ReactIsland component={Skeleton} props={{ testid: "task-skeleton", rows: 6 }} />
             {/if}
           </section>
         {:else}
@@ -324,7 +328,7 @@
                 onMutated={() => loadCockpit()}
               />
             {:else}
-              <Skeleton testid="dashboard-skeleton" rows={4} />
+              <ReactIsland component={Skeleton} props={{ testid: "dashboard-skeleton", rows: 4 }} />
             {/if}
           </section>
         {/if}
