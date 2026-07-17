@@ -40,7 +40,7 @@ Delegation decision: delegated via model-router.
 
 - [x] **Task 4 — on-device + PR.**
   - Matt: restart from phone, diagnostics copy, result Undo — **validated 2026-07-17**.
-  - PR: opening.
+  - PR: https://github.com/mossipcams/ajax-cli/pull/575 (opened 2026-07-17). CI/review/merge/baseline-restore still pending.
 
 ## Escalate instead of guessing
 
