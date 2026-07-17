@@ -415,7 +415,7 @@ You orchestrate; you do not implement. Per `AGENTS.md`: model-router chooses the
 | Slice | Name | Status | PR | Validated | Approved behavior deltas |
 |---|---|---|---|---|---|
 | S1 | Foundation + ConnectionStatus/Skeleton | merged | #571 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s1.md` |
-| S2 | Dashboard (TaskList + ActionBar) | open | TBD | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
+| S2 | Dashboard (TaskList + ActionBar) | open | #573 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
 | S3 | Settings + ResultPanel | not-started | — | — | — |
 | S4 | New-task sheet + FullscreenLayer | not-started | — | — | — |
 | S5 | Terminal (TaskTerminal) | not-started | — | — | — |

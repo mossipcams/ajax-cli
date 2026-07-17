@@ -47,7 +47,7 @@ Delegation decision: delegated via model-router.
 
 - [x] **Task 4 — on-device + PR gate.**
   - Matt: filter chips, swipe feel, two-tap destructive, PTR regression, rotation — **validated 2026-07-17**.
-  - PR `refactor(web): … (react S2)`; CI; merge; baseline restore — in progress.
+  - PR: https://github.com/mossipcams/ajax-cli/pull/573 (opened 2026-07-17). CI/review/merge/baseline-restore still pending.
 
 ## Escalate instead of guessing
 
