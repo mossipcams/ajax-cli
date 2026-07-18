@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.4...ajax-cli-v0.50.5) (2026-07-17)
+
+
+### Bug Fixes
+
+* **web:** move Test in Dev under Task details and compact it ([#580](https://github.com/mossipcams/ajax-cli/issues/580)) ([a2015b2](https://github.com/mossipcams/ajax-cli/commit/a2015b23821504f53d7c5ed37036a7668b07118d))
+
+
+### Code Refactoring
+
+* **web:** migrate TaskTerminal to React island (react S5) ([#578](https://github.com/mossipcams/ajax-cli/issues/578)) ([7e53844](https://github.com/mossipcams/ajax-cli/commit/7e53844138dc87d097291a626c2f26c5b7399f4b))
+
 ## [0.50.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.3...ajax-cli-v0.50.4) (2026-07-17)
 
 
