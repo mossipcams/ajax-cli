@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.6...ajax-cli-v0.50.7) (2026-07-18)
+
+
+### Code Refactoring
+
+* **web:** migrate TaskDetail + TestInDevPanel to React islands (react S6) ([#583](https://github.com/mossipcams/ajax-cli/issues/583)) ([dd0af7e](https://github.com/mossipcams/ajax-cli/commit/dd0af7e7a5c51026efae24f14077bdd55e700825))
+
 ## [0.50.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.5...ajax-cli-v0.50.6) (2026-07-18)
 
 
