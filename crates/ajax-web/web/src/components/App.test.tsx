@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render } from "@testing-library/svelte";
+import { render, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tick } from "svelte";
-import App from "./App.svelte";
-import appSource from "./App.svelte?raw";
-import appViewportSource from "./AppViewport.svelte?raw";
+import App from "./App";
+import appSource from "./App.tsx?raw";
+import appViewportSource from "./AppViewport.tsx?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
@@ -78,7 +77,7 @@ describe("App shell", () => {
   });
 
   it("renders the shared chrome", () => {
-    const { getByRole, container } = render(App);
+    const { getByRole, container } = render(<App />);
     expect(getByRole("heading", { name: "Ajax" })).toBeInTheDocument();
     expect(container.querySelector(".connection-status")).toBeInTheDocument();
     expect(container.querySelector(".update-banner")).toBeInTheDocument();
@@ -89,7 +88,9 @@ describe("App shell", () => {
   });
 
   it("live-dot pulses only when connected", () => {
-    expect(appSource).toMatch(/class:is-live=\{connection === "connected"\}/);
+    expect(appSource).toMatch(
+      /is-live[\s\S]*connection === "connected"|connection === "connected"[\s\S]*is-live/,
+    );
     const stylesSource = loadStylesSource();
     expect(stylesSource).toMatch(
       /\.live-dot\s*\{[^}]*background:\s*var\(--ink-faint\)/,
@@ -106,18 +107,19 @@ describe("App shell", () => {
       removeEventListener: vi.fn(),
     });
     document.documentElement.style.removeProperty("--app-height");
-    render(App);
+    render(<App />);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("712px");
   });
 
   it("shows the dashboard outlet by default", () => {
-    const { container } = render(App);
+    const { container } = render(<App />);
     expect(container.querySelector("[data-outlet='dashboard']")).toBeInTheDocument();
     expect(container.querySelector("[data-outlet='settings']")).toBeNull();
   });
 
   it("exposes layout primitives for viewport and scroll ownership", () => {
-    const { container } = render(App);
+    const stylesSource = loadStylesSource();
+    const { container } = render(<App />);
     expect(container.querySelector("[data-testid='app-viewport']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='app-shell']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='app-main']")).toBeInTheDocument();
@@ -125,16 +127,15 @@ describe("App shell", () => {
     expect(appSource).not.toMatch(/initViewport/);
     expect(appViewportSource).toMatch(/initViewport/);
     expect(appSource).not.toMatch(/ajax-dashboard-open/);
-    expect(appViewportSource).toMatch(/--app-band-top:\s*var\(--app-top/);
-    expect(appViewportSource).toMatch(/--app-band-height:\s*var\(--app-height/);
+    expect(stylesSource).toMatch(/--app-band-top:\s*var\(--app-top/);
+    expect(stylesSource).toMatch(/--app-band-height:\s*var\(--app-height/);
     expect(appSource).not.toMatch(/--app-height|--app-top/);
   });
 
   it("pins app-viewport to the keyboard band when html.keyboard-open", () => {
+    const stylesSource = loadStylesSource();
     const keyboardRule =
-      appViewportSource.match(
-        /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
+      stylesSource.match(/html\.keyboard-open\s+\.app-viewport\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(keyboardRule).toMatch(/position:\s*fixed/);
     expect(keyboardRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
@@ -323,28 +324,25 @@ describe("App shell", () => {
       }),
     );
 
-    render(App);
+    render(<App />);
     expect(document.title).toBe("Ajax");
 
     setHash("#/settings");
-    await tick();
-    expect(document.title).toBe("Settings — Ajax");
+    await waitFor(() => expect(document.title).toBe("Settings — Ajax"));
 
     setHash("#/t/web%2Ffix-login");
-    await tick();
-    expect(document.title).toBe("web/fix-login — Ajax");
+    await waitFor(() => expect(document.title).toBe("web/fix-login — Ajax"));
   });
 
   it("marks the dashboard nav button as current", async () => {
-    const { container } = render(App);
+    const { container } = render(<App />);
     const dashboardNav = () =>
       container.querySelector<HTMLButtonElement>("[data-bottom-route='#/']")!;
 
     expect(dashboardNav()).toHaveAttribute("aria-current", "page");
 
     setHash("#/settings");
-    await tick();
-    expect(dashboardNav()).not.toHaveAttribute("aria-current");
+    await waitFor(() => expect(dashboardNav()).not.toHaveAttribute("aria-current"));
   });
 
   it("styles the current bottom-nav page with an accent selected state", () => {
@@ -358,27 +356,27 @@ describe("App shell", () => {
   });
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
-    const { container } = render(App);
+    const { container } = render(<App />);
     expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();
     expect(container.querySelector(".empty")).toBeNull();
   });
 
   it("shows a task skeleton while a task detail is loading", async () => {
-    const { container, findByTestId } = render(App);
+    const { container, findByTestId } = render(<App />);
     setHash("#/t/web%2Ffix-login");
     await findByTestId("outlet-task");
     expect(container.querySelector("[data-testid='task-skeleton']")).toBeInTheDocument();
   });
 
   it("shows the settings outlet on the settings route", async () => {
-    const { container, findByTestId } = render(App);
+    const { container, findByTestId } = render(<App />);
     setHash("#/settings");
     expect(await findByTestId("outlet-settings")).toBeInTheDocument();
     expect(container.querySelector("[data-outlet='dashboard']")).toBeNull();
   });
 
   it("shows the task outlet on a task route", async () => {
-    const { findByTestId } = render(App);
+    const { findByTestId } = render(<App />);
     setHash("#/t/web%2Ffix-login");
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
   });
@@ -400,12 +398,12 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByTestId } = render(App);
+    const { findByTestId } = render(<App />);
     setHash("#/t/web%2Ffix-login");
     await findByTestId("outlet-task");
 
     releaseResume(jsonResponse({ ok: true }));
-    await tick();
+    await waitFor(() => expect(true).toBe(true));
   });
 
   it("resumes the task once when its route is entered, and re-resumes a different handle", async () => {
@@ -425,11 +423,10 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByTestId } = render(App);
+    const { findByTestId } = render(<App />);
 
     // Dashboard route must never resume.
-    await tick();
-    expect(operations).toHaveLength(0);
+    await waitFor(() => expect(operations).toHaveLength(0));
 
     setHash("#/t/web%2Ffix-login");
     await findByTestId("outlet-task");
@@ -465,9 +462,9 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
     setHash("#/t/web%2Ffix-login");
-    await tick();
+    await waitFor(() => expect(true).toBe(true));
     setHash("#/t/web%2Fother");
     await findByText("Other task");
 
@@ -475,7 +472,7 @@ describe("App shell", () => {
     resolveFirstDetail(jsonResponse({ ...taskDetail, title: "STALE fix-login" }));
     // Macrotask boundary: let the whole fetch→parse→assign chain settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await tick();
+    await waitFor(() => expect(true).toBe(true));
     expect(queryByText("STALE fix-login")).not.toBeInTheDocument();
     expect(queryByText("Other task")).toBeInTheDocument();
   });
@@ -494,7 +491,7 @@ describe("App shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(App);
+    render(<App />);
 
     const hitVersion = () =>
       fetchMock.mock.calls.some(([path]) => String(path) === "/api/version");
@@ -519,7 +516,7 @@ describe("App shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = render(App);
+    const { container } = render(<App />);
     const banner = container.querySelector(".update-banner") as HTMLButtonElement;
 
     expect(banner.hidden).toBe(true);
@@ -543,7 +540,7 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
 
     expect(await findByText("disconnected: HTTP 503")).toBeInTheDocument();
     expect(queryByText("backend unreachable")).toBeNull();
@@ -559,7 +556,7 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
 
     expect(await findByText("stale session: HTTP 401")).toBeInTheDocument();
     expect(queryByText("disconnected: HTTP 401")).toBeNull();
@@ -585,7 +582,7 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
 
     expect(await findByText("connected")).toBeInTheDocument();
     expect(queryByText("stale session")).toBeNull();
@@ -606,7 +603,7 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
 
     expect(await findByText("stale session: HTTP 503")).toBeInTheDocument();
     expect(queryByText("connected")).toBeNull();
@@ -615,7 +612,7 @@ describe("App shell", () => {
   it("reports cockpit network failures as backend unreachable with detail", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
 
-    const { findByText } = render(App);
+    const { findByText } = render(<App />);
 
     expect(await findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
   });
@@ -635,7 +632,7 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText } = render(App);
+    const { findByText } = render(<App />);
     setHash("#/t/web%2Ffix-login");
 
     expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
@@ -675,17 +672,17 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(App);
+    const { findByText, queryByText } = render(<App />);
     setHash("#/t/web%2Ffix-login");
     expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
     releaseResume(jsonResponse({ ok: true }));
     releaseCockpit(jsonResponse(cockpit));
-    await tick();
+    await waitFor(() => expect(true).toBe(true));
 
     // Flush the dashboard intermediate so the detail effect observes handle=null
     // before reopening the same task (sync double-hashchange would otherwise batch).
     setHash("#/");
-    await tick();
+    await waitFor(() => expect(true).toBe(true));
     setHash("#/t/web%2Ffix-login");
 
     expect(await findByText("connected")).toBeInTheDocument();

@@ -1,0 +1,110 @@
+ROUTER_REPORT_BEGIN
+```yaml
+status: success
+task: "Shell inversion capstone — App.svelte → App.tsx React root, delete Svelte shell + island adapter"
+summary: |
+  Inverted the Ajax web shell to a React root: App.tsx + AppShell/AppViewport/RouteScroll.tsx,
+  main.tsx entry (createRoot, ErrorBoundary, no StrictMode), app.html → main.tsx, shell CSS
+  appended to styles.css, all ReactIsland usages replaced with direct child components, S7 hooks
+  wired (useHashRoute, usePullToRefresh, useViewportBand). Deleted all src/*.svelte, main.ts,
+  ReactIsland.svelte, mountIsland.tsx, pullToRefreshAction(+test). Ported App.test.ts → App.test.tsx (34 tests).
+  Required fallout edits outside packet allowed-files list: repointed TaskDetail.test.tsx and
+  keyboardBandPin.test.ts raw imports; deleted orphaned mountIsland.test.tsx.
+
+test_first:
+  command: "npm run web:test -- --run crates/ajax-web/web/src/components/App.test.tsx"
+  phase: red
+  exit_code: 1
+  excerpt: |
+    FAIL  src/components/App.test.tsx
+    Error: Failed to resolve import "./App" from ".../App.test.tsx". Does the file exist?
+    Test Files  1 failed (1) | Tests  no tests
+
+verification:
+  - command: "npm run web:test -- --run crates/ajax-web/web/src/components/App.test.tsx"
+    exit_code: 0
+    excerpt: "Test Files  1 passed (1) | Tests  34 passed (34)"
+
+  - command: "npm run web:test -- --run"
+    exit_code: 0
+    excerpt: "Test Files  36 passed (36) | Tests  321 passed (321)"
+
+  - command: "npm run web:check"
+    exit_code: 0
+    excerpt: "COMPLETED 172 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS"
+
+  - command: "npm run web:build"
+    exit_code: 0
+    excerpt: "✓ 68 modules transformed. | dist/app.js    592.74 kB | ✓ built in 1.04s"
+
+  - command: "grep -c serviceWorker crates/ajax-web/web/dist/app.js"
+    exit_code: 1
+    excerpt: "0 matches for 'serviceWorker'  (count=0, grep exit 1 = no matches — expected)"
+
+  - command: "npm run web:build:check"
+    exit_code: 0
+    excerpt: "web build check passed: deterministic shell with version placeholder."
+
+  - command: "npm run web:smoke -- --project=mobile-webkit"
+    exit_code: 0
+    excerpt: "2 skipped | 92 passed (35.8s) — terminal-behavior green, no socket-cardinality failures"
+
+  - command: "npm run web:smoke -- --project=desktop-chromium"
+    exit_code: 0
+    excerpt: "68 skipped | 26 passed (34.8s)"
+
+  - command: "cargo nextest run -p ajax-web"
+    exit_code: 0
+    excerpt: "Summary [1.079s] 159 tests run: 159 passed, 0 skipped"
+
+files_created:
+  - crates/ajax-web/web/src/components/App.tsx
+  - crates/ajax-web/web/src/components/App.test.tsx
+  - crates/ajax-web/web/src/components/AppShell.tsx
+  - crates/ajax-web/web/src/components/AppViewport.tsx
+  - crates/ajax-web/web/src/components/RouteScroll.tsx
+  - crates/ajax-web/web/src/main.tsx
+
+files_edited:
+  - crates/ajax-web/web/app.html
+  - crates/ajax-web/web/src/styles.css
+  - crates/ajax-web/web/src/legacyTerminalRemoval.test.ts
+  - crates/ajax-web/web/dist/* (regenerated via web:build)
+
+files_deleted:
+  - crates/ajax-web/web/src/components/App.svelte
+  - crates/ajax-web/web/src/components/App.test.ts
+  - crates/ajax-web/web/src/components/AppShell.svelte
+  - crates/ajax-web/web/src/components/AppViewport.svelte
+  - crates/ajax-web/web/src/components/RouteScroll.svelte
+  - crates/ajax-web/web/src/main.ts
+  - crates/ajax-web/web/src/react/ReactIsland.svelte
+  - crates/ajax-web/web/src/react/mountIsland.tsx
+  - crates/ajax-web/web/src/gestures/pullToRefreshAction.ts
+  - crates/ajax-web/web/src/gestures/pullToRefreshAction.test.ts
+
+scope_deviations:
+  - file: crates/ajax-web/web/src/components/TaskDetail.test.tsx
+    reason: "Repointed App.svelte/RouteScroll.svelte ?raw → .tsx; ReactIsland grep → <TaskDetail after shell inversion"
+  - file: crates/ajax-web/web/src/components/keyboardBandPin.test.ts
+    reason: "AppViewport keyboard-pin CSS moved to styles.css; repointed regex from :global() Svelte to plain html.keyboard-open .app-viewport in stylesSource"
+  - file: crates/ajax-web/web/src/react/mountIsland.test.tsx
+    reason: "Deleted orphaned test for removed mountIsland.tsx (parallel to pullToRefreshAction.test.ts deletion)"
+
+acceptance_checklist:
+  no_svelte_under_src: true
+  main_tsx_entry: true
+  no_strict_mode: true
+  no_react_island: true
+  web_test_green: true
+  web_check_clean: true
+  web_build_green: true
+  service_worker_count_zero: true
+  mobile_webkit_smoke_green: true
+  desktop_chromium_smoke_green: true
+  cargo_nextest_green: true
+
+risks: []
+blockers: []
+```
+ROUTER_REPORT_END

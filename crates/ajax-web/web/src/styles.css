@@ -2062,6 +2062,76 @@ header .bar h1 {
   .detail-grid { grid-template-columns: 92px 1fr; }
 }
 
+/* SHELL LAYOUT — app-viewport, app-shell, app-main ------------------------- */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.app-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+/* Sole consumer of initViewport's --app-top / --app-height on <html>. */
+.app-viewport {
+  --app-band-top: var(--app-top, 0px);
+  --app-band-height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  height: var(--app-band-height);
+  max-height: var(--app-band-height);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+html.keyboard-open .app-viewport {
+  position: fixed;
+  /* Height pin to visualViewport band. */
+  top: var(--app-top, var(--app-band-top, 0px));
+  left: 0;
+  right: 0;
+  height: var(--app-height, var(--app-band-height, 100dvh));
+  max-height: var(--app-height, var(--app-band-height, 100dvh));
+  z-index: 30;
+}
+
+/* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
+.pull-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.pull-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--rule-strong);
+  border-top-color: var(--accent);
+  opacity: 0.5;
+  transition: opacity 140ms var(--ease), transform 140ms var(--ease);
+}
+
+.pull-indicator.armed .pull-spinner {
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

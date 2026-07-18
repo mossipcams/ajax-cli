@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
-import routeScrollSource from "./RouteScroll.svelte?raw";
-import appSource from "./App.svelte?raw";
+import routeScrollSource from "./RouteScroll.tsx?raw";
+import appSource from "./App.tsx?raw";
 import type { BrowserTaskDetail } from "../types";
 
 const stylesSource = readFileSync(
@@ -109,7 +109,7 @@ describe("TaskDetail", () => {
 
   it("renders the task outlet hook the scroll lock targets", () => {
     expect(appSource).toMatch(
-      /<section[^>]*data-outlet="task"[^>]*>[\s\S]*?<ReactIsland[^>]*component=\{TaskDetail\}/,
+      /<section[^>]*data-outlet="task"[^>]*>[\s\S]*?<TaskDetail/,
     );
     const { container } = render(<TaskDetail detail={detail()} />);
     expect(container.querySelector(".task-detail")).toBeInTheDocument();
