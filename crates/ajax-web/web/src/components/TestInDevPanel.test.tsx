@@ -1,6 +1,6 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import TestInDevPanel from "./TestInDevPanel.svelte";
+import TestInDevPanel from "./TestInDevPanel";
 
 const fetchDevDeploy = vi.fn();
 const startDevDeploy = vi.fn();
@@ -37,7 +37,7 @@ describe("TestInDevPanel", () => {
       },
     });
 
-    render(TestInDevPanel, { props: { taskHandle: "ajax-cli/demo" } });
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" />);
 
     const panel = screen.getByTestId("test-in-dev");
 
@@ -110,7 +110,7 @@ describe("TestInDevPanel", () => {
       },
     });
 
-    render(TestInDevPanel, { props: { taskHandle: "ajax-cli/demo" } });
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" />);
     await waitFor(() => expect(screen.getByTestId("test-in-dev-button")).toBeEnabled());
 
     await fireEvent.click(screen.getByTestId("test-in-dev-button"));

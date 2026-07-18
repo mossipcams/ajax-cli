@@ -1709,6 +1709,359 @@ header .bar h1 {
   }
 }
 
+/* TEST IN DEV PANEL ------------------------------------------------------- */
+.test-in-dev {
+  margin: 0 0 12px;
+}
+
+.test-in-dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-in-dev .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.test-in-dev .pill {
+  min-height: 24px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  padding: 2px 8px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.test-in-dev .pill:hover,
+.test-in-dev .pill:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.test-in-dev .pill:disabled {
+  opacity: 0.55;
+}
+
+.test-in-dev .error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(188, 92, 62, 0.12);
+  color: var(--terracotta-bright);
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* DETAIL HEADER --------------------------------------------------------- */
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.detail-header .back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  background: transparent;
+  border: none;
+  padding: 4px 10px 4px 0;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.detail-header .back:hover,
+.detail-header .back:focus-visible {
+  color: var(--ink);
+  outline: none;
+}
+
+.detail-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-heading);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  text-transform: none;
+  color: var(--ink);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-header .interact-pill {
+  flex: none;
+  margin-left: auto;
+}
+
+/* STATUS — CLI cockpit glyph + label (▸ ? ! ✓ ·), painted with the tone
+   color. Lives in the header row so state is always in view. */
+.interact-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--tone, var(--ink-muted));
+}
+
+.interact-pill::before {
+  content: "·";
+  line-height: 1;
+}
+
+.interact-pill.tone-running::before {
+  content: "▸";
+  animation: pulse 2.2s ease-in-out infinite;
+}
+
+.interact-pill.tone-waiting::before,
+.interact-pill.tone-attention::before,
+.interact-pill.tone-ready::before {
+  content: "?";
+}
+
+.interact-pill.tone-error::before,
+.interact-pill.tone-danger::before {
+  content: "!";
+}
+
+.interact-pill.tone-done::before,
+.interact-pill.tone-success::before {
+  content: "✓";
+}
+
+.interact-summary {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: var(--text-body-sm);
+  line-height: 1.5;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.interact-summary:last-child {
+  margin-bottom: 0;
+}
+
+/* Rare runtime-observation failure — stays visible on mobile, unlike the
+   summary lines, because it explains why status may be stale. */
+.interact-warning {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.interact-activity {
+  color: var(--ink-muted);
+  font-size: var(--text-label);
+}
+
+/* META DETAILS ---------------------------------------------------------- */
+.meta-details {
+  margin-top: 18px;
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+}
+
+.meta-details summary {
+  cursor: pointer;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.meta-group-label {
+  margin: 14px 0 8px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 8px 14px;
+  font-size: var(--text-body-sm);
+}
+
+.detail-grid dt {
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  font-size: var(--text-label);
+  font-weight: 600;
+}
+
+.detail-grid dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-data);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  font-feature-settings: "tnum";
+}
+
+.meta-copy-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meta-copy-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meta-copy {
+  flex: none;
+  min-height: 28px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.meta-copy:hover,
+.meta-copy:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.attempt-list,
+.annotation-list {
+  margin: 0;
+  padding-left: 18px;
+  font-family: var(--mono);
+  font-size: var(--text-data);
+  color: var(--ink);
+}
+
+.attempt-list li,
+.annotation-list li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.attempt-outcome {
+  font-weight: 600;
+}
+
+.attempt-when {
+  color: var(--ink-muted);
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  .detail-header {
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+  }
+
+  .interact-panel {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    min-height: 0;
+    padding: 2px 8px 2px calc(8px + env(safe-area-inset-left));
+    padding-right: calc(8px + env(safe-area-inset-right));
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+  }
+
+  .interact-summary {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--text-label);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .interact-warning {
+    margin: 0;
+    font-size: var(--text-label);
+    line-height: 1.2;
+  }
+
+  .interact-activity {
+    display: none;
+  }
+
+  .interact-panel .action-row {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .interact-panel .action-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .interact-panel .action {
+    min-height: 28px;
+    min-width: 0;
+    padding: 2px 8px;
+  }
+
+  .detail-header { margin-bottom: 8px; }
+  .detail-header .back { min-height: 32px; padding: 4px 10px 4px 0; }
+  .detail-title { font-size: var(--text-body-sm); line-height: 1.2; }
+
+  /* The details hairline sits flush under the terminal hotbar. */
+  .meta-details {
+    margin-top: 0;
+    padding-top: 10px;
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+  }
+}
+
+@media (max-width: 380px) {
+  .detail-grid { grid-template-columns: 92px 1fr; }
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

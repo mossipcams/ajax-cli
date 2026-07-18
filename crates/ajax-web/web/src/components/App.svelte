@@ -12,7 +12,7 @@
   import ConnectionStatus from "./ConnectionStatus";
   import ResultPanel from "./ResultPanel";
   import TaskList from "./TaskList";
-  import TaskDetail from "./TaskDetail.svelte";
+  import TaskDetail from "./TaskDetail";
   import SettingsView from "./SettingsView";
   import NewTaskSheet from "./NewTaskSheet";
   import Skeleton from "./Skeleton";
@@ -293,13 +293,16 @@
         {:else if route.kind === "task"}
           <section data-outlet="task" data-testid="outlet-task" data-handle={route.handle} aria-live="polite">
             {#if detail}
-              <TaskDetail
-                {detail}
-                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-                onCockpit={applyCockpit}
-                onResult={showResult}
-                onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
-                onDismiss={() => go(dashboardHash())}
+              <ReactIsland
+                component={TaskDetail}
+                props={{
+                  detail,
+                  onBack: () => go(selectedProject ? projectHash(selectedProject) : dashboardHash()),
+                  onCockpit: applyCockpit,
+                  onResult: showResult,
+                  onMutated: () => route.kind === "task" && route.handle && loadDetail(route.handle),
+                  onDismiss: () => go(dashboardHash()),
+                }}
               />
             {:else}
               <ReactIsland component={Skeleton} props={{ testid: "task-skeleton", rows: 6 }} />
