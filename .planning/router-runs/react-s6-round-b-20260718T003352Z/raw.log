@@ -1,0 +1,69 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Migrated TaskDetail from Svelte to React with native child composition, de-scoped CSS in styles.css, App.svelte ReactIsland mount, guard repoint, and deleted frozen ActionBar/TaskDetail Svelte files.
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/components/TaskDetail.tsx
+    - crates/ajax-web/web/src/components/TaskDetail.test.tsx
+    - crates/ajax-web/web/src/styles.css
+    - crates/ajax-web/web/src/components/App.svelte
+    - crates/ajax-web/web/src/legacyTerminalRemoval.test.ts
+    - crates/ajax-web/web/src/components/TaskDetail.svelte (deleted)
+    - crates/ajax-web/web/src/components/TaskDetail.test.ts (deleted)
+    - crates/ajax-web/web/src/components/ActionBar.svelte (deleted)
+    - crates/ajax-web/web/src/components/ActionBar.test.ts (deleted)
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/components/TaskDetail.test.tsx
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/components/TaskDetail.test.tsx
+        Error: Failed to resolve import "./TaskDetail" from "crates/ajax-web/web/src/components/TaskDetail.test.tsx". Does the file exist?
+        Test Files  1 failed (1)
+        Tests  no tests
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/components/TaskDetail.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  22 passed (22)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  35 passed (35)
+        Tests  320 passed (320)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        COMPLETED 173 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+    - PHASE: VERIFY
+      COMMAND: npm run web:build
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        ✓ 175 modules transformed.
+        ✓ built in 1.29s
+    - PHASE: VERIFY
+      COMMAND: grep -c serviceWorker crates/ajax-web/web/dist/app.js
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        0 matches for 'serviceWorker'
+    - PHASE: VERIFY
+      COMMAND: npm run web:build:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        web build check passed: deterministic shell with version placeholder.
+    - PHASE: VERIFY
+      COMMAND: cargo nextest run -p ajax-web
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Summary [   1.352s] 159 tests run: 159 passed, 0 skipped
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS:
+    - TaskDetail.test.tsx uses readFileSync for styles.css instead of styles.css?raw because Tailwind/vite ?raw import strips non-processed rules; assertions unchanged vs packet intent.
+    - TaskTerminal wrapped in a bare <div> to preserve ReactIsland host-div DOM hook for existing .task-detail > div:has([data-testid="task-terminal-panel"]) layout CSS.
+```
+ROUTER_REPORT_END

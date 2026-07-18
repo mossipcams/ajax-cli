@@ -22,7 +22,7 @@ via `ReactIsland`.
 ## Decomposition (two bounded rounds)
 
 - [x] **Round A — TestInDevPanel.tsx (leaf)** — delegated to Cursor/composer-2.5, ACCEPTED. Gate: vitest 24/24, web:check clean, build+build:check pass, serviceWorker=0, cargo nextest -p ajax-web 159/159. NOTE: original react-s6 worktree was deleted externally before commit; Round A reconstructed from context and committed immediately.
-- [ ] **Round B — TaskDetail.tsx + ActionBar dedup + shell swap**
+- [x] **Round B — TaskDetail.tsx + ActionBar dedup + shell swap** — delegated to Cursor/composer-2.5, ACCEPTED. Gate (independently rerun): web:test 320/320, web:check 0/0, build+build:check pass, serviceWorker=0, cargo nextest -p ajax-web 159/159. Accepted deviations: (1) test reads styles.css via `readFileSync` not `?raw` (Tailwind processes `?raw` css imports) — assertions preserved; (2) `<TaskTerminal>` wrapped in a bare `<div>` to keep the `.task-detail > div:has([data-testid="task-terminal-panel"])` host-div hook (styles.css:592,645) that ReactIsland previously provided.
   - Port `TaskDetail.svelte` → `TaskDetail.tsx`, importing `TestInDevPanel.tsx`, `ActionBar.tsx`, `TaskTerminal.tsx` natively (drop the Round-A island wrapper).
   - Move TaskDetail scoped styles into `styles.css`.
   - Port `TaskDetail.test.ts` → `.test.tsx`.
