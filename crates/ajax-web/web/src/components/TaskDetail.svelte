@@ -69,12 +69,12 @@
 
   <ReactIsland component={TaskTerminal} props={{ handle: detail.qualified_handle }} />
 
+  {#if detail.repo === "ajax-cli"}
+    <TestInDevPanel taskHandle={detail.qualified_handle} {onResult} />
+  {/if}
+
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>
-    {#if detail.repo === "ajax-cli"}
-      <div class="meta-group-label">Dev</div>
-      <TestInDevPanel taskHandle={detail.qualified_handle} {onResult} />
-    {/if}
     <div class="meta-group-label">Branch</div>
     <dl class="detail-grid">
       <dt>Branch</dt>

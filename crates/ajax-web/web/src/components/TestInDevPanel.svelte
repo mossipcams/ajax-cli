@@ -72,7 +72,6 @@
 
 <section class="test-in-dev" data-testid="test-in-dev" aria-label="Test in Dev">
   <div class="test-in-dev-row">
-    <span class="phase" data-testid="test-in-dev-phase">{phaseLabel}</span>
     <div class="actions">
       <button
         type="button"
@@ -110,28 +109,19 @@
     gap: 8px;
   }
 
-  .phase {
-    font-size: var(--text-label);
-    font-weight: 600;
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-    color: var(--ink-muted);
-  }
-
   .actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-left: auto;
+    gap: 6px;
   }
 
   .pill {
-    min-height: 28px;
+    min-height: 24px;
     border: 1px solid var(--rule-strong);
     border-radius: 999px;
     background: transparent;
     color: var(--ink-muted);
-    padding: 4px 10px;
+    padding: 2px 8px;
     font-size: var(--text-micro);
     font-weight: 600;
     letter-spacing: var(--tracking-label);
