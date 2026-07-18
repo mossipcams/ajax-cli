@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import appViewportSource from "./AppViewport.svelte?raw";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../styles.css"), "utf8");
@@ -58,9 +57,7 @@ describe("keyboard band height pin contract", () => {
 
   it("pins app-viewport with visualViewport height (not 100lvh bottom)", () => {
     const rule =
-      appViewportSource.match(
-        /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
+      stylesSource.match(/html\.keyboard-open\s+\.app-viewport\s*\{([^}]*)\}/)?.[1] ?? "";
     expectHeightBandPin(rule);
   });
 
@@ -81,7 +78,6 @@ describe("keyboard band height pin contract", () => {
   it("forbids 100lvh bottom band math anywhere in pin surfaces", () => {
     for (const [name, source] of [
       ["styles.css", stylesSource],
-      ["AppViewport.svelte", appViewportSource],
       ["TaskTerminal styles", taskTerminalStylesSection()],
     ] as const) {
       expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
