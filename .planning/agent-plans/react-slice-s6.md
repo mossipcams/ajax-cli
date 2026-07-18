@@ -53,3 +53,5 @@ Dev redeploy from the phone (self-hosting proof); terminal within detail unchang
 ## Validation results
 
 - Round A: PASS — vitest 24/24, web:check 0/0, build + build:check pass, serviceWorker=0.
+- Round B: PASS — web:test 320/320, web:check 0/0, build + build:check pass, serviceWorker=0, cargo nextest -p ajax-web 159/159.
+- On-device (Matt, 2026-07-18): PASS — clean. Open-task journey, copy buttons, destructive confirm, Test in Dev redeploy from phone, terminal keyboard band + fullscreen all verified on iPhone.
