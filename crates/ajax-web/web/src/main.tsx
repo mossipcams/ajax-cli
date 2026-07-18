@@ -11,5 +11,5 @@ if (el) {
     </ErrorBoundary>,
   );
 } else {
-  console.error("[ajax] #app element not found — Svelte app not mounted");
+  console.error("[ajax] #app element not found — React app not mounted");
 }

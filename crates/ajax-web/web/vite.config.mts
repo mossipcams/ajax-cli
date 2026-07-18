@@ -1,6 +1,4 @@
 import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { svelteTesting } from "@testing-library/svelte/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -9,7 +7,7 @@ import { join } from "node:path";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
-// The Svelte entry lives in `app.html` so Vite uses a predictable output name.
+// The app entry lives in `app.html` so Vite uses a predictable output name.
 // We rename the built `dist/app.html` to `dist/index.html` so the Rust embed
 // in adapters/assets.rs finds the conventional name.
 function renameAppHtml() {
@@ -33,7 +31,7 @@ function renameAppHtml() {
 export default defineConfig({
   root,
   base: "/",
-  plugins: [svelte(), react(), tailwindcss(), svelteTesting(), renameAppHtml()],
+  plugins: [react(), tailwindcss(), renameAppHtml()],
   resolve: {
     alias: {
       "@": join(root, "src"),
