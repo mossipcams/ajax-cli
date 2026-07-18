@@ -418,8 +418,8 @@ You orchestrate; you do not implement. Per `AGENTS.md`: model-router chooses the
 | S2 | Dashboard (TaskList + ActionBar) | merged | #573 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s2.md` |
 | S3 | Settings + ResultPanel | merged | #575 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s3.md` |
 | S4 | New-task sheet + FullscreenLayer | merged | #577 | 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s4.md` |
-| S5 | Terminal (TaskTerminal) | review | — | verify+on-device 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s5.md` |
-| S6 | Task detail + TestInDevPanel | not-started | — | — | — |
+| S5 | Terminal (TaskTerminal) | merged | #578 | verify+on-device 2026-07-17 | ledger: `.planning/agent-plans/react-slice-s5.md` |
+| S6 | Task detail + TestInDevPanel | in-progress | — | — | ledger: `.planning/agent-plans/react-slice-s6.md` |
 | S7 | Shell inversion + Svelte removal | not-started | — | — | — |
 
 Temporary migration code inventory (all rows must be empty before S7 closes):

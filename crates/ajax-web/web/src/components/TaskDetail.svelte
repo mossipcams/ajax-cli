@@ -6,7 +6,7 @@
   import ActionBar from "./ActionBar.svelte";
   import ReactIsland from "../react/ReactIsland.svelte";
   import TaskTerminal from "./TaskTerminal";
-  import TestInDevPanel from "./TestInDevPanel.svelte";
+  import TestInDevPanel from "./TestInDevPanel";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -73,7 +73,7 @@
     <summary>Task details</summary>
     {#if detail.repo === "ajax-cli"}
       <div class="meta-group-label">Dev</div>
-      <TestInDevPanel taskHandle={detail.qualified_handle} {onResult} />
+      <ReactIsland component={TestInDevPanel} props={{ taskHandle: detail.qualified_handle, onResult }} />
     {/if}
     <div class="meta-group-label">Branch</div>
     <dl class="detail-grid">
