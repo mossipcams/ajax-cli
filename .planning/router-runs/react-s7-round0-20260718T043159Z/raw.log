@@ -1,0 +1,40 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Added shell-characterization Playwright e2e tests for update-banner reload and pull-to-refresh; both pass green against current Svelte App.
+  FILES_CHANGED:
+    - crates/ajax-web/web/e2e/shell-characterization.test.ts
+  TEST_FIRST: NOT_APPLICABLE
+  COMMAND_EVIDENCE:
+    - PHASE: VERIFY
+      COMMAND: npm run web:smoke -- --project=mobile-webkit crates/ajax-web/web/e2e/shell-characterization.test.ts
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Running 2 tests using 2 workers
+          ✓  pull-to-refresh past threshold reloads the cockpit (843ms)
+          ✓  update banner appears on version change and reloads on tap (958ms)
+        2 passed (2.4s)
+    - PHASE: VERIFY
+      COMMAND: npm run web:smoke -- --project=desktop-chromium crates/ajax-web/web/e2e/shell-characterization.test.ts
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Running 2 tests using 2 workers
+          -  pull-to-refresh past threshold reloads the cockpit (skipped)
+          ✓  update banner appears on version change and reloads on tap (549ms)
+        1 skipped
+        1 passed (2.3s)
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS:
+    - Stateful /api/version mock must inline version strings; passing fixtures.VERSION_A/B via addInitScript args did not produce distinct A/B responses in WebKit.
+```
+ROUTER_REPORT_ENDAdded `crates/ajax-web/web/e2e/shell-characterization.test.ts` with two characterization tests against the current Svelte `App`:
+
+1. **Update banner** — stateful `/api/version` mock (A on first read, B on later polls); banner becomes visible and reloads on tap.
+2. **Pull-to-refresh** — touch-drag past threshold on the dashboard outlet triggers another `/api/cockpit` fetch (mobile-webkit only).
+
+Verification passed:
+- **mobile-webkit**: 2 passed
+- **desktop-chromium**: 1 passed, 1 skipped (pull-to-refresh)
+
+No production or fixture changes. One implementation note: version strings are inlined in the init script because passing `VERSION_A`/`VERSION_B` through `addInitScript` did not produce distinct responses in WebKit.
