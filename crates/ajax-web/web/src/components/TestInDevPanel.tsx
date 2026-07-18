@@ -70,9 +70,6 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
   return (
     <section className="test-in-dev" data-testid="test-in-dev" aria-label="Test in Dev">
       <div className="test-in-dev-row">
-        <span className="phase" data-testid="test-in-dev-phase">
-          {phaseLabel}
-        </span>
         <div className="actions">
           <button
             type="button"

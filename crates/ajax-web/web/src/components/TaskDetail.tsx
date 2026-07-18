@@ -80,17 +80,15 @@ export default function TaskDetail({
         <TaskTerminal handle={detail.qualified_handle} />
       </div>
 
+      {detail.repo === "ajax-cli" ? (
+        <TestInDevPanel taskHandle={detail.qualified_handle} onResult={onResult} />
+      ) : null}
+
       <details
         className="meta-details"
         open={metaOpen}
         onToggle={(e) => setMetaOpen(e.currentTarget.open)}>
         <summary>Task details</summary>
-        {detail.repo === "ajax-cli" ? (
-          <>
-            <div className="meta-group-label">Dev</div>
-            <TestInDevPanel taskHandle={detail.qualified_handle} onResult={onResult} />
-          </>
-        ) : null}
         <div className="meta-group-label">Branch</div>
         <dl className="detail-grid">
           <dt>Branch</dt>

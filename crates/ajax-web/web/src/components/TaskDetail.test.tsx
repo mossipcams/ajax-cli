@@ -248,7 +248,7 @@ describe("TaskDetail projection surface", () => {
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
   });
 
-  it("places Test in Dev inside Task details for ajax-cli tasks", async () => {
+  it("shows Test in Dev on the detail page (not in the action bar or collapsed details) for ajax-cli tasks", async () => {
     fetchDevDeploy.mockResolvedValue({
       ok: true,
       deploy: {
@@ -267,8 +267,10 @@ describe("TaskDetail projection surface", () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector(".meta-details [data-testid='test-in-dev']")).toBeInTheDocument();
+      expect(container.querySelector("[data-testid='test-in-dev']")).toBeInTheDocument();
     });
+    // Visible on the page, not buried in the collapsed Task details disclosure.
+    expect(container.querySelector(".meta-details [data-testid='test-in-dev']")).toBeNull();
     expect(
       container.querySelector("[data-mobile-chrome='actions'] [data-testid='test-in-dev']"),
     ).toBeNull();
