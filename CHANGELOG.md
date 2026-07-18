@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.7...ajax-cli-v0.50.8) (2026-07-18)
+
+
+### Code Refactoring
+
+* **web:** invert shell to React and remove Svelte — migration complete (react S7) ([#585](https://github.com/mossipcams/ajax-cli/issues/585)) ([e5c593e](https://github.com/mossipcams/ajax-cli/commit/e5c593ed41ba03d89186e5802d02ef9dddae9704))
+
 ## [0.50.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.6...ajax-cli-v0.50.7) (2026-07-18)
 
 
