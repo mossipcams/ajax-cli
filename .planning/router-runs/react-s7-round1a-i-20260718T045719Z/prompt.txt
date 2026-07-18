@@ -1,0 +1,98 @@
+You are a bounded implementation worker for a parent agent.
+Current directory is the task worktree.
+Never commit, push, merge, rebase, create branches, or change branches.
+
+Complete exactly one bounded task from the packet below.
+Edit only Allowed files (all are NEW files). Do not modify ANY existing file. Do not touch Forbidden changes. Follow Code anchors.
+Run the failing test first (TEST_FIRST REQUIRED): write each hook's test, run the focused red command, confirm failure, then implement to green.
+Make the smallest allowed edit needed. Reuse the existing pure modules; do not duplicate gesture/route math.
+Run Verification commands.
+Stop if any Stop condition is hit.
+No drive-by cleanup, renames, or refactors.
+
+Return exactly the router's DELEGATE_REPORT schema between these marker lines:
+ROUTER_REPORT_BEGIN
+<DELEGATE_REPORT YAML>
+ROUTER_REPORT_END
+Include every command's actual exit code and a short output excerpt. Do not summarize missing evidence.
+
+---- TDD IMPLEMENTATION PACKET ----
+PACKET_STATUS: READY
+TASK_KIND: behavior
+TEST_FIRST: REQUIRED
+PRODUCTION_EDIT: REQUIRED
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+
+## Goal
+
+Add the three React hooks the S7 shell inversion will consume, each a thin wrapper over an existing pure/neutral module, with unit tests. Purely additive — no existing file changes, Svelte shell untouched, build stays green. This pre-tests the hooks before the root-inversion sub-round wires them.
+
+Worktree: `/Users/matt/Desktop/Projects/ajax-cli__worktrees/react-s7`, branch `ajax/react-s7`.
+
+## Allowed files
+
+- `crates/ajax-web/web/src/react/useHashRoute.ts` (create)
+- `crates/ajax-web/web/src/react/useHashRoute.test.tsx` (create)
+- `crates/ajax-web/web/src/react/usePullToRefresh.ts` (create)
+- `crates/ajax-web/web/src/react/usePullToRefresh.test.tsx` (create)
+- `crates/ajax-web/web/src/react/useViewportBand.ts` (create)
+- `crates/ajax-web/web/src/react/useViewportBand.test.tsx` (create)
+
+## Forbidden changes
+
+- No edits to any existing file (no wiring into `App.svelte`, no deletions). No changes to the pure modules (`routes.ts`, `gestures/pullToRefresh.ts`, `viewport.ts`) — import only.
+- No new dependencies. Do not commit, push, merge, rebase, or change branches.
+
+## Context evidence
+
+- **routes.ts**: `parseRoute(hash) → Route`; helpers `dashboardHash/settingsHash/taskHash/projectHash`. App does `route = parseRoute(location.hash)` at init and on `hashchange` (`App.svelte:27,157,169`).
+- **gestures/pullToRefresh.ts** (pure): `PULL_THRESHOLD=64`, `PULL_MAX=96`, `pullStart(scrollTop): PullState`, `pullMove(state, rawDelta): PullState`, `pullEnd(state): {triggered}`. `PullState` has `active`, `distance`, `armed`.
+- **pullToRefreshAction.ts** (Svelte adapter to mirror as a hook): touchstart→`pullStart(scrollTop())`; touchmove→`pullMove(state, y-startY)` + `onDistance(distance)`; touchend/cancel→ if `pullEnd(state).triggered` call `onRefresh()`, reset, `onDistance(0)`. `readTouchY` returns `touches[0].clientY` only when `touches.length === 1`. Listeners: touchstart/touchmove passive, touchend/touchcancel. `scrollTop` defaults to `document.scrollingElement?.scrollTop ?? 0`.
+- **viewport.ts**: `initViewport()` returns a cleanup fn (used by `AppViewport.svelte` as `$effect(() => initViewport())`).
+- **Test infra**: `@testing-library/react` 16.3.2 (has `renderHook`), vitest jsdom globals.
+
+## Code anchors
+
+- `useHashRoute` mirrors `App.svelte:27` (initial `parseRoute(location.hash)`) + `:157,169,175` (hashchange add/remove).
+- `usePullToRefresh` mirrors `pullToRefreshAction.ts` in full, as a hook returning a ref callback (or a ref + effect) that attaches the same listeners with identical passive flags.
+- `useViewportBand` mirrors `AppViewport.svelte:$effect(() => initViewport())`.
+
+## Test-first instructions
+
+Write each hook's failing test first, then implement.
+
+1. `useHashRoute.test.tsx`: `renderHook(() => useHashRoute())`; assert initial route matches `parseRoute(location.hash)`; set `location.hash` + dispatch `new HashChangeEvent("hashchange")` (or `window.dispatchEvent(new Event("hashchange"))`), assert the returned route updates; assert listener removed on unmount (no update after unmount).
+2. `usePullToRefresh.test.tsx`: attach the hook's ref to a detached element; simulate touchstart (1 touch), touchmove past `PULL_THRESHOLD` (dispatch real `touchstart`/`touchmove`/`touchend` with `touches`/`changedTouches` like `swipe-reveal.test.ts`), assert `onDistance` called with the resisted distance and `onRefresh` called once on end when armed; assert `onRefresh` NOT called when the drag is below threshold; assert cleanup removes listeners.
+3. `useViewportBand.test.tsx`: mock `../viewport` `initViewport` returning a cleanup spy; `renderHook(() => useViewportBand())`; assert `initViewport` called once on mount and cleanup called on unmount.
+4. Red command:
+   ```bash
+   npm run web:test -- --run crates/ajax-web/web/src/react/useHashRoute.test.tsx crates/ajax-web/web/src/react/usePullToRefresh.test.tsx crates/ajax-web/web/src/react/useViewportBand.test.tsx
+   ```
+   Record RED (import failure), then implement to GREEN.
+
+## Edit instructions
+
+1. `useHashRoute.ts`: `export function useHashRoute(): Route` — `useState(() => parseRoute(location.hash))`, `useEffect(() => { const on = () => setRoute(parseRoute(location.hash)); window.addEventListener("hashchange", on); return () => window.removeEventListener("hashchange", on); }, [])`, return route.
+2. `usePullToRefresh.ts`: `export function usePullToRefresh(options): (node: HTMLElement | null) => void` (ref callback) OR `(ref, options)` — attach the exact listeners from `pullToRefreshAction.ts` in a `useEffect`/ref-callback, keep `options` in a ref so `onRefresh`/`onDistance` stay current without reattaching. Same passive flags. Reuse `pullStart/pullMove/pullEnd`. No gesture math inline.
+3. `useViewportBand.ts`: `export function useViewportBand(): void` — `useEffect(() => initViewport(), [])`.
+
+## Verification commands
+
+```bash
+npm run web:test -- --run crates/ajax-web/web/src/react/useHashRoute.test.tsx crates/ajax-web/web/src/react/usePullToRefresh.test.tsx crates/ajax-web/web/src/react/useViewportBand.test.tsx
+npm run web:check
+npm run web:test -- --run
+```
+
+## Acceptance criteria
+
+- Three hooks + three test files added; all new tests green; full `web:test` still green; `web:check` clean.
+- No existing file modified; no new dependency.
+- Hooks delegate to the pure modules (no duplicated gesture/route math).
+
+## Stop conditions
+
+- Any need to edit an existing file (esp. a pure module or `App.svelte`) — stop, report.
+- `renderHook` unavailable from `@testing-library/react` — stop, report (do not add a dependency).
+- A hook's behavior can't match its Svelte-adapter source without changing the pure module — stop, report.

@@ -1,0 +1,59 @@
+ROUTER_REPORT_BEGIN
+```yaml
+status: success
+task: react-s7-hooks-round1a
+summary: Added three React hooks (useHashRoute, usePullToRefresh, useViewportBand) with unit tests; thin wrappers over existing pure modules; no existing files modified.
+
+files_created:
+  - crates/ajax-web/web/src/react/useHashRoute.ts
+  - crates/ajax-web/web/src/react/useHashRoute.test.tsx
+  - crates/ajax-web/web/src/react/usePullToRefresh.ts
+  - crates/ajax-web/web/src/react/usePullToRefresh.test.tsx
+  - crates/ajax-web/web/src/react/useViewportBand.ts
+  - crates/ajax-web/web/src/react/useViewportBand.test.tsx
+
+files_modified: []
+
+test_first:
+  red_command: npm run web:test -- --run crates/ajax-web/web/src/react/useHashRoute.test.tsx crates/ajax-web/web/src/react/usePullToRefresh.test.tsx crates/ajax-web/web/src/react/useViewportBand.test.tsx
+  red_exit_code: 1
+  red_excerpt: |
+    FAIL  src/react/useHashRoute.test.tsx
+    Error: Failed to resolve import "./useHashRoute" from "crates/ajax-web/web/src/react/useHashRoute.test.tsx". Does the file exist?
+    FAIL  src/react/usePullToRefresh.test.tsx
+    Error: Failed to resolve import "./usePullToRefresh" from "crates/ajax-web/web/src/react/usePullToRefresh.test.tsx". Does the file exist?
+    FAIL  src/react/useViewportBand.test.tsx
+    Error: Failed to resolve import "./useViewportBand" from "crates/ajax-web/web/src/react/useViewportBand.test.tsx". Does the file exist?
+    Test Files  3 failed (3)
+    Tests  no tests
+
+implementation:
+  useHashRoute: useState(parseRoute(location.hash)) + hashchange listener in useEffect
+  usePullToRefresh: ref callback mirroring pullToRefreshAction.ts listeners/passive flags; opts kept in ref
+  useViewportBand: useEffect(() => initViewport(), [])
+
+verification:
+  - command: npm run web:test -- --run crates/ajax-web/web/src/react/useHashRoute.test.tsx crates/ajax-web/web/src/react/usePullToRefresh.test.tsx crates/ajax-web/web/src/react/useViewportBand.test.tsx
+    exit_code: 0
+    excerpt: |
+      Test Files  3 passed (3)
+      Tests  7 passed (7)
+  - command: npm run web:check
+    exit_code: 0
+    excerpt: |
+      COMPLETED 176 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+  - command: npm run web:test -- --run
+    exit_code: 0
+    excerpt: |
+      Test Files  38 passed (38)
+      Tests  327 passed (327)
+
+tests_added:
+  useHashRoute: 3 (initial route, hashchange update, listener cleanup on unmount)
+  usePullToRefresh: 3 (threshold refresh + distance, below-threshold no refresh, ref-clear cleanup)
+  useViewportBand: 1 (initViewport on mount, cleanup on unmount)
+
+stop_conditions_hit: none
+commit_push_merge: none (per worker constraints)
+```
+ROUTER_REPORT_END

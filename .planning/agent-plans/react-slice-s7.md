@@ -25,7 +25,10 @@ Invert the shell to a React root and delete the Svelte toolchain entirely:
 
 - [x] **Round 0 — characterization gap (MANDATED FIRST, against Svelte)** — delegated to Cursor/composer-2.5, ACCEPTED. New `e2e/shell-characterization.test.ts`; independently reverified: mobile-webkit 2/2 (update-banner + pull-to-refresh), desktop-chromium update-banner pass + pull-to-refresh skipped (coarse-pointer only).
   - Add e2e for the **update banner** (mock `/api/version` change → banner appears, tap reloads) and **pull-to-refresh** (touch-drag ≥ `PULL_THRESHOLD` → cockpit reload), green against the current Svelte `App`. Commit before any port.
-- [ ] **Round 1 — shell port + framework removal (one atomic change; a half-migrated tree does not build)**
+- [~] **Round 1 — shell port + framework removal** (split into sub-rounds)
+  - [x] **1a-i — hooks** (`useHashRoute`, `usePullToRefresh`, `useViewportBand` + tests). Cursor/composer-2.5, ACCEPTED (nonconforming envelope, content reverified). Additive; hook tests 7/7, full web:test 327/327, web:check clean. No existing files touched.
+  - [ ] **1a-ii — root inversion**: shell components + App.tsx + main.tsx createRoot + app.html + delete all .svelte + island adapter + pullToRefreshAction; port App.test.ts (694 lines). Atomic; likely resume steps.
+  - [ ] **1b — toolchain/dep/config removal**
   - App/AppShell/AppViewport/RouteScroll → `.tsx`; hooks; `main.tsx` + `createRoot`; root ErrorBoundary; `App.test.ts` → `.test.tsx`; delete island adapter + `pullToRefreshAction`; remove svelte plugin/deps/config; `app.html` + `web:check` + guard repoints + prose.
   - May split into implement→resume sub-rounds along: (a) App.tsx + hooks + shell components, (b) main.tsx flip + toolchain/dep/config removal + guard/prose. Each sub-round must leave `npm run verify` green.
 
