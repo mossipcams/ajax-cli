@@ -64,4 +64,9 @@ Commit each round the moment it passes the gate (worktrees can be reaped — see
 
 ## Deviations / Validation results
 
-- (pending Round 0)
+- Round 0: PASS — e2e mobile-webkit 2/2, desktop banner pass + pull skip.
+- Round 1a-i: PASS — hook tests 7/7, full web:test 327/327.
+- Round 1a-ii: PASS — 0 .svelte, web:test 321/321, web:check clean, mobile smoke 92, desktop 26, nextest 159/159; resume-once/effect-parity verified.
+- Round 1b: PASS — svelte toolchain removed, web:check tsc-only, full gate green, mobile 92 / desktop 26 / vitest 321 / nextest 159.
+- Rebased onto origin/main (S6 #583 merged + release #584); re-verified: build, web:check, vitest 321/321, mobile-webkit smoke 92.
+- On-device (Matt, 2026-07-18): PASS — validated on dev. Full §9 iPhone matrix clean.
