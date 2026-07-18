@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.5...ajax-cli-v0.50.6) (2026-07-18)
+
+
+### Bug Fixes
+
+* **web:** surface Test in Dev on the detail page as name-only pills ([#581](https://github.com/mossipcams/ajax-cli/issues/581)) ([2bc8e20](https://github.com/mossipcams/ajax-cli/commit/2bc8e20ca830ffa04a3e632b5b0a46d5aeb61b96))
+
 ## [0.50.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.4...ajax-cli-v0.50.5) (2026-07-17)
 
 
