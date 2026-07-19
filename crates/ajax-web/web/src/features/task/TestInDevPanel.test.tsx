@@ -20,17 +20,15 @@ describe("TestInDevPanel", () => {
   beforeEach(() => {
     fetchDevDeploy.mockReset();
     startDevDeploy.mockReset();
-    vi.stubGlobal("open", vi.fn());
   });
 
-  it("shows ready state and fixed Open Dev URL", async () => {
+  it("shows ready state with Test in Dev button only", async () => {
     fetchDevDeploy.mockResolvedValue({
       ok: true,
       deploy: {
         phase: "ready_to_deploy",
         phase_label: "Ready to deploy",
         shared_slot: true,
-        open_url: "https://ajaxdev.mossyhome.net:8788",
         active: false,
         error: null,
         occupant: null,
@@ -47,13 +45,7 @@ describe("TestInDevPanel", () => {
     expect(within(panel).queryByText(/Shared Ajax Dev slot/)).toBeNull();
     expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(screen.getByTestId("test-in-dev-button")).toBeEnabled();
-
-    fireEvent.click(screen.getByTestId("open-dev-button"));
-    expect(window.open).toHaveBeenCalledWith(
-      "https://ajaxdev.mossyhome.net:8788",
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(screen.queryByTestId("open-dev-button")).toBeNull();
   });
 
   it("disables Test in Dev while building and surfaces failure text", async () => {
@@ -64,7 +56,6 @@ describe("TestInDevPanel", () => {
           phase: "ready_to_deploy",
           phase_label: "Ready to deploy",
           shared_slot: true,
-          open_url: "https://ajaxdev.mossyhome.net:8788",
           active: false,
           error: null,
           occupant: null,
@@ -76,7 +67,6 @@ describe("TestInDevPanel", () => {
           phase: "failed",
           phase_label: "Failed",
           shared_slot: true,
-          open_url: "https://ajaxdev.mossyhome.net:8788",
           active: false,
           error: "cargo build failed",
           occupant: {
@@ -96,7 +86,6 @@ describe("TestInDevPanel", () => {
         phase: "building",
         phase_label: "Building",
         shared_slot: true,
-        open_url: "https://ajaxdev.mossyhome.net:8788",
         active: true,
         error: null,
         occupant: {

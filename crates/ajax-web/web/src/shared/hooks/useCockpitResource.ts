@@ -3,11 +3,16 @@ import { ApiError, fetchCockpit } from "@/shared/lib/api";
 import { createCockpitApplyGate, createInFlightGuard } from "@/shared/lib/cockpitPoll";
 import type { BrowserCockpitView, ConnectionState, RemoteResource } from "@/shared/lib/types";
 
+export type LoadCockpitOptions = {
+  /** Schedule a follow-up poll if one is already in flight (Retry). */
+  trailing?: boolean;
+};
+
 export type CockpitResource = {
   cockpit: RemoteResource<BrowserCockpitView>;
   connection: ConnectionState;
   connectionDetail: string | null;
-  loadCockpit: () => Promise<void>;
+  loadCockpit: (options?: LoadCockpitOptions) => Promise<void>;
   applyCockpit: (next: BrowserCockpitView) => void;
   applyConnectionError: (error: unknown) => void;
   /**
@@ -72,22 +77,25 @@ export function useCockpitResource(): CockpitResource {
     setConnectionDetail(null);
   }, []);
 
-  const loadCockpit = useCallback(async () => {
+  const loadCockpit = useCallback(async (options?: LoadCockpitOptions) => {
     if (document.hidden) return;
-    await cockpitPollGuardRef.current.run(async () => {
-      try {
-        applyCockpit(await fetchCockpit());
-      } catch (error) {
-        applyConnectionError(error);
-        const apiError = toApiError(error);
-        setCockpit((prev) => {
-          if (prev.status === "ready" || prev.status === "stale") {
-            return { status: "stale", data: prev.data, error: apiError };
-          }
-          return { status: "error", data: null, error: apiError };
-        });
-      }
-    });
+    await cockpitPollGuardRef.current.run(
+      async () => {
+        try {
+          applyCockpit(await fetchCockpit());
+        } catch (error) {
+          applyConnectionError(error);
+          const apiError = toApiError(error);
+          setCockpit((prev) => {
+            if (prev.status === "ready" || prev.status === "stale") {
+              return { status: "stale", data: prev.data, error: apiError };
+            }
+            return { status: "error", data: null, error: apiError };
+          });
+        }
+      },
+      options?.trailing ? { trailing: true } : undefined,
+    );
   }, [applyCockpit, applyConnectionError]);
 
   return {

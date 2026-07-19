@@ -175,7 +175,7 @@ export default function App() {
         <ConnectionStatus
           state={connection}
           detail={connectionDetail}
-          onRetry={() => loadCockpit()}
+          onRetry={() => void loadCockpit({ trailing: true })}
           onReload={() => location.reload()}
           onCopyDiagnostics={() => go(settingsHash())}
         />

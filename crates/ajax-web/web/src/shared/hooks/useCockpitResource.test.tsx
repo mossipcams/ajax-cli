@@ -80,6 +80,34 @@ describe("useCockpitResource", () => {
       await second;
     });
 
+    expect(fetchCockpit).toHaveBeenCalledTimes(1);
+    expect(result.current.cockpit.status).toBe("ready");
+  });
+
+  it("schedules one trailing fetch when loadCockpit is called with trailing while in flight", async () => {
+    let resolve!: (value: BrowserCockpitView) => void;
+    const pending = new Promise<BrowserCockpitView>((res) => {
+      resolve = res;
+    });
+    fetchCockpit.mockReturnValueOnce(pending).mockResolvedValue(cockpit);
+    const { result } = renderHook(() => useCockpitResource());
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    await act(async () => {
+      first = result.current.loadCockpit();
+      second = result.current.loadCockpit({ trailing: true });
+    });
+
+    expect(fetchCockpit).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolve(cockpit);
+      await first;
+      await second;
+    });
+
+    await vi.waitFor(() => expect(fetchCockpit).toHaveBeenCalledTimes(2));
     expect(result.current.cockpit.status).toBe("ready");
   });
 

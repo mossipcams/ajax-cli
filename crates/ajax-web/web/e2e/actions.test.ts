@@ -222,3 +222,32 @@ test("connection Reload calls location.reload", async ({ page }) => {
   await expect(reload).toBeEnabled();
   await Promise.all([page.waitForEvent("load"), reload.click()]);
 });
+
+test("connection Retry recovers when cockpit becomes reachable", async ({ page }) => {
+  await mockFetch(page);
+  await failCockpit(page);
+  await page.goto("/app.html");
+  const banner = page.locator(".connection-status");
+  await expect(banner).toContainText("unreachable", { timeout: 10_000 });
+
+  await page.evaluate((fixture) => {
+    const orig = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input
+        : input instanceof URL ? input.href
+        : (input as Request).url;
+      if (url.includes("/api/cockpit")) {
+        return new Response(JSON.stringify(fixture), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return orig(input, init);
+    };
+  }, COCKPIT_FIXTURE);
+
+  await banner.getByRole("button", { name: "Retry" }).click();
+  await expect(banner).toHaveAttribute("data-state", "connected", { timeout: 10_000 });
+  await expect(banner).not.toContainText("unreachable");
+});

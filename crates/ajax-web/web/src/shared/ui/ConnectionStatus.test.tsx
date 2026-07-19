@@ -1,7 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { render, fireEvent, screen } from "@testing-library/react";
 import ConnectionStatus from "./ConnectionStatus";
 import connectionStatusSource from "./ConnectionStatus.tsx?raw";
+
+function loadStylesSource(): string {
+  const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
+  return readFileSync(join(testDir, "../../styles.css"), "utf8");
+}
 
 describe("ConnectionStatus", () => {
   it("shows the connection state label", () => {
@@ -56,5 +63,23 @@ describe("ConnectionStatus", () => {
       "href",
       "/api/health",
     );
+  });
+
+  it("hides quiet connection states in CSS while error states stay visible", () => {
+    const stylesSource = loadStylesSource();
+    const quietStates = ["checking", "connected", "reconnecting"] as const;
+    for (const state of quietStates) {
+      expect(stylesSource).toMatch(
+        new RegExp(`\\.connection-status\\[data-state="${state}"\\][\\s\\S]*?display:\\s*none`),
+      );
+    }
+    const errorStates = ["backend unreachable", "disconnected", "stale session"] as const;
+    for (const state of errorStates) {
+      const rule =
+        stylesSource.match(
+          new RegExp(`\\.connection-status\\[data-state="${state}"\\]\\s*\\{([^}]*)\\}`),
+        )?.[1] ?? "";
+      expect(rule).not.toMatch(/display:\s*none/);
+    }
   });
 });

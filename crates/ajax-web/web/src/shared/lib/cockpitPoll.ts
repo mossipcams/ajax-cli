@@ -24,19 +24,46 @@ export function createCockpitApplyGate(): {
   };
 }
 
+export type InFlightRunOptions = {
+  /** When true, overlapping calls schedule one trailing re-run after the flight. */
+  trailing?: boolean;
+};
+
 export function createInFlightGuard(): {
-  run<T>(fn: () => Promise<T>): Promise<T | undefined>;
+  run<T>(fn: () => Promise<T>, options?: InFlightRunOptions): Promise<T | undefined>;
 } {
   let inFlight: Promise<unknown> | null = null;
+  let dirty = false;
 
-  return {
-    async run<T>(fn: () => Promise<T>): Promise<T | undefined> {
-      if (inFlight) return undefined;
-      const promise = fn().finally(() => {
-        if (inFlight === promise) inFlight = null;
-      });
-      inFlight = promise;
-      return promise;
-    },
-  };
+  async function run<T>(
+    fn: () => Promise<T>,
+    options?: InFlightRunOptions,
+  ): Promise<T | undefined> {
+    if (inFlight) {
+      if (options?.trailing) dirty = true;
+      return undefined;
+    }
+    const promise = (async () => {
+      let result!: T;
+      do {
+        dirty = false;
+        result = await fn();
+      } while (dirty);
+      return result;
+    })();
+    inFlight = promise;
+    try {
+      return await promise;
+    } finally {
+      if (inFlight === promise) {
+        const again = dirty;
+        dirty = false;
+        inFlight = null;
+        // Trailing overlap arrived after the loop exited but before clear.
+        if (again) void run(fn, { trailing: true });
+      }
+    }
+  }
+
+  return { run };
 }
