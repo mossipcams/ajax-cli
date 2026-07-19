@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { DROP_UNDO_MS, RESULT_AUTO_DISMISS_MS, RESULT_SUCCESS_DISMISS_MS } from "../polling";
+import { Button } from "./ui/button";
 
 interface Props {
   message: string;
@@ -50,13 +51,13 @@ export default function ResultPanel({
       <p className="result-message">{message}</p>
       {trimmedOutput ? <pre className="result-output">{trimmedOutput}</pre> : null}
       {undoArmed ? (
-        <button type="button" className="pill is-primary" onClick={dismiss}>
+        <Button type="button" variant="default" onClick={dismiss}>
           Undo
-        </button>
+        </Button>
       ) : null}
-      <button type="button" className="pill" onClick={dismiss}>
+      <Button type="button" variant="secondary" onClick={dismiss}>
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }

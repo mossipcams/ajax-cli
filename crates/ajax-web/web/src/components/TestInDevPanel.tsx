@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "./ui/button";
 import { ApiError, fetchDevDeploy, startDevDeploy } from "../api";
 import type { DevDeployStatus } from "../types";
 
@@ -71,18 +72,23 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
     <section className="test-in-dev" data-testid="test-in-dev" aria-label="Test in Dev">
       <div className="test-in-dev-row">
         <div className="actions">
-          <button
+          <Button
             type="button"
-            className="pill"
+            variant="secondary"
             data-testid="test-in-dev-button"
             disabled={disabled}
             onClick={() => void deploy()}
           >
             {disabled ? `${phaseLabel}…` : "Test in Dev"}
-          </button>
-          <button type="button" className="pill" data-testid="open-dev-button" onClick={openDev}>
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="open-dev-button"
+            onClick={openDev}
+          >
             Open Dev
-          </button>
+          </Button>
         </div>
       </div>
       {error ? (

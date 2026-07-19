@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { restartServer, waitForServerOnline } from "../api";
 import { buildDiagnosticsReport, copyText } from "../diagnostics";
 import { CONFIRM_TIMEOUT_MS } from "../polling";
+import { Button } from "./ui/button";
 
 interface Props {
   detailHandle?: string | null;
@@ -92,9 +93,9 @@ export default function SettingsView({
   return (
     <section className="settings-view" aria-labelledby="settings-heading">
       <div className="settings-header">
-        <button type="button" className="settings-back pill" onClick={() => onBack?.()}>
+        <Button type="button" variant="secondary" className="settings-back" onClick={() => onBack?.()}>
           Back
-        </button>
+        </Button>
         <h2 id="settings-heading">Settings</h2>
       </div>
 
@@ -122,19 +123,19 @@ export default function SettingsView({
         </dl>
 
         <h4 className="settings-subheading">Actions</h4>
-        <button type="button" className="pill" onClick={reloadApp}>
+        <Button type="button" variant="secondary" onClick={reloadApp}>
           Reload app
-        </button>
-        <button type="button" className="pill" onClick={runDiagnostics}>
+        </Button>
+        <Button type="button" variant="secondary" onClick={runDiagnostics}>
           Run diagnostics
-        </button>
-        <button type="button" className="pill" onClick={copyDiagnostics}>
+        </Button>
+        <Button type="button" variant="secondary" onClick={copyDiagnostics}>
           Copy Diagnostics
-        </button>
+        </Button>
         <p className="settings-note">Restarts this Cockpit process.</p>
-        <button type="button" className="pill" disabled={restarting} onClick={restart}>
+        <Button type="button" variant="secondary" disabled={restarting} onClick={restart}>
           {confirmingRestart ? "Tap to confirm" : "Restart server"}
-        </button>
+        </Button>
         {restartStatus ? <p className="settings-status">{restartStatus}</p> : null}
         {diagnosticsOutput ? <pre className="settings-status">{diagnosticsOutput}</pre> : null}
       </div>

@@ -4,6 +4,7 @@ import { requestId, startTask } from "../api";
 import { startTaskHandle } from "../taskSlug";
 import { useSheetDrag } from "../react/useSheetDrag";
 import FullscreenLayer from "./FullscreenLayer";
+import { Button } from "./ui/button";
 
 interface Props {
   repos: RepoSummary[];
@@ -194,12 +195,12 @@ export default function NewTaskSheet({
           {error ? <p className="sheet-error">{error}</p> : null}
 
           <div className="sheet-actions">
-            <button type="button" className="pill" onClick={() => onClose?.()}>
+            <Button type="button" variant="secondary" onClick={() => onClose?.()}>
               Cancel
-            </button>
-            <button type="submit" className="pill is-primary" disabled={submitting}>
+            </Button>
+            <Button type="submit" variant="default" disabled={submitting}>
               Start
-            </button>
+            </Button>
           </div>
         </form>
       </div>

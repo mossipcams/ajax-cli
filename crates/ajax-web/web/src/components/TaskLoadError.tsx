@@ -1,3 +1,5 @@
+import { Button } from "./ui/button";
+
 export default function TaskLoadError({
   message,
   onRetry,
@@ -8,9 +10,9 @@ export default function TaskLoadError({
   return (
     <div data-testid="task-load-error">
       <p className="empty">Could not load this task — {message}</p>
-      <button type="button" className="pill" onClick={onRetry}>
+      <Button type="button" variant="secondary" onClick={onRetry}>
         Retry
-      </button>
+      </Button>
     </div>
   );
 }
