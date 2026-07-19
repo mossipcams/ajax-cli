@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.8...ajax-cli-v0.50.9) (2026-07-19)
+
+
+### Code Refactoring
+
+* **web:** React migration cleanup — tooling, lifecycle correctness, and shadcn foundation ([#587](https://github.com/mossipcams/ajax-cli/issues/587)) ([e733e53](https://github.com/mossipcams/ajax-cli/commit/e733e538623bd42ebc5ac90a6668776c8d297211))
+
 ## [0.50.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.7...ajax-cli-v0.50.8) (2026-07-18)
 
 
