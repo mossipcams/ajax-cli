@@ -71,7 +71,9 @@ async function touchDragRowLeft(page: Page, row: Locator, dx: number) {
   }, dx);
 }
 
-test.beforeEach((_fixtures, testInfo) => {
+// Playwright requires object-destructured fixtures; empty pattern is intentional.
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "swipe-reveal is a touch gesture; desktop has no equivalent",

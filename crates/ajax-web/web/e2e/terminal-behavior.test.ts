@@ -364,7 +364,9 @@ async function programTerminalSelection(
   return selected;
 }
 
-test.beforeEach((_fixtures, testInfo) => {
+// Playwright requires object-destructured fixtures; empty pattern is intentional.
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   const desktopOnly =
     testInfo.title ===
     "desktop expanded mode keeps terminal bounded and task details summary reachable";
