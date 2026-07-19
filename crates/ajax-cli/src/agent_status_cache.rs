@@ -52,13 +52,17 @@ impl TmuxAgentStatusSnapshot {
                 let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
-                let Some((session, _pane_id)) = file_name.split_once('_') else {
+                let Some(stem) = file_name.strip_suffix(".status") else {
                     continue;
                 };
-                if !file_name.ends_with(".status") {
+                let Some((session, pane_id)) = stem.split_once('_') else {
                     continue;
-                }
-                if let Some(entry) = read_status_entry(&path, now, fresh_for) {
+                };
+                if let Some(mut entry) = read_status_entry(&path, now, fresh_for) {
+                    // Pane-scoped hook files are delegated child runs under the
+                    // session's primary agent run.
+                    entry.run_id = Some(format!("pane:{session}:{pane_id}"));
+                    entry.parent_run_id = Some("primary".to_string());
                     by_session
                         .entry(session.to_string())
                         .or_default()
@@ -147,6 +151,8 @@ fn read_status_entry(
         observed_at,
         fresh,
         source: AgentStatusCacheSource::Hook,
+        run_id: None,
+        parent_run_id: None,
     })
 }
 
@@ -181,6 +187,8 @@ fn read_agent_runtime_entry(
             observed_at,
             fresh,
             source: AgentStatusCacheSource::RuntimeWrapper,
+            run_id: None,
+            parent_run_id: None,
         },
     ))
 }
@@ -238,6 +246,33 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn pane_status_files_carry_child_run_id_under_primary() {
+        let root = temp_cache_root();
+        let pane_dir = root.join("panes");
+        fs::create_dir_all(&pane_dir).unwrap();
+        fs::write(root.join("ajax-web-fix-login.status"), "done\n").unwrap();
+        fs::write(pane_dir.join("ajax-web-fix-login_%1.status"), "working\n").unwrap();
+        let cache = TmuxAgentStatusSnapshot::from_root(root.clone());
+
+        let entries = cache.status_entries_for_session("ajax-web-fix-login");
+        let session = entries
+            .iter()
+            .find(|entry| entry.value == "done")
+            .expect("session status");
+        assert_eq!(session.run_id, None);
+        assert_eq!(session.parent_run_id, None);
+
+        let pane = entries
+            .iter()
+            .find(|entry| entry.value == "working")
+            .expect("pane status");
+        assert_eq!(pane.run_id.as_deref(), Some("pane:ajax-web-fix-login:%1"));
+        assert_eq!(pane.parent_run_id.as_deref(), Some("primary"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn set_modified(path: &std::path::Path, modified: SystemTime) {
         File::options()
             .write(true)
@@ -266,6 +301,8 @@ mod tests {
                 observed_at: now - Duration::from_secs(60),
                 fresh: false,
                 source: AgentStatusCacheSource::Hook,
+                run_id: None,
+                parent_run_id: None,
             }]
         );
 

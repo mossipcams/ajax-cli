@@ -1109,7 +1109,11 @@ mod tests {
                 [command, ..] if command == "list-windows" => {
                     "ajax-web-fix-login\ttask\t/repo/web__worktrees/ajax-fix-login\n"
                 }
-                [command, ..] if command == "capture-pane" => "codex is working\n",
+                [command, ..] if command == "capture-pane" => {
+                    // Structured Cursor lifecycle evidence — generic busy chrome
+                    // alone no longer projects AgentRunning.
+                    "{\"type\":\"thinking\"}\n"
+                }
                 _ => "",
             };
 

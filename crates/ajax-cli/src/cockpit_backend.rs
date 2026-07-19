@@ -814,6 +814,8 @@ mod tests {
                     observed_at: std::time::SystemTime::now(),
                     fresh: true,
                     source: ajax_core::runtime_refresh::AgentStatusCacheSource::Hook,
+                    run_id: None,
+                    parent_run_id: None,
                 })
                 .collect()
         }
@@ -1001,7 +1003,9 @@ mod tests {
                     "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => {
-                    "• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…\n\n› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci\n"
+                    // Structured Cursor lifecycle evidence (not generic busy chrome):
+                    // conservative status only clears waiting on medium+ activity.
+                    "{\"type\":\"thinking\"}\n• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…\n\n› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci\n"
                 }
                 _ => "",
             };

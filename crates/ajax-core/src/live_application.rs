@@ -226,7 +226,12 @@ fn apply_reduced_observation(
         }
         LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
             task.agent_status = AgentRuntimeStatus::Waiting;
-            task.add_side_flag(SideFlag::NeedsInput);
+            if crate::agent_status::is_delegated_waiting_summary(&observation.summary) {
+                // Parent is waiting on children, not the operator.
+                task.remove_side_flag(SideFlag::NeedsInput);
+            } else {
+                task.add_side_flag(SideFlag::NeedsInput);
+            }
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::AuthRequired

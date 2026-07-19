@@ -150,6 +150,10 @@ pub struct StatusCandidate {
     pub source: AgentEvidenceSource,
     pub value: String,
     pub observed_at: SystemTime,
+    /// When set, this candidate belongs to a delegated/child run. Session-level
+    /// hooks leave this `None` (primary run).
+    pub run_id: Option<String>,
+    pub parent_run_id: Option<String>,
 }
 
 impl StatusCandidate {
@@ -162,7 +166,15 @@ impl StatusCandidate {
             source,
             value: value.into(),
             observed_at,
+            run_id: None,
+            parent_run_id: None,
         }
+    }
+
+    pub fn with_run(mut self, run_id: impl Into<String>, parent_run_id: Option<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self.parent_run_id = parent_run_id;
+        self
     }
 }
 
@@ -173,6 +185,9 @@ pub struct StatusDecisionInput<'a> {
     pub acknowledged_at: Option<SystemTime>,
     pub now: SystemTime,
     pub candidates: &'a [StatusCandidate],
+    /// Additional observations (pane projections, delegated child runs) merged
+    /// into the reducer after wrapper/hook candidates.
+    pub extra_observations: &'a [crate::agent_status::StatusObservation],
 }
 
 /// Result of [`select_status_observation`].
@@ -190,33 +205,23 @@ pub struct StatusDecision {
     /// was suppressed by an acknowledgment. The caller should hold the current
     /// non-actionable state and skip pane capture rather than re-raise it.
     pub acknowledged_hold: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EvidenceTier {
-    WrapperTerminal,
-    WrapperRunning,
-    Hook,
-}
-
-impl EvidenceTier {
-    fn priority(self) -> u8 {
-        match self {
-            Self::WrapperTerminal => 0,
-            Self::WrapperRunning => 1,
-            Self::Hook => 2,
-        }
-    }
+    /// Wrapper heartbeat observed the agent process as alive. Informational
+    /// only — never alone implies [`LiveStatusKind::AgentRunning`].
+    pub process_alive: bool,
 }
 
 /// Select the strongest eligible agent-status observation.
 ///
-/// Source priority follows the decision table: trusted wrapper terminal
-/// evidence (120-second window) outranks an active wrapper heartbeat
-/// (30-second window), which outranks agent-specific hook evidence. Missing-substrate priors are
-/// preserved over any candidate. Malformed and stale candidates are filtered
-/// before timestamp selection, and equal timestamps fall back to a state
-/// tie-break where busy beats waiting and waiting beats approval.
+/// Candidates are projected onto the conservative
+/// [`crate::agent_status`] observation/run model. A wrapper `working`/
+/// `starting` heartbeat is treated as process liveness only — it never selects
+/// an agent-activity observation — and `done`/`failed` from the wrapper is
+/// treated as a `ProcessExit` activity on the primary run. Hook values are
+/// projected as `ProviderHook` observations. Missing-substrate priors are
+/// preserved over any candidate (the reducer falls through to pane capture),
+/// and fresh waiting/completion evidence suppressed by an acknowledgment is
+/// reported via `acknowledged_hold` so the caller can hold the current state
+/// without re-raising it.
 pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecision {
     let preserved = StatusDecision {
         applied: false,
@@ -224,6 +229,7 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
         source: None,
         observed_at: None,
         acknowledged_hold: false,
+        process_alive: false,
     };
 
     if input
@@ -233,128 +239,280 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
         return preserved;
     }
 
-    let mut best: Option<(EvidenceTier, &StatusCandidate, LiveObservation)> = None;
+    let now = input.now;
+    let mut process_alive = false;
+    let mut observations: Vec<crate::agent_status::StatusObservation> = Vec::new();
+    let mut acknowledged_hold = false;
+
     for candidate in input.candidates {
-        let Some((tier, observation)) = eligible_candidate(
-            input.selected_agent,
-            candidate,
-            input.acknowledged_at,
-            input.now,
-        ) else {
-            continue;
-        };
-
-        let better = match &best {
-            None => true,
-            Some((best_tier, best_candidate, best_observation)) => {
-                if tier.priority() != best_tier.priority() {
-                    tier.priority() < best_tier.priority()
-                } else if candidate.observed_at != best_candidate.observed_at {
-                    candidate.observed_at > best_candidate.observed_at
-                } else {
-                    state_tie_rank(observation.kind) > state_tie_rank(best_observation.kind)
+        match candidate.source {
+            AgentEvidenceSource::RuntimeWrapper => {
+                let Some(observation) = classify_agent_status_value(&candidate.value) else {
+                    continue;
+                };
+                match observation.kind {
+                    LiveStatusKind::Done | LiveStatusKind::CommandFailed => {
+                        if !within_window(now, candidate.observed_at, WRAPPER_TERMINAL_FRESH_FOR) {
+                            continue;
+                        }
+                        if is_acknowledgeable_kind(observation.kind)
+                            && input
+                                .acknowledged_at
+                                .is_some_and(|ack| candidate.observed_at <= ack)
+                        {
+                            acknowledged_hold = true;
+                            continue;
+                        }
+                        let Some(activity) = live_kind_to_activity(observation.kind) else {
+                            continue;
+                        };
+                        observations.push(crate::agent_status::StatusObservation {
+                            source: crate::agent_status::ObservationSource::ProcessExit,
+                            observed_at: candidate.observed_at,
+                            expires_at: candidate.observed_at + WRAPPER_TERMINAL_FRESH_FOR,
+                            confidence: crate::agent_status::Confidence::High,
+                            run_id: candidate
+                                .run_id
+                                .clone()
+                                .unwrap_or_else(|| PRIMARY_RUN_ID.to_string()),
+                            parent_run_id: candidate.parent_run_id.clone(),
+                            kind: activity,
+                        });
+                    }
+                    LiveStatusKind::AgentRunning
+                    | LiveStatusKind::CommandRunning
+                    | LiveStatusKind::TestsRunning => {
+                        // A wrapper heartbeat confirms the process is alive,
+                        // never that the agent is actively working. Activity
+                        // must come from structured pane/hook/lifecycle.
+                        if within_window(now, candidate.observed_at, WRAPPER_RUNNING_FRESH_FOR) {
+                            process_alive = true;
+                        }
+                    }
+                    _ => {}
                 }
             }
-        };
-
-        if better {
-            best = Some((tier, candidate, observation));
-        }
-    }
-
-    match best {
-        Some((_tier, candidate, observation)) => StatusDecision {
-            applied: true,
-            observation: Some(observation),
-            source: Some(candidate.source),
-            observed_at: Some(candidate.observed_at),
-            acknowledged_hold: false,
-        },
-        None => {
-            let acknowledged_hold = input.candidates.iter().any(|candidate| {
-                is_acknowledged_candidate(
+            AgentEvidenceSource::Hook => {
+                let Some(observation) = hook_observation_if_eligible(
                     input.selected_agent,
-                    candidate,
-                    input.acknowledged_at,
-                    input.now,
-                )
-            });
-            StatusDecision {
-                acknowledged_hold,
-                ..preserved
+                    &candidate.value,
+                    candidate.observed_at,
+                    None,
+                    now,
+                ) else {
+                    continue;
+                };
+                if is_acknowledgeable_kind(observation.kind)
+                    && input
+                        .acknowledged_at
+                        .is_some_and(|ack| candidate.observed_at <= ack)
+                {
+                    acknowledged_hold = true;
+                    continue;
+                }
+                let Some(activity) = live_kind_to_activity(observation.kind) else {
+                    continue;
+                };
+                let window = hook_freshness_window(input.selected_agent, observation.kind)
+                    .unwrap_or(HOOK_DEFAULT_FRESH_FOR);
+                observations.push(crate::agent_status::StatusObservation {
+                    source: crate::agent_status::ObservationSource::ProviderHook,
+                    observed_at: candidate.observed_at,
+                    expires_at: candidate.observed_at + window,
+                    confidence: crate::agent_status::Confidence::High,
+                    run_id: candidate
+                        .run_id
+                        .clone()
+                        .unwrap_or_else(|| PRIMARY_RUN_ID.to_string()),
+                    parent_run_id: candidate.parent_run_id.clone(),
+                    kind: activity,
+                });
             }
         }
     }
+
+    observations.extend_from_slice(input.extra_observations);
+
+    let projection = crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
+        now,
+        primary_run_id: PRIMARY_RUN_ID.to_string(),
+        process_liveness: Some(crate::agent_status::ProcessLiveness {
+            alive: process_alive,
+            observed_at: now,
+        }),
+        observations: &observations,
+    });
+
+    status_decision_from_projection(
+        projection,
+        process_alive,
+        acknowledged_hold,
+        input.prior,
+        now,
+    )
 }
 
-/// True when otherwise eligible waiting/completion evidence is suppressed only
-/// because it is at or before the acknowledgment time.
-fn is_acknowledged_candidate(
-    agent: AgentClient,
-    candidate: &StatusCandidate,
-    acknowledged_at: Option<SystemTime>,
+/// Map a reducer projection onto the CLI/refresh [`StatusDecision`] surface.
+fn status_decision_from_projection(
+    projection: crate::agent_status::StatusProjection,
+    process_alive: bool,
+    acknowledged_hold: bool,
+    prior: Option<&LiveObservation>,
     now: SystemTime,
-) -> bool {
-    let Some(acknowledged_at) = acknowledged_at else {
-        return false;
+) -> StatusDecision {
+    let preserved = StatusDecision {
+        applied: false,
+        observation: prior.cloned(),
+        source: None,
+        observed_at: None,
+        acknowledged_hold,
+        process_alive,
     };
-    let Some((_tier, observation)) = eligible_candidate(agent, candidate, None, now) else {
-        return false;
+
+    if projection.phase == crate::agent_status::ParentPhase::Unknown {
+        return preserved;
+    }
+
+    let agent_source = match projection.selected_source {
+        Some(crate::agent_status::ObservationSource::ProcessExit) => {
+            Some(AgentEvidenceSource::RuntimeWrapper)
+        }
+        Some(crate::agent_status::ObservationSource::ProviderHook) => {
+            Some(AgentEvidenceSource::Hook)
+        }
+        _ => None,
     };
-    is_acknowledgeable_kind(observation.kind) && candidate.observed_at <= acknowledged_at
+
+    StatusDecision {
+        applied: true,
+        observation: Some(projection.live),
+        source: agent_source,
+        observed_at: projection.selected_observed_at.or(Some(now)),
+        acknowledged_hold: false,
+        process_alive,
+    }
 }
 
-fn eligible_candidate(
+/// Run id used by the [`live`] adapter when projecting wrapper/hook candidates
+/// onto the conservative observation model.
+const PRIMARY_RUN_ID: &str = "primary";
+
+/// Map a presentation [`LiveStatusKind`] returned by `classify_*` helpers onto
+/// the reducer's activity-only enum. Kinds that are not activity observations
+/// return `None`.
+fn live_kind_to_activity(kind: LiveStatusKind) -> Option<crate::agent_status::ActivityKind> {
+    Some(match kind {
+        LiveStatusKind::AgentRunning => crate::agent_status::ActivityKind::Working,
+        LiveStatusKind::CommandRunning => crate::agent_status::ActivityKind::CommandRunning,
+        LiveStatusKind::TestsRunning => crate::agent_status::ActivityKind::TestsRunning,
+        LiveStatusKind::WaitingForInput => crate::agent_status::ActivityKind::WaitingInput,
+        LiveStatusKind::WaitingForApproval => crate::agent_status::ActivityKind::WaitingApproval,
+        LiveStatusKind::Done => crate::agent_status::ActivityKind::Done,
+        LiveStatusKind::CommandFailed => crate::agent_status::ActivityKind::Failed,
+        _ => return None,
+    })
+}
+
+const STRUCTURED_PANE_FRESH_FOR: Duration = Duration::from_secs(60);
+const GENERIC_PANE_FRESH_FOR: Duration = Duration::from_secs(15);
+
+/// Project pane text onto a single conservative [`crate::agent_status::StatusObservation`].
+///
+/// Structured recognition (Cursor stream-json, agent-specific prompts) is
+/// Medium confidence. Generic busy chrome and heuristic needles are Low
+/// confidence and cannot alone assert running/approval through the reducer.
+/// Returns `None` when the pane is empty or yields no activity kind.
+pub fn project_pane_activity(
     agent: AgentClient,
-    candidate: &StatusCandidate,
-    acknowledged_at: Option<SystemTime>,
+    pane: &str,
     now: SystemTime,
-) -> Option<(EvidenceTier, LiveObservation)> {
-    let selected = match candidate.source {
-        AgentEvidenceSource::RuntimeWrapper => {
-            let observation = classify_agent_status_value(&candidate.value)?;
-            match observation.kind {
-                LiveStatusKind::Done | LiveStatusKind::CommandFailed => {
-                    if within_window(now, candidate.observed_at, WRAPPER_TERMINAL_FRESH_FOR) {
-                        Some((EvidenceTier::WrapperTerminal, observation))
-                    } else {
-                        None
-                    }
-                }
-                LiveStatusKind::AgentRunning
-                | LiveStatusKind::CommandRunning
-                | LiveStatusKind::TestsRunning => {
-                    if within_window(now, candidate.observed_at, WRAPPER_RUNNING_FRESH_FOR) {
-                        Some((EvidenceTier::WrapperRunning, observation))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        }
-        AgentEvidenceSource::Hook => {
-            hook_observation_if_eligible(agent, &candidate.value, candidate.observed_at, None, now)
-                .map(|observation| (EvidenceTier::Hook, observation))
-        }
-    }?;
-    if acknowledged_at.is_some_and(|acknowledged_at| {
-        is_acknowledgeable_kind(selected.1.kind) && candidate.observed_at <= acknowledged_at
-    }) {
+) -> Option<crate::agent_status::StatusObservation> {
+    let trimmed = pane.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    Some(selected)
+    let lines = meaningful_lines(trimmed);
+
+    for line in lines.iter().rev() {
+        if let Some(observation) = classify_cursor_stream_json_line(line) {
+            return pane_status_observation(
+                observation,
+                crate::agent_status::ObservationSource::StructuredPane,
+                crate::agent_status::Confidence::Medium,
+                STRUCTURED_PANE_FRESH_FOR,
+                now,
+            );
+        }
+    }
+
+    if let Some(observation) = classify_agent_prompt(agent, &lines) {
+        return pane_status_observation(
+            observation,
+            crate::agent_status::ObservationSource::StructuredPane,
+            crate::agent_status::Confidence::Medium,
+            STRUCTURED_PANE_FRESH_FOR,
+            now,
+        );
+    }
+
+    if has_recent_busy_indicator(agent, &lines) {
+        return pane_status_observation(
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+            crate::agent_status::ObservationSource::GenericPane,
+            crate::agent_status::Confidence::Low,
+            GENERIC_PANE_FRESH_FOR,
+            now,
+        );
+    }
+
+    if let Some(observation) = classify_recent_evidence(&lines) {
+        if observation.kind == LiveStatusKind::Unknown
+            || observation.kind == LiveStatusKind::ShellIdle
+        {
+            return None;
+        }
+        // Current-line approval/input prompts are structured UI recognition.
+        // Historical scrollback of the same wording stays low-confidence generic.
+        let on_current_line = lines.last().is_some_and(|line| {
+            classify_line_evidence(line)
+                .as_ref()
+                .is_some_and(|current| current.kind == observation.kind)
+        });
+        let (source, confidence, fresh_for) = match (observation.kind, on_current_line) {
+            (LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput, true) => (
+                crate::agent_status::ObservationSource::StructuredPane,
+                crate::agent_status::Confidence::Medium,
+                STRUCTURED_PANE_FRESH_FOR,
+            ),
+            _ => (
+                crate::agent_status::ObservationSource::GenericPane,
+                crate::agent_status::Confidence::Low,
+                GENERIC_PANE_FRESH_FOR,
+            ),
+        };
+        return pane_status_observation(observation, source, confidence, fresh_for, now);
+    }
+
+    None
 }
 
-fn state_tie_rank(kind: LiveStatusKind) -> u8 {
-    match kind {
-        LiveStatusKind::AgentRunning
-        | LiveStatusKind::CommandRunning
-        | LiveStatusKind::TestsRunning => 3,
-        LiveStatusKind::WaitingForInput => 2,
-        LiveStatusKind::WaitingForApproval => 1,
-        _ => 0,
-    }
+fn pane_status_observation(
+    observation: LiveObservation,
+    source: crate::agent_status::ObservationSource,
+    confidence: crate::agent_status::Confidence,
+    fresh_for: Duration,
+    now: SystemTime,
+) -> Option<crate::agent_status::StatusObservation> {
+    let kind = live_kind_to_activity(observation.kind)?;
+    Some(crate::agent_status::StatusObservation {
+        source,
+        observed_at: now,
+        expires_at: now + fresh_for,
+        confidence,
+        run_id: PRIMARY_RUN_ID.to_string(),
+        parent_run_id: None,
+        kind,
+    })
 }
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
@@ -2297,6 +2455,7 @@ Nothing actionable to report here.";
             acknowledged_at: None,
             now: hook_now(),
             candidates,
+            extra_observations: &[],
         })
     }
 
@@ -2323,6 +2482,7 @@ Nothing actionable to report here.";
             acknowledged_at: Some(now - std::time::Duration::from_secs(1)),
             now,
             candidates: &candidates,
+            extra_observations: &[],
         });
 
         assert!(!decision.applied);
@@ -2346,6 +2506,7 @@ Nothing actionable to report here.";
             acknowledged_at: None,
             now,
             candidates: &candidates,
+            extra_observations: &[],
         });
 
         assert!(decision.applied);
@@ -2442,6 +2603,9 @@ Nothing actionable to report here.";
         use super::AgentEvidenceSource::RuntimeWrapper;
         let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
 
+        // A wrapper heartbeat is process liveness only: even while fresh, it
+        // does not assert `AgentRunning`. The reducer falls through, so the
+        // prior credible state is preserved and the caller may probe the pane.
         let fresh = select(
             AgentClient::Codex,
             Some(&prior),
@@ -2451,10 +2615,10 @@ Nothing actionable to report here.";
                 std::time::Duration::from_secs(30),
             )],
         );
-        assert!(fresh.applied);
+        assert!(!fresh.applied);
         assert_eq!(
             fresh.observation.map(|observation| observation.kind),
-            Some(LiveStatusKind::AgentRunning)
+            Some(LiveStatusKind::WaitingForInput)
         );
 
         let stale = select(
@@ -2548,6 +2712,7 @@ Nothing actionable to report here.";
             acknowledged_at: Some(now - std::time::Duration::from_secs(1)),
             now,
             candidates: &candidates,
+            extra_observations: &[],
         });
 
         assert!(!decision.applied);
@@ -2659,5 +2824,157 @@ Nothing actionable to report here.";
                 "{prior_kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn waiting_on_delegated_status_decision_applies() {
+        let now = hook_now();
+        let child = crate::agent_status::StatusObservation {
+            source: crate::agent_status::ObservationSource::ProviderHook,
+            observed_at: now - std::time::Duration::from_secs(1),
+            expires_at: now + std::time::Duration::from_secs(120),
+            confidence: crate::agent_status::Confidence::High,
+            run_id: "child-1".to_string(),
+            parent_run_id: Some("primary".to_string()),
+            kind: crate::agent_status::ActivityKind::Working,
+        };
+
+        let decision = super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: AgentClient::Codex,
+            prior: None,
+            acknowledged_at: None,
+            now,
+            candidates: &[],
+            extra_observations: &[child],
+        });
+
+        assert!(decision.applied);
+        assert!(decision.source.is_none());
+        assert_eq!(
+            decision
+                .observation
+                .as_ref()
+                .map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(
+            decision
+                .observation
+                .as_ref()
+                .is_some_and(|observation| observation.summary.contains("delegated")),
+            "summary={:?}",
+            decision
+                .observation
+                .as_ref()
+                .map(|observation| &observation.summary)
+        );
+    }
+
+    #[test]
+    fn generic_pane_busy_alone_projects_unknown() {
+        let now = hook_now();
+        let pane_obs = super::project_pane_activity(AgentClient::Codex, "codex is working\n", now)
+            .expect("busy chrome should project");
+        assert_eq!(
+            pane_obs.source,
+            crate::agent_status::ObservationSource::GenericPane
+        );
+        assert_eq!(pane_obs.confidence, crate::agent_status::Confidence::Low);
+
+        let projection =
+            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
+                now,
+                primary_run_id: "primary".to_string(),
+                process_liveness: Some(crate::agent_status::ProcessLiveness {
+                    alive: true,
+                    observed_at: now,
+                }),
+                observations: &[pane_obs],
+            });
+        assert_eq!(projection.phase, crate::agent_status::ParentPhase::Unknown);
+        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
+    }
+
+    #[test]
+    fn structured_cursor_json_pane_can_project_running() {
+        let now = hook_now();
+        let pane_obs =
+            super::project_pane_activity(AgentClient::Codex, r#"{"type":"thinking"}"#, now)
+                .expect("cursor json should project");
+        assert_eq!(
+            pane_obs.source,
+            crate::agent_status::ObservationSource::StructuredPane
+        );
+        assert_eq!(pane_obs.confidence, crate::agent_status::Confidence::Medium);
+
+        let projection =
+            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
+                now,
+                primary_run_id: "primary".to_string(),
+                process_liveness: Some(crate::agent_status::ProcessLiveness {
+                    alive: true,
+                    observed_at: now,
+                }),
+                observations: &[pane_obs],
+            });
+        assert_eq!(
+            projection.phase,
+            crate::agent_status::ParentPhase::ActivelyWorking
+        );
+        assert_eq!(projection.live.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn parent_done_hook_with_active_child_pane_run_is_not_fully_complete() {
+        let now = hook_now();
+        let candidates = [
+            super::StatusCandidate::new(
+                super::AgentEvidenceSource::Hook,
+                "done",
+                now - std::time::Duration::from_secs(1),
+            ),
+            super::StatusCandidate::new(
+                super::AgentEvidenceSource::Hook,
+                "working",
+                now - std::time::Duration::from_secs(1),
+            )
+            .with_run("pane:ajax-web-fix-login:%1", Some("primary".to_string())),
+        ];
+
+        let decision = super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: AgentClient::Codex,
+            prior: None,
+            acknowledged_at: None,
+            now,
+            candidates: &candidates,
+            extra_observations: &[],
+        });
+
+        assert!(decision.applied);
+        assert_ne!(
+            decision
+                .observation
+                .as_ref()
+                .map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(
+            decision
+                .observation
+                .as_ref()
+                .map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(
+            decision
+                .observation
+                .as_ref()
+                .is_some_and(|observation| observation.summary.contains("delegated")),
+            "summary={:?}",
+            decision
+                .observation
+                .as_ref()
+                .map(|observation| &observation.summary)
+        );
     }
 }

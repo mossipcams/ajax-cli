@@ -89,6 +89,11 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
     let live_acknowledged = live_evidence_is_acknowledged(task);
     if !live_acknowledged {
         if let Some(live) = task.live_status.as_ref() {
+            if let Some(explanation) =
+                crate::agent_status::operator_explanation_for_summary(&live.summary)
+            {
+                return canonical(TaskStatus::Waiting, explanation);
+            }
             if let Some(explanation) = canonical_waiting_explanation(live.kind) {
                 return canonical(TaskStatus::Waiting, explanation);
             }

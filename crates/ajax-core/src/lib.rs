@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod agent_prompt;
+pub mod agent_status;
 pub mod analysis;
 pub mod attention;
 pub mod commands;

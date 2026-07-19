@@ -91,18 +91,29 @@ evidence, not authority. Git, tmux, and supervised processes remain the
 authoritative sources for their own reality.
 
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
-evidence. Hook files and pane text are observational hints. When sources
-disagree, core's status decision applies an explicit precedence: explicit
-missing substrate stays authoritative; trusted runtime-wrapper terminal events
-(`done`/`failed`) outrank hooks and pane text only within a 120-second window
-(same decay as hook completion evidence); after that the agent-aware pane
-fallback owns truth; an active
-wrapper heartbeat applies only inside its 30-second window; hook freshness is
-selected-agent and state specific (Codex `working` for 20 seconds, Codex
-`wait`/`ask` and all Claude hook states for 120 seconds, `AgentClient::Other`
-ignores hooks); and an agent-aware, busy-first pane fallback runs only when
-stronger evidence is absent or stale. Equal timestamps break to source priority,
-then to busy-over-waiting-over-approval; malformed values never participate.
+evidence for terminal exit (`done`/`failed`) and for process liveness only.
+Hook files and pane text are observational hints with explicit confidence.
+When sources disagree, core's status decision applies this precedence:
+
+1. Terminal process exit or fatal runtime error (wrapper `done`/`failed`, 120s)
+2. Structured provider lifecycle event
+3. Provider hook event (agent-specific freshness: Codex `working` 20s; Codex
+   `wait`/`ask` and Claude hook states 120s; `AgentClient::Other` ignores hooks)
+4. Structured pane/UI recognition (Cursor stream-json, agent-specific prompts;
+   medium confidence, 60s)
+5. Generic pane heuristic (low confidence, 15s; cannot alone assert
+   `AgentRunning` or approval)
+6. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
+   becomes `AgentRunning`
+
+Missing substrate stays authoritative over activity candidates. Ambiguous or
+contradictory fresh evidence projects `Unknown`. Parent and delegated runs are
+aggregated as a run graph: a parent is not fully complete while non-detached
+descendants remain active. Session-level hook files map to the primary run;
+pane-scoped hook files under `~/.cache/tmux-agent-status/panes/` map to child
+runs (`pane:{session}:{pane_id}` with `parent_run_id = primary`). Equal-timestamp
+conflicts across sources on the same run project `Unknown`; malformed values
+never participate.
 
 ## Task Operations
 
@@ -328,7 +339,11 @@ evidence stays deduped.
 
 ### Live Status
 
-`live.rs` reduces observations into live-status classifications.
+`live.rs` reduces observations into live-status classifications. The internal
+`agent_status` module owns the conservative observation/run reducer
+(source, freshness, confidence, `run_id` / `parent_run_id`, and parent-phase
+aggregation). `LiveStatusKind` remains the presentation projection derived at
+the status-decision boundary.
 
 `live.rs` (`application` submodule) applies reduced observations to task state, agent status,
 side flags, activity timestamps, visible live status, and the live evidence's
@@ -337,7 +352,8 @@ separates ordinary observations from trusted wrapper/supervisor observations so
 only the trusted path may advance lifecycle on process start or successful
 completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
 text is neutral and does not overwrite the last known agent state or fabricate
-a probe failure.
+a probe failure. Low-confidence generic pane activity alone projects `Unknown`
+and does not overwrite prior credible state.
 
 Ordinary class evidence on a task that already shows the *opposite* class is a
 candidate, not an immediate status change. A waiting-class sample on a busy
@@ -362,13 +378,22 @@ reducer, and annotation mapping on one membership list.
 `Running` immediately after a stale completion (agent relaunch) without
 waiting out a `Done → Running` dwell, so the gate does not block a busy pane
 from un-sticking a `Done` task. Error-class and missing-substrate live status
-likewise recover to Running immediately.
+likewise recover to Running immediately. Trusted wrapper completion advances
+lifecycle to `Reviewable` only when the run-graph aggregation reports the
+parent as fully completed (no active non-detached descendants).
 
-Pane classification is agent-aware and busy-first: `classify_agent_pane` applies
-recent busy indicators before stale prompts, then agent-specific prompts (Claude
-permission dialogs and standalone prompts, Codex composer prompts), then explicit
-failure/completion, then a passive/unknown fallback the reducer preserves.
-`classify_pane` remains the generic compatibility entry point.
+Pane classification is agent-aware: structured recognition (Cursor stream-json,
+agent-specific prompts) is preferred over generic busy heuristics. Generic pane
+parsing is a low-confidence fallback and cannot alone assert `AgentRunning`.
+`classify_pane` remains the generic compatibility entry point;
+`project_pane_activity` feeds the conservative reducer.
+
+Attention webhooks (`attention::take_attention_transition`) fire on actionable
+Waiting and Error operator status. Parent phases that wait on delegated
+children (`Waiting on delegated runs`, `Delegated runs still active`) remain
+visible as Waiting but are not actionable: they do not set `NeedsInput`, do not
+annotate `NeedsMe`, and do not phone-ping. Ordinary user waits and approvals
+still notify.
 
 Opening a task persists an attention acknowledgment without changing lifecycle
 or deleting evidence. `live::acknowledge_attention` is agent-neutral:
