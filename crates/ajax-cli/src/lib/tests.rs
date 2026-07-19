@@ -475,6 +475,12 @@ fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
     ]
 }
 
+/// Structured Cursor lifecycle evidence that confidently projects AgentRunning.
+/// Generic busy chrome like "codex is working" alone is low-confidence → Unknown.
+fn structured_busy_pane() -> &'static str {
+    "{\"type\":\"thinking\"}\n"
+}
+
 #[test]
 fn command_flow_fixture_records_partial_success_before_failure() {
     let mut plan = ajax_core::commands::CommandPlan::new("partial failure");
@@ -1140,7 +1146,7 @@ fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
             RuntimeObservationSource::TmuxProbe,
         );
     }
-    let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
 
     let output =
         run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
@@ -1271,7 +1277,7 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
 
     let output = run_with_context_and_runner(
         ["ajax", "cockpit", "--watch", "--iterations", "1"],
@@ -1330,7 +1336,7 @@ fn status_command_renders_json_from_refreshed_live_state() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
 
     let output =
         run_with_context_and_runner(["ajax", "status", "--json"], &mut context, &mut runner)
@@ -1369,7 +1375,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
             );
         }
 
-        let mut outputs = tmux_live_outputs("codex is working\n");
+        let mut outputs = tmux_live_outputs(structured_busy_pane());
         outputs.push(output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
@@ -1693,7 +1699,7 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
     );
     task.last_activity_at = SystemTime::UNIX_EPOCH;
     let previous_activity = task.last_activity_at;
-    let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
     let mut state_changed = false;
 
     let _snapshot =
@@ -8254,8 +8260,8 @@ fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> 
 }
 
 #[test]
-fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
-    let directory = runtime_snapshot_directory("running");
+fn cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone() {
+    let directory = runtime_snapshot_directory("running-liveness");
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -8263,6 +8269,31 @@ fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
     write_runtime_snapshot(&directory, "running", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    // Wrapper "running" is process liveness only; idle pane has no activity.
+    assert_ne!(task.agent_status, AgentRuntimeStatus::Running);
+    assert_ne!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::AgentRunning)
+    );
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn cockpit_refresh_marks_agent_running_from_wrapper_plus_structured_pane() {
+    let directory = runtime_snapshot_directory("running-structured");
+    let now_millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    write_runtime_snapshot(&directory, "running", now_millis);
+    let mut context = active_runtime_context(&directory);
+    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 

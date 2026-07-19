@@ -23,6 +23,10 @@ pub struct AgentStatusCacheEntry {
     pub observed_at: SystemTime,
     pub fresh: bool,
     pub source: AgentStatusCacheSource,
+    /// Optional run key. Session-level hooks omit this (primary). Pane hook
+    /// files set `pane:{session}:{pane_id}` with `parent_run_id = primary`.
+    pub run_id: Option<String>,
+    pub parent_run_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -339,7 +343,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         let candidates: Vec<live::StatusCandidate> = agent_status_entries
             .iter()
             .map(|entry| {
-                live::StatusCandidate::new(
+                let mut candidate = live::StatusCandidate::new(
                     match entry.source {
                         AgentStatusCacheSource::Hook => live::AgentEvidenceSource::Hook,
                         AgentStatusCacheSource::RuntimeWrapper => {
@@ -348,7 +352,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     },
                     entry.value.clone(),
                     entry.observed_at,
-                )
+                );
+                if let Some(run_id) = entry.run_id.as_ref() {
+                    candidate = candidate.with_run(run_id.clone(), entry.parent_run_id.clone());
+                }
+                candidate
             })
             .collect();
         let decision = live::select_status_observation(live::StatusDecisionInput {
@@ -357,44 +365,51 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             acknowledged_at: task_snapshot.attention_acknowledged_at,
             now,
             candidates: &candidates,
+            extra_observations: &[],
         });
-        if let (true, Some(observation), Some(source), Some(observed_at)) = (
-            decision.applied,
-            decision.observation,
-            decision.source,
-            decision.observed_at,
-        ) {
-            if let Some(task) = context.registry.get_task_mut(&task_id) {
-                let live_status_unchanged = task
-                    .live_status
-                    .as_ref()
-                    .is_some_and(|status| status.kind == observation.kind)
-                    && task
-                        .live_status_observed_at
-                        .is_some_and(|current| current >= observed_at);
-                let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
-                    && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-                if live_status_unchanged
-                    && !needs_agent_running_flag
-                    && !live::has_pending_live_class_candidate(task)
-                {
-                    continue;
-                }
-                let previous = task.clone();
-                task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
-                task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
-                match source {
-                    live::AgentEvidenceSource::Hook => {
-                        live::apply_authoritative_observation_at(task, observation, observed_at);
+        if decision.applied {
+            if let (Some(observation), Some(observed_at)) =
+                (decision.observation.clone(), decision.observed_at)
+            {
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    let live_status_unchanged = task
+                        .live_status
+                        .as_ref()
+                        .is_some_and(|status| status.kind == observation.kind)
+                        && task
+                            .live_status_observed_at
+                            .is_some_and(|current| current >= observed_at);
+                    let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
+                        && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
+                    if live_status_unchanged
+                        && !needs_agent_running_flag
+                        && !live::has_pending_live_class_candidate(task)
+                    {
+                        continue;
                     }
-                    live::AgentEvidenceSource::RuntimeWrapper => {
-                        live::apply_trusted_observation_at(task, observation, observed_at);
+                    let previous = task.clone();
+                    task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
+                    task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
+                    match decision.source {
+                        Some(live::AgentEvidenceSource::Hook) => {
+                            live::apply_authoritative_observation_at(
+                                task,
+                                observation,
+                                observed_at,
+                            );
+                        }
+                        Some(live::AgentEvidenceSource::RuntimeWrapper) => {
+                            live::apply_trusted_observation_at(task, observation, observed_at);
+                        }
+                        None => {
+                            live::apply_observation_at(task, observation, observed_at);
+                        }
                     }
+                    refresh_cached_annotations(task);
+                    changed |= *task != previous;
                 }
-                refresh_cached_annotations(task);
-                changed |= *task != previous;
+                continue;
             }
-            continue;
         }
 
         if decision.acknowledged_hold {
@@ -429,7 +444,29 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 continue;
             }
         };
-        let observation = live::classify_agent_pane(task_snapshot.selected_agent, &pane_output);
+        let pane_now = SystemTime::now();
+        let Some(pane_observation) =
+            live::project_pane_activity(task_snapshot.selected_agent, &pane_output, pane_now)
+        else {
+            continue;
+        };
+        let pane_projection =
+            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
+                now: pane_now,
+                primary_run_id: "primary".to_string(),
+                process_liveness: Some(crate::agent_status::ProcessLiveness {
+                    alive: decision.process_alive,
+                    observed_at: pane_now,
+                }),
+                observations: &[pane_observation],
+            });
+        if pane_projection.phase == crate::agent_status::ParentPhase::Unknown {
+            // Ambiguous or low-confidence pane evidence must not overwrite
+            // credible prior state or fabricate AgentRunning from process liveness.
+            continue;
+        }
+        let observation = pane_projection.live;
+        let observed_at = pane_projection.selected_observed_at.unwrap_or(pane_now);
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let live_status_unchanged = task.live_status.as_ref() == Some(&observation);
             let had_recoverable_missing_flag = task
@@ -447,7 +484,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             let previous = task.clone();
             task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
             task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
-            live::apply_observation(task, observation);
+            live::apply_observation_at(task, observation, observed_at);
             refresh_cached_annotations(task);
             changed |= *task != previous;
         }
@@ -912,6 +949,8 @@ mod tests {
                     observed_at: SystemTime::now(),
                     fresh: true,
                     source: AgentStatusCacheSource::Hook,
+                    run_id: None,
+                    parent_run_id: None,
                 })
                 .collect()
         }
@@ -1016,7 +1055,7 @@ mod tests {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             self.commands.push(command.clone());
             let stdout = match command.args.as_slice() {
-                [command, ..] if command == "capture-pane" => "codex is working\n",
+                [command, ..] if command == "capture-pane" => "{\"type\":\"thinking\"}\n",
                 _ => runtime_stdout(&command.args),
             };
 
@@ -1353,12 +1392,16 @@ mod tests {
                         observed_at: SystemTime::UNIX_EPOCH,
                         fresh: false,
                         source: AgentStatusCacheSource::Hook,
+                        run_id: None,
+                        parent_run_id: None,
                     },
                     AgentStatusCacheEntry {
                         value: "done".to_string(),
                         observed_at: SystemTime::now(),
                         fresh: true,
                         source: AgentStatusCacheSource::RuntimeWrapper,
+                        run_id: None,
+                        parent_run_id: None,
                     },
                 ]
             }
@@ -1412,6 +1455,8 @@ mod tests {
             observed_at: SystemTime::now() - ago,
             fresh: true,
             source,
+            run_id: None,
+            parent_run_id: None,
         }
     }
 
@@ -1507,6 +1552,89 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::AgentRunning)
         );
+    }
+
+    #[test]
+    fn generic_busy_pane_alone_does_not_set_agent_running() {
+        struct GenericBusyPaneRunner {
+            commands: Vec<CommandSpec>,
+        }
+
+        impl CommandRunner for GenericBusyPaneRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                self.commands.push(command.clone());
+                let stdout = match command.args.as_slice() {
+                    [command, ..] if command == "capture-pane" => "codex is working\n",
+                    _ => runtime_stdout(&command.args),
+                };
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let mut context = context_with_active_task();
+        let mut runner = GenericBusyPaneRunner {
+            commands: Vec::new(),
+        };
+        // Fresh wrapper heartbeat is liveness only; pane is generic busy chrome.
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::RuntimeWrapper,
+                "working",
+                Duration::from_secs(1),
+            )],
+        };
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_ne!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+    }
+
+    #[test]
+    fn parent_wrapper_done_with_active_child_pane_hook_is_not_reviewable() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![
+                scripted_entry(
+                    AgentStatusCacheSource::RuntimeWrapper,
+                    "done",
+                    Duration::from_secs(1),
+                ),
+                AgentStatusCacheEntry {
+                    value: "working".to_string(),
+                    observed_at: SystemTime::now() - Duration::from_secs(1),
+                    fresh: true,
+                    source: AgentStatusCacheSource::Hook,
+                    run_id: Some("pane:ajax-web-fix-login:%1".to_string()),
+                    parent_run_id: Some("primary".to_string()),
+                },
+            ],
+        };
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_ne!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_ne!(task.lifecycle_status, LifecycleStatus::Reviewable);
     }
 
     #[test]
@@ -1763,6 +1891,8 @@ mod tests {
                 observed_at: acknowledged_at + Duration::from_nanos(1),
                 fresh: true,
                 source: AgentStatusCacheSource::Hook,
+                run_id: None,
+                parent_run_id: None,
             }],
         };
 
@@ -1832,6 +1962,8 @@ mod tests {
                 observed_at: next_observed_at,
                 fresh: true,
                 source: AgentStatusCacheSource::Hook,
+                run_id: None,
+                parent_run_id: None,
             }],
         };
 
@@ -2102,7 +2234,7 @@ mod tests {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             self.commands.push(command.clone());
             let stdout = match command.args.as_slice() {
-                [command, ..] if command == "capture-pane" => "codex is working\n",
+                [command, ..] if command == "capture-pane" => "{\"type\":\"thinking\"}\n",
                 _ => runtime_stdout(&command.args),
             };
 

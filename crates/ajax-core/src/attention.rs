@@ -106,7 +106,11 @@ fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
     match status.status {
         TaskStatus::Error => true,
-        TaskStatus::Waiting => status.explanation.as_deref() != Some("Ready for review"),
+        TaskStatus::Waiting => {
+            let explanation = status.explanation.as_deref().unwrap_or("");
+            explanation != "Ready for review"
+                && !crate::agent_status::is_delegated_waiting_summary(explanation)
+        }
         TaskStatus::Running | TaskStatus::Idle => false,
     }
 }
@@ -157,6 +161,9 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
             task.agent_status,
             AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
         )
+        && !crate::agent_status::is_delegated_waiting_summary(
+            operator_status.explanation.as_deref().unwrap_or(""),
+        )
     {
         push_collapsed_annotation(
             &mut annotations,
@@ -168,11 +175,13 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
     }
 
     if let Some(live_status) = task.live_status.as_ref() {
-        if let Some(kind) = annotation_kind_for_live_status(live_status.kind) {
-            push_collapsed_annotation(
-                &mut annotations,
-                Annotation::new(kind, Evidence::LiveStatus(live_status.kind)),
-            );
+        if !crate::agent_status::is_delegated_waiting_summary(&live_status.summary) {
+            if let Some(kind) = annotation_kind_for_live_status(live_status.kind) {
+                push_collapsed_annotation(
+                    &mut annotations,
+                    Annotation::new(kind, Evidence::LiveStatus(live_status.kind)),
+                );
+            }
         }
     }
 
@@ -834,5 +843,66 @@ mod tests {
         mark_active(&mut idle).unwrap();
         assert_eq!(super::take_attention_transition(&mut idle), None);
         assert!(idle.metadata.is_empty());
+    }
+
+    #[test]
+    fn delegated_waiting_does_not_notify() {
+        let mut task = active_task("delegated");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                crate::agent_status::SUMMARY_WAITING_ON_DELEGATED,
+            ),
+        );
+
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some(crate::agent_status::EXPLANATION_WAITING_ON_DELEGATED)
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+    }
+
+    #[test]
+    fn delegated_still_active_does_not_notify() {
+        let mut task = active_task("children");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                crate::agent_status::SUMMARY_DELEGATED_STILL_ACTIVE,
+            ),
+        );
+
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some(crate::agent_status::EXPLANATION_DELEGATED_STILL_ACTIVE)
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+    }
+
+    #[test]
+    fn real_user_waiting_still_notifies() {
+        let mut task = active_task("ask");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+        );
+
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        let transition = super::take_attention_transition(&mut task);
+        assert_eq!(
+            transition.map(|transition| (
+                transition.status,
+                transition.explanation.unwrap_or_default()
+            )),
+            Some((TaskStatus::Waiting, "Waiting for approval".to_string()))
+        );
     }
 }
