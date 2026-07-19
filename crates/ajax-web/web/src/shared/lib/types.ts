@@ -159,7 +159,6 @@ export interface DevDeployStatus {
   phase: DevDeployPhase;
   phase_label: string;
   shared_slot: boolean;
-  open_url: string;
   active: boolean;
   error?: string | null;
   occupant?: DevSlotOccupant | null;

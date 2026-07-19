@@ -3,8 +3,6 @@ import { Button } from "@/shared/ui/button";
 import { ApiError, fetchDevDeploy, startDevDeploy } from "@/shared/lib/api";
 import type { DevDeployStatus } from "@/shared/lib/types";
 
-const OPEN_URL = "https://ajaxdev.mossyhome.net:8788";
-
 interface Props {
   taskHandle: string;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
@@ -53,10 +51,6 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
     }
   }
 
-  function openDev() {
-    window.open(OPEN_URL, "_blank", "noopener,noreferrer");
-  }
-
   useEffect(() => {
     void refresh();
     return () => {
@@ -80,14 +74,6 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
             onClick={() => void deploy()}
           >
             {disabled ? `${phaseLabel}…` : "Test in Dev"}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="open-dev-button"
-            onClick={openDev}
-          >
-            Open Dev
           </Button>
         </div>
       </div>

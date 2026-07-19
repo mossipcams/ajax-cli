@@ -250,14 +250,13 @@ describe("TaskDetail projection surface", () => {
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
   });
 
-  it("shows Test in Dev on the detail page (not in the action bar or collapsed details) for ajax-cli tasks", async () => {
+  it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {
     fetchDevDeploy.mockResolvedValue({
       ok: true,
       deploy: {
         phase: "ready_to_deploy",
         phase_label: "Ready to deploy",
         shared_slot: true,
-        open_url: "https://ajaxdev.mossyhome.net:8788",
         active: false,
         error: null,
         occupant: null,
@@ -272,8 +271,11 @@ describe("TaskDetail projection surface", () => {
       expect(screen.getByRole("region", { name: "Task terminal" })).toBeInTheDocument();
       expect(screen.getByRole("region", { name: "Test in Dev" })).toBeInTheDocument();
     });
-    // Visible on the page, not buried in the collapsed Task details disclosure.
-    expect(within(screen.getByRole("group")).queryByRole("region", { name: "Test in Dev" })).toBeNull();
+
+    const detailsGroup = screen.getByRole("group");
+    expect(
+      within(detailsGroup).getByRole("region", { name: "Test in Dev" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
       "Task terminal",
       "Test in Dev",

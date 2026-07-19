@@ -14,7 +14,6 @@ use std::{
 };
 
 pub const AJAX_SELF_REPO: &str = "ajax-cli";
-pub const DEV_OPEN_URL: &str = "https://ajaxdev.mossyhome.net:8788";
 pub const DEV_PROFILE: &str = "dev";
 pub const DEV_PORT: u16 = 8788;
 
@@ -71,7 +70,6 @@ pub struct DevDeployStatus {
     pub phase: DevDeployPhase,
     pub phase_label: String,
     pub shared_slot: bool,
-    pub open_url: String,
     pub active: bool,
     pub error: Option<String>,
     pub occupant: Option<DevSlotOccupant>,
@@ -141,7 +139,6 @@ impl DevDeploySlot {
             phase: self.phase,
             phase_label: self.phase.label().to_string(),
             shared_slot: true,
-            open_url: DEV_OPEN_URL.to_string(),
             active: self.phase.is_active(),
             error: self.error.clone(),
             occupant: self.occupant.clone(),
@@ -486,8 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn open_url_is_fixed_ajaxdev_endpoint() {
-        assert_eq!(DEV_OPEN_URL, "https://ajaxdev.mossyhome.net:8788");
+    fn dev_deploy_status_has_no_open_url_field() {
+        let status = DevDeploySlot::default().status();
+        let value = serde_json::to_value(&status).expect("status serializes");
+        assert!(value.get("open_url").is_none());
     }
 
     #[test]

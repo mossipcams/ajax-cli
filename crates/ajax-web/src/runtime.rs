@@ -2953,10 +2953,7 @@ mod tests {
         let status_body = json_of(status).await;
         assert_eq!(status_body["ok"], true);
         assert_eq!(status_body["deploy"]["shared_slot"], true);
-        assert_eq!(
-            status_body["deploy"]["open_url"],
-            "https://ajaxdev.mossyhome.net:8788"
-        );
+        assert!(status_body["deploy"].get("open_url").is_none());
         assert_eq!(status_body["deploy"]["phase"], "ready_to_deploy");
 
         let rejected = post_json(

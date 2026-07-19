@@ -617,6 +617,34 @@ describe("App shell", () => {
     expect(await screen.findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
   });
 
+  it("recovers from backend unreachable to connected when Retry succeeds", async () => {
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          if (cockpitCalls === 1) {
+            return Promise.reject(new Error("Failed to fetch"));
+          }
+          return Promise.resolve(jsonResponse(cockpit));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected"),
+    );
+    expect(screen.queryByText("backend unreachable")).toBeNull();
+  });
+
   it("reports reachable detail HTTP failures as disconnected", async () => {
     vi.stubGlobal(
       "fetch",

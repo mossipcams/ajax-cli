@@ -265,7 +265,9 @@ header .bar h1 {
   font-size: var(--text-label);
 }
 
-.connection-status[data-state="connected"] {
+.connection-status[data-state="checking"],
+.connection-status[data-state="connected"],
+.connection-status[data-state="reconnecting"] {
   display: none;
 }
 

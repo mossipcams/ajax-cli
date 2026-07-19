@@ -65,6 +65,27 @@ describe("createInFlightGuard", () => {
     expect(fetchCount).toBe(1);
   });
 
+  it("coalesces overlapping trailing runs into one follow-up fetch", async () => {
+    const guard = createInFlightGuard();
+    let fetchCount = 0;
+    const fetch = vi.fn(async () => {
+      fetchCount += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return "ok";
+    });
+
+    const first = guard.run(fetch);
+    const second = guard.run(fetch, { trailing: true });
+    const third = guard.run(fetch, { trailing: true });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await second).toBeUndefined();
+    expect(await third).toBeUndefined();
+    expect(await first).toBe("ok");
+    await vi.waitFor(() => expect(fetchCount).toBe(2));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("allows the next run after the first settles", async () => {
     const guard = createInFlightGuard();
     const fetch = vi.fn(async () => "done");
