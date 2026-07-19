@@ -416,7 +416,7 @@ fn live_kind_to_activity(kind: LiveStatusKind) -> Option<crate::agent_status::Ac
 const STRUCTURED_PANE_FRESH_FOR: Duration = Duration::from_secs(60);
 const GENERIC_PANE_FRESH_FOR: Duration = Duration::from_secs(15);
 
-/// Project pane text onto a single conservative [`StatusObservation`].
+/// Project pane text onto a single conservative [`crate::agent_status::StatusObservation`].
 ///
 /// Structured recognition (Cursor stream-json, agent-specific prompts) is
 /// Medium confidence. Generic busy chrome and heuristic needles are Low
