@@ -7,11 +7,11 @@ import {
   assertCockpit,
   assertDetail,
   assertOperationResponse,
-} from "./contracts";
+} from "@/shared/lib/contracts";
 
-import cockpit from "./fixtures/cockpit.json";
-import taskDetail from "./fixtures/task-detail.json";
-import operation from "./fixtures/operation.json";
+import cockpit from "@/fixtures/cockpit.json";
+import taskDetail from "@/fixtures/task-detail.json";
+import operation from "@/fixtures/operation.json";
 
 describe("cockpit fixture", () => {
   it("passes boundary guard without throwing", () => {

@@ -160,3 +160,7 @@ Cost: **+169 bytes gzip** (186,950 → 187,119), versus +3.5KB for Radix.
   `opencode` to `localStorage` and later tests in the same describe no longer
   start on Codex. The two new tests clear `localStorage` explicitly. Pre-existing
   fragility, not introduced here — worth a broader isolation pass someday.
+
+## On-device gate
+
+- **PASS (Matt, 2026-07-19)** — validated on iPhone. S8 cleared for PR.

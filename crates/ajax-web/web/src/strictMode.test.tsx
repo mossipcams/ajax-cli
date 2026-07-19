@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StrictMode } from "react";
 import { render, waitFor } from "@testing-library/react";
-import mainSource from "./main.tsx?raw";
-import App from "./components/App";
-import cockpit from "./fixtures/cockpit.json";
+import mainSource from "@/app/main.tsx?raw";
+import App from "@/app/App";
+import cockpit from "@/fixtures/cockpit.json";
 
 // StrictMode double-invokes effects in development. The Playwright suite runs
 // against the Vite dev server, so socket cardinality is covered there

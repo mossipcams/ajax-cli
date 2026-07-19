@@ -144,6 +144,98 @@ export default tseslint.config(
     },
   },
   {
+    // Layering, added in slice 9 once app/features/shared existed. Direction is
+    // one-way: app -> features -> shared. Enforced on the @/ alias because slice 9
+    // round 1 made every cross-directory import use it; a relative escape hatch
+    // would need to climb out of its own folder, which the patterns below also catch.
+    //
+    // shared/ is the leaf: it must not know about features or the app shell.
+    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
+    // a test that reads another layer's source text with ?raw for a source-text
+    // assertion is not a runtime dependency.
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/shared/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/features/*", "@/app/*", "**/features/*", "**/app/*"],
+              message:
+                "shared/ is the leaf layer: it must not import from features/ or app/. Move the shared piece down, or the consumer up.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // features/ may use shared/, but not the app shell, and not each other —
+    // cross-feature coupling is what feature folders exist to prevent.
+    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
+    // a test that reads another layer's source text with ?raw for a source-text
+    // assertion is not a runtime dependency.
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/features/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/app/*", "**/app/*"],
+              message:
+                "features/ must not import from the app shell. Lift the shared piece into shared/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Tests are exempt from layering below: these rules constrain *runtime*
+    // coupling, and a test that reads another layer's source text with ?raw for a
+    // source-text assertion is not a runtime dependency.
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/features/task/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/app/*", "**/app/*", "@/features/settings/*"],
+              message:
+                "features/task must not import from app/ or another feature. Shared pieces belong in shared/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
+    // a test that reads another layer's source text with ?raw for a source-text
+    // assertion is not a runtime dependency.
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/features/settings/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/app/*", "**/app/*", "@/features/task/*"],
+              message:
+                "features/settings must not import from app/ or another feature. Shared pieces belong in shared/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     rules: {
       // slice 12 follow-up: 11 existing violations
@@ -217,7 +309,7 @@ export default tseslint.config(
     // controller so the effect depends only on [handle, hostElements]. That is
     // slice 10. Delete this block in the same change; it is the last
     // react-hooks suppression in the tree.
-    files: ["**/components/TaskTerminal.tsx"],
+    files: ["**/features/task/TaskTerminal.tsx"],
     rules: {
       "react-hooks/exhaustive-deps": "off",
     },

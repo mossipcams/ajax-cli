@@ -71,17 +71,17 @@ describe("legacy terminal removal hygiene", () => {
 
     violations.push(
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/components/TaskDetail.tsx",
+        "crates/ajax-web/web/src/features/task/TaskDetail.tsx",
         ["TerminalSurfaceSelector"],
       ),
-      ...collectSymbolViolations("crates/ajax-web/web/src/components/App.tsx", [
+      ...collectSymbolViolations("crates/ajax-web/web/src/app/App.tsx", [
         "terminalPreload",
       ]),
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/components/SettingsView.tsx",
+        "crates/ajax-web/web/src/features/settings/SettingsView.tsx",
         ["surfaceV2", "Terminal Surface V2"],
       ),
-      ...collectSymbolViolations("crates/ajax-web/web/src/diagnostics.ts", [
+      ...collectSymbolViolations("crates/ajax-web/web/src/features/settings/diagnostics.ts", [
         "surfaceV2",
         "Terminal Surface V2",
       ]),

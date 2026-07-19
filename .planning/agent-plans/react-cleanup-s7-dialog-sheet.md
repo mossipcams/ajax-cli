@@ -191,3 +191,7 @@ Escape via hardware keyboard, backdrop tap, rotation) → **wait for Matt** → 
   (lowercase keys, extra fields), so `run-delegate` recorded `FAILED`. Content
   was independently reverified by the parent — same precedent as react S7
   rounds 1a-i / 1a-ii.
+
+## On-device gate
+
+- **PASS (Matt, 2026-07-19)** — validated on iPhone. S7 cleared for PR.

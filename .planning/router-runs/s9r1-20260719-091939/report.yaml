@@ -1,0 +1,8 @@
+DELEGATE_REPORT:
+  STATUS: FAILED
+  SUMMARY: delegate report failed schema validation
+  FILES_CHANGED: []
+  TEST_FIRST: NOT_PROVEN
+  COMMAND_EVIDENCE: []
+  STOP_CONDITIONS_HIT: [INVALID_STRUCTURED_REPORT]
+  REMAINING_RISKS: [Inspect the preserved raw log]
