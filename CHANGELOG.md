@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.9...ajax-cli-v0.50.10) (2026-07-19)
+
+
+### Bug Fixes
+
+* **web:** nest Test in Dev, drop Open Dev, harden connection banner ([#589](https://github.com/mossipcams/ajax-cli/issues/589)) ([c3d86b6](https://github.com/mossipcams/ajax-cli/commit/c3d86b6ccfe60de4315c6d987018320cd10eeaae))
+
 ## [0.50.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.8...ajax-cli-v0.50.9) (2026-07-19)
 
 
