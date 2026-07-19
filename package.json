@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "test": "npm run verify",
-    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:lint && npm run web:test -- --run",
+    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:lint && npm run web:sg && npm run web:test -- --run",
     "web:check": "node node_modules/typescript-7/bin/tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit",
     "web:lint": "eslint --config crates/ajax-web/web/eslint.config.mjs crates/ajax-web/web/src crates/ajax-web/web/e2e",
+    "web:sg": "ast-grep scan crates/ajax-web/web/src",
+    "web:sg:test": "ast-grep test",
     "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
     "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
     "web:build:check": "node scripts/web-build-check.mjs",
@@ -15,6 +17,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.44.1",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.1",

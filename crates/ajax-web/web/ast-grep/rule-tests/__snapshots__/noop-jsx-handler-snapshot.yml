@@ -1,0 +1,14 @@
+id: noop-jsx-handler
+snapshots:
+  <button onClick={() => {}} />:
+    labels:
+    - source: onClick={() => {}}
+      style: primary
+      start: 8
+      end: 26
+  <div onKeyDown={() => {}} />:
+    labels:
+    - source: onKeyDown={() => {}}
+      style: primary
+      start: 5
+      end: 25
