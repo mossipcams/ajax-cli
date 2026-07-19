@@ -172,6 +172,35 @@ test("new task sheet Start submits and reports the task started", async ({ page 
   await expect(resultPanel(page)).toContainText("Task started");
 });
 
+// Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in
+// from the title field, then arrow. jsdom cannot cover this — it does not implement
+// the focus semantics — and a Radix RadioGroup silently failed exactly here, leaving
+// the unselected agents unreachable. This is the test that caught it.
+test("agent picker is keyboard reachable and moves with arrow keys", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const sheet = page.locator("[data-testid='new-task-sheet']");
+  await expect(sheet).toBeVisible();
+
+  await sheet.locator("#new-task-title-input").focus();
+  await page.keyboard.press("Tab");
+  await expect(sheet.getByRole("radio", { name: "Codex" })).toBeFocused();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(sheet.getByRole("radio", { name: "Claude" })).toBeFocused();
+  await expect(sheet.getByRole("radio", { name: "Claude" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(sheet.getByRole("radio", { name: "Codex" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+});
+
 // ---- ConnectionStatus (error-state action row) ----------------------------
 
 test("connection Copy Diagnostics jumps to the settings route", async ({ page }) => {

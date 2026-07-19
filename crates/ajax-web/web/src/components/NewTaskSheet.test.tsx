@@ -187,6 +187,30 @@ describe("NewTaskSheet", () => {
     expect(document.getElementById(labelledBy!)?.textContent).toBe("New task");
   });
 
+  it("keeps the agent picker a single tab stop", () => {
+    localStorage.clear(); // an earlier test in this file persists a remembered agent
+    const { container } = render(<NewTaskSheet repos={repos} />);
+    const options = [...container.querySelectorAll<HTMLElement>(".agent-option")];
+    expect(options.map((option) => option.getAttribute("tabindex"))).toEqual([
+      "0",
+      "-1",
+      "-1",
+      "-1",
+    ]);
+  });
+
+  it("moves selection and focus with arrow keys", () => {
+    localStorage.clear(); // start from Codex regardless of test order
+    const { getByRole } = render(<NewTaskSheet repos={repos} />);
+    fireEvent.keyDown(getByRole("radio", { name: "Codex" }), { key: "ArrowRight" });
+    expect(getByRole("radio", { name: "Claude" })).toHaveAttribute("aria-checked", "true");
+    expect(document.activeElement).toBe(getByRole("radio", { name: "Claude" }));
+    // Wraps backwards off the first option.
+    fireEvent.keyDown(getByRole("radio", { name: "Claude" }), { key: "ArrowLeft" });
+    fireEvent.keyDown(getByRole("radio", { name: "Codex" }), { key: "ArrowLeft" });
+    expect(getByRole("radio", { name: "OpenCode" })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("restores focus to the opener when the sheet unmounts", () => {
     const opener = document.createElement("button");
     document.body.appendChild(opener);

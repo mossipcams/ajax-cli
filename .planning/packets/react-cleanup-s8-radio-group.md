@@ -1,0 +1,212 @@
+# Packet — Slice 8: RadioGroup primitive
+
+```yaml
+PACKET_STATUS: READY
+TASK_KIND: behavior
+TEST_FIRST: REQUIRED
+PRODUCTION_EDIT: REQUIRED
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+```
+
+## Goal
+
+Add `components/ui/radio-group.tsx` over `@radix-ui/react-radio-group` and
+rewire the new-task agent picker onto it, so the group becomes a single tab
+stop with arrow-key traversal (ARIA APG radiogroup pattern). Semantics that
+already exist must be preserved exactly; the only *new* behaviour is keyboard
+mechanics.
+
+All 378 existing tests must keep passing **unmodified**.
+
+## Allowed files
+
+- `crates/ajax-web/web/src/components/ui/radio-group.tsx` (new)
+- `crates/ajax-web/web/src/components/NewTaskSheet.tsx`
+- `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx` (additive only)
+
+## Forbidden changes
+
+- Any edit to `crates/ajax-web/web/src/styles.css`. No CSS added, removed, or
+  reordered; no class renames. `.agent-picker`, `.agent-option`, and
+  `.agent-option.is-selected` keep their exact current names and usage.
+- Any edit to `package.json` / `package-lock.json` — `@radix-ui/react-radio-group`
+  is **already installed**. Do not run `npm install`.
+- Any edit under `crates/ajax-web/web/e2e/`.
+- Editing, renaming, reordering, deleting, or weakening any of the **20**
+  existing `it(...)` blocks in `NewTaskSheet.test.tsx`. Additions only.
+- Any change to the `AGENTS` array values or labels, `LAST_AGENT_KEY`,
+  `LAST_REPO_KEY`, `initialAgent`, `savePrefs`, or `submit`.
+- Any change to the repo `<select>`, the title `<input>`, the sheet/dialog
+  wiring from slice 7, `useSheetDrag`, or `FullscreenLayer`.
+- Switching selection styling to `[data-state="checked"]` — that would require
+  a CSS change, which is forbidden.
+- Any commit, branch, push, rebase, or branch switch.
+
+## Context evidence
+
+**Current markup** (`NewTaskSheet.tsx:205-221`):
+
+```tsx
+<span className="field-label" id="new-task-agent">Agent</span>
+<div className="agent-picker" role="radiogroup" aria-labelledby="new-task-agent">
+  {AGENTS.map((option) => (
+    <button
+      key={option.value}
+      type="button"
+      className={`agent-option${agent === option.value ? " is-selected" : ""}`}
+      role="radio"
+      aria-checked={agent === option.value}
+      onClick={() => setAgent(option.value)}
+    >
+      {option.label}
+    </button>
+  ))}
+</div>
+```
+
+State: `const [agent, setAgent] = useState(initialAgent)` (`:58`).
+`AGENTS` (`:21-26`) = codex, claude, cursor, opencode.
+
+**Tests that pin this contract and must not change:**
+- `NewTaskSheet.test.tsx:47-58` — `.agent-option` elements, in order, with
+  text `["Codex","Claude","Cursor","OpenCode"]`; also asserts the source still
+  contains `role="radiogroup"` and does **not** contain `<select id="new-task-agent"`.
+- `:60-69` — `getByRole("radio", { name: "OpenCode" })` click then submit;
+  asserts `startTask` received `agent: "opencode"`.
+- `:164-171` and `:178-184` — `getByRole("radio", { name: … })` with
+  `aria-checked="true"`.
+- `:186-196` — remembers agent after successful start.
+
+Note `:56` asserts the literal string `role="radiogroup"` is present in
+`NewTaskSheet.tsx` source. Radix's Root emits that role at runtime, but the
+**source-text** assertion must still hold — pass `role="radiogroup"` explicitly
+on the Root, or otherwise keep that literal in the file. Do not edit that test.
+
+**Existing primitive conventions to mirror**:
+`crates/ajax-web/web/src/components/ui/button.tsx` and
+`crates/ajax-web/web/src/components/ui/sheet.tsx` — `cn` from `@/lib/utils`,
+`data-slot` attributes, no behaviour beyond presentation.
+
+**Slice 7 precedent — read before writing.** In slice 7 a hand-written `id` on
+a Radix `asChild` child silently overrode Radix's generated id, leaving
+`aria-labelledby` pointing at a nonexistent element, and `aria-modal` was
+dropped without any test noticing. Both shipped "green". Verify rendered aria
+attributes explicitly here.
+
+## Code anchors
+
+- `crates/ajax-web/web/src/components/NewTaskSheet.tsx:205-221` — the picker;
+  the only production region that changes.
+- `crates/ajax-web/web/src/components/NewTaskSheet.tsx:58` — `agent` state.
+- `crates/ajax-web/web/src/components/ui/button.tsx:1-6` — import/`cn` style.
+- `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx:189` — append point,
+  end of the first `describe("NewTaskSheet", …)` block. The file has **two**
+  describes; the second is `"NewTaskSheet remembered defaults"`. Do not append
+  at end of file.
+
+## Test-first instructions
+
+Add exactly two new tests at the append point, named exactly:
+
+**1. `"moves selection with arrow keys"`**
+- Render `<NewTaskSheet repos={repos} />`.
+- `getByRole("radio", { name: "Codex" })` — focus it (`.focus()`).
+- `fireEvent.keyDown(focusedElement, { key: "ArrowRight" })`.
+- Assert the "Claude" radio now has `aria-checked="true"` and Codex does not.
+- This MUST fail before the change: plain buttons ignore ArrowRight.
+
+**2. `"keeps the agent picker a single tab stop"`**
+- Render, then read all four `.agent-option` elements.
+- Assert exactly one has `tabindex="0"` and the other three have
+  `tabindex="-1"`.
+- This MUST fail before the change: today no element carries `tabindex`, so the
+  count of `tabindex="0"` is 0.
+
+Focused red command — run BEFORE any production edit and record real output:
+
+```bash
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "arrow keys"
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "single tab stop"
+```
+
+Both must exit nonzero with a genuine assertion failure. Then implement and
+record both passing.
+
+## Edit instructions
+
+**1. Create `crates/ajax-web/web/src/components/ui/radio-group.tsx`.**
+
+Thin wrappers over `@radix-ui/react-radio-group`, mirroring `sheet.tsx`.
+Export `RadioGroup` (Root) and `RadioGroupItem` (Item), rendering
+`data-slot="radio-group"` and `data-slot="radio-group-item"`, merging incoming
+`className` via `cn(...)`, and forwarding all Radix props. No CVA unless a real
+variant exists — do not invent one. No `Indicator` is needed: selection is shown
+by the `.agent-option.is-selected` CSS class, not a check mark.
+
+**2. Rewire `NewTaskSheet.tsx:208-221`.**
+
+- `RadioGroup` replaces the wrapper `div`, keeping
+  `className="agent-picker"`, `aria-labelledby="new-task-agent"`, and an
+  explicit `role="radiogroup"` (see the source-text assertion above).
+- Wire `value={agent}` and `onValueChange={setAgent}`.
+- Each `RadioGroupItem` keeps `value={option.value}`, the exact
+  `` className={`agent-option${agent === option.value ? " is-selected" : ""}`} ``
+  expression, and the label as its child.
+- Remove the now-redundant hand-written `role="radio"`, `aria-checked`, and
+  `onClick` — Radix supplies all three. Keep `key`.
+- Do **not** set `orientation` on the Root: the picker is a 2×2 grid and both
+  arrow axes should traverse.
+- Do **not** add an `id` to any Radix child (see slice 7 precedent).
+
+**3. Verify the aria and form contract explicitly** (not a code change; a check
+you must run and report):
+- every `.agent-option` still exposes `role="radio"` and correct `aria-checked`;
+- the group still exposes `role="radiogroup"` and an `aria-labelledby` that
+  **resolves to the "Agent" label element**;
+- items render `type="button"` and do not submit the form;
+- if Radix emits a hidden `BubbleInput`, it does not change what `startTask`
+  receives.
+
+## Verification commands
+
+```bash
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "arrow keys"        # RED then GREEN
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "single tab stop"   # RED then GREEN
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx
+npm run web:test -- --run
+npm run web:check
+npm run web:lint
+npm run web:build:check
+```
+
+Run from the repository root (npm scripts live in the root `package.json`).
+
+## Acceptance criteria
+
+- Both new tests failed before the production change and pass after, with real
+  exit codes and assertion text recorded for each phase.
+- `NewTaskSheet.test.tsx`: **22** passing, 0 failing, 0 skipped.
+- Full suite: **380** passing across 42 files, 0 failing.
+- `web:check`, `web:lint`, `web:build:check` all exit 0.
+- `git diff --stat` lists exactly three paths: `ui/radio-group.tsx` (new),
+  `NewTaskSheet.tsx`, `NewTaskSheet.test.tsx`. No `styles.css`, no
+  `package.json`, no `package-lock.json`, no e2e file, no `dist/`.
+- The rendered `aria-labelledby` on the group resolves to the "Agent" label
+  element — state the resolved element's text in the report.
+- No existing `it(...)` block was edited, reordered, or removed.
+
+## Stop conditions
+
+- Either new test passes *before* the production change — the premise is wrong;
+  stop and report rather than rewriting the test.
+- Any existing test requires modification to pass. This is the central signal
+  the port is not behaviour-preserving; stop and report which test and why.
+  In particular `:47-58` (source text `role="radiogroup"`) and `:60-69`
+  (`getByRole("radio", …)` → `startTask` payload) are tripwires.
+- Radix's hidden input changes the `startTask` payload or causes the form to
+  submit when an agent is picked — stop and report.
+- Preserving the styling requires a `styles.css` change — stop and report.
+- Radix emits a console error or warning during the test run that cannot be
+  resolved inside the Allowed files.
+- The patch exceeds roughly 150 changed lines.

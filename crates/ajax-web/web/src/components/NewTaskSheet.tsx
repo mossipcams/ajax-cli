@@ -46,6 +46,20 @@ function initialAgent(): string {
   return AGENTS.some((option) => option.value === remembered) ? remembered! : "codex";
 }
 
+// ponytail: 14 lines instead of @radix-ui/react-radio-group. Radix was tried and
+// discarded — inside the Dialog's focus scope its RovingFocusGroup never moved
+// selection, which left the unselected agents unreachable by keyboard. Both arrow
+// axes move because .agent-picker is a 2x2 grid.
+function agentForArrowKey(current: string, key: string): string | null {
+  const index = AGENTS.findIndex((option) => option.value === current);
+  const delta =
+    key === "ArrowRight" || key === "ArrowDown" ? 1
+    : key === "ArrowLeft" || key === "ArrowUp" ? -1
+    : 0;
+  if (index < 0 || delta === 0) return null;
+  return AGENTS[(index + delta + AGENTS.length) % AGENTS.length]!.value;
+}
+
 export default function NewTaskSheet({
   repos,
   selectedProject = null,
@@ -213,7 +227,17 @@ export default function NewTaskSheet({
                 className={`agent-option${agent === option.value ? " is-selected" : ""}`}
                 role="radio"
                 aria-checked={agent === option.value}
+                tabIndex={agent === option.value ? 0 : -1}
                 onClick={() => setAgent(option.value)}
+                onKeyDown={(event) => {
+                  const next = agentForArrowKey(agent, event.key);
+                  if (!next) return;
+                  event.preventDefault();
+                  setAgent(next);
+                  const index = AGENTS.findIndex((entry) => entry.value === next);
+                  const group = event.currentTarget.parentElement;
+                  group?.querySelectorAll<HTMLButtonElement>(".agent-option")[index]?.focus();
+                }}
               >
                 {option.label}
               </button>
