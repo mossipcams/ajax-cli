@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import Skeleton from "./Skeleton";
 
 describe("Skeleton", () => {
@@ -18,8 +18,8 @@ describe("Skeleton", () => {
   });
 
   it("sets data-testid when testid is provided", () => {
-    const { container } = render(<Skeleton testid="task-skeleton" />);
-    expect(container.querySelector(".skeleton")?.getAttribute("data-testid")).toBe(
+    render(<Skeleton testid="task-skeleton" />);
+    expect(screen.getByTestId("task-skeleton").getAttribute("data-testid")).toBe(
       "task-skeleton",
     );
   });

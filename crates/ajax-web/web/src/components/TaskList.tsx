@@ -241,7 +241,7 @@ export default function TaskList({
       ) : null}
 
       {inboxItems.length > 0 ? (
-        <section className="group inbox" aria-live="polite">
+        <section className="group inbox" aria-label="Needs you" aria-live="polite">
           <div className="section-head attention">
             <span className="section-head-title">Needs you</span>
             <span className="section-head-count">{inboxItems.length}</span>
@@ -261,7 +261,7 @@ export default function TaskList({
       ) : null}
 
       {calmCount > 0 ? (
-        <section className="group tasks" aria-live="polite">
+        <section className="group tasks" aria-label="Tasks" aria-live="polite">
           <div className="section-head">
             <span className="section-head-title">{selectedProject ?? "Tasks"}</span>
             <span className="section-head-count">{calmCount}</span>

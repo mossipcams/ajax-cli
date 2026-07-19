@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, screen, within } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
 import routeScrollSource from "./RouteScroll.tsx?raw";
@@ -73,18 +73,18 @@ function taskDetailMobileBlock(): string {
 
 describe("TaskDetail", () => {
   it("renders the canonical headline status", () => {
-    const { getByText, container } = render(<TaskDetail detail={detail()} />);
-    expect(container.querySelector(".interact-pill")?.textContent).toContain("Waiting");
-    expect(getByText("Ready for review")).toBeInTheDocument();
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.getByText("Waiting")).toHaveClass("interact-pill");
+    expect(screen.getByText("Ready for review")).toBeInTheDocument();
   });
 
   it("renders the ordered actions without inferring them", () => {
-    const { getByText } = render(<TaskDetail detail={detail()} />);
-    expect(getByText("Review")).toBeInTheDocument();
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.getByText("Review")).toBeInTheDocument();
   });
 
   it("removes redundant resume from task detail actions", () => {
-    const { getByText, queryByText } = render(
+    render(
       <TaskDetail
         detail={detail({
           actions: [
@@ -95,11 +95,14 @@ describe("TaskDetail", () => {
       />,
     );
 
-    expect(queryByText("Resume")).not.toBeInTheDocument();
-    expect(getByText("Review")).toBeInTheDocument();
+    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
+    expect(screen.getByText("Review")).toBeInTheDocument();
   });
 
   it("exposes mobile layout hooks for header and actions", () => {
+    // The `data-mobile-chrome` markers are layout-ownership hooks with no
+    // accessible equivalent — asserting a Back/Review button exists would not
+    // test what this case is named for. Located by attribute deliberately.
     const { container } = render(<TaskDetail detail={detail()} />);
 
     expect(container.querySelector("[data-mobile-chrome='header']")).toBeInTheDocument();
@@ -111,14 +114,16 @@ describe("TaskDetail", () => {
     expect(appSource).toMatch(
       /<section[^>]*data-outlet="task"[^>]*>[\s\S]*?<TaskDetail/,
     );
+    // `.task-detail` is the element the scroll lock targets; the terminal
+    // region is a different node and would not prove this contract.
     const { container } = render(<TaskDetail detail={detail()} />);
     expect(container.querySelector(".task-detail")).toBeInTheDocument();
   });
 
   it("fires onBack from the back control", async () => {
     const onBack = vi.fn();
-    const { getByText } = render(<TaskDetail detail={detail()} onBack={onBack} />);
-    await fireEvent.click(getByText("← Back"));
+    render(<TaskDetail detail={detail()} onBack={onBack} />);
+    fireEvent.click(screen.getByText("← Back"));
     expect(onBack).toHaveBeenCalledOnce();
   });
 
@@ -141,43 +146,43 @@ describe("TaskDetail", () => {
 
 describe("TaskDetail projection surface", () => {
   it("surfaces the runtime observation error as a warning", () => {
-    const { getByTestId } = render(
+    render(
       <TaskDetail detail={detail({ runtime_observation_error: "tmux capture failed" })} />,
     );
-    expect(getByTestId("observation-error").textContent).toContain("tmux capture failed");
+    expect(screen.getByTestId("observation-error").textContent).toContain("tmux capture failed");
   });
 
   it("omits the observation warning when observation succeeded", () => {
-    const { queryByTestId } = render(<TaskDetail detail={detail()} />);
-    expect(queryByTestId("observation-error")).not.toBeInTheDocument();
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.queryByTestId("observation-error")).not.toBeInTheDocument();
   });
 
   it("shows agent activity when it adds information beyond the status line", () => {
-    const { getByTestId } = render(
+    render(
       <TaskDetail detail={detail({ agent_activity: "running cargo nextest" })} />,
     );
-    expect(getByTestId("agent-activity").textContent).toContain("running cargo nextest");
+    expect(screen.getByTestId("agent-activity").textContent).toContain("running cargo nextest");
   });
 
   it("hides agent activity when it just repeats the status explanation", () => {
-    const { queryByTestId } = render(
+    render(
       <TaskDetail
         detail={detail({ agent_activity: "Ready for review", status_explanation: "Ready for review" })}
       />,
     );
-    expect(queryByTestId("agent-activity")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-activity")).not.toBeInTheDocument();
   });
 
   it("falls back to the live status summary for the activity line", () => {
-    const { getByTestId } = render(
+    render(
       <TaskDetail detail={detail({ agent_activity: null, live_status_summary: "waiting on approval" })} />,
     );
-    expect(getByTestId("agent-activity").textContent).toContain("waiting on approval");
+    expect(screen.getByTestId("agent-activity").textContent).toContain("waiting on approval");
   });
 
   it("renders created and last-activity relative times in task details", () => {
     const now = Math.floor(Date.now() / 1000);
-    const { getByText } = render(
+    render(
       <TaskDetail
         detail={detail({
           created_unix_secs: now - 2 * 86400,
@@ -185,13 +190,13 @@ describe("TaskDetail projection surface", () => {
         })}
       />,
     );
-    expect(getByText("2d ago")).toBeInTheDocument();
-    expect(getByText("5m ago")).toBeInTheDocument();
+    expect(screen.getByText("2d ago")).toBeInTheDocument();
+    expect(screen.getByText("5m ago")).toBeInTheDocument();
   });
 
   it("lists agent attempts with outcome and duration", () => {
     const now = Math.floor(Date.now() / 1000);
-    const { getByTestId } = render(
+    render(
       <TaskDetail
         detail={detail({
           agent_attempts: [
@@ -201,23 +206,23 @@ describe("TaskDetail projection surface", () => {
         })}
       />,
     );
-    const attempts = getByTestId("agent-attempts");
+    const attempts = screen.getByTestId("agent-attempts");
     expect(attempts.textContent).toContain("completed");
     expect(attempts.textContent).toContain("2m");
     expect(attempts.textContent).toContain("running");
   });
 
   it("lists annotations when the task carries notes", () => {
-    const { getByTestId } = render(
+    render(
       <TaskDetail detail={detail({ annotations: ["needs rebase", "check CI"] })} />,
     );
-    expect(getByTestId("task-annotations").textContent).toContain("needs rebase");
-    expect(getByTestId("task-annotations").textContent).toContain("check CI");
+    expect(screen.getByTestId("task-annotations").textContent).toContain("needs rebase");
+    expect(screen.getByTestId("task-annotations").textContent).toContain("check CI");
   });
 
   it("omits the annotations block when the task has none", () => {
-    const { queryByTestId } = render(<TaskDetail detail={detail()} />);
-    expect(queryByTestId("task-annotations")).not.toBeInTheDocument();
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
   });
 
   it("clamps status explanation and activity to a single row", () => {
@@ -262,18 +267,19 @@ describe("TaskDetail projection surface", () => {
       },
     });
 
-    const { container } = render(
+    render(
       <TaskDetail detail={detail({ repo: "ajax-cli", qualified_handle: "ajax-cli/demo" })} />,
     );
 
     await waitFor(() => {
-      expect(container.querySelector("[data-testid='test-in-dev']")).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Test in Dev" })).toBeInTheDocument();
     });
     // Visible on the page, not buried in the collapsed Task details disclosure.
-    expect(container.querySelector(".meta-details [data-testid='test-in-dev']")).toBeNull();
-    expect(
-      container.querySelector("[data-mobile-chrome='actions'] [data-testid='test-in-dev']"),
-    ).toBeNull();
+    expect(within(screen.getByRole("group")).queryByRole("region", { name: "Test in Dev" })).toBeNull();
+    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Task terminal",
+      "Test in Dev",
+    ]);
   });
 
   it("compacts the mobile status panel and action buttons", () => {

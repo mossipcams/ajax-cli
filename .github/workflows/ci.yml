@@ -104,6 +104,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
+      - name: Lint
+        run: npm run web:lint
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps webkit
 

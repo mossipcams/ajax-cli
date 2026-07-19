@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent, screen, act } from "@testing-library/react";
 import ActionBar from "./ActionBar";
 import * as api from "../api";
 import { DROP_UNDO_MS } from "../polling";
@@ -26,20 +26,18 @@ describe("ActionBar", () => {
   });
 
   it("renders only returned actions, first as primary", () => {
-    const { container, getByText } = render(
-      <ActionBar actions={[review, drop]} handle="web/x" />,
-    );
-    expect(getByText("Review").classList.contains("primary")).toBe(true);
-    expect(container.querySelectorAll("button[data-action]")).toHaveLength(2);
+    render(<ActionBar actions={[review, drop]} handle="web/x" />);
+    expect(screen.getByText("Review").classList.contains("primary")).toBe(true);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
   });
 
   it("requires two taps for a destructive action then commits after the undo window", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
-    const { getByText } = render(<ActionBar actions={[drop]} handle="web/x" />);
-    await fireEvent.click(getByText("Drop"));
+    render(<ActionBar actions={[drop]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Drop"));
     expect(spy).not.toHaveBeenCalled();
-    expect(getByText("Tap to confirm")).toBeInTheDocument();
-    await fireEvent.click(getByText("Tap to confirm"));
+    expect(screen.getByText("Tap to confirm")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Tap to confirm"));
     // Drop is now delayed by the undo window — no API call yet.
     expect(spy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(DROP_UNDO_MS);
@@ -51,11 +49,11 @@ describe("ActionBar", () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const onResult = vi.fn();
     const onDismiss = vi.fn();
-    const { getByText } = render(
+    render(
       <ActionBar actions={[drop]} handle="web/x" onResult={onResult} onDismiss={onDismiss} />,
     );
-    await fireEvent.click(getByText("Drop"));
-    await fireEvent.click(getByText("Tap to confirm"));
+    fireEvent.click(screen.getByText("Drop"));
+    fireEvent.click(screen.getByText("Tap to confirm"));
     // After confirm, the API is not called yet; an undo toast is surfaced.
     expect(spy).not.toHaveBeenCalled();
     expect(onResult).toHaveBeenCalledWith(
@@ -74,11 +72,11 @@ describe("ActionBar", () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const onResult = vi.fn();
     const onDismiss = vi.fn();
-    const { getByText } = render(
+    render(
       <ActionBar actions={[drop]} handle="web/x" onResult={onResult} onDismiss={onDismiss} />,
     );
-    await fireEvent.click(getByText("Drop"));
-    await fireEvent.click(getByText("Tap to confirm"));
+    fireEvent.click(screen.getByText("Drop"));
+    fireEvent.click(screen.getByText("Tap to confirm"));
     const options = onResult.mock.calls[0][3] as { onUndo: () => void };
     options.onUndo();
     vi.advanceTimersByTime(DROP_UNDO_MS);
@@ -89,13 +87,13 @@ describe("ActionBar", () => {
 
   it("expires the confirmation after the timeout", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
-    const { getByText, queryByText } = render(<ActionBar actions={[drop]} handle="web/x" />);
-    await fireEvent.click(getByText("Drop"));
-    expect(getByText("Tap to confirm")).toBeInTheDocument();
+    render(<ActionBar actions={[drop]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Drop"));
+    expect(screen.getByText("Tap to confirm")).toBeInTheDocument();
     await act(async () => {
       vi.advanceTimersByTime(8000);
     });
-    expect(queryByText("Tap to confirm")).toBeNull();
+    expect(screen.queryByText("Tap to confirm")).toBeNull();
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -103,11 +101,11 @@ describe("ActionBar", () => {
     vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const onMutated = vi.fn();
     const onDismiss = vi.fn();
-    const { getByText } = render(
+    render(
       <ActionBar actions={[drop]} handle="web/x" onMutated={onMutated} onDismiss={onDismiss} />,
     );
-    await fireEvent.click(getByText("Drop"));
-    await fireEvent.click(getByText("Tap to confirm"));
+    fireEvent.click(screen.getByText("Drop"));
+    fireEvent.click(screen.getByText("Tap to confirm"));
     await vi.runAllTimersAsync();
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(onMutated).not.toHaveBeenCalled();
@@ -117,10 +115,10 @@ describe("ActionBar", () => {
     vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const onMutated = vi.fn();
     const onDismiss = vi.fn();
-    const { getByText } = render(
+    render(
       <ActionBar actions={[review]} handle="web/x" onMutated={onMutated} onDismiss={onDismiss} />,
     );
-    await fireEvent.click(getByText("Review"));
+    fireEvent.click(screen.getByText("Review"));
     await vi.runAllTimersAsync();
     expect(onMutated).toHaveBeenCalledOnce();
     expect(onDismiss).not.toHaveBeenCalled();
@@ -135,10 +133,8 @@ describe("ActionBar", () => {
     };
     vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: { cockpit } });
     const onCockpit = vi.fn();
-    const { getByText } = render(
-      <ActionBar actions={[review]} handle="web/x" onCockpit={onCockpit} />,
-    );
-    await fireEvent.click(getByText("Review"));
+    render(<ActionBar actions={[review]} handle="web/x" onCockpit={onCockpit} />);
+    fireEvent.click(screen.getByText("Review"));
     await vi.runAllTimersAsync();
     expect(onCockpit).toHaveBeenCalledWith(cockpit);
   });

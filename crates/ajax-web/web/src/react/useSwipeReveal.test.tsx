@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { useSwipeReveal } from "./useSwipeReveal";
 import { SWIPE_REVEAL_WIDTH } from "../gestures/swipeReveal";
@@ -19,15 +19,15 @@ function Harness({
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   useSwipeReveal(ref, { onOffset, onOpenChange });
-  return <button ref={ref} type="button" />;
+  return <button ref={ref} type="button" data-testid="swipe-reveal-target" />;
 }
 
 describe("useSwipeReveal", () => {
   it("reports a settled-open offset after a horizontal left swipe", () => {
     const onOffset = vi.fn();
     const onOpenChange = vi.fn();
-    const { container } = render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
-    const node = container.querySelector("button")!;
+    render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
+    const node = screen.getByTestId("swipe-reveal-target");
 
     node.dispatchEvent(touch("touchstart", 200, 100));
     node.dispatchEvent(touch("touchmove", 80, 100));
@@ -40,8 +40,8 @@ describe("useSwipeReveal", () => {
   it("settles closed when the swipe is mostly vertical", () => {
     const onOpenChange = vi.fn();
     const onOffset = vi.fn();
-    const { container } = render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
-    const node = container.querySelector("button")!;
+    render(<Harness onOffset={onOffset} onOpenChange={onOpenChange} />);
+    const node = screen.getByTestId("swipe-reveal-target");
 
     node.dispatchEvent(touch("touchstart", 200, 100));
     node.dispatchEvent(touch("touchmove", 180, 260));

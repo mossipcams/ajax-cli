@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, screen } from "@testing-library/react";
 import SettingsView from "./SettingsView";
 import * as api from "../api";
 import * as diagnostics from "../diagnostics";
@@ -11,13 +11,13 @@ afterEach(() => {
 });
 
 describe("SettingsView", () => {
-  it("requires confirmation before restarting", async () => {
+  it("requires confirmation before restarting", () => {
     const spy = vi.spyOn(api, "restartServer").mockResolvedValue({});
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
-    const { getByText } = render(<SettingsView />);
-    await fireEvent.click(getByText("Restart server"));
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
     expect(spy).not.toHaveBeenCalled();
-    expect(getByText("Tap to confirm")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tap to confirm" })).toBeInTheDocument();
   });
 
   it("restarts and reports success on the second tap", async () => {
@@ -25,11 +25,9 @@ describe("SettingsView", () => {
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
     const onResult = vi.fn();
     const onRestarted = vi.fn();
-    const { getByText } = render(
-      <SettingsView onResult={onResult} onRestarted={onRestarted} />,
-    );
-    await fireEvent.click(getByText("Restart server"));
-    await fireEvent.click(getByText("Tap to confirm"));
+    render(<SettingsView onResult={onResult} onRestarted={onRestarted} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
     await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Server restarted", null, false),
@@ -41,9 +39,9 @@ describe("SettingsView", () => {
     vi.spyOn(api, "restartServer").mockResolvedValue({});
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);
     const onResult = vi.fn();
-    const { getByText } = render(<SettingsView onResult={onResult} />);
-    await fireEvent.click(getByText("Restart server"));
-    await fireEvent.click(getByText("Tap to confirm"));
+    render(<SettingsView onResult={onResult} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
     );
@@ -53,10 +51,12 @@ describe("SettingsView", () => {
     vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({
       browser_mode: "Safari/browser",
     });
-    const { getByText, container } = render(<SettingsView />);
-    await fireEvent.click(getByText("Run diagnostics"));
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Run diagnostics" }));
     await vi.waitFor(() =>
-      expect(container.querySelector(".settings-status")?.textContent).toContain("Safari/browser"),
+      expect(
+        screen.getByText((content) => content.includes("Safari/browser")),
+      ).toHaveClass("settings-status"),
     );
   });
 
@@ -64,17 +64,17 @@ describe("SettingsView", () => {
     vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({ ok: true });
     vi.spyOn(diagnostics, "copyText").mockResolvedValue(false);
     const onResult = vi.fn();
-    const { getByText } = render(<SettingsView onResult={onResult} />);
-    await fireEvent.click(getByText("Copy Diagnostics"));
+    render(<SettingsView onResult={onResult} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy Diagnostics" }));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Diagnostics ready to copy", null, false),
     );
   });
 
   it("renders Diagnostics debug info", () => {
-    const { getByText, getByTestId } = render(<SettingsView />);
-    expect(getByTestId("dev-settings")).toBeInTheDocument();
-    expect(getByText("Diagnostics")).toBeInTheDocument();
+    render(<SettingsView />);
+    expect(screen.getByTestId("dev-settings")).toBeInTheDocument();
+    expect(screen.getByText("Diagnostics")).toBeInTheDocument();
   });
 
   it("shows live debug info with origin and app version", () => {
@@ -83,10 +83,10 @@ describe("SettingsView", () => {
     meta.content = "0.42.0-test";
     document.head.appendChild(meta);
 
-    const { getByTestId } = render(<SettingsView />);
-    const debug = getByTestId("dev-settings-debug");
-    expect(debug.textContent).toContain(window.location.origin);
-    expect(debug.textContent).toContain("0.42.0-test");
+    render(<SettingsView />);
+    const debug = screen.getByTestId("dev-settings-debug");
+    expect(debug).toHaveTextContent(window.location.origin);
+    expect(debug).toHaveTextContent("0.42.0-test");
 
     meta.remove();
   });
@@ -97,10 +97,10 @@ describe("SettingsView", () => {
     const reload = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload });
 
-    const { getByText } = render(<SettingsView />);
-    await fireEvent.click(getByText("Reload app"));
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Reload app" }));
     await vi.waitFor(() => expect(restartSpy).toHaveBeenCalledOnce());
-    expect(reload).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
 
     vi.unstubAllGlobals();
   });
@@ -112,8 +112,8 @@ describe("SettingsView", () => {
     vi.stubGlobal("location", { ...window.location, reload });
     const onResult = vi.fn();
 
-    const { getByText } = render(<SettingsView onResult={onResult} />);
-    await fireEvent.click(getByText("Reload app"));
+    render(<SettingsView onResult={onResult} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reload app" }));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
     );

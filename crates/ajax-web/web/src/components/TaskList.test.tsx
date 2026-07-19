@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, screen, within } from "@testing-library/react";
 import TaskList from "./TaskList";
 import type { BrowserCockpitView } from "../types";
 
@@ -63,68 +63,79 @@ const cockpit: BrowserCockpitView = {
 
 describe("TaskList", () => {
   it("shows relative last-activity time on task rows and omits it when unset", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
-    const rowB = container.querySelector(".task-row[data-handle='web/b']");
-    expect(rowB!.textContent).toContain("5m ago");
-    const rowC = container.querySelector(".task-row[data-handle='api/c']");
-    expect(rowC!.textContent).not.toContain("ago");
+    render(<TaskList cockpit={cockpit} />);
+    const rowB = screen.getByRole("button", { name: /web\/b/ });
+    expect(rowB).toHaveTextContent("5m ago");
+    const rowC = screen.getByRole("button", { name: /api\/c/ });
+    expect(rowC).not.toHaveTextContent("ago");
   });
 
   it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
-    const { container, getByText, queryByText } = render(<TaskList cockpit={cockpit} />);
-    const inboxRow = container.querySelector(".task-row.is-inbox[data-handle='web/a']");
-    expect(inboxRow).not.toBeNull();
-    expect(getByText("CI failed")).toBeInTheDocument();
+    const { container } = render(<TaskList cockpit={cockpit} />);
+    const webARow = screen.getByRole("button", { name: /web\/a/ });
+    expect(webARow).toHaveClass("task-row");
+    expect(webARow).toHaveClass("is-inbox");
+    expect(webARow).toHaveAttribute("data-handle", "web/a");
+    expect(screen.getByText("CI failed")).toBeInTheDocument();
     const wrap = container.querySelector(".task-row-wrap[data-handle='web/a']");
     expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
-    expect(getByText("Fix CI")).toBeInTheDocument();
-    expect(queryByText("Open")).not.toBeInTheDocument();
-    expect(queryByText("Resume")).not.toBeInTheDocument();
+    expect(screen.getByText("Fix CI")).toBeInTheDocument();
+    expect(screen.queryByText("Open")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
   });
 
   it("renders calm task rows excluding inbox tasks", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
-    expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
-    expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
-    expect(container.querySelector(".group.tasks [data-handle='web/a']")).toBeNull();
-    expect(container.querySelector(".group.inbox [data-handle='web/a']")).not.toBeNull();
+    render(<TaskList cockpit={cockpit} />);
+    expect(screen.getByRole("button", { name: /web\/b/ })).toHaveAttribute("data-handle", "web/b");
+    expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
+    const webARow = screen.getByRole("button", { name: /web\/a/ });
+    expect(webARow).toHaveClass("is-inbox");
+    expect(webARow).toHaveAttribute("data-handle", "web/a");
+  });
+
+  it("groups attention tasks under Needs you and keeps them out of Tasks", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const needsYou = screen.getByRole("region", { name: "Needs you" });
+    const tasks = screen.getByRole("region", { name: "Tasks" });
+    // web/a is an inbox item: it belongs to Needs you and must not be duplicated
+    // into the calm Tasks group.
+    expect(within(needsYou).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
+    expect(within(tasks).queryByRole("button", { name: /web\/a/ })).toBeNull();
+    // Calm rows live only under Tasks.
+    expect(within(tasks).getByRole("button", { name: /web\/b/ })).toBeInTheDocument();
+    expect(within(needsYou).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
   it("shows per-repo attention counts on project pills", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
-    const pills = [...container.querySelectorAll(".project-pill")];
-    const webPill = pills.find((pill) => pill.textContent?.includes("web"))!;
-    expect(webPill.querySelector(".pill-badge")).toHaveTextContent("2");
+    render(<TaskList cockpit={cockpit} />);
+    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
     expect(webPill).toHaveAttribute("aria-label", "web — 2 need attention");
-    const apiPill = pills.find((pill) => pill.textContent?.includes("api"))!;
-    expect(apiPill.querySelector(".pill-badge")).toBeNull();
+    expect(within(webPill).getByText("2")).toHaveClass("pill-badge");
+    const apiPill = screen.getByRole("button", { name: "api" });
+    expect(apiPill).toHaveAttribute("aria-label", "api");
   });
 
   it("marks the active project pill for assistive tech", () => {
-    const { container } = render(<TaskList cockpit={cockpit} selectedProject="api" />);
-    const pills = [...container.querySelectorAll(".project-pill")];
-    const allPill = pills.find((pill) => pill.textContent?.trim().startsWith("All"))!;
-    const apiPill = pills.find((pill) => pill.textContent?.includes("api"))!;
+    render(<TaskList cockpit={cockpit} selectedProject="api" />);
+    const allPill = screen.getByRole("button", { name: "All" });
+    const apiPill = screen.getByRole("button", { name: "api" });
     expect(apiPill).toHaveAttribute("aria-current", "true");
     expect(allPill).not.toHaveAttribute("aria-current");
   });
 
-  it("offers project pills and reports selection", async () => {
+  it("offers project pills and reports selection", () => {
     const onSelectProject = vi.fn();
-    const { getByText, container } = render(
-      <TaskList cockpit={cockpit} onSelectProject={onSelectProject} />,
-    );
-    expect(getByText("All")).toBeInTheDocument();
-    const pills = [...container.querySelectorAll(".project-pill")];
-    const webPill = pills.find((pill) => pill.getAttribute("aria-label")?.startsWith("web"))!;
-    await fireEvent.click(webPill);
+    render(<TaskList cockpit={cockpit} onSelectProject={onSelectProject} />);
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
+    fireEvent.click(webPill);
     expect(onSelectProject).toHaveBeenCalledWith("web");
   });
 
   it("filters by the selected project", () => {
-    const { container } = render(<TaskList cockpit={cockpit} selectedProject="api" />);
-    expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
-    expect(container.querySelector(".task-row[data-handle='web/b']")).toBeNull();
+    render(<TaskList cockpit={cockpit} selectedProject="api" />);
+    expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
+    expect(screen.queryByRole("button", { name: /web\/b/ })).not.toBeInTheDocument();
   });
 
   it("empty state points at the new-task CTA", () => {
@@ -132,31 +143,29 @@ describe("TaskList", () => {
       ...cockpit,
       repos: { repos: [...cockpit.repos.repos, { name: "docs" }] },
     };
-    const { getByText: getDocsEmpty } = render(
-      <TaskList cockpit={docsCockpit} selectedProject="docs" />,
-    );
-    expect(getDocsEmpty("No tasks in docs yet — start one below.")).toBeInTheDocument();
+    render(<TaskList cockpit={docsCockpit} selectedProject="docs" />);
+    expect(screen.getByText("No tasks in docs yet — start one below.")).toBeInTheDocument();
 
     const emptyCockpit: BrowserCockpitView = {
       ...cockpit,
       cards: [],
       inbox: { items: [] },
     };
-    const { getByText: getAllEmpty } = render(<TaskList cockpit={emptyCockpit} />);
-    expect(getAllEmpty("All quiet — start a new task below.")).toBeInTheDocument();
+    render(<TaskList cockpit={emptyCockpit} />);
+    expect(screen.getByText("All quiet — start a new task below.")).toBeInTheDocument();
   });
 
-  it("opens a task when a row is tapped", async () => {
+  it("opens a task when a row is tapped", () => {
     const onOpenTask = vi.fn();
-    const { container } = render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
-    await fireEvent.click(container.querySelector(".task-row[data-handle='api/c']")!);
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByRole("button", { name: /api\/c/ }));
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
 
-  it("opens an inbox task when the row is tapped", async () => {
+  it("opens an inbox task when the row is tapped", () => {
     const onOpenTask = vi.fn();
-    const { container } = render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
-    await fireEvent.click(container.querySelector(".task-row[data-handle='web/a']")!);
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByRole("button", { name: /web\/a/ }));
     expect(onOpenTask).toHaveBeenCalledWith("web/a");
   });
 
@@ -186,10 +195,11 @@ describe("TaskList", () => {
       inbox: { items: [] },
     };
     const { container } = render(<TaskList cockpit={withAction} />);
+    const webBRow = screen.getByRole("button", { name: /web\/b/ });
     const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
     expect(wrap).not.toBeNull();
     expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
-    expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
+    expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
   it("renders no reveal for a calm row without non-resume actions", () => {

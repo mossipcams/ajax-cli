@@ -48,7 +48,7 @@ describe("TestInDevPanel", () => {
     expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(screen.getByTestId("test-in-dev-button")).toBeEnabled();
 
-    await fireEvent.click(screen.getByTestId("open-dev-button"));
+    fireEvent.click(screen.getByTestId("open-dev-button"));
     expect(window.open).toHaveBeenCalledWith(
       "https://ajaxdev.mossyhome.net:8788",
       "_blank",
@@ -113,11 +113,11 @@ describe("TestInDevPanel", () => {
     render(<TestInDevPanel taskHandle="ajax-cli/demo" />);
     await waitFor(() => expect(screen.getByTestId("test-in-dev-button")).toBeEnabled());
 
-    await fireEvent.click(screen.getByTestId("test-in-dev-button"));
+    fireEvent.click(screen.getByTestId("test-in-dev-button"));
     await waitFor(() => {
       expect(screen.getByTestId("test-in-dev-button")).toHaveTextContent("Building");
-      expect(screen.getByTestId("test-in-dev-button")).toBeDisabled();
     });
+    expect(screen.getByTestId("test-in-dev-button")).toBeDisabled();
     expect(screen.queryByText(/Shared Ajax Dev slot/)).toBeNull();
     expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(startDevDeploy).toHaveBeenCalledWith("ajax-cli/demo");

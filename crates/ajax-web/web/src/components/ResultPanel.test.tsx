@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, screen } from "@testing-library/react";
 import ResultPanel from "./ResultPanel";
 import { DROP_UNDO_MS } from "../polling";
 
@@ -8,24 +8,24 @@ describe("ResultPanel", () => {
   afterEach(() => vi.useRealTimers());
 
   it("renders the message and output", () => {
-    const { getByText, container } = render(
+    render(
       <ResultPanel message="Review completed" output="logs here" isError={false} />,
     );
-    expect(getByText("Review completed")).toBeInTheDocument();
-    expect(container.querySelector(".result-output")?.textContent).toContain("logs here");
+    expect(screen.getByText("Review completed")).toBeInTheDocument();
+    expect(screen.getByText("logs here").textContent).toContain("logs here");
   });
 
   it("applies the error styling for failures", () => {
-    const { container } = render(<ResultPanel message="Action failed" isError={true} />);
-    expect(container.querySelector(".result-panel")?.classList.contains("is-error")).toBe(true);
+    render(<ResultPanel message="Action failed" isError={true} />);
+    expect(screen.getByRole("alert").classList.contains("is-error")).toBe(true);
   });
 
   it("calls onDismiss when dismissed", async () => {
     const onDismiss = vi.fn();
-    const { getByText } = render(
+    render(
       <ResultPanel message="Done" isError={false} onDismiss={onDismiss} />,
     );
-    await fireEvent.click(getByText("Dismiss"));
+    fireEvent.click(screen.getByText("Dismiss"));
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
@@ -47,8 +47,8 @@ describe("ResultPanel", () => {
   });
 
   it("announces errors assertively", () => {
-    const { container, rerender } = render(<ResultPanel message="x" isError={true} />);
-    const panel = container.querySelector(".result-panel");
+    const { rerender } = render(<ResultPanel message="x" isError={true} />);
+    const panel = screen.getByRole("alert");
     expect(panel).toHaveAttribute("role", "alert");
     expect(panel).toHaveAttribute("aria-live", "assertive");
 
@@ -59,9 +59,9 @@ describe("ResultPanel", () => {
 
   it("shows an Undo button when onUndo is set and calls it on click", async () => {
     const onUndo = vi.fn();
-    const { getByText } = render(<ResultPanel message="Dropping web/x…" onUndo={onUndo} />);
-    expect(getByText("Undo")).toBeInTheDocument();
-    await fireEvent.click(getByText("Undo"));
+    render(<ResultPanel message="Dropping web/x…" onUndo={onUndo} />);
+    expect(screen.getByText("Undo")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Undo"));
     expect(onUndo).toHaveBeenCalledOnce();
   });
 

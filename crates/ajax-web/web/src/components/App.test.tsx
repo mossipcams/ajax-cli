@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, screen, act } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import App from "./App";
@@ -7,6 +7,7 @@ import appSource from "./App.tsx?raw";
 import appViewportSource from "./AppViewport.tsx?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
+import { taskHash } from "../routes";
 
 function taskTerminalStylesSection(stylesSource: string): string {
   const start = stylesSource.indexOf("/* TaskTerminal");
@@ -77,14 +78,14 @@ describe("App shell", () => {
   });
 
   it("renders the shared chrome", () => {
-    const { getByRole, container } = render(<App />);
-    expect(getByRole("heading", { name: "Ajax" })).toBeInTheDocument();
+    const { container } = render(<App />);
+    expect(screen.getByRole("heading", { name: "Ajax" })).toBeInTheDocument();
     expect(container.querySelector(".connection-status")).toBeInTheDocument();
     expect(container.querySelector(".update-banner")).toBeInTheDocument();
     expect(container.querySelector(".bottom-nav")).toBeInTheDocument();
     expect(container.querySelector("[data-bottom-action='new-task']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='app-main']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='route-scroll']")).toBeInTheDocument();
+    expect(screen.getByTestId("app-main")).toBeInTheDocument();
+    expect(screen.getByTestId("route-scroll")).toBeInTheDocument();
   });
 
   it("live-dot pulses only when connected", () => {
@@ -119,11 +120,11 @@ describe("App shell", () => {
 
   it("exposes layout primitives for viewport and scroll ownership", () => {
     const stylesSource = loadStylesSource();
-    const { container } = render(<App />);
-    expect(container.querySelector("[data-testid='app-viewport']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='app-shell']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='app-main']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='route-scroll']")).toBeInTheDocument();
+    render(<App />);
+    expect(screen.getByTestId("app-viewport")).toBeInTheDocument();
+    expect(screen.getByTestId("app-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("app-main")).toBeInTheDocument();
+    expect(screen.getByTestId("route-scroll")).toBeInTheDocument();
     expect(appSource).not.toMatch(/initViewport/);
     expect(appViewportSource).toMatch(/initViewport/);
     expect(appSource).not.toMatch(/ajax-dashboard-open/);
@@ -357,28 +358,28 @@ describe("App shell", () => {
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
     const { container } = render(<App />);
-    expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-skeleton")).toBeInTheDocument();
     expect(container.querySelector(".empty")).toBeNull();
   });
 
   it("shows a task skeleton while a task detail is loading", async () => {
-    const { container, findByTestId } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
-    await findByTestId("outlet-task");
-    expect(container.querySelector("[data-testid='task-skeleton']")).toBeInTheDocument();
+    await screen.findByTestId("outlet-task");
+    expect(screen.getByTestId("task-skeleton")).toBeInTheDocument();
   });
 
   it("shows the settings outlet on the settings route", async () => {
-    const { container, findByTestId } = render(<App />);
+    const { container } = render(<App />);
     setHash("#/settings");
-    expect(await findByTestId("outlet-settings")).toBeInTheDocument();
+    expect(await screen.findByTestId("outlet-settings")).toBeInTheDocument();
     expect(container.querySelector("[data-outlet='dashboard']")).toBeNull();
   });
 
   it("shows the task outlet on a task route", async () => {
-    const { findByTestId } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
-    expect(await findByTestId("outlet-task")).toBeInTheDocument();
+    expect(await screen.findByTestId("outlet-task")).toBeInTheDocument();
   });
 
   it("renders task detail while the resume operation is still in flight", async () => {
@@ -398,9 +399,9 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByTestId } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
-    await findByTestId("outlet-task");
+    await screen.findByTestId("outlet-task");
 
     releaseResume(jsonResponse({ ok: true }));
     await waitFor(() => expect(true).toBe(true));
@@ -423,13 +424,13 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByTestId } = render(<App />);
+    render(<App />);
 
     // Dashboard route must never resume.
     await waitFor(() => expect(operations).toHaveLength(0));
 
     setHash("#/t/web%2Ffix-login");
-    await findByTestId("outlet-task");
+    await screen.findByTestId("outlet-task");
     await vi.waitFor(() =>
       expect(operations).toEqual([{ task_handle: "web/fix-login", action: "resume", request_id: expect.any(String) }]),
     );
@@ -440,7 +441,7 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(operations).toHaveLength(2));
     expect(operations[1]).toMatchObject({ task_handle: "web/other", action: "resume" });
 
-    await findByTestId("outlet-task");
+    await screen.findByTestId("outlet-task");
   });
 
   it("ignores a stale detail response after switching tasks", async () => {
@@ -462,19 +463,19 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
     await waitFor(() => expect(true).toBe(true));
     setHash("#/t/web%2Fother");
-    await findByText("Other task");
+    await screen.findByText("Other task");
 
     // The slow response for the task we left must not clobber the open one.
     resolveFirstDetail(jsonResponse({ ...taskDetail, title: "STALE fix-login" }));
     // Macrotask boundary: let the whole fetch→parse→assign chain settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
     await waitFor(() => expect(true).toBe(true));
-    expect(queryByText("STALE fix-login")).not.toBeInTheDocument();
-    expect(queryByText("Other task")).toBeInTheDocument();
+    expect(screen.queryByText("STALE fix-login")).not.toBeInTheDocument();
+    expect(screen.getByText("Other task")).toBeInTheDocument();
   });
 
   it("defers the version check until the browser is idle", async () => {
@@ -540,10 +541,10 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
 
-    expect(await findByText("disconnected: HTTP 503")).toBeInTheDocument();
-    expect(queryByText("backend unreachable")).toBeNull();
+    expect(await screen.findByText("disconnected: HTTP 503")).toBeInTheDocument();
+    expect(screen.queryByText("backend unreachable")).toBeNull();
   });
 
   it("reports missing browser session as stale session", async () => {
@@ -556,10 +557,10 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
 
-    expect(await findByText("stale session: HTTP 401")).toBeInTheDocument();
-    expect(queryByText("disconnected: HTTP 401")).toBeNull();
+    expect(await screen.findByText("stale session: HTTP 401")).toBeInTheDocument();
+    expect(screen.queryByText("disconnected: HTTP 401")).toBeNull();
   });
 
   it("recovers a missing browser session before showing stale session", async () => {
@@ -582,10 +583,10 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
 
-    expect(await findByText("connected")).toBeInTheDocument();
-    expect(queryByText("stale session")).toBeNull();
+    expect(await screen.findByText("connected")).toBeInTheDocument();
+    expect(screen.queryByText("stale session")).toBeNull();
   });
 
   it("reports stale session when browser session renewal fails", async () => {
@@ -603,18 +604,18 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
 
-    expect(await findByText("stale session: HTTP 503")).toBeInTheDocument();
-    expect(queryByText("connected")).toBeNull();
+    expect(await screen.findByText("stale session: HTTP 503")).toBeInTheDocument();
+    expect(screen.queryByText("connected")).toBeNull();
   });
 
   it("reports cockpit network failures as backend unreachable with detail", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
 
-    const { findByText } = render(<App />);
+    render(<App />);
 
-    expect(await findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
+    expect(await screen.findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
   });
 
   it("reports reachable detail HTTP failures as disconnected", async () => {
@@ -632,10 +633,10 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
 
-    expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
+    expect(await screen.findByText("disconnected: HTTP 500")).toBeInTheDocument();
   });
 
   it("clears detail failure text after a later successful detail load", async () => {
@@ -672,9 +673,9 @@ describe("App shell", () => {
       }),
     );
 
-    const { findByText, queryByText } = render(<App />);
+    render(<App />);
     setHash("#/t/web%2Ffix-login");
-    expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
+    expect(await screen.findByText("disconnected: HTTP 500")).toBeInTheDocument();
     releaseResume(jsonResponse({ ok: true }));
     releaseCockpit(jsonResponse(cockpit));
     await waitFor(() => expect(true).toBe(true));
@@ -685,7 +686,101 @@ describe("App shell", () => {
     await waitFor(() => expect(true).toBe(true));
     setHash("#/t/web%2Ffix-login");
 
-    expect(await findByText("connected")).toBeInTheDocument();
-    expect(queryByText("disconnected: HTTP 500")).toBeNull();
+    expect(await screen.findByText("connected")).toBeInTheDocument();
+    expect(screen.queryByText("disconnected: HTTP 500")).toBeNull();
+  });
+
+  // Polling-cadence lifecycle. These pin the behaviour that the two
+  // `react-hooks/exhaustive-deps` suppressions used to hide: the interval effect
+  // must reschedule on cadence change, must not churn on unrelated re-renders,
+  // and the mount-once listener effect must stay subscribed exactly once.
+  function cockpitCountingFetch() {
+    let cockpitCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        return Promise.resolve(jsonResponse(cockpit));
+      }
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+      if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+      if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    return { fetchMock, cockpitCalls: () => cockpitCalls };
+  }
+
+  it("polls the cockpit on the dashboard cadence", async () => {
+    vi.useFakeTimers();
+    const { fetchMock, cockpitCalls } = cockpitCountingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
+
+    // Dashboard cadence is 1000ms: three ticks add three polls.
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(4));
+  });
+
+  it("reschedules the cockpit interval when the route cadence changes", async () => {
+    vi.useFakeTimers();
+    const { fetchMock, cockpitCalls } = cockpitCountingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
+
+    // Task route slows the cadence to 5000ms. If the old 1000ms interval were
+    // left running, 4000ms would add four polls instead of none.
+    await act(async () => {
+      setHash(taskHash("web/a"));
+    });
+    // Guard: a wrong prefix would silently leave the route on dashboard and the
+    // 1000ms cadence would look correct.
+    expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
+    const afterRouteChange = cockpitCalls();
+
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(cockpitCalls()).toBe(afterRouteChange);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(afterRouteChange + 1));
+  });
+
+  it("keeps one focus listener across re-renders", async () => {
+    vi.useFakeTimers();
+    const { fetchMock, cockpitCalls } = cockpitCountingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const addSpy = vi.spyOn(window, "addEventListener");
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
+
+    const focusRegistrations = addSpy.mock.calls.filter(([type]) => type === "focus").length;
+    expect(focusRegistrations).toBe(1);
+
+    // A focus resume triggers exactly one extra cockpit load, not one per
+    // re-render that has happened since mount.
+    const beforeFocus = cockpitCalls();
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(beforeFocus + 1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cockpitCalls()).toBe(beforeFocus + 1);
+  });
+
+  it("removes shell listeners on unmount", async () => {
+    vi.useFakeTimers();
+    const { fetchMock, cockpitCalls } = cockpitCountingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
+
+    unmount();
+    const afterUnmount = cockpitCalls();
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(cockpitCalls()).toBe(afterUnmount);
   });
 });

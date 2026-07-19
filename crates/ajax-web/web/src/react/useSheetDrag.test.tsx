@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { useSheetDrag } from "./useSheetDrag";
 
@@ -18,14 +18,14 @@ function Harness({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useSheetDrag(ref, { onDismiss: onDismiss ?? (() => {}), onOffset });
-  return <div ref={ref} />;
+  return <div ref={ref} data-testid="sheet-drag-target" />;
 }
 
 describe("useSheetDrag", () => {
   it("dismisses after a downward drag past the threshold", () => {
     const onDismiss = vi.fn();
-    const { container } = render(<Harness onDismiss={onDismiss} />);
-    const node = container.querySelector("div")!;
+    render(<Harness onDismiss={onDismiss} />);
+    const node = screen.getByTestId("sheet-drag-target");
 
     node.dispatchEvent(touch("touchstart", 0));
     node.dispatchEvent(touch("touchmove", 200));
@@ -37,10 +37,10 @@ describe("useSheetDrag", () => {
   it("springs back (no dismiss) on a small drag and resets offset", () => {
     const onDismiss = vi.fn();
     const offsets: number[] = [];
-    const { container } = render(
+    render(
       <Harness onDismiss={onDismiss} onOffset={(o) => offsets.push(o)} />,
     );
-    const node = container.querySelector("div")!;
+    const node = screen.getByTestId("sheet-drag-target");
 
     node.dispatchEvent(touch("touchstart", 0));
     node.dispatchEvent(touch("touchmove", 20));

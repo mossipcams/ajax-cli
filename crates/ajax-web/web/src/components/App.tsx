@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { dashboardHash, projectHash, settingsHash, taskHash } from "../routes";
 import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
 import { ApiError, fetchCockpit, fetchDetail, fetchVersion, postOperation, requestId } from "../api";
@@ -165,21 +165,30 @@ export default function App() {
     onDistance: setPullDistance,
   });
 
-  // Shell listeners — mount once; immediate poll on focus / pageshow / become-visible.
-  useEffect(() => {
+  // The shell subscription below must mount exactly once, but its handlers need
+  // the latest loadCockpit/checkVersion. Effect events are non-reactive, so they
+  // give us that without making the subscription re-run.
+  const onShellMount = useEffectEvent(() => {
     void loadCockpit();
-    const idleHandle = whenIdle(() => void checkVersion());
-    const onResume = () => {
+    return whenIdle(() => void checkVersion());
+  });
+  const onShellResume = useEffectEvent(() => {
+    void checkVersion();
+    void loadCockpit();
+  });
+  const onShellVisibilityChange = useEffectEvent(() => {
+    setDocumentVisibility(document.visibilityState);
+    if (document.visibilityState === "visible") {
       void checkVersion();
       void loadCockpit();
-    };
-    const onVisibilityChange = () => {
-      setDocumentVisibility(document.visibilityState);
-      if (document.visibilityState === "visible") {
-        void checkVersion();
-        void loadCockpit();
-      }
-    };
+    }
+  });
+
+  // Shell listeners — mount once; immediate poll on focus / pageshow / become-visible.
+  useEffect(() => {
+    const idleHandle = onShellMount();
+    const onResume = () => onShellResume();
+    const onVisibilityChange = () => onShellVisibilityChange();
     window.addEventListener("focus", onResume);
     window.addEventListener("pageshow", onResume);
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -189,26 +198,26 @@ export default function App() {
       window.removeEventListener("pageshow", onResume);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-    // ponytail: mount-once shell listeners; loadCockpit/checkVersion are stable enough via refs/guards
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Adaptive cockpit / version intervals — reschedule on route or visibility change.
+  // Adaptive cockpit / version intervals. Derive the scalar cadences first: an
+  // inline object literal is a new value every render and could never be a
+  // dependency, which is what forced the old suppression here.
+  const pollingInput = {
+    visibilityState: documentVisibility,
+    routeKind: route.kind as PollingRouteKind,
+  };
+  const cockpitIntervalMs = cockpitRefreshIntervalMs(pollingInput);
+  const versionIntervalMs = versionPollIntervalMs(pollingInput);
+
   useEffect(() => {
-    const input = {
-      visibilityState: documentVisibility,
-      routeKind: route.kind as PollingRouteKind,
-    };
-    const cockpitTimer = setInterval(loadCockpit, cockpitRefreshIntervalMs(input));
-    const versionTimer = setInterval(checkVersion, versionPollIntervalMs(input));
+    const cockpitTimer = window.setInterval(loadCockpit, cockpitIntervalMs);
+    const versionTimer = window.setInterval(checkVersion, versionIntervalMs);
     return () => {
-      clearInterval(cockpitTimer);
-      clearInterval(versionTimer);
+      window.clearInterval(cockpitTimer);
+      window.clearInterval(versionTimer);
     };
-    // ponytail: loadCockpit/checkVersion intentionally omitted; they are stable callbacks
-    // and re-running this effect on their identity would churn both intervals
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentVisibility, route.kind]);
+  }, [checkVersion, cockpitIntervalMs, loadCockpit, versionIntervalMs]);
 
   // Detail loading — re-run only when the selected task handle changes.
   useEffect(() => {
