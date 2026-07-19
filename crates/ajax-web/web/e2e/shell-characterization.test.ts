@@ -1,6 +1,7 @@
 // Shell characterization e2e suite. Pins update-banner visibility/reload and
-// dashboard pull-to-refresh against the current Svelte App before the S7
-// shell inversion. API responses are mocked via addInitScript (same pattern as
+// dashboard pull-to-refresh. Written against the pre-S7 shell and kept as the
+// invariant the React shell must still satisfy.
+// API responses are mocked via addInitScript (same pattern as
 // smoke.test.ts) so tests run without a live Rust server.
 
 import { test, expect, type Page, type Locator } from "@playwright/test";

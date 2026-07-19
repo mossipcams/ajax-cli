@@ -1,5 +1,5 @@
-// Swipe-to-reveal e2e characterization. Pins the current Svelte TaskList
-// behavior: a left touch-drag on a dashboard row opens it by exactly
+// Swipe-to-reveal e2e characterization. Pins TaskList behavior across
+// implementations: a left touch-drag on a dashboard row opens it by exactly
 // SWIPE_REVEAL_WIDTH (88px) and tapping the revealed first action dispatches
 // the operation (no second confirm tap for non-destructive review).
 //

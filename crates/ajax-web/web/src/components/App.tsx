@@ -205,7 +205,8 @@ export default function App() {
       clearInterval(cockpitTimer);
       clearInterval(versionTimer);
     };
-    // ponytail: exact Svelte $effect dep set — loadCockpit/checkVersion intentionally omitted
+    // ponytail: loadCockpit/checkVersion intentionally omitted; they are stable callbacks
+    // and re-running this effect on their identity would churn both intervals
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentVisibility, route.kind]);
 

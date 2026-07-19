@@ -709,7 +709,7 @@ desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
 without explicit approval. Legacy snapshot, keys, and answer routes are not
 supported browser task-control APIs.
 
-`TaskDetail.svelte` mounts one `TaskTerminal.svelte` surface per task route.
+`TaskDetail.tsx` mounts one `TaskTerminal.tsx` surface per task route.
 The component uses xterm.js for rendering and `terminalConnection.ts` for the
 WebSocket lifecycle contract; general viewport helpers remain in `viewport.ts`.
 `crates/ajax-web/web/TERMINAL.md` records frontend ownership. The Rust
@@ -718,7 +718,7 @@ PTY/WebSocket backend (`/api/tasks/{handle}/terminal` route,
 
 Frontend ownership:
 
-- `TaskTerminal.svelte`: lifecycle, DOM, accessibility, composition.
+- `TaskTerminal.tsx`: lifecycle, DOM, accessibility, composition.
 - `terminalConnection.ts`: WebSocket lifecycle/transport.
 - `viewport.ts`: document viewport and keyboard truth.
 - `terminalGeometry.ts`: pure grid/scale/row/font persistence math.
@@ -726,7 +726,7 @@ Frontend ownership:
   PTY debounce, dimension dedupe, and disposal.
 - PTY adapter ownership is unchanged.
 
-Both modules exist and are wired into `TaskTerminal.svelte`, and the
+Both modules exist and are wired into `TaskTerminal.tsx`, and the
 mobile-WebKit terminal behavior suite, including the repeated same-dimension
 viewport-burst case, passes as of 2026-07-16.
 

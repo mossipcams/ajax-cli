@@ -2,9 +2,9 @@
 
 ## Status
 
-Web Cockpit mounts one xterm.js task terminal from `TaskDetail.svelte` via
-`TaskTerminal.svelte`. Geometry math lives in `terminalGeometry.ts`, refit
-scheduling in `terminalRefit.ts`, both wired into `TaskTerminal.svelte`; the
+Web Cockpit mounts one xterm.js task terminal from `TaskDetail.tsx` via
+`TaskTerminal.tsx`. Geometry math lives in `terminalGeometry.ts`, refit
+scheduling in `terminalRefit.ts`, both wired into `TaskTerminal.tsx`; the
 mobile-WebKit behavior suite including the viewport-burst case passes as of
 2026-07-16.
 
@@ -12,7 +12,7 @@ mobile-WebKit behavior suite including the viewport-burst case passes as of
 
 | Concern | Owner |
 | --- | --- |
-| Lifecycle, DOM, accessibility, composition | `TaskTerminal.svelte` |
+| Lifecycle, DOM, accessibility, composition | `TaskTerminal.tsx` |
 | WebSocket lifecycle / transport | `terminalConnection.ts` |
 | Document viewport + keyboard truth | `viewport.ts` |
 | Pure grid/scale/row/font persistence math | `terminalGeometry.ts` |

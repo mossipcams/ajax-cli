@@ -3,8 +3,10 @@
 **Status:** Task 12 complete — frontend mount removed; this inventory documents
 the **pre-removal** Ghostty/Surface V2 behavior contract for rebuild reference.
 
-Source-backed behavioral inventory of the current Ajax browser terminal, focused
-on iOS Safari. Every row cites at least one file or test path. Primary
+Source-backed behavioral inventory of the **pre-removal** Ajax browser terminal,
+focused on iOS Safari. Every row cites at least one file or test path; `.svelte`
+citations are historical references into files this rebuild deleted, and are
+preserved as provenance rather than repointed at the React successor. Primary
 classifications are mutually exclusive:
 
 | Label            | Meaning |

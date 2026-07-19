@@ -18,7 +18,7 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
 
 #[cfg(test)]
 mod tests {
-    //! These tests verify the *serving contract* of the bundled Svelte shell:
+    //! These tests verify the *serving contract* of the bundled React shell:
     //! the static HTML mount point, the supported asset routes, and the
     //! preserved visual language. The browser's runtime behavior (rendering,
     //! routing, polling, confirmations, prompts) is covered by the Vitest
@@ -37,7 +37,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_is_the_bundled_svelte_mount_point() {
+    fn shell_is_the_bundled_react_mount_point() {
         let shell = browser_shell();
 
         assert!(shell.contains("<!doctype html>"));
@@ -51,7 +51,7 @@ mod tests {
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(shell.contains("type=\"module\""));
-        // Svelte mounts into this single node.
+        // React mounts into this single node.
         assert!(shell.contains("id=\"app\""));
     }
 
@@ -59,7 +59,7 @@ mod tests {
     fn shell_no_longer_carries_the_legacy_imperative_dom() {
         let shell = browser_shell();
         // The hand-built container shell is gone; everything below the mount
-        // point is rendered client-side by Svelte components.
+        // point is rendered client-side by React components.
         for legacy in [
             "class=\"cockpit-chrome\"",
             "id=\"inbox\"",

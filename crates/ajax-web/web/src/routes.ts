@@ -1,5 +1,6 @@
 // Hash-route parsing and formatting. Pure functions extracted from the legacy
-// `applyRoute` so route selection can move into Svelte without re-deriving it.
+// `applyRoute` so route selection stays framework-agnostic and is not
+// re-derived by whatever renders the route.
 
 import type { RouteKind } from "./types";
 
