@@ -192,7 +192,6 @@ async function longPressTerminalText(
   page: import("@playwright/test").Page,
   needle: string,
 ) {
-  const surface = terminalInteractionSurface(page);
   await expect
     .poll(async () =>
       page.evaluate((text) => {
@@ -365,7 +364,7 @@ async function programTerminalSelection(
   return selected;
 }
 
-test.beforeEach(({ }, testInfo) => {
+test.beforeEach((_fixtures, testInfo) => {
   const desktopOnly =
     testInfo.title ===
     "desktop expanded mode keeps terminal bounded and task details summary reachable";
@@ -1256,7 +1255,7 @@ test("interaction wrap hides scrollbar chrome", async ({ page }) => {
   const wrap = terminalInteractionSurface(page);
   await expect(wrap).toHaveCSS("scrollbar-width", "none");
 
-  const webkitHidden = await wrap.evaluate((el) => {
+  const webkitHidden = await wrap.evaluate((_el) => {
     const rules = Array.from(document.styleSheets).flatMap((sheet) => {
       try {
         return Array.from(sheet.cssRules);

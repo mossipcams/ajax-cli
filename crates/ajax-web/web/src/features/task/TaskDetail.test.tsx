@@ -100,14 +100,11 @@ describe("TaskDetail", () => {
   });
 
   it("exposes mobile layout hooks for header and actions", () => {
-    // The `data-mobile-chrome` markers are layout-ownership hooks with no
-    // accessible equivalent — asserting a Back/Review button exists would not
-    // test what this case is named for. Located by attribute deliberately.
-    const { container } = render(<TaskDetail detail={detail()} />);
+    render(<TaskDetail detail={detail()} />);
 
-    expect(container.querySelector("[data-mobile-chrome='header']")).toBeInTheDocument();
-    expect(container.querySelector("[data-mobile-chrome='actions']")).toBeInTheDocument();
-    expect(container.querySelector(".task-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-chrome-header")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-chrome-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
 
   it("renders the task outlet hook the scroll lock targets", () => {
@@ -116,8 +113,8 @@ describe("TaskDetail", () => {
     );
     // `.task-detail` is the element the scroll lock targets; the terminal
     // region is a different node and would not prove this contract.
-    const { container } = render(<TaskDetail detail={detail()} />);
-    expect(container.querySelector(".task-detail")).toBeInTheDocument();
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
 
   it("fires onBack from the back control", async () => {

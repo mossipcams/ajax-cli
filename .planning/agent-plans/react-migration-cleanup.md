@@ -39,18 +39,18 @@ dev deploy → iPhone checklist → **wait for Matt** → PR.
 
 | # | Slice | Plan file | Status |
 | --- | --- | --- | --- |
-| 1 | Svelte + documentation cleanup | `react-cleanup-s1-svelte-docs.md` | in progress |
-| 2 | ESLint toolchain + dependency boundaries | `react-cleanup-s2-eslint.md` | not started |
-| 3 | `useHashRoute` → `useSyncExternalStore` | — | not started |
-| 4 | Cockpit/version/task resource hooks (`RemoteResource<T>`) | — | not started |
-| 5 | Strict Mode lifecycle safety | — | not started |
-| 6 | shadcn foundation + Button | — | not started |
-| 7 | Dialog/Sheet + NewTaskSheet | — | not started |
-| 8 | RadioGroup + remaining low-risk primitives | — | not started |
-| 9 | App composition cleanup (feature folders) | — | not started |
+| 1 | Svelte + documentation cleanup | `react-cleanup-s1-svelte-docs.md` | done |
+| 2 | ESLint toolchain + dependency boundaries | `react-cleanup-s2-eslint.md` | done |
+| 3 | `useHashRoute` → `useSyncExternalStore` | `react-cleanup-s3-hash-route.md` | done |
+| 4 | Cockpit/version/task resource hooks (`RemoteResource<T>`) | `react-cleanup-s4-resource-hooks.md` | done |
+| 5 | Strict Mode lifecycle safety | `react-cleanup-s5-strict-mode.md` | done |
+| 6 | shadcn foundation + Button | `react-cleanup-s6-shadcn-button.md` | done |
+| 7 | Dialog/Sheet + NewTaskSheet | `react-cleanup-s7-dialog-sheet.md` | done |
+| 8 | RadioGroup + remaining low-risk primitives | `react-cleanup-s8-radio-group.md` | done |
+| 9 | App composition cleanup (feature folders) | `react-cleanup-s9-feature-folders.md` | done |
 | 10 | Terminal-controller extraction | `react-cleanup-s10-terminal-controller.md` | done (r1+r2a) |
 | 11 | Bundle / code-splitting investigation | `react-cleanup-s11-bundle.md` | done — deferred `terminal.js` |
-| 12 | Remaining audit findings | — | not started |
+| 12 | Remaining audit findings | `react-cleanup-s12-audit.md` | done |
 
 ## Slice ordering rationale
 

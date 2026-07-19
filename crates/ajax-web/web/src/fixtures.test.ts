@@ -95,16 +95,13 @@ describe("task-detail fixture", () => {
 describe("operation response fixture", () => {
   it("refreshed cockpit passes boundary guard", () => {
     const resp = assertOperationResponse(operation);
-    if (resp.cockpit) {
-      const view = assertCockpit(resp.cockpit);
-      expect(view.cards).toHaveLength(1);
-    }
+    expect(resp.cockpit).toBeTruthy();
+    const view = assertCockpit(resp.cockpit!);
+    expect(view.cards).toHaveLength(1);
   });
 
   it("output is a string when present", () => {
     const resp = assertOperationResponse(operation);
-    if (resp.output != null) {
-      expect(typeof resp.output).toBe("string");
-    }
+    expect(resp.output == null || typeof resp.output === "string").toBe(true);
   });
 });

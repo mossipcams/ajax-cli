@@ -70,17 +70,14 @@ describe("keyboard band height pin contract", () => {
   it("pins expanded terminal panel with visualViewport height (not 100lvh bottom)", () => {
     const rule =
       taskTerminalStylesSection().match(
-        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n {2}\}/,
       )?.[1] ?? "";
     expectHeightBandPin(rule);
   });
 
   it("forbids 100lvh bottom band math anywhere in pin surfaces", () => {
-    for (const [name, source] of [
-      ["styles.css", stylesSource],
-      ["TaskTerminal styles", taskTerminalStylesSection()],
-    ] as const) {
-      expect(stripCssComments(source), name).not.toMatch(FORBIDDEN_LVH_BOTTOM);
+    for (const source of [stylesSource, taskTerminalStylesSection()]) {
+      expect(stripCssComments(source)).not.toMatch(FORBIDDEN_LVH_BOTTOM);
     }
   });
 

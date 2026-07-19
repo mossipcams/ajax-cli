@@ -71,15 +71,13 @@ describe("TaskList", () => {
   });
 
   it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
+    render(<TaskList cockpit={cockpit} />);
     const webARow = screen.getByRole("button", { name: /web\/a/ });
     expect(webARow).toHaveClass("task-row");
     expect(webARow).toHaveClass("is-inbox");
     expect(webARow).toHaveAttribute("data-handle", "web/a");
     expect(screen.getByText("CI failed")).toBeInTheDocument();
-    const wrap = container.querySelector(".task-row-wrap[data-handle='web/a']");
-    expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
-    expect(screen.getByText("Fix CI")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByText("Resume")).not.toBeInTheDocument();
   });
@@ -170,10 +168,8 @@ describe("TaskList", () => {
   });
 
   it("does not reveal resume as a calm-row action", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
-    const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
-    expect(wrap).not.toBeNull();
-    expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
+    render(<TaskList cockpit={cockpit} />);
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
   it("reveals a swipe action behind a calm row that has actions", () => {
@@ -194,19 +190,32 @@ describe("TaskList", () => {
       ],
       inbox: { items: [] },
     };
-    const { container } = render(<TaskList cockpit={withAction} />);
+    render(<TaskList cockpit={withAction} />);
     const webBRow = screen.getByRole("button", { name: /web\/b/ });
-    const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
-    expect(wrap).not.toBeNull();
-    expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
   it("renders no reveal for a calm row without non-resume actions", () => {
-    const { container } = render(<TaskList cockpit={cockpit} />);
-    const wrap = container.querySelector(".task-row-wrap[data-handle='api/c']");
-    expect(wrap).not.toBeNull();
-    expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
+    const onlyIdle: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "api/c",
+          qualified_handle: "api/c",
+          repo: "api",
+          title: "C",
+          status: "idle",
+          last_activity_unix_secs: 0,
+          actions: [],
+        },
+      ],
+      inbox: { items: [] },
+    };
+    render(<TaskList cockpit={onlyIdle} />);
+    expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
+    expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fix CI" })).not.toBeInTheDocument();
   });
 
   it("keeps is-inbox semantics without a left border stripe", () => {

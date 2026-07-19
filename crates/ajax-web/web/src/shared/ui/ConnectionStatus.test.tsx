@@ -5,11 +5,9 @@ import connectionStatusSource from "./ConnectionStatus.tsx?raw";
 
 describe("ConnectionStatus", () => {
   it("shows the connection state label", () => {
-    const { container } = render(<ConnectionStatus state="connected" />);
+    render(<ConnectionStatus state="connected" />);
     expect(screen.getByText("connected")).toBeInTheDocument();
-    expect(container.querySelector(".connection-status")?.getAttribute("data-state")).toBe(
-      "connected",
-    );
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
   });
 
   it("appends a detail to the label when provided", () => {
@@ -22,12 +20,10 @@ describe("ConnectionStatus", () => {
   it("marks Retry as the sole primary connection action", () => {
     render(<ConnectionStatus state="disconnected" />);
     const retry = screen.getByRole("button", { name: "Retry" });
-    expect(retry).not.toBeNull();
     expect(retry).toHaveTextContent("Retry");
-    const primaries = screen
-      .getAllByRole("button")
-      .filter((b) => b.classList.contains("is-primary"));
-    expect(primaries).toHaveLength(1);
+    expect(retry).toHaveClass("is-primary");
+    expect(screen.getByRole("button", { name: "Reload" })).not.toHaveClass("is-primary");
+    expect(screen.getByRole("button", { name: "Copy Diagnostics" })).not.toHaveClass("is-primary");
     expect(connectionStatusSource).toMatch(/Retry[\s\S]*className="is-primary"/);
     expect(connectionStatusSource).toMatch(/Reload/);
     expect(connectionStatusSource).toMatch(/Copy Diagnostics/);
@@ -56,6 +52,9 @@ describe("ConnectionStatus", () => {
 
   it("links to the health URL", () => {
     render(<ConnectionStatus state="checking" />);
-    expect(screen.getByText("Open Health URL").getAttribute("href")).toBe("/api/health");
+    expect(screen.getByRole("link", { name: "Open Health URL" })).toHaveAttribute(
+      "href",
+      "/api/health",
+    );
   });
 });

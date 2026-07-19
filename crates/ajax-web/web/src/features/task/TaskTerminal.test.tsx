@@ -66,7 +66,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
 
     const onInteractionClick = taskTerminalSource.match(
-      /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
+      /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
     )?.[1] ?? "";
 
     expect(onInteractionClick).toMatch(/resetDocumentScroll\s*\(\s*\)/);
@@ -80,7 +80,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalSource).toMatch(/const EXPAND_REWRAP_MS\s*=\s*280/);
     const settleBody =
       taskTerminalSource.match(
-        /const scheduleBandSettle\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n  \};/,
+        /const scheduleBandSettle\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/,
       )?.[1] ?? "";
 
     expect(settleBody).toMatch(/cancelExpandSettle\s*\(\s*\)/);
@@ -107,7 +107,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
     const inlineWrapRule =
       mobileBlock.match(
-        /\n  \.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+        /\n {2}\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     expect(inlineWrapRule).toMatch(/flex:\s*1\s+1\s+0%/);
     expect(inlineWrapRule).toMatch(/height:\s*auto/);
@@ -138,7 +138,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   it("skips ambient fits while a terminal selection is active", () => {
     const scheduleFitBody =
       taskTerminalSource.match(
-        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
+        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
       )?.[1] ?? "";
 
     expect(scheduleFitBody).toMatch(
@@ -158,7 +158,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
     expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding-bottom:\s*2px/);
     expect(mobileBlock).not.toMatch(
-      /\n  \.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
+      /\n {2}\.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
@@ -172,7 +172,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     const observerBody = extractBlock(
       taskTerminalSource,
       /const keyboardClassObserver\s*=\s*new MutationObserver/,
-      /\n    keyboardClassObserver\.observe/,
+      /\n {4}keyboardClassObserver\.observe/,
     );
 
     expect(observerBody).toMatch(/MutationObserver/);
@@ -190,7 +190,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("settles the band on expand enter, expand exit, and tap-focus", () => {
     const toggleBody =
-      taskTerminalSource.match(/const toggleExpanded\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n  \};/)?.[1] ??
+      taskTerminalSource.match(/const toggleExpanded\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/)?.[1] ??
       "";
 
     expect(toggleBody).toMatch(/if\s*\(\s*!entering\s*\)\s*\{[\s\S]*?scheduleBandSettle\s*\(\s*\)[\s\S]*?return/);
@@ -201,7 +201,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
     const onInteractionClick =
       taskTerminalSource.match(
-        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
+        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
       )?.[1] ?? "";
     expect(onInteractionClick).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(onInteractionClick).not.toMatch(/EXPANDED_CLASS/);
@@ -211,7 +211,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   it("pins expanded panel with top and height to the live visual-viewport band", () => {
     const expandedRule =
       taskTerminalStylesSection().match(
-        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n {2}\}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);

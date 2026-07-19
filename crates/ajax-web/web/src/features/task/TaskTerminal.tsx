@@ -206,6 +206,8 @@ export default function TaskTerminal({ handle }: Props) {
       const code = data.toLowerCase().charCodeAt(0);
       if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
     }
+    // ANSI CSI cursor sequences are the point of this match.
+    // eslint-disable-next-line no-control-regex -- CSI ESC must appear in the pattern
     const cursor = /^\x1b\[([ABCD])$/.exec(data);
     if (cursor) return `\x1b[1;5${cursor[1]}`;
     return data;
@@ -433,11 +435,9 @@ export default function TaskTerminal({ handle }: Props) {
       return;
     }
 
+    // Deferred init: closed over by fitLocal / cleanup before first assignment.
+    // eslint-disable-next-line prefer-const -- assigned once after helper closures are built
     let fitAddon: FitAddon | undefined;
-    let dataDisposable: { dispose(): void } | undefined;
-    let scrollDisposable: { dispose(): void } | undefined;
-    let selectionDisposable: { dispose(): void } | undefined;
-    let resizeObserver: ResizeObserver | undefined;
     let lastSentCols = 0;
     let lastSentRows = 0;
     let fitFrame = 0;
@@ -468,6 +468,7 @@ export default function TaskTerminal({ handle }: Props) {
       }
     };
 
+    // eslint-disable-next-line prefer-const -- assigned once after fitLocal exists
     let refitController: ReturnType<typeof createRefitController> | undefined;
 
     const resetDedupe = () => {
@@ -917,16 +918,16 @@ export default function TaskTerminal({ handle }: Props) {
       (hostEl as unknown as { __xterm?: Terminal }).__xterm = liveTerm;
     }
     termRef.current = liveTerm;
-    selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
+    const selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
     fitLocal();
     scrollSync.syncSpacer();
     scrollSync.refreshFollow();
 
-    scrollDisposable = liveTerm.onScroll(scrollSync.onTermScroll);
+    const scrollDisposable = liveTerm.onScroll(scrollSync.onTermScroll);
     interactionEl.addEventListener("scroll", scrollSync.onInteractionScroll, { passive: true });
     interactionEl.addEventListener("click", onInteractionClick);
 
-    dataDisposable = liveTerm.onData(onTermData);
+    const dataDisposable = liveTerm.onData(onTermData);
 
     interactionEl.addEventListener("touchstart", onTouchStart, { passive: false });
     interactionEl.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -972,7 +973,7 @@ export default function TaskTerminal({ handle }: Props) {
       connectionRef.current = connection;
     });
 
-    resizeObserver = new ResizeObserver(onViewportChange);
+    const resizeObserver = new ResizeObserver(onViewportChange);
     resizeObserver.observe(hostEl);
     const panelEl = hostEl.parentElement;
     if (panelEl) resizeObserver.observe(panelEl);

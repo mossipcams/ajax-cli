@@ -184,6 +184,7 @@ export default function App() {
       <div className="page-lead">
         <button
           className="update-banner"
+          data-testid="update-banner"
           type="button"
           hidden={!updateAvailable}
           onClick={() => location.reload()}

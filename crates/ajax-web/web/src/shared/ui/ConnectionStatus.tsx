@@ -20,7 +20,7 @@ export default function ConnectionStatus({
   const label = detail ? `${state}: ${detail}` : state;
 
   return (
-    <div className="connection-status" data-state={state}>
+    <div className="connection-status" data-testid="connection-status" data-state={state}>
       <span className="connection-label">{label}</span>
       <div className="connection-actions" aria-label="Connection actions">
         <button type="button" className="is-primary" onClick={() => onRetry?.()}>

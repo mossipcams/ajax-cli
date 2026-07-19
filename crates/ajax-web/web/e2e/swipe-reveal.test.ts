@@ -71,7 +71,7 @@ async function touchDragRowLeft(page: Page, row: Locator, dx: number) {
   }, dx);
 }
 
-test.beforeEach(({ }, testInfo) => {
+test.beforeEach((_fixtures, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "swipe-reveal is a touch gesture; desktop has no equivalent",

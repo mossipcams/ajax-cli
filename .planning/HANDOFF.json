@@ -1,9 +1,18 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-19T18:12:00.000Z",
-  "phase": "11",
-  "phase_name": "bundle-investigation",
-  "status": "done-deferred",
-  "next_action": "Slice 12 when Matt is ready — remaining audit findings.",
-  "context_notes": "Slice 11 deferred: no second JS chunk. Measured app.js ~644KiB/~182KiB gzip. Dominated by react-dom then xterm."
+  "timestamp": "2026-07-19T19:00:00.000Z",
+  "phase": "12",
+  "phase_name": "remaining-audit-findings",
+  "phase_dir": null,
+  "plan": "react-cleanup-s12-audit",
+  "task": "done",
+  "total_tasks": 3,
+  "status": "done",
+  "completed_tasks": [
+    { "id": 1, "name": "Wave A mechanical ESLint", "status": "done" },
+    { "id": 2, "name": "Wave B testing-library no exemptions", "status": "done" },
+    { "id": 3, "name": "Wave C husky verify close-out", "status": "done" }
+  ],
+  "next_action": "Commit slice 12 when Matt asks. Device checklist before PR if NewTaskSheet hooks need phone pass.",
+  "context_notes": "npm run verify + release build/install green. ESLint backlog cleared; no permanent TL exemptions."
 }

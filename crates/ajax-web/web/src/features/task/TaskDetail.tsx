@@ -42,8 +42,12 @@ export default function TaskDetail({
   }
 
   return (
-    <div className="task-detail">
-      <div className="detail-header" data-mobile-chrome="header">
+    <div className="task-detail" data-testid="task-detail">
+      <div
+        className="detail-header"
+        data-mobile-chrome="header"
+        data-testid="mobile-chrome-header"
+      >
         <button type="button" className="back" onClick={() => onBack?.()}>
           ← Back
         </button>
@@ -51,7 +55,11 @@ export default function TaskDetail({
         <span className={`interact-pill tone-${meta.tone}`}>{meta.label}</span>
       </div>
 
-      <section className="interact-panel" data-mobile-chrome="actions">
+      <section
+        className="interact-panel"
+        data-mobile-chrome="actions"
+        data-testid="mobile-chrome-actions"
+      >
         {detail.runtime_observation_error ? (
           <p className="interact-warning" data-testid="observation-error">
             Observation error: {detail.runtime_observation_error}

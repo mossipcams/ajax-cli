@@ -165,7 +165,7 @@ export default function NewTaskSheet({
               backdrop tap is *inside* it and onPointerDownOutside never fires; the
               target===currentTarget guard stays ours. Escape is Radix's, so there is
               deliberately no keyboard handler here. */}
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- backdrop click; Escape is Radix */}
           <div
             id="new-task-sheet"
             data-testid="new-task-sheet"
@@ -177,11 +177,17 @@ export default function NewTaskSheet({
           >
             <form
               className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}`}
+              aria-label="New task"
               autoComplete="off"
               onSubmit={submit}
               style={{ transform: `translateY(${dragOffset}px)` }}
             >
-              <div className="sheet-grab" aria-hidden="true" ref={grabRef}>
+              <div
+                className="sheet-grab"
+                aria-hidden="true"
+                data-testid="sheet-grab"
+                ref={grabRef}
+              >
                 <span className="sheet-grabber" />
               </div>
               {/* No id here: Slot lets child props win, so a hand-written id would

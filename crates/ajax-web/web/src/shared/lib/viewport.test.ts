@@ -262,9 +262,7 @@ describe("resetDocumentScroll", () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 0);
     expect(document.documentElement.scrollTop).toBe(0);
     expect(document.body.scrollTop).toBe(0);
-    if (document.scrollingElement) {
-      expect(document.scrollingElement.scrollTop).toBe(0);
-    }
+    expect(document.scrollingElement?.scrollTop ?? 0).toBe(0);
 
     scrollTo.mockImplementation(() => {
       throw new Error("Not implemented");

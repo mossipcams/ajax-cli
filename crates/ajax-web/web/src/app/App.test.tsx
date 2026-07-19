@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor, screen, act, within } from "@testing-library/react";
+import { render, waitFor, screen, act, within, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import App from "./App";
@@ -78,12 +78,12 @@ describe("App shell", () => {
   });
 
   it("renders the shared chrome", () => {
-    const { container } = render(<App />);
+    render(<App />);
     expect(screen.getByRole("heading", { name: "Ajax" })).toBeInTheDocument();
-    expect(container.querySelector(".connection-status")).toBeInTheDocument();
-    expect(container.querySelector(".update-banner")).toBeInTheDocument();
-    expect(container.querySelector(".bottom-nav")).toBeInTheDocument();
-    expect(container.querySelector("[data-bottom-action='new-task']")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-status")).toBeInTheDocument();
+    expect(screen.getByTestId("update-banner")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Mobile navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New" })).toBeInTheDocument();
     expect(screen.getByTestId("app-main")).toBeInTheDocument();
     expect(screen.getByTestId("route-scroll")).toBeInTheDocument();
   });
@@ -113,9 +113,9 @@ describe("App shell", () => {
   });
 
   it("shows the dashboard outlet by default", () => {
-    const { container } = render(<App />);
-    expect(container.querySelector("[data-outlet='dashboard']")).toBeInTheDocument();
-    expect(container.querySelector("[data-outlet='settings']")).toBeNull();
+    render(<App />);
+    expect(screen.getByTestId("outlet-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("outlet-settings")).not.toBeInTheDocument();
   });
 
   it("exposes layout primitives for viewport and scroll ownership", () => {
@@ -232,7 +232,7 @@ describe("App shell", () => {
     const stylesSource = loadStylesSource();
     const expandedRule =
       taskTerminalStylesSection(stylesSource).match(
-        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n  \}/,
+        /html\.terminal-expanded\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n {2}\}/,
       )?.[1] ?? "";
 
     expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
@@ -336,9 +336,8 @@ describe("App shell", () => {
   });
 
   it("marks the dashboard nav button as current", async () => {
-    const { container } = render(<App />);
-    const dashboardNav = () =>
-      container.querySelector<HTMLButtonElement>("[data-bottom-route='#/']")!;
+    render(<App />);
+    const dashboardNav = () => screen.getByRole("button", { name: "Dashboard" });
 
     expect(dashboardNav()).toHaveAttribute("aria-current", "page");
 
@@ -357,9 +356,9 @@ describe("App shell", () => {
   });
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
-    const { container } = render(<App />);
+    render(<App />);
     expect(screen.getByTestId("dashboard-skeleton")).toBeInTheDocument();
-    expect(container.querySelector(".empty")).toBeNull();
+    expect(screen.queryByText(/All quiet|No tasks/)).not.toBeInTheDocument();
   });
 
   it("shows a task skeleton while a task detail is loading", async () => {
@@ -370,10 +369,10 @@ describe("App shell", () => {
   });
 
   it("shows the settings outlet on the settings route", async () => {
-    const { container } = render(<App />);
+    render(<App />);
     setHash("#/settings");
     expect(await screen.findByTestId("outlet-settings")).toBeInTheDocument();
-    expect(container.querySelector("[data-outlet='dashboard']")).toBeNull();
+    expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
   });
 
   it("shows the task outlet on a task route", async () => {
@@ -389,7 +388,7 @@ describe("App shell", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
@@ -517,17 +516,17 @@ describe("App shell", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = render(<App />);
-    const banner = container.querySelector(".update-banner") as HTMLButtonElement;
+    render(<App />);
+    const banner = screen.getByTestId("update-banner");
 
-    expect(banner.hidden).toBe(true);
+    expect(banner).not.toBeVisible();
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(versionCalls).toBe(1));
-    expect(banner.hidden).toBe(true);
+    expect(banner).not.toBeVisible();
 
     await vi.advanceTimersByTimeAsync(30000);
 
-    await vi.waitFor(() => expect(banner.hidden).toBe(false));
+    await vi.waitFor(() => expect(banner).toBeVisible());
     expect(banner).toHaveTextContent("Update ready — tap to reload");
   });
 
@@ -870,7 +869,9 @@ describe("App shell", () => {
     const callsBeforeRetry = detailCalls;
 
     allowDetailSuccess = true;
-    within(screen.getByTestId("task-load-error")).getByRole("button", { name: "Retry" }).click();
+    fireEvent.click(
+      within(screen.getByTestId("task-load-error")).getByRole("button", { name: "Retry" }),
+    );
     await screen.findByText("Fix login");
     expect(detailCalls).toBe(callsBeforeRetry + 1);
   });
