@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor, screen, act } from "@testing-library/react";
+import { render, waitFor, screen, act, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import App from "./App";
@@ -769,6 +769,60 @@ describe("App shell", () => {
     expect(cockpitCalls()).toBe(beforeFocus + 1);
   });
 
+  // Regression: loadDetail must not depend on cockpit data. It is a dependency
+  // of the detail effect, so an identity that churns with each poll re-runs that
+  // effect and fires an extra resume mutation every time the projection changes.
+  // A static fixture hides this — the apply gate suppresses unchanged
+  // projections — so this drives a cockpit whose payload really does change.
+  it("does not re-resume an open task when the cockpit projection changes", async () => {
+    let cockpitCalls = 0;
+    let resumeCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          // Each poll returns a genuinely different projection.
+          return Promise.resolve(
+            jsonResponse({
+              ...cockpit,
+              cards: cockpit.cards.map((card, index) =>
+                index === 0 ? { ...card, title: `Changed ${cockpitCalls}` } : card,
+              ),
+            }),
+          );
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          const body = String(init?.body ?? "");
+          if (body.includes('"resume"')) resumeCalls += 1;
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    vi.useFakeTimers();
+    render(<App />);
+    await act(async () => {
+      setHash(taskHash("web/a"));
+    });
+    expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
+    await vi.waitFor(() => expect(resumeCalls).toBe(1));
+
+    // Task-route cadence is 5000ms; drive three polls, each with a changed payload.
+    const pollsAtStart = cockpitCalls;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+    expect(cockpitCalls).toBeGreaterThan(pollsAtStart);
+
+    // Changed projections must not add resume mutations.
+    expect(resumeCalls).toBe(1);
+  });
+
   it("removes shell listeners on unmount", async () => {
     vi.useFakeTimers();
     const { fetchMock, cockpitCalls } = cockpitCountingFetch();
@@ -782,5 +836,42 @@ describe("App shell", () => {
     window.dispatchEvent(new Event("focus"));
     await vi.advanceTimersByTimeAsync(5000);
     expect(cockpitCalls()).toBe(afterUnmount);
+  });
+
+  it("renders task-load-error when detail fetch rejects and Retry refetches", async () => {
+    let detailCalls = 0;
+    let allowDetailSuccess = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) {
+          detailCalls += 1;
+          if (!allowDetailSuccess) {
+            return Promise.resolve({
+              ok: false,
+              status: 503,
+              text: () => Promise.resolve("Service unavailable"),
+            });
+          }
+          return Promise.resolve(jsonResponse(taskDetail));
+        }
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: false }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    expect(await screen.findByTestId("task-load-error")).toBeInTheDocument();
+    expect(screen.getByText(/Could not load this task —/)).toBeInTheDocument();
+    const callsBeforeRetry = detailCalls;
+
+    allowDetailSuccess = true;
+    within(screen.getByTestId("task-load-error")).getByRole("button", { name: "Retry" }).click();
+    await screen.findByText("Fix login");
+    expect(detailCalls).toBe(callsBeforeRetry + 1);
   });
 });

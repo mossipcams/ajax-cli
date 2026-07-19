@@ -2,6 +2,8 @@
 // `crates/ajax-web/src/slices/*` exactly. The browser must not derive
 // lifecycle, action validity, or status from these; it renders them.
 
+import type { ApiError } from "./api";
+
 /** Canonical four-state task status owned by Rust. */
 export type TaskStatus = "running" | "waiting" | "idle" | "error";
 
@@ -169,3 +171,9 @@ export interface DevDeployResponse {
   message?: string;
   error?: string;
 }
+
+export type RemoteResource<T> =
+  | { status: "loading"; data: null; error: null }
+  | { status: "ready"; data: T; error: null }
+  | { status: "stale"; data: T; error: ApiError }
+  | { status: "error"; data: null; error: ApiError };

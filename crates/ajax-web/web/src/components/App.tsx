@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { dashboardHash, projectHash, settingsHash, taskHash } from "../routes";
-import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
-import { ApiError, fetchCockpit, fetchDetail, fetchVersion, postOperation, requestId } from "../api";
 import {
   cockpitRefreshIntervalMs,
   versionPollIntervalMs,
@@ -11,6 +9,7 @@ import ConnectionStatus from "./ConnectionStatus";
 import ResultPanel from "./ResultPanel";
 import TaskList from "./TaskList";
 import TaskDetail from "./TaskDetail";
+import TaskLoadError from "./TaskLoadError";
 import SettingsView from "./SettingsView";
 import NewTaskSheet from "./NewTaskSheet";
 import Skeleton from "./Skeleton";
@@ -18,9 +17,11 @@ import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
 import RouteScroll from "./RouteScroll";
 import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
-import { createCockpitApplyGate, createInFlightGuard } from "../cockpitPoll";
 import { useHashRoute } from "../react/useHashRoute";
 import { usePullToRefresh } from "../react/usePullToRefresh";
+import { useVersionMonitor } from "../react/useVersionMonitor";
+import { useCockpitResource } from "../react/useCockpitResource";
+import { useTaskDetailResource } from "../react/useTaskDetailResource";
 
 type ResultState = {
   message: string;
@@ -32,11 +33,23 @@ type ResultState = {
 
 export default function App() {
   const route = useHashRoute();
-  const [cockpit, setCockpit] = useState<BrowserCockpitView | null>(null);
-  const [detail, setDetail] = useState<BrowserTaskDetail | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>("checking");
-  const [connectionDetail, setConnectionDetail] = useState<string | null>(null);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const {
+    cockpit,
+    connection,
+    connectionDetail,
+    loadCockpit,
+    applyCockpit,
+    applyConnectionError,
+    markConnected,
+  } = useCockpitResource();
+  const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
+  const taskOpenHandle = route.kind === "task" ? (route.handle ?? null) : null;
+  const { detail, reload } = useTaskDetailResource(taskOpenHandle, {
+    applyCockpit,
+    applyConnectionError,
+    markConnected,
+  });
+  const { updateAvailable, checkVersion } = useVersionMonitor();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
@@ -44,17 +57,8 @@ export default function App() {
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
 
-  const bootVersionRef = useRef<string | null>(null);
-  const cockpitApplyGateRef = useRef(createCockpitApplyGate());
-  const cockpitPollGuardRef = useRef(createInFlightGuard());
-
-  const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
-  const taskOpenHandle = route.kind === "task" ? route.handle : null;
-  const taskOpenHandleRef = useRef(taskOpenHandle);
-  taskOpenHandleRef.current = taskOpenHandle;
-
-  const statusText = cockpit
-    ? `${cockpit.cards.length} ${cockpit.cards.length === 1 ? "task" : "tasks"}`
+  const statusText = cockpit.data
+    ? `${cockpit.data.cards.length} ${cockpit.data.cards.length === 1 ? "task" : "tasks"}`
     : "— loading";
 
   function showResult(
@@ -65,86 +69,6 @@ export default function App() {
   ) {
     setResult({ message, output, isError, onUndo: options?.onUndo, onCommit: options?.onCommit });
   }
-
-  const applyCockpit = useCallback((next: BrowserCockpitView) => {
-    if (cockpitApplyGateRef.current.applyIfChanged(next)) {
-      setCockpit(next);
-    }
-    setConnection("connected");
-    setConnectionDetail(null);
-  }, []);
-
-  const applyConnectionError = useCallback((error: unknown) => {
-    if (error instanceof ApiError) {
-      setConnection(
-        error.kind === "network"
-          ? "backend unreachable"
-          : error.kind === "stale-session"
-            ? "stale session"
-            : "disconnected",
-      );
-      setConnectionDetail(error.message);
-      return;
-    }
-    setConnection("backend unreachable");
-    setConnectionDetail(error instanceof Error ? error.message : String(error));
-  }, []);
-
-  const loadCockpit = useCallback(async () => {
-    if (document.hidden) return;
-    await cockpitPollGuardRef.current.run(async () => {
-      try {
-        applyCockpit(await fetchCockpit());
-      } catch (error) {
-        applyConnectionError(error);
-      }
-    });
-  }, [applyCockpit, applyConnectionError]);
-
-  const resumeOnOpen = useCallback(
-    async (handle: string): Promise<boolean> => {
-      try {
-        const opResult = await postOperation({
-          task_handle: handle,
-          action: "resume",
-          request_id: requestId(),
-        });
-        if (opResult.ok && opResult.response.cockpit) applyCockpit(opResult.response.cockpit);
-        return opResult.ok;
-      } catch {
-        return false;
-      }
-    },
-    [applyCockpit],
-  );
-
-  const loadDetail = useCallback(
-    async (handle: string) => {
-      try {
-        const next = await fetchDetail(handle);
-        if (taskOpenHandleRef.current !== handle) return;
-        setDetail(next);
-        setConnection("connected");
-        setConnectionDetail(null);
-      } catch (error) {
-        if (error instanceof ApiError) {
-          applyConnectionError(error);
-        }
-      }
-    },
-    [applyConnectionError],
-  );
-
-  const checkVersion = useCallback(async () => {
-    try {
-      const { version } = await fetchVersion();
-      if (!version) return;
-      if (bootVersionRef.current === null) bootVersionRef.current = version;
-      else if (version !== bootVersionRef.current) setUpdateAvailable(true);
-    } catch {
-      // Offline: keep the pinned version and retry later.
-    }
-  }, []);
 
   function whenIdle(callback: () => void): number {
     if (typeof requestIdleCallback === "function") return requestIdleCallback(callback);
@@ -218,20 +142,6 @@ export default function App() {
       window.clearInterval(versionTimer);
     };
   }, [checkVersion, cockpitIntervalMs, loadCockpit, versionIntervalMs]);
-
-  // Detail loading — re-run only when the selected task handle changes.
-  useEffect(() => {
-    const handle = taskOpenHandle;
-    if (!handle) {
-      setDetail(null);
-      return;
-    }
-    setDetail(null);
-    void loadDetail(handle);
-    void resumeOnOpen(handle).then((mutated) => {
-      if (mutated) void loadDetail(handle);
-    });
-  }, [taskOpenHandle, loadDetail, resumeOnOpen]);
 
   useEffect(() => {
     const kind = route.kind;
@@ -323,17 +233,19 @@ export default function App() {
               data-handle={route.handle}
               aria-live="polite"
             >
-              {detail ? (
+              {detail.status === "loading" ? (
+                <Skeleton testid="task-skeleton" rows={6} />
+              ) : detail.data ? (
                 <TaskDetail
-                  detail={detail}
+                  detail={detail.data}
                   onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
                   onCockpit={applyCockpit}
                   onResult={showResult}
-                  onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
+                  onMutated={() => route.kind === "task" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                 />
               ) : (
-                <Skeleton testid="task-skeleton" rows={6} />
+                <TaskLoadError message={detail.error.message} onRetry={reload} />
               )}
             </section>
           ) : (
@@ -350,9 +262,9 @@ export default function App() {
               >
                 <span className="pull-spinner" />
               </div>
-              {cockpit ? (
+              {cockpit.data ? (
                 <TaskList
-                  cockpit={cockpit}
+                  cockpit={cockpit.data}
                   selectedProject={selectedProject}
                   onSelectProject={(project: string | null) =>
                     go(project ? projectHash(project) : dashboardHash())
@@ -383,7 +295,7 @@ export default function App() {
 
       {sheetOpen && (
         <NewTaskSheet
-          repos={cockpit?.repos?.repos ?? []}
+          repos={cockpit.data?.repos?.repos ?? []}
           selectedProject={selectedProject}
           onClose={() => setSheetOpen(false)}
           onCockpit={applyCockpit}
