@@ -1,6 +1,6 @@
 // Operator-flow smoke suite. API responses are mocked via addInitScript
 // (overrides globalThis.fetch before the app boots) so these tests run
-// without a live Rust server. They verify Svelte routing, dashboard
+// without a live Rust server. They verify hash routing, dashboard
 // rendering, project filtering, task detail rendering, and action
 // confirmation (single-tap vs two-tap) flows in a real browser.
 

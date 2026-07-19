@@ -7,11 +7,11 @@ import {
   assertCockpit,
   assertDetail,
   assertOperationResponse,
-} from "./contracts";
+} from "@/shared/lib/contracts";
 
-import cockpit from "./fixtures/cockpit.json";
-import taskDetail from "./fixtures/task-detail.json";
-import operation from "./fixtures/operation.json";
+import cockpit from "@/fixtures/cockpit.json";
+import taskDetail from "@/fixtures/task-detail.json";
+import operation from "@/fixtures/operation.json";
 
 describe("cockpit fixture", () => {
   it("passes boundary guard without throwing", () => {
@@ -95,16 +95,13 @@ describe("task-detail fixture", () => {
 describe("operation response fixture", () => {
   it("refreshed cockpit passes boundary guard", () => {
     const resp = assertOperationResponse(operation);
-    if (resp.cockpit) {
-      const view = assertCockpit(resp.cockpit);
-      expect(view.cards).toHaveLength(1);
-    }
+    expect(resp.cockpit).toBeTruthy();
+    const view = assertCockpit(resp.cockpit!);
+    expect(view.cards).toHaveLength(1);
   });
 
   it("output is a string when present", () => {
     const resp = assertOperationResponse(operation);
-    if (resp.output != null) {
-      expect(typeof resp.output).toBe("string");
-    }
+    expect(resp.output == null || typeof resp.output === "string").toBe(true);
   });
 });

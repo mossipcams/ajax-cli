@@ -26,8 +26,9 @@ function renameAppHtml() {
 
 // The Rust asset adapter embeds and fingerprints the built files by exact
 // name, so the build must emit deterministic, non-hashed output:
-//   dist/index.html, dist/app.js, dist/app.css
+//   dist/index.html, dist/app.js, dist/app.css, dist/terminal.js
 // Do not enable content hashing here without updating adapters/assets.rs.
+// terminal.js is the deferred TaskTerminal + @xterm chunk (slice 11).
 export default defineConfig({
   root,
   base: "/",
@@ -43,10 +44,34 @@ export default defineConfig({
     // No hashing: filenames are part of the Rust embed contract.
     assetsInlineLimit: 0,
     cssCodeSplit: false,
+    // terminal.js must stay lazy (task-route dynamic import). Vite's default
+    // modulepreload would fetch it on every boot and defeat the split.
+    modulePreload: false,
     rollupOptions: {
       input: join(root, "app.html"),
       output: {
         entryFileNames: "app.js",
+        // One deferred async chunk from lazy(() => import("./TaskTerminal")).
+        // Do not use manualChunks for TaskTerminal/@xterm: forcing those modules
+        // into a named chunk pulled shared boot modules (api.ts) into terminal.js
+        // and left /api/operations out of app.js.
+        chunkFileNames: (chunk) => {
+          if (
+            chunk.name === "TaskTerminal" ||
+            chunk.name === "terminal" ||
+            chunk.moduleIds?.some(
+              (id) =>
+                typeof id === "string" &&
+                (id.includes("/features/task/TaskTerminal") ||
+                  id.includes("node_modules/@xterm/")),
+            )
+          ) {
+            return "terminal.js";
+          }
+          throw new Error(
+            `ajax vite: unexpected chunk "${chunk.name}" — only app.js + terminal.js are allowed`,
+          );
+        },
         assetFileNames: (asset) => {
           const name = asset.names?.[0] ?? "";
           if (name.endsWith(".css")) return "app.css";

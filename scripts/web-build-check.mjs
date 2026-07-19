@@ -21,7 +21,7 @@ function check(condition, message) {
 
 execFileSync("npm", ["run", "web:build"], { cwd: repoRoot, stdio: "inherit" });
 
-for (const name of ["index.html", "app.js", "app.css"]) {
+for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
   const assetPath = join(distDir, name);
   if (!existsSync(assetPath)) continue;
   const contents = readFileSync(assetPath, "utf8");
@@ -29,19 +29,18 @@ for (const name of ["index.html", "app.js", "app.css"]) {
   if (contents !== normalized) writeFileSync(assetPath, normalized);
 }
 
-for (const name of ["index.html", "app.js", "app.css"]) {
+for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
   check(existsSync(join(distDir, name)), `missing dist/${name}`);
 }
 
 const jsFiles = existsSync(distDir)
-  ? readdirSync(distDir).filter((name) => name.endsWith(".js"))
+  ? readdirSync(distDir).filter((name) => name.endsWith(".js")).sort()
   : [];
 check(
-  jsFiles.length === 1 && jsFiles.includes("app.js"),
-  `expected exactly dist/app.js, found ${jsFiles.join(", ") || "none"}`,
+  jsFiles.length === 2 && jsFiles[0] === "app.js" && jsFiles[1] === "terminal.js",
+  `expected exactly dist/app.js + dist/terminal.js, found ${jsFiles.join(", ") || "none"}`,
 );
 
-check(!existsSync(join(distDir, "terminal.js")), "stale dist/terminal.js must not be emitted");
 check(!existsSync(join(distDir, "ghostty-vt.wasm")), "stale dist/ghostty-vt.wasm must not be emitted");
 
 if (existsSync(join(distDir, "index.html"))) {
@@ -59,8 +58,8 @@ if (existsSync(join(distDir, "index.html"))) {
     "built index.html should not advertise Home Screen icons",
   );
   check(
-    !html.includes('href="/terminal.js"'),
-    "built index.html should not preload a deferred terminal chunk",
+    !html.includes('href="/terminal.js"') && !html.includes('src="/terminal.js"'),
+    "built index.html must not preload or synchronously load terminal.js (lazy import only)",
   );
   const scripts = html.match(/<script[^>]*(?<![a-z-])src=/g) ?? [];
   check(scripts.length === 1, `expected one local script, found ${scripts.length}`);

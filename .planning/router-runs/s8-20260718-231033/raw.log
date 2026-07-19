@@ -1,0 +1,101 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: >-
+    Added ui/radio-group.tsx, rewired NewTaskSheet agent picker onto Radix
+    RadioGroup with roving tabindex and arrow-key selection; 380/380 tests pass.
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/components/ui/radio-group.tsx
+    - crates/ajax-web/web/src/components/NewTaskSheet.tsx
+    - crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "arrow keys"
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/components/NewTaskSheet.test.tsx > NewTaskSheet > moves selection with arrow keys
+        Error: expect(element).toHaveAttribute("aria-checked", "true")
+        Expected: aria-checked="true"
+        Received: aria-checked="false"
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "single tab stop"
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/components/NewTaskSheet.test.tsx > NewTaskSheet > keeps the agent picker a single tab stop
+        AssertionError: expected [] to have a length of 1 but got +0
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "arrow keys"
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  1 passed | 21 skipped (22)
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "single tab stop"
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  1 passed | 21 skipped (22)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run src/components/NewTaskSheet.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  22 passed (22)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  42 passed (42)
+        Tests  380 passed (380)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        > ajax-cli@0.1.0 web:check
+        > node node_modules/typescript-7/bin/tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit
+    - PHASE: VERIFY
+      COMMAND: npm run web:lint
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        > ajax-cli@0.1.0 web:lint
+        > eslint --config crates/ajax-web/web/eslint.config.mjs crates/ajax-web/web/src crates/ajax-web/web/e2e
+    - PHASE: VERIFY
+      COMMAND: npm run web:build:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        web build check passed: deterministic shell with version placeholder.
+    - PHASE: OTHER
+      COMMAND: git diff --stat -- crates/ajax-web/web/src/components/ui/radio-group.tsx crates/ajax-web/web/src/components/NewTaskSheet.tsx crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        NewTaskSheet.test.tsx | 30 +++++++++++++++++-
+        NewTaskSheet.tsx       | 37 +++++++++++++++++-----
+        2 files changed, 58 insertions(+), 9 deletions(-)
+        (radio-group.tsx is new/untracked, 32 lines)
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS:
+    - >-
+      Test beforeEach adds ResizeObserver mock (Radix use-size) and
+      localStorage.clear() beyond the two named tests; required for jsdom
+      and file-order isolation.
+    - >-
+      Checked RadioGroupItem sets tabIndex={checked ? 0 : -1} because Radix
+      defaults all items to -1 until a roving tab stop is established.
+    - >-
+      Item onKeyDown calls agentForArrowKey for synchronous selection updates
+      alongside Radix roving-focus (Radix defers selection via setTimeout).
+    - >-
+      stderr act(...) warning on arrow-keys test when run with full file;
+      test still passes.
+  ARIA_VERIFICATION:
+    radiogroup_role: present on .agent-picker (explicit role="radiogroup" in source)
+    aria_labelledby_resolves_to: "Agent"
+    aria_labelledby_id: new-task-agent
+    items_role_radio: all four .agent-option expose role="radio"
+    items_type_button: all four render type="button"
+    aria_checked: driven by value={agent}; existing getByRole("radio") tests pass
+    bubble_input_submit: unchanged; startTask payload tests pass (agent from React state)
+```
+ROUTER_REPORT_END

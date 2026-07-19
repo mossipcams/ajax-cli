@@ -1,0 +1,16 @@
+id: noop-jsx-handler
+language: tsx
+severity: error
+message: >-
+  Empty JSX event handler. An event handler that does nothing is almost always
+  there to silence a linter; fix the underlying issue or use a scoped disable
+  with a reason.
+note: >-
+  Shipped in slice 8: onKeyDown={() => {}} was added to satisfy
+  jsx-a11y/click-events-have-key-events on the new-task backdrop. The rule was
+  right; the handler lied to it.
+rule:
+  kind: jsx_attribute
+  pattern:
+    context: <div $PROP={() => {}} />
+    selector: jsx_attribute

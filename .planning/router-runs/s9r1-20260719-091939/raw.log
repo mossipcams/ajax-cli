@@ -1,0 +1,114 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: FAILED
+  SUMMARY: >-
+    Codemod rewrote 86 cross-directory import specifiers across 36 files; all
+    verification gates pass except web:test (379/380) because
+    TaskTerminal.test.tsx asserts the raw source still contains
+    `from "../viewport"`.
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/cockpitPoll.test.ts
+    - crates/ajax-web/web/src/components/ActionBar.test.tsx
+    - crates/ajax-web/web/src/components/ActionBar.tsx
+    - crates/ajax-web/web/src/components/App.test.tsx
+    - crates/ajax-web/web/src/components/App.tsx
+    - crates/ajax-web/web/src/components/AppViewport.tsx
+    - crates/ajax-web/web/src/components/ConnectionStatus.tsx
+    - crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+    - crates/ajax-web/web/src/components/NewTaskSheet.tsx
+    - crates/ajax-web/web/src/components/ResultPanel.test.tsx
+    - crates/ajax-web/web/src/components/ResultPanel.tsx
+    - crates/ajax-web/web/src/components/SettingsView.test.tsx
+    - crates/ajax-web/web/src/components/SettingsView.tsx
+    - crates/ajax-web/web/src/components/TaskDetail.test.tsx
+    - crates/ajax-web/web/src/components/TaskDetail.tsx
+    - crates/ajax-web/web/src/components/TaskList.test.tsx
+    - crates/ajax-web/web/src/components/TaskList.tsx
+    - crates/ajax-web/web/src/components/TaskLoadError.tsx
+    - crates/ajax-web/web/src/components/TaskTerminal.tsx
+    - crates/ajax-web/web/src/components/TestInDevPanel.tsx
+    - crates/ajax-web/web/src/fixtures.test.ts
+    - crates/ajax-web/web/src/main.tsx
+    - crates/ajax-web/web/src/react/useCockpitResource.test.tsx
+    - crates/ajax-web/web/src/react/useCockpitResource.ts
+    - crates/ajax-web/web/src/react/useHashRoute.test.tsx
+    - crates/ajax-web/web/src/react/useHashRoute.ts
+    - crates/ajax-web/web/src/react/usePullToRefresh.test.tsx
+    - crates/ajax-web/web/src/react/usePullToRefresh.ts
+    - crates/ajax-web/web/src/react/useSheetDrag.ts
+    - crates/ajax-web/web/src/react/useSwipeReveal.test.tsx
+    - crates/ajax-web/web/src/react/useSwipeReveal.ts
+    - crates/ajax-web/web/src/react/useTaskDetailResource.test.tsx
+    - crates/ajax-web/web/src/react/useTaskDetailResource.ts
+    - crates/ajax-web/web/src/react/useVersionMonitor.ts
+    - crates/ajax-web/web/src/react/useViewportBand.ts
+    - crates/ajax-web/web/src/strictMode.test.tsx
+  TEST_FIRST: NOT_APPLICABLE
+  COMMAND_EVIDENCE:
+    - PHASE: OTHER
+      COMMAND: node scripts/alias-codemod.mjs
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        files changed: 36
+        specifiers rewritten: 86
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        > ajax-cli@0.1.0 web:check
+        > node node_modules/typescript-7/bin/tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/components/TaskTerminal.test.tsx > TaskTerminal iOS keyboard geometry > resets document scroll before focusing the terminal textarea
+         ❯ src/components/TaskTerminal.test.tsx:61:32
+             61|     expect(taskTerminalSource).toMatch(/import\s*\{[^}]*resetDocumentScroll[^}]*\}\s*from\s*["']\.\.\/viewport["']/);
+        Test Files  1 failed | 41 passed (42)
+             Tests  1 failed | 379 passed (380)
+    - PHASE: VERIFY
+      COMMAND: npm run web:lint
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        > ajax-cli@0.1.0 web:lint
+        > eslint --config crates/ajax-web/web/eslint.config.mjs crates/ajax-web/web/src crates/ajax-web/web/e2e
+    - PHASE: VERIFY
+      COMMAND: npm run web:build:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        web build check passed: deterministic shell with version placeholder.
+        ✓ built in 1.10s
+    - PHASE: VERIFY
+      COMMAND: git diff -- crates/ajax-web/web/src | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vcE '^[+-]\s*(import|export|})'
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        0
+    - PHASE: VERIFY
+      COMMAND: grep -rn 'from "\.\./' crates/ajax-web/web/src
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        (no matches)
+    - PHASE: VERIFY
+      COMMAND: git status --porcelain
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        36 modified files under crates/ajax-web/web/src (M only, no added/deleted src files)
+        scripts/alias-codemod.mjs absent (deleted after run)
+  STOP_CONDITIONS_HIT:
+    - >-
+      Test needs editing to stay green: crates/ajax-web/web/src/components/TaskTerminal.test.tsx:61
+      asserts raw TaskTerminal.tsx source contains `from "../viewport"`; codemod
+      correctly rewrote production import to `from "@/viewport"`. Packet forbids
+      test assertion edits.
+  REMAINING_RISKS:
+    - >-
+      Parent must update TaskTerminal.test.tsx:61 regex to accept `@/viewport`
+      (or drop import-path assertion) before this round can pass 380/380.
+    - >-
+      Five vi.mock("../…") calls remain (useCockpitResource.test.tsx,
+      useTaskDetailResource.test.tsx, TaskDetail.test.tsx, TestInDevPanel.test.tsx,
+      useViewportBand.test.tsx); out of packet rewrite scope but still
+      cross-directory relative paths.
+```
+ROUTER_REPORT_END

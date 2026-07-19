@@ -1,0 +1,118 @@
+<think>
+The diff is purely additive, exactly as required:
+- 20 lines added, 0 removed
+- No existing line removed or reordered
+- No import added
+- Two new `it(...)` blocks at the append point (line 196/197 boundary)
+- The closing `});` of `describe("NewTaskSheet remembered defaults", ...)` is preserved
+- File is under the 40-line patch limit
+
+All acceptance criteria are met:
+- ✓ 18 passing tests, 0 failing, 0 skipped (16 pre-existing + 2 new)
+- ✓ Both new tests pass on first execution with no production change
+- ✓ `npm run web:check` exits 0
+- ✓ `git status --porcelain` shows exactly one modified path: `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx`
+- ✓ Diff is purely additive within the `describe` block: no existing line removed or reordered, no import added
+
+No stop conditions hit:
+- The behavior in `NewTaskSheet.tsx:121-123` and `:135-138` matches the excerpts ✓
+- Both new tests pass against unmodified production code ✓
+- No edits to any file outside Allowed files; no imports added ✓
+- Last test in file is at line 186-196; file ends with `});` on line 197 ✓
+- No pre-existing tests failing ✓
+- Patch is 20 lines, well under 40 limit ✓
+
+Now let me prepare the final report.
+</think>
+All checks pass. The patch is 20 lines, purely additive, with no imports added and no existing lines modified. Now I'll compose the router report.
+
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  task_kind: tests-only
+  packet_status: READY
+  test_first: NOT_APPLICABLE
+  production_edit: FORBIDDEN
+  status: SUCCESS
+
+  acceptance_criteria:
+    total_tests: 18
+    failing: 0
+    skipped: 0
+    pre_existing_still_passing: true
+    first_run_no_production_change: true
+    web_check_exit: 0
+    single_modified_path: true
+    diff_is_purely_additive: true
+    no_imports_added: true
+    patch_lines: 20
+    patch_under_40: true
+
+  verification_commands:
+    - command: "npm run web:test -- --run src/components/NewTaskSheet.test.tsx"
+      cwd: repo root (no `package.json` in `crates/ajax-web/web/`)
+      exit_code: 0
+      output_excerpt: |
+        > ajax-cli@0.1.0 web:test
+        > vitest --config crates/ajax-web/web/vite.config.mts --run src/components/NewTaskSheet.test.tsx
+
+         RUN  v4.1.9 /Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-react-migration-cleanup/crates/ajax-web/web
+
+         Test Files  1 passed (1)
+              Tests  18 passed (18)
+           Start at  22:31:16
+           Duration  569ms (transform 73ms, setup 40ms, import 126ms, tests 119ms, environment 202ms)
+
+    - command: "npm run web:check"
+      exit_code: 0
+      output_excerpt: |
+        > ajax-cli@0.1.0 web:check
+        > node node_modules/typescript-7/bin/tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit
+
+        (no output, exit 0)
+
+    - command: "git status --porcelain"
+      exit_code: 0
+      output_excerpt: |
+         M crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+        (untracked .planning/* files are pre-existing artifacts, not from this task)
+
+    - command: "git diff --stat crates/ajax-web/web/src/components/NewTaskSheet.test.tsx"
+      exit_code: 0
+      output_excerpt: |
+         crates/ajax-web/web/src/components/NewTaskSheet.test.tsx | 20 ++++++++++++++++++++
+         1 file changed, 20 insertions(+)
+
+  stop_conditions_checked:
+    NewTaskSheet_121_123_matches: true
+    NewTaskSheet_135_138_matches: true
+    no_new_test_failures: true
+    no_files_outside_allowed: true
+    no_imports_added: true
+    last_test_at_186_196: true
+    file_ends_with_describe_close_at_197: true
+    pre_existing_tests_still_pass: true
+    patch_under_40_lines: true
+
+  notes:
+    - Working directory: /Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-react-migration-cleanup
+    - Branch (unchanged): ajax/react-migration-cleanup
+    - No commit, push, branch, or rebase performed.
+    - `package.json` is at the repo root, not `crates/ajax-web/web/`. The packet
+      says "Run from `crates/ajax-web/web`" but npm scripts live in the root
+      `package.json`, so the commands were run from the repo root. Same scripts.
+    - Anchor note: the packet's edit-instructions prose says the file's final
+      `});` on line 197 "closes `describe("NewTaskSheet", ...)`". In fact line
+      197 closes `describe("NewTaskSheet remembered defaults", ...)` (the
+      first describe closes at line 159). The line number 197 and the
+      structural anchor (last test `});` at 196, then a single `});` at 197)
+      are correct; the new tests are inserted at that exact point, inside the
+      second describe block. Behavior under test, the two `it` names, and
+      the fixture usage all match the packet.
+    - No new imports were added. Tests reuse `render`, `fireEvent`, `vi`,
+      `expect`, and `NewTaskSheet`, all already imported.
+    - No production code was modified. The two new tests are strictly
+      additive and pin the existing `handleBackdropClick` (121-123) and
+      Escape `onKeyDown` (135-138) behaviors against the current dialog.
+```
+ROUTER_REPORT_END

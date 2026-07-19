@@ -1,0 +1,14 @@
+# ast-grep: structural search, scan and rewrite for the web frontend.
+#
+# Complements ESLint rather than duplicating it. ESLint owns hooks correctness,
+# a11y and the app/features/shared import layering; the rules here encode
+# structural defects that actually shipped in this repo and that ESLint has no
+# rule for. Each rule has a test in rule-tests/ and must fail on the real defect.
+#
+#   npm run web:sg          scan the web source
+#   npm run web:sg:test     run the rule tests
+#   ast-grep run -p '<pat>' -l tsx <path>     one-off structural query
+ruleDirs:
+  - crates/ajax-web/web/ast-grep/rules
+testConfigs:
+  - testDir: crates/ajax-web/web/ast-grep/rule-tests

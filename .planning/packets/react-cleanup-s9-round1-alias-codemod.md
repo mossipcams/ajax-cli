@@ -1,0 +1,143 @@
+# Packet — Slice 9 Round 1: relative → alias codemod
+
+```yaml
+PACKET_STATUS: READY
+TASK_KIND: mechanical
+TEST_FIRST: NOT_APPLICABLE
+PRODUCTION_EDIT: REQUIRED
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+```
+
+## Goal
+
+Make the web import graph location-independent ahead of the slice 9 file moves:
+rewrite every **cross-directory** relative import under
+`crates/ajax-web/web/src` to the already-configured `@/` alias. No file moves,
+no behaviour change, no test edits. The import graph must be semantically
+identical afterwards — same modules, same edges, different spelling.
+
+## Allowed files
+
+- Any `.ts` / `.tsx` file under `crates/ajax-web/web/src/` — **import
+  specifiers only**.
+- One temporary codemod script at `scripts/alias-codemod.mjs`, which is
+  **deleted in the same change** once applied.
+
+## Forbidden changes
+
+- Any change to a file body other than the text inside an `import`/`export …
+  from` specifier. No formatting sweeps, no reordering imports, no adding or
+  removing imports, no touching code.
+- Moving, renaming, creating, or deleting any source file. This round has
+  **zero** `git mv`.
+- Any edit to `tsconfig.json`, `vite.config.mts`, `eslint.config.mjs`,
+  `package.json`, `package-lock.json`, or anything under `crates/ajax-web/web/e2e/`.
+- Any edit to a test's assertions, or to `styles.css`.
+- Rewriting **same-directory** imports. `./Sibling` stays `./Sibling` — those
+  files travel together in round 2.
+- Rewriting non-relative specifiers (`react`, `@radix-ui/…`, `vitest`, …).
+- Leaving `scripts/alias-codemod.mjs` behind in the final diff.
+- Any commit, branch, push, rebase, or branch switch.
+
+## Context evidence
+
+**The alias already exists and already resolves in every toolchain:**
+- `crates/ajax-web/web/tsconfig.json:4-6` — `"paths": { "@/*": ["./src/*"] }`
+- `crates/ajax-web/web/vite.config.mts:35-38` — `alias: { "@": join(root, "src") }`
+- vitest runs through that same config
+  (`package.json` `web:test` → `vitest --config crates/ajax-web/web/vite.config.mts`)
+
+**Two files already use it**, and are the style reference:
+`crates/ajax-web/web/src/components/ui/button.tsx:5` and
+`components/ui/sheet.tsx:4` — `import { cn } from "@/lib/utils";`
+
+**Scale**: 90 `.ts`/`.tsx` files, 156 relative-import lines. The subset to
+rewrite is those whose resolved target is outside the importing file's own
+directory.
+
+**Suffix handling**: some specifiers carry an extension or query and must be
+preserved byte-for-byte after the path rewrite — e.g.
+`components/TaskDetail.test.tsx:7` imports `./TaskDetail?raw` (no extension),
+`:8` imports `./RouteScroll.tsx?raw` (extension + query). Both are
+same-directory here and therefore out of scope, but the script must not corrupt
+such specifiers if it encounters a cross-directory one.
+
+## Code anchors
+
+- Reference spelling: `crates/ajax-web/web/src/components/ui/button.tsx:5`.
+- Alias definitions: `crates/ajax-web/web/tsconfig.json:4-6`,
+  `crates/ajax-web/web/vite.config.mts:35-38`.
+- Densest cross-directory importers, useful as spot-checks:
+  `src/components/App.tsx`, `src/components/TaskDetail.tsx`,
+  `src/components/NewTaskSheet.tsx`, `src/react/useCockpitResource.ts`.
+
+## Test-first instructions
+
+`NOT_APPLICABLE: mechanical, behaviour-preserving rewrite of import specifiers.
+The existing 380-test suite is the oracle — it must stay green with zero test
+edits. A new test would assert nothing the suite does not already assert.`
+
+## Edit instructions
+
+Write `scripts/alias-codemod.mjs` (Node, no new dependencies) that:
+
+1. Walks every `.ts`/`.tsx` file under `crates/ajax-web/web/src`.
+2. For each static `import … from "<spec>"`, `export … from "<spec>"`, and
+   dynamic `import("<spec>")` where `<spec>` starts with `./` or `../`:
+   - split off any `?query` suffix and preserve it verbatim;
+   - resolve the path part against the importing file's directory;
+   - if the resolved target is in the **same directory** as the importer, leave
+     the specifier untouched;
+   - otherwise rewrite it to `@/` + the resolved path relative to
+     `crates/ajax-web/web/src`, preserving the original extension-or-absence and
+     the `?query` suffix exactly, and always using forward slashes.
+3. Prints the number of files changed and specifiers rewritten.
+
+Run it, then **delete the script** so it does not appear in the final diff.
+
+Report the counts it printed — they are the mechanical evidence for this round.
+
+Do not hand-edit files: if the script gets a case wrong, fix the script and
+re-run from a clean tree.
+
+## Verification commands
+
+```bash
+npm run web:check
+npm run web:test -- --run
+npm run web:lint
+npm run web:build:check
+git diff -- crates/ajax-web/web/src | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vcE '^[+-]\s*(import|export|})'
+```
+
+The last command counts changed lines that are **not** import/export lines. It
+must print `0` — that is the proof this round changed nothing but specifiers.
+
+Run from the repository root.
+
+## Acceptance criteria
+
+- Full suite: **380** passing across 42 files, 0 failing, **zero test files
+  edited**.
+- `web:check`, `web:lint`, `web:build:check` all exit 0.
+- The non-import changed-line count above is **0**.
+- `git status --porcelain` shows **no** added, deleted, or renamed files —
+  only modifications. In particular `scripts/alias-codemod.mjs` must not exist.
+- No remaining cross-directory relative import under `src`: state the count the
+  script reported, and confirm a re-run would rewrite 0 further specifiers.
+- `grep -rn 'from "\.\./' crates/ajax-web/web/src` returns only same-directory
+  cases that legitimately resolve into the importer's own directory (there
+  should be none of the form `../` that crosses a directory).
+
+## Stop conditions
+
+- The alias fails to resolve in any toolchain (tsc, vite, vitest, eslint) —
+  stop and report which; do not add resolver config to compensate.
+- Any test needs editing to stay green — stop and report which and why. That
+  means the rewrite was not behaviour-preserving.
+- A specifier carries a `?raw` (or other) query that the script would corrupt —
+  stop and report rather than special-casing by hand.
+- `import-x/no-cycle` starts firing — the rewrite has changed the graph; stop.
+- The non-import changed-line count is not 0 — stop and report what else changed.
+- The patch touches any file outside `crates/ajax-web/web/src`.

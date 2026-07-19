@@ -1,0 +1,7 @@
+id: noop-jsx-handler
+valid:
+  - <div onClick={handleBackdropClick} />
+  - <div onKeyDown={(event) => { if (event.key === "Escape") onClose?.(); }} />
+invalid:
+  - <div onKeyDown={() => {}} />
+  - <button onClick={() => {}} />

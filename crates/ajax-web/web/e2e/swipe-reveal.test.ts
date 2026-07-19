@@ -1,5 +1,5 @@
-// Swipe-to-reveal e2e characterization. Pins the current Svelte TaskList
-// behavior: a left touch-drag on a dashboard row opens it by exactly
+// Swipe-to-reveal e2e characterization. Pins TaskList behavior across
+// implementations: a left touch-drag on a dashboard row opens it by exactly
 // SWIPE_REVEAL_WIDTH (88px) and tapping the revealed first action dispatches
 // the operation (no second confirm tap for non-destructive review).
 //
@@ -71,7 +71,9 @@ async function touchDragRowLeft(page: Page, row: Locator, dx: number) {
   }, dx);
 }
 
-test.beforeEach(({ }, testInfo) => {
+// Playwright requires object-destructured fixtures; empty pattern is intentional.
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "swipe-reveal is a touch gesture; desktop has no equivalent",

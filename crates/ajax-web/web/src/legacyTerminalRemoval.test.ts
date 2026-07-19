@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 
 const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
 const webRoot = join(testDir, "..");
@@ -71,17 +71,17 @@ describe("legacy terminal removal hygiene", () => {
 
     violations.push(
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/components/TaskDetail.tsx",
+        "crates/ajax-web/web/src/features/task/TaskDetail.tsx",
         ["TerminalSurfaceSelector"],
       ),
-      ...collectSymbolViolations("crates/ajax-web/web/src/components/App.tsx", [
+      ...collectSymbolViolations("crates/ajax-web/web/src/app/App.tsx", [
         "terminalPreload",
       ]),
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/components/SettingsView.tsx",
+        "crates/ajax-web/web/src/features/settings/SettingsView.tsx",
         ["surfaceV2", "Terminal Surface V2"],
       ),
-      ...collectSymbolViolations("crates/ajax-web/web/src/diagnostics.ts", [
+      ...collectSymbolViolations("crates/ajax-web/web/src/features/settings/diagnostics.ts", [
         "surfaceV2",
         "Terminal Surface V2",
       ]),
@@ -117,5 +117,28 @@ describe("legacy terminal removal hygiene", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  // The named-path list above only covers the terminal-era Svelte components, so
+  // other `.svelte` files can reappear without failing anything — during the
+  // 2026-07 cleanup `TaskDetail.svelte` and `TestInDevPanel.svelte` came back
+  // into the working tree and every suite still passed, because nothing imports
+  // them and the toolchain no longer looks at `.svelte` at all. This is the
+  // catch-all: the React migration is complete, so the extension must not exist.
+  it("keeps the web source tree free of any Svelte component", () => {
+    const webSrc = join(webRoot, "src");
+    const found: string[] = [];
+
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".svelte")) found.push(relative(repoRoot, full));
+      }
+    };
+    walk(webSrc);
+
+    expect(found).toEqual([]);
   });
 });

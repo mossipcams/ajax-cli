@@ -1,0 +1,11 @@
+id: radix-aschild-hardcoded-id
+valid:
+  # Radix owns the id — the shape slice 7 was fixed to.
+  - <SheetTitle asChild><h2>New task</h2></SheetTitle>
+  # No asChild, so no Slot prop-merging: an explicit id is fine.
+  - <h2 id="new-task-title">New task</h2>
+  # Content has no generated id, and #new-task-sheet is the e2e-pinned DOM
+  # contract. This must NOT be flagged — it is the real shape in NewTaskSheet.
+  - <SheetContent asChild><div id="new-task-sheet">x</div></SheetContent>
+invalid:
+  - <SheetTitle asChild><h2 id="new-task-title">New task</h2></SheetTitle>

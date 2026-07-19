@@ -1,0 +1,34 @@
+id: radix-aschild-hardcoded-id
+language: tsx
+severity: error
+message: >-
+  Hard-written id on a Radix asChild child. Slot lets child props win, so this
+  overrides Radix's generated id and leaves aria-labelledby/aria-describedby
+  pointing at nothing. Let Radix own the id.
+note: >-
+  Shipped in slice 7: <SheetTitle asChild><h2 id="new-task-title"> left the
+  new-task dialog with aria-labelledby="radix-_r_1_" resolving to no element,
+  so the dialog had no accessible name. Every test, tsc and the build passed.
+# Scoped to *Title/*Description only: those are the components whose generated
+# id is the target of aria-labelledby/aria-describedby. Content-like components
+# have no generated id, so a hand-written id on their child is legitimate — the
+# new-task sheet's own #new-task-sheet is exactly that, and is pinned by e2e.
+rule:
+  kind: jsx_element
+  all:
+    - has:
+        kind: jsx_opening_element
+        all:
+          - has:
+              kind: identifier
+              regex: '(Title|Description)$'
+          - has:
+              kind: jsx_attribute
+              regex: '^asChild$'
+    - has:
+        kind: jsx_element
+        has:
+          kind: jsx_opening_element
+          has:
+            kind: jsx_attribute
+            regex: '^id='

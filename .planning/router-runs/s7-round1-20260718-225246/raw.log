@@ -1,0 +1,90 @@
+ROUTER_REPORT_BEGIN
+```yaml
+status: success
+task: "Slice 7 Round 1 — ui/sheet.tsx primitive + NewTaskSheet Radix rewire"
+failure_mode: "Hand-rolled dialog had no focus restore; unmount left document.activeElement on <body>. Radix modal Dialog without Dialog.Trigger also preventDefaults onCloseAutoFocus and defers FocusScope restore via setTimeout(0), so sync unmount assertions fail without a mount-effect cleanup."
+implementation_path: "Add focus-restore test (RED) → create thin sheet.tsx over @radix-ui/react-dialog → wrap NewTaskSheet in Sheet/SheetContent asChild on #new-task-sheet → capture opener in mount-effect cleanup for synchronous restore → keep onOpenAutoFocus preventDefault + existing sheetRef focus"
+
+files_changed:
+  - crates/ajax-web/web/src/components/ui/sheet.tsx (new)
+  - crates/ajax-web/web/src/components/NewTaskSheet.tsx
+  - crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+
+deviations:
+  - "Focus restore uses mount-effect cleanup (captures opener, restores on unmount) because Radix modal Content's composed onCloseAutoFocus always preventDefaults and targets a null triggerRef; FocusScope restore is async (setTimeout 0) and fails the sync test assertion."
+  - "Kept role=\"dialog\" on #new-task-sheet div for jsx-a11y/no-static-element-interactions."
+  - "Added no-op onKeyDown={() => {}} on backdrop div to satisfy jsx-a11y/click-events-have-key-events after removing local Escape handler; Escape still handled by Radix DismissableLayer."
+
+commands:
+  - name: "RED — focus-restore test (before production)"
+    command: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "restores focus to the opener"
+    exit_code: 1
+    excerpt: |
+      FAIL  src/components/NewTaskSheet.test.tsx > NewTaskSheet > restores focus to the opener when the sheet unmounts
+      AssertionError: expected <body><button></button>…(1)</body> to be <button></button>
+      ❯ src/components/NewTaskSheet.test.tsx:189:36
+      Tests  1 failed | 18 skipped (19)
+
+  - name: "GREEN — focus-restore test (after production)"
+    command: npm run web:test -- --run src/components/NewTaskSheet.test.tsx -t "restores focus to the opener"
+    exit_code: 0
+    excerpt: |
+      Test Files  1 passed (1)
+      Tests  1 passed | 18 skipped (19)
+
+  - name: "NewTaskSheet.test.tsx full file"
+    command: npm run web:test -- --run src/components/NewTaskSheet.test.tsx
+    exit_code: 0
+    excerpt: |
+      Test Files  1 passed (1)
+      Tests  19 passed (19)
+
+  - name: "Full web test suite"
+    command: npm run web:test -- --run
+    exit_code: 0
+    excerpt: |
+      Test Files  42 passed (42)
+      Tests  377 passed (377)
+
+  - name: "web:check"
+    command: npm run web:check
+    exit_code: 0
+    excerpt: "(no output — tsc passed)"
+
+  - name: "web:lint"
+    command: npm run web:lint
+    exit_code: 0
+    excerpt: "(no errors)"
+
+  - name: "web:build:check"
+    command: npm run web:build:check
+    exit_code: 0
+    excerpt: |
+      web build check passed: deterministic shell with version placeholder.
+
+  - name: "Portal grep"
+    command: grep -c 'Portal' crates/ajax-web/web/src/components/ui/sheet.tsx
+    exit_code: 1
+    excerpt: "0 matches (grep exit 1 = no matches)"
+
+  - name: "git diff --stat (allowed files only)"
+    command: git diff --stat -- crates/ajax-web/web/src/components/ui/sheet.tsx crates/ajax-web/web/src/components/NewTaskSheet.tsx crates/ajax-web/web/src/components/NewTaskSheet.test.tsx
+    exit_code: 0
+    excerpt: |
+      NewTaskSheet.test.tsx | 13 +++++
+      NewTaskSheet.tsx       | 64 ++++++++++++++--------
+      2 files changed, 54 insertions(+), 23 deletions(-)
+      (sheet.tsx is new/untracked: 36 lines)
+
+acceptance:
+  focus_restore_red_then_green: true
+  newtasksheet_tests: "19 passed, 0 failed, 0 skipped"
+  full_suite: "377 passed across 42 files"
+  web_check: true
+  web_lint: true
+  web_build_check: true
+  exactly_three_paths_in_diff: true
+  existing_it_blocks_unmodified: true
+  portal_count: 0
+```
+ROUTER_REPORT_END
