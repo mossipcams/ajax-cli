@@ -1,0 +1,257 @@
+You are a bounded implementation worker for a parent agent.
+Current directory is the task worktree.
+Never commit, push, merge, rebase, create branches, or change branches.
+
+Complete exactly one bounded task from the packet below.
+Edit only Allowed files. Do not touch Forbidden changes. Follow Code anchors.
+Run the failing test first only when TEST_FIRST is REQUIRED.
+Edit production code only when PRODUCTION_EDIT is REQUIRED.
+Make the smallest allowed edit needed.
+Run Verification commands.
+Stop if any Stop condition is hit, or if the patch would exceed roughly 400 changed lines.
+No drive-by cleanup, renames, formatting sweeps, or broad refactors.
+Before editing, state the likely failure mode and smallest implementation path.
+
+Return exactly the router's DELEGATE_REPORT schema between these marker lines:
+ROUTER_REPORT_BEGIN
+<DELEGATE_REPORT YAML>
+ROUTER_REPORT_END
+Include every command's actual exit code and a short output excerpt. Do not
+summarize missing evidence.
+
+# Packet — Slice 10 Round 2a: extract terminal scroll/follow sync
+
+```yaml
+PACKET_STATUS: READY
+TASK_KIND: behavior
+TEST_FIRST: REQUIRED
+PRODUCTION_EDIT: REQUIRED
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+```
+
+## Goal
+
+Extract the scroll/follow region of `TaskTerminal.tsx`'s mount effect
+(lines 641–740) into `shared/lib/terminalScrollSync.ts`, a deps-injected
+factory in the same shape as the existing `createRefitController`. Behaviour
+must not change. The payoff is that this logic becomes unit-testable — today it
+is reachable only through the mobile-webkit e2e.
+
+## Allowed files
+
+- `crates/ajax-web/web/src/shared/lib/terminalScrollSync.ts` (new)
+- `crates/ajax-web/web/src/shared/lib/terminalScrollSync.test.ts` (new)
+- `crates/ajax-web/web/src/features/task/TaskTerminal.tsx`
+
+## Forbidden changes
+
+- Any edit under `crates/ajax-web/web/e2e/`, or to
+  `features/task/TaskTerminal.test.tsx`. They are the net for this surface.
+- Any other file, including `styles.css`, `eslint.config.mjs`, `package.json`.
+- **Moving `touchDistance`** (defined at `:641`). It sits inside the region but
+  is used only by the *gesture* handlers at `:889` and `:939`. It stays in the
+  effect; it belongs to round 2c.
+- Moving or altering anything outside `:641-740` except the call sites listed
+  under "Rewrite these call sites".
+- Changing the effect's dependency array (`[handle]` at `:1132`).
+- Changing behaviour: scroll positions, follow-to-bottom semantics, spacer
+  height maths, unseen-output signalling, or the order of calls.
+- Reordering `fitLocal()` → `syncSpacer()` → `refreshFollow()` at `:1013-1015`.
+  That sequence is load-bearing at construction.
+- Duplicating any of the three flags. Exactly one owner — see below.
+- Enabling React `StrictMode`.
+- Any commit, branch, push, rebase, or branch switch.
+
+## Context evidence
+
+**The region is `TaskTerminal.tsx:641-740`** and defines 12 symbols. Verified by
+AST enumeration:
+
+| symbol | line | used outside 641-740? |
+| --- | --- | --- |
+| `touchDistance` | 641 | **yes — 889, 939 (gestures). DO NOT MOVE** |
+| `cellHeightPx` | 644 | no — internal |
+| `scrollbackLines` | 649 | no — internal |
+| `viewportTopLine` | 654 | no — internal |
+| `syncSpacer` | 656 | yes — 1014, 1055 |
+| `scrollInteractionToBottom` | 661 | yes — 761, 1057 |
+| `refreshFollow` | 666 | yes — 763, 1015, 1059 |
+| `syncWrapperFromTerm` | 675 | no — internal |
+| `syncTermFromWrapper` | 690 | no — internal |
+| `applyOutput` | 718 | yes — 1036 |
+| `onInteractionScroll` | 731 | yes — 1018, 1104 |
+| `onTermScroll` | 736 | yes — 1017 |
+
+So the module's public surface is exactly **6** functions; 5 are internal.
+
+**Inbound dependencies — the complete set, verified by AST enumeration (6):**
+
+| symbol | uses | note |
+| --- | --- | --- |
+| `termRef` | 15 | component ref holding the `Terminal`; inject as a getter |
+| `interactionEl` | 23 | non-null: guarded at `:431` |
+| `spacerEl` | 2 | **may be null** — `:431` does *not* guard it; `:657` null-checks |
+| `followLive` | 3 | flag — see ownership |
+| `syncingScroll` | 8 | flag — see ownership |
+| `wrapperDroveScroll` | 3 | flag — fully internal |
+
+Plus one React setter used inside the region: **`setHasUnseenOutput`** at
+`:672` (`false`) and `:727` (`true`). Inject it as a callback.
+
+**Flag ownership, verified by read/write site:**
+- `wrapperDroveScroll` — written `:711,:714`, read `:737`. **Entirely inside the
+  region.** Becomes private module state with no accessor.
+- `followLive` — read only at `:720` (inside). Written inside at `:671,:694`,
+  and **outside** at `:757` (gestures) and `:1051` (construct). Module owns it;
+  expose a setter for the two external writers.
+- `syncingScroll` — read only at `:732,:737` (inside). Written inside at
+  `:684,:686,:710,:713,:721,:724`, and **outside** at `:759,:762` (gestures) and
+  `:1053,:1058` (construct). Module owns it; expose a setter.
+
+**The pattern to imitate** — `crates/ajax-web/web/src/shared/lib/terminalRefit.ts`:
+exports `RefitControllerDeps`, `RefitController`, and
+`createRefitController(deps): RefitController`. It is already imported and
+called inside this same effect at `:569`. Its test is
+`shared/lib/terminalRefit.test.ts`. Siblings: `terminalGeometry.ts`,
+`terminalConnection.ts`, each with a unit test.
+
+**Layering**: `shared/` must not import from `features/` or `app/` — enforced by
+`eslint.config.mjs`. The new module takes everything by injection and imports
+only `@xterm/xterm` types, so it satisfies this.
+
+## Code anchors
+
+- `TaskTerminal.tsx:641-740` — the region to move (minus `touchDistance`).
+- `TaskTerminal.tsx:431` — the guard proving `interactionEl` non-null and
+  `spacerEl` possibly null.
+- `TaskTerminal.tsx:757,759,762,761,763` — gesture-side call sites to rewrite.
+- `TaskTerminal.tsx:1013-1018,1036,1051-1059,1104` — construct-side call sites.
+- `shared/lib/terminalRefit.ts:3-15` — the deps/controller shape to mirror.
+- `shared/lib/terminalRefit.test.ts` — the test style to mirror.
+
+## Test-first instructions
+
+Write `shared/lib/terminalScrollSync.test.ts` **before** touching
+`TaskTerminal.tsx`. It must fail first because the module does not exist yet.
+
+Drive the factory with a fake terminal and stub elements — no React, no jsdom
+component rendering. Cover at minimum:
+
+1. **`syncSpacer` sets spacer height** to `scrollbackLines * cellHeightPx`, and
+   is a no-op when `spacerEl` is null or the terminal is absent.
+2. **`refreshFollow` sets follow true at bottom, false when scrolled up**, and
+   calls `onUnseenOutput(false)` only when at bottom.
+3. **`applyOutput` while following** scrolls the terminal to bottom and the
+   wrapper to bottom; **while not following** it calls `onUnseenOutput(true)`
+   and does not scroll.
+4. **`onInteractionScroll` is suppressed while `setSyncingScroll(true)`** — the
+   re-entrancy guard that stops the two scrollers fighting.
+5. **`onTermScroll` is suppressed while syncing or while the wrapper drove the
+   scroll** — proving `wrapperDroveScroll` is honoured internally.
+
+Focused red command, which must fail before any production change:
+
+```bash
+npm run web:test -- --run src/shared/lib/terminalScrollSync.test.ts
+```
+
+Record the real failure output, then implement, then record it passing.
+
+## Edit instructions
+
+**1. Create `shared/lib/terminalScrollSync.ts`.**
+
+Mirror `terminalRefit.ts`: export a deps type, a controller type, and
+`createTerminalScrollSync(deps)`. Deps:
+
+- `interactionEl: HTMLElement`
+- `spacerEl: HTMLElement | null`
+- `getTerminal: () => Terminal | undefined` — never capture `termRef.current`
+  eagerly; the terminal is assigned at `:1011`, after this factory would run
+- `onUnseenOutput: (unseen: boolean) => void`
+
+Returned surface: the 6 public functions above, plus `setFollowLive(v: boolean)`
+and `setSyncingScroll(v: boolean)`. `followLive`, `syncingScroll` and
+`wrapperDroveScroll` become private module state initialised to `true`, `false`,
+`false` respectively, matching `:445,:459,:460`.
+
+Move the bodies of the 11 functions verbatim, substituting `termRef.current` →
+`getTerminal()` and `setHasUnseenOutput(x)` → `onUnseenOutput(x)`. Do not
+rewrite the maths.
+
+**2. Wire it in `TaskTerminal.tsx`.**
+
+Construct it where the region used to begin, after `interactionEl`/`spacerEl`
+are known. Delete `:644-740` (keeping `touchDistance` at `:641-642`) and the
+three flag declarations at `:445,:459,:460`.
+
+**Rewrite these call sites** (the complete list):
+
+| line | from | to |
+| --- | --- | --- |
+| 757 | `followLive = true;` | `scrollSync.setFollowLive(true);` |
+| 759 | `syncingScroll = true;` | `scrollSync.setSyncingScroll(true);` |
+| 761 | `scrollInteractionToBottom();` | `scrollSync.scrollInteractionToBottom();` |
+| 762 | `syncingScroll = false;` | `scrollSync.setSyncingScroll(false);` |
+| 763 | `refreshFollow();` | `scrollSync.refreshFollow();` |
+| 1014 | `syncSpacer();` | `scrollSync.syncSpacer();` |
+| 1015 | `refreshFollow();` | `scrollSync.refreshFollow();` |
+| 1017 | `onTermScroll` | `scrollSync.onTermScroll` |
+| 1018 | `onInteractionScroll` | `scrollSync.onInteractionScroll` |
+| 1036 | `applyOutput();` | `scrollSync.applyOutput();` |
+| 1051 | `followLive = true;` | `scrollSync.setFollowLive(true);` |
+| 1053 | `syncingScroll = true;` | `scrollSync.setSyncingScroll(true);` |
+| 1055 | `syncSpacer();` | `scrollSync.syncSpacer();` |
+| 1057 | `scrollInteractionToBottom();` | `scrollSync.scrollInteractionToBottom();` |
+| 1058 | `syncingScroll = false;` | `scrollSync.setSyncingScroll(false);` |
+| 1059 | `refreshFollow();` | `scrollSync.refreshFollow();` |
+| 1104 | `onInteractionScroll` | `scrollSync.onInteractionScroll` |
+
+Line numbers shift as you edit — match on the surrounding code, not on the
+number alone.
+
+## Verification commands
+
+```bash
+npm run web:test -- --run src/shared/lib/terminalScrollSync.test.ts   # RED then GREEN
+npm run web:test -- --run
+npm run web:check
+npm run web:lint
+npm run web:sg
+npm run web:build:check
+npm run web:smoke -- --project=mobile-webkit -g "terminal"
+```
+
+Run from the repository root.
+
+## Acceptance criteria
+
+- The new unit test failed before the production change and passes after, with
+  real exit codes and assertion text for both phases.
+- Full suite: **380 + N** passing (N = new tests), 0 failing, and
+  `TaskTerminal.test.tsx` **unmodified**.
+- `web:check`, `web:lint`, `web:sg`, `web:build:check` all exit 0. `web:lint`
+  passing matters specially: it proves `shared/` did not gain a `features/`
+  import.
+- Terminal e2e passes, including single-socket cardinality.
+- `git diff --stat` lists exactly three paths.
+- `grep -c 'followLive\|syncingScroll\|wrapperDroveScroll' TaskTerminal.tsx`
+  returns **0** — the flags moved, they were not duplicated. State the number.
+- `touchDistance` still exists in `TaskTerminal.tsx` and gestures still compile.
+
+## Stop conditions
+
+- The unit test passes before the module exists — the test is not testing what
+  it claims. Stop and report.
+- Any existing test needs modification. Report which and why; do not edit it.
+  (`TaskTerminal.test.tsx` asserts source text of several handlers — if a moved
+  function is named in one of those regexes, that is exactly the conflict to
+  report rather than silently resolve.)
+- The extraction appears to need a 7th inbound dependency beyond the six listed
+  — the region boundary is wrong. Stop and report the symbol.
+- Terminal e2e fails, especially socket cardinality or scroll behaviour — stop
+  immediately, do not adjust the test.
+- `spacerEl` turns out to be non-nullable, or `interactionEl` nullable, contrary
+  to `:431` — stop and report.
+- The patch exceeds roughly 350 changed lines.

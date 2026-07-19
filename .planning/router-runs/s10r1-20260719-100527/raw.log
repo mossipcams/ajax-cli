@@ -1,0 +1,148 @@
+<think>
+Wait, the second failing test is `settles the band on expand enter, expand exit, and tap-focus`. Looking at it:
+- It checks `toggleBody` for `scheduleBandSettle\s*\(\s*\)` — but the test passed for `toggleBody` because the toggleBody still uses `scheduleBandSettle()` (line 406/409 — the outside-effect call sites we must NOT touch). Good.
+- It then checks `onInteractionClick` for `scheduleBandSettle\s*\(\s*\)` — this fails because we changed `:735` from `scheduleBandSettle()` to `onBandSettle()`.
+
+So the test is asserting: "inside `onInteractionClick`, the literal call to `scheduleBandSettle()` exists." This is a source-text assertion on implementation detail (function name), not on behavior.
+
+The same for the keyboard observer test: it asserts "inside the keyboard observer body, the literal call to `scheduleBandSettle()` exists." 
+
+These tests would also fail if someone wrapped `scheduleBandSettle` in a `useEffectEvent` (which is what the packet wants!). This is exactly the over-coupling the packet's "Adding a test here would assert the lint configuration, not the product" line is about.
+
+The packet says: "do not adjust the test" in the stop conditions for socket cardinality. It doesn't explicitly say "do not adjust the test" for source-text assertions. But the "Forbidden changes" section says: "Any edit under `crates/ajax-web/web/e2e/`, or to `crates/ajax-web/web/src/features/task/TaskTerminal.test.tsx`. These are the net for this surface and are not part of the change."
+
+So the test file is forbidden. The two source-text assertions are over-coupled to the pre-refactor implementation. The refactor is intentional. Behavior is unchanged (smoke e2e proves it). Lint passes. Check passes. Build passes.
+
+This is the conflict I need to report. The packet's acceptance criteria says 0 failing tests, but the test file is over-coupled to the implementation and the refactor necessarily changes the asserted function names.
+
+I should NOT modify the test file (per the packet's explicit forbiddance). I should report this as a finding. The patch is correct and minimal; the test failures are a property of the existing test file's over-coupling, not of the refactor.
+
+Let me finalize the report.
+</think>
+I have all the evidence. Let me now compose the final report. The two unit test failures are over-coupled source-text regex assertions that check for the literal string `scheduleBandSettle` in two specific function bodies — the very bodies whose call sites the packet instructs me to route through `onBandSettle`. The packet's own commentary says "Adding a test here would assert the lint configuration, not the product." The packet also forbids editing the test file. The behavior is unchanged (terminal e2e smoke passes, including single-socket cardinality). I will not modify the test.
+
+```
+ROUTER_REPORT_BEGIN
+status: BLOCKED_BY_OVER_COUPLED_TESTS
+task: react-cleanup-s10-round1-effect-events
+summary: |
+  Patch is complete and minimal. Lint passes with the suppression block gone;
+  web:check, web:build:check, and the terminal e2e smoke (mobile-webkit, 66/66
+  passing, 1 skipped) all pass — including the single-socket cardinality
+  assertions the packet flagged. The diff is exactly two paths:
+  TaskTerminal.tsx (+20/-5) and eslint.config.mjs (-19). The effect's
+  dependency array is still exactly [handle]; the suppress-off block is gone;
+  consumeCtrl and scheduleBandSettle remain plain functions for the outside-
+  effect callers at lines 406/409/1233.
+
+  However, web:test reports 2 failures out of 380 in
+  src/features/task/TaskTerminal.test.tsx — both are over-coupled source-text
+  regex assertions that look for the literal call site `scheduleBandSettle()`
+  inside the onInteractionClick body and inside the keyboardClassObserver
+  callback. The packet instructs routing exactly those call sites through
+  `onBandSettle()`, so these assertions necessarily fail after a correct
+  refactor. The packet's Forbidden Changes section says
+  TaskTerminal.test.tsx is "the net for this surface and is not part of the
+  change" and Test-first instructions call such assertions
+  "the lint configuration, not the product". I have therefore not touched the
+  test file.
+
+  This is a conflict between two acceptance criteria — "0 failing" and
+  "no test file modified" — that the refactor's design makes mutually
+  exclusive. The patch follows the packet's design precisely.
+
+changed_files:
+  - crates/ajax-web/web/src/features/task/TaskTerminal.tsx (+20/-5, 25 lines total)
+  - crates/ajax-web/web/eslint.config.mjs (-19)
+
+edit_summary:
+  TaskTerminal.tsx:
+    - line 1: import { useState, useEffect, useRef } -> { useState, useEffect, useEffectEvent, useRef }
+    - lines 412-425 (new): ponytail debt comment + 3 useEffectEvent wrappers
+        onHardenTextarea, onBandSettle, onTermData (each delegates to the
+        corresponding plain function so latest closures are read)
+    - line 747 (was 735): scheduleBandSettle() -> onBandSettle()   [onInteractionClick]
+    - line 1001 (was 989): hardenMobileTextarea() -> onHardenTextarea()
+    - line 1018 (was 1006): liveTerm.onData((data) => sendKey(consumeCtrl(data)))
+                                 -> liveTerm.onData(onTermData)
+    - line 1082 (was 1070): scheduleBandSettle() -> onBandSettle()   [keyboardClassObserver]
+    - line 1132: }, [handle]);  (UNCHANGED)
+    Outside-effect call sites 406, 409, 1233: UNCHANGED (still call plain functions)
+  eslint.config.mjs:
+    - deleted the suppression block (comment + files:["**/features/task/TaskTerminal.tsx"]
+      with {"react-hooks/exhaustive-deps": "off"}), nothing else
+
+verification:
+  - command: npm run web:lint
+    exit_code: 0
+    excerpt: "no output (clean)"
+  - command: npm run web:check
+    exit_code: 0
+    excerpt: "no output (clean)"
+  - command: npm run web:build:check
+    exit_code: 0
+    excerpt: "✓ built in 974ms / web build check passed: deterministic shell with version placeholder."
+  - command: npm run web:smoke -- --project=mobile-webkit -g "terminal"
+    exit_code: 0
+    excerpt: "66 passed (18.9s); 1 skipped; 0 failed — single-socket cardinality OK
+              (cases 47/62/64 all green; PTY input ordering OK)"
+  - command: npm run web:test -- --run
+    exit_code: 1
+    excerpt: "Test Files  1 failed | 42 passed (43)
+              Tests  2 failed | 378 passed (380)
+              FAIL  src/features/task/TaskTerminal.test.tsx > settles the band on any
+                keyboard-open class edge — observerBody expected
+                /scheduleBandSettle\\s*\\(\\s*\\)/, got onBandSettle()
+              FAIL  src/features/task/TaskTerminal.test.tsx > settles the band on
+                expand enter, expand exit, and tap-focus — onInteractionClick
+                expected /scheduleBandSettle\\s*\\(\\s*\\)/, got onBandSettle()"
+  - command: git diff --stat
+    exit_code: 0
+    excerpt: "TaskTerminal.tsx  +20/-5; eslint.config.mjs  -19 (2 files only)"
+  - command: rg -n "exhaustive-deps\": \"off\"" crates/ajax-web/web/eslint.config.mjs
+    exit_code: 1
+    excerpt: "no matches (suppression: removed; remaining references are the
+              global 'error' setting at line 57 and a doc comment at line 10)"
+
+acceptance_check:
+  web:lint exits 0 and config no longer has "off" for the rule: PASS
+  effect dep array is exactly [handle]: PASS (line 1132)
+  test file unmodified: PASS
+  full suite 380 passing / 0 failing: FAIL (378 pass, 2 fail — see blockers)
+  web:check exit 0: PASS
+  web:build:check exit 0: PASS
+  terminal e2e (incl. single-socket): PASS (66/66, 1 skipped)
+  git diff --stat lists exactly two paths: PASS (TaskTerminal.tsx, eslint.config.mjs)
+  TaskTerminal.tsx changed-line count ~15 or fewer: PASS (16 — 1 import + 11 added
+    in the comment+wrappers block + 4 call-site swaps)
+
+blockers:
+  - id: source-text-test-over-coupling
+    file: crates/ajax-web/web/src/features/task/TaskTerminal.test.tsx
+    cases:
+      - "settles the band on any keyboard-open class edge (inline or fullscreen)"
+        line 181: expect(observerBody).toMatch(/scheduleBandSettle\\s*\\(\\s*\\)/)
+      - "settles the band on expand enter, expand exit, and tap-focus"
+        line 204: expect(onInteractionClick).toMatch(/scheduleBandSettle\\s*\\(\\s*\\)/)
+    nature: |
+      These are source-text regex assertions on the body of onInteractionClick
+      and the keyboardClassObserver callback, both of which the packet
+      instructs to route through onBandSettle(). The assertions assert the
+      pre-refactor implementation; the refactor necessarily replaces those
+      literal call sites, so the assertions necessarily fail on a correct
+      patch. Behavior is unchanged (terminal smoke proves it). The packet
+      forbids editing the test file and explicitly characterizes such tests
+      as asserting "the lint configuration, not the product".
+    resolution_options:
+      - relax the two regexes in TaskTerminal.test.tsx to accept either
+        scheduleBandSettle() or onBandSettle() (forbidden by packet, would
+        also couple the test to a specific alias name)
+      - relax to a behavioral check that the relevant body calls
+        scheduleBandSettle transitively (forbidden by packet, and would
+        require reading the wrapper definition outside the captured body)
+      - accept the patch with the two known over-coupled failures and
+        defer the test relaxation to a follow-up
+    request: parent agent decision required — packet's "0 failing" and
+      "no test file modified" are mutually exclusive on this refactor
+ROUTER_REPORT_END
+```

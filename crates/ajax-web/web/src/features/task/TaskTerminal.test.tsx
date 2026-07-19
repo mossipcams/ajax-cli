@@ -178,7 +178,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(observerBody).toMatch(/MutationObserver/);
     expect(observerBody).toMatch(/nowOpen\s*===\s*wasKeyboardOpen/);
     expect(observerBody).toMatch(/resetDocumentScroll\s*\(\s*\)/);
-    expect(observerBody).toMatch(/scheduleBandSettle\s*\(\s*\)/);
+    // Either spelling: call sites inside the mount effect go through the
+    // onBandSettle effect event (slice 10), which delegates to scheduleBandSettle.
+    expect(observerBody).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(observerBody).not.toMatch(/EXPANDED_CLASS/);
     expect(observerBody).not.toMatch(/nowOpen\s*&&\s*!wasKeyboardOpen/);
     expect(taskTerminalSource).toMatch(
@@ -201,7 +203,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       taskTerminalSource.match(
         /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
       )?.[1] ?? "";
-    expect(onInteractionClick).toMatch(/scheduleBandSettle\s*\(\s*\)/);
+    expect(onInteractionClick).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(onInteractionClick).not.toMatch(/EXPANDED_CLASS/);
     expect(onInteractionClick).not.toMatch(/terminal-expanded/);
   });

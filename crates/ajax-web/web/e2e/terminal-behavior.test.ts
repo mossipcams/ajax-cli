@@ -2039,6 +2039,40 @@ test("task route exposes a stable terminal interaction surface locator", async (
   await expect(terminalInteractionSurface(page)).toBeVisible();
 });
 
+// Scrollback's *content* half. The sibling test below asserts only the New
+// output badge, which refreshFollow drives — it passes even if the terminal
+// viewport never moves, so nothing here covered the content actually scrolling.
+//
+// Caveat, recorded honestly: this does NOT reproduce the slice 10 round 2a
+// scrollback regression. It drives scroll by assigning scrollTop, which is not
+// how a user scrolls; a real touch drag goes through the browser's native
+// scroll pipeline, and synthetic touch events do not trigger that. Reproducing
+// that regression needs the iOS simulator or a device. This test is still worth
+// keeping — it closes a real assertion gap — but it is not the guard that would
+// have caught round 2a.
+test("scrolling the interaction wrapper moves the terminal viewport", async ({ page }) => {
+  await openTaskTerminal(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+
+  const viewportY = () =>
+    page.evaluate(() => {
+      const host = document.querySelector(
+        "[data-testid='task-terminal-panel'] .terminal-host",
+      ) as (HTMLElement & { __xterm?: { buffer: { active: { viewportY: number } } } }) | null;
+      return host?.__xterm?.buffer.active.viewportY ?? -1;
+    });
+
+  const atBottom = await viewportY();
+  expect(atBottom).toBeGreaterThan(0);
+
+  await scrollInteractionSurfaceAway(page);
+
+  // The wrapper drove the scroll, so syncTermFromWrapper must have moved the
+  // terminal's own viewport up. Without this the user sees the New output badge
+  // appear while the text stays put.
+  await expect.poll(async () => await viewportY()).toBeLessThan(atBottom);
+});
+
 test("reading scrollback shows New output and restoring live output sends no PTY input", async ({
   page,
 }) => {

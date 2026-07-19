@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -19,6 +19,7 @@ import {
   computeTerminalGeometry,
 } from "@/shared/lib/terminalGeometry";
 import { createRefitController } from "@/shared/lib/terminalRefit";
+import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 
 interface Props {
   handle: string;
@@ -409,6 +410,21 @@ export default function TaskTerminal({ handle }: Props) {
     scheduleBandSettle();
   };
 
+  // ponytail: this useEffect is the entire terminal mount lifecycle (~700
+  // lines: socket setup/teardown, gestures, clipboard, fullscreen, geometry,
+  // refit, status). The effect events below make its [handle] dep honest
+  // rather than suppressed; splitting the body into a disposable controller
+  // with [handle, hostElements] deps is round 2's work, not this change.
+  const onHardenTextarea = useEffectEvent(() => {
+    hardenMobileTextarea();
+  });
+  const onBandSettle = useEffectEvent(() => {
+    scheduleBandSettle();
+  });
+  const onTermData = useEffectEvent((data: string) => {
+    sendKey(consumeCtrl(data));
+  });
+
   useEffect(() => {
     const hostEl = hostElRef.current;
     const interactionEl = interactionElRef.current;
@@ -427,7 +443,6 @@ export default function TaskTerminal({ handle }: Props) {
     let fitFrame = 0;
     let pendingPostKeyboardResync = false;
     let disposed = false;
-    let followLive = true;
     let pinchStartDistance = 0;
     let pinchBaseFontSize = DEFAULT_FONT_SIZE;
     let pinchEngaged = false;
@@ -441,8 +456,6 @@ export default function TaskTerminal({ handle }: Props) {
     let directionalArmed = false;
     let directionalArrow: string | undefined;
     let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
-    let syncingScroll = false;
-    let wrapperDroveScroll = false;
 
     const isKeyboardOpen = () => document.documentElement.classList.contains("keyboard-open");
 
@@ -626,102 +639,12 @@ export default function TaskTerminal({ handle }: Props) {
     const touchDistance = (touches: TouchList) =>
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 
-    const cellHeightPx = () => {
-      if (!termRef.current || !interactionEl || termRef.current.rows <= 0) return 18;
-      return Math.max(1, interactionEl.clientHeight / termRef.current.rows);
-    };
-
-    const scrollbackLines = () => {
-      if (!termRef.current) return 0;
-      return Math.max(0, termRef.current.buffer.active.length - termRef.current.rows);
-    };
-
-    const viewportTopLine = () => termRef.current?.buffer.active.viewportY ?? 0;
-
-    const syncSpacer = () => {
-      if (!termRef.current || !spacerEl || !interactionEl) return;
-      spacerEl.style.height = `${scrollbackLines() * cellHeightPx()}px`;
-    };
-
-    const scrollInteractionToBottom = () => {
-      if (!interactionEl) return;
-      interactionEl.scrollTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
-    };
-
-    const refreshFollow = () => {
-      if (!interactionEl) return;
-      const atBottom =
-        interactionEl.scrollHeight <= interactionEl.clientHeight + 1 ||
-        interactionEl.scrollTop + interactionEl.clientHeight >= interactionEl.scrollHeight - 1;
-      followLive = atBottom;
-      if (atBottom) setHasUnseenOutput(false);
-    };
-
-    const syncWrapperFromTerm = () => {
-      if (!termRef.current || !interactionEl) return;
-      const maxTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
-      const linesUpFromBottom = Math.max(0, scrollbackLines() - viewportTopLine());
-      const nextTop = Math.max(0, maxTop - linesUpFromBottom * cellHeightPx());
-      if (Math.abs(interactionEl.scrollTop - nextTop) <= 1) {
-        refreshFollow();
-        return;
-      }
-      syncingScroll = true;
-      interactionEl.scrollTop = nextTop;
-      syncingScroll = false;
-      refreshFollow();
-    };
-
-    const syncTermFromWrapper = () => {
-      if (!termRef.current || !interactionEl) return;
-      const maxTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
-      if (interactionEl.scrollTop < maxTop - 1) {
-        followLive = false;
-      }
-      const fromBottomPx = Math.max(0, maxTop - interactionEl.scrollTop);
-      const linesUpFromBottom = Math.floor(fromBottomPx / cellHeightPx());
-      const targetLine = Math.max(
-        0,
-        termRef.current.buffer.active.length - termRef.current.rows - linesUpFromBottom,
-      );
-      const clampedLine = Math.min(
-        targetLine,
-        Math.max(0, termRef.current.buffer.active.length - 1),
-      );
-      if (viewportTopLine() === clampedLine) {
-        refreshFollow();
-        return;
-      }
-      syncingScroll = true;
-      wrapperDroveScroll = true;
-      termRef.current.scrollToLine(clampedLine);
-      syncingScroll = false;
-      wrapperDroveScroll = false;
-      refreshFollow();
-    };
-
-    const applyOutput = () => {
-      syncSpacer();
-      if (followLive) {
-        syncingScroll = true;
-        termRef.current?.scrollToBottom();
-        scrollInteractionToBottom();
-        syncingScroll = false;
-        refreshFollow();
-      } else {
-        setHasUnseenOutput(true);
-      }
-    };
-
-    const onInteractionScroll = () => {
-      if (syncingScroll) return;
-      syncTermFromWrapper();
-    };
-
-    const onTermScroll = () => {
-      if (syncingScroll || wrapperDroveScroll) return;
-      syncWrapperFromTerm();
-    };
+    const scrollSync = createTerminalScrollSync({
+      interactionEl,
+      spacerEl,
+      getTerminal: () => termRef.current,
+      onUnseenOutput: setHasUnseenOutput,
+    });
 
     const onInteractionClick = (event: MouseEvent) => {
       const target = event.target;
@@ -732,20 +655,20 @@ export default function TaskTerminal({ handle }: Props) {
         textarea.focus({ preventScroll: true });
         // Tap opens (or keeps) the iOS keyboard; settle so inline and fullscreen
         // bands both track the animated visual viewport.
-        scheduleBandSettle();
+        onBandSettle();
         return;
       }
       termRef.current?.focus();
     };
 
     jumpToBottomRef.current = () => {
-      followLive = true;
+      scrollSync.setFollowLive(true);
       setHasUnseenOutput(false);
-      syncingScroll = true;
+      scrollSync.setSyncingScroll(true);
       termRef.current?.scrollToBottom();
-      scrollInteractionToBottom();
-      syncingScroll = false;
-      refreshFollow();
+      scrollSync.scrollInteractionToBottom();
+      scrollSync.setSyncingScroll(false);
+      scrollSync.refreshFollow();
     };
 
     const cancelLongPress = () => {
@@ -986,7 +909,7 @@ export default function TaskTerminal({ handle }: Props) {
     fitAddon = new FitAddon();
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
-    hardenMobileTextarea();
+    onHardenTextarea();
     syncHostToWrap();
     const viteDev =
       (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
@@ -996,14 +919,14 @@ export default function TaskTerminal({ handle }: Props) {
     termRef.current = liveTerm;
     selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
     fitLocal();
-    syncSpacer();
-    refreshFollow();
+    scrollSync.syncSpacer();
+    scrollSync.refreshFollow();
 
-    scrollDisposable = liveTerm.onScroll(onTermScroll);
-    interactionEl.addEventListener("scroll", onInteractionScroll, { passive: true });
+    scrollDisposable = liveTerm.onScroll(scrollSync.onTermScroll);
+    interactionEl.addEventListener("scroll", scrollSync.onInteractionScroll, { passive: true });
     interactionEl.addEventListener("click", onInteractionClick);
 
-    dataDisposable = liveTerm.onData((data) => sendKey(consumeCtrl(data)));
+    dataDisposable = liveTerm.onData(onTermData);
 
     interactionEl.addEventListener("touchstart", onTouchStart, { passive: false });
     interactionEl.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -1018,7 +941,7 @@ export default function TaskTerminal({ handle }: Props) {
       if (disposed) return;
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
-          termRef.current?.write(text, applyOutput);
+          termRef.current?.write(text, scrollSync.applyOutput);
         },
         onServerError: (message) => {
           setStatusDetail(message);
@@ -1033,15 +956,15 @@ export default function TaskTerminal({ handle }: Props) {
           setStatusDetail("");
           resetDedupe();
           if (isReconnect && seeded && termRef.current) {
-            followLive = true;
+            scrollSync.setFollowLive(true);
             setHasUnseenOutput(false);
-            syncingScroll = true;
+            scrollSync.setSyncingScroll(true);
             termRef.current.reset();
-            syncSpacer();
+            scrollSync.syncSpacer();
             termRef.current.scrollToBottom();
-            scrollInteractionToBottom();
-            syncingScroll = false;
-            refreshFollow();
+            scrollSync.scrollInteractionToBottom();
+            scrollSync.setSyncingScroll(false);
+            scrollSync.refreshFollow();
           }
           scheduleImmediate();
         },
@@ -1067,7 +990,7 @@ export default function TaskTerminal({ handle }: Props) {
       if (nowOpen === wasKeyboardOpen) return;
       wasKeyboardOpen = nowOpen;
       resetDocumentScroll();
-      scheduleBandSettle();
+      onBandSettle();
     });
     keyboardClassObserver.observe(document.documentElement, {
       attributes: true,
@@ -1086,7 +1009,7 @@ export default function TaskTerminal({ handle }: Props) {
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();
       if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
-      interactionEl.removeEventListener("scroll", onInteractionScroll);
+      interactionEl.removeEventListener("scroll", scrollSync.onInteractionScroll);
       interactionEl.removeEventListener("click", onInteractionClick);
       interactionEl.removeEventListener("touchstart", onTouchStart);
       interactionEl.removeEventListener("touchmove", onTouchMove);

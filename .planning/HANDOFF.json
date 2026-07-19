@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-07-19T18:00:00.000Z",
+  "phase": "10",
+  "phase_name": "terminal-controller-extraction",
+  "status": "round-2a-relanded",
+  "next_action": "Optional 2b/2c, or stop after 2a per plan recommendation. Device pass accepted by Matt for 2a.",
+  "context_notes": "2a re-landed after Matt confirmed physical-device scroll OK with extraction live. Gates: vitest 387, terminal e2e 67/1 skipped, ajax-web 159."
+}

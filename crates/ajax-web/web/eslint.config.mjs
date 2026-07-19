@@ -295,23 +295,4 @@ export default tseslint.config(
       "testing-library/no-node-access": "off",
     },
   },
-  {
-    // REMOVE IN SLICE 10 (terminal controller extraction).
-    //
-    // TaskTerminal.tsx:1110 closes a ~700-line mount effect keyed on [handle].
-    // It calls consumeCtrl, hardenMobileTextarea, and scheduleBandSettle, which
-    // are plain component-body functions recreated every render. Adding them to
-    // the dep array would re-run the whole terminal teardown/setup on every
-    // render and break single-socket cardinality — the rule is right that the
-    // deps are missing, and wrong that adding them is the fix.
-    //
-    // The real fix is moving that imperative ownership behind a disposable
-    // controller so the effect depends only on [handle, hostElements]. That is
-    // slice 10. Delete this block in the same change; it is the last
-    // react-hooks suppression in the tree.
-    files: ["**/features/task/TaskTerminal.tsx"],
-    rules: {
-      "react-hooks/exhaustive-deps": "off",
-    },
-  },
 );
