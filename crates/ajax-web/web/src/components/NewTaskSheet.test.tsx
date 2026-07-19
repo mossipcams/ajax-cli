@@ -156,6 +156,49 @@ describe("NewTaskSheet", () => {
     expect(await findByText("Repo busy")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("closes when Escape is pressed on the dialog", () => {
+    const onClose = vi.fn();
+    const { getByTestId } = render(<NewTaskSheet repos={repos} onClose={onClose} />);
+    fireEvent.keyDown(getByTestId("new-task-sheet"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes on a backdrop click but not on a click inside the card", () => {
+    const onClose = vi.fn();
+    const { container, getByTestId } = render(
+      <NewTaskSheet repos={repos} onClose={onClose} />,
+    );
+    const card = container.querySelector(".sheet-card")!;
+    expect(card).not.toBeNull();
+    fireEvent.click(card);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(getByTestId("new-task-sheet"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels the dialog with a title that actually exists", () => {
+    const { getByTestId } = render(<NewTaskSheet repos={repos} />);
+    const dialog = getByTestId("new-task-sheet");
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const labelledBy = dialog.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    // Radix generates the id; the point is that it resolves, not what it is.
+    expect(document.getElementById(labelledBy!)?.textContent).toBe("New task");
+  });
+
+  it("restores focus to the opener when the sheet unmounts", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const { unmount } = render(<NewTaskSheet repos={repos} />);
+    unmount();
+
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
 });
 
 describe("NewTaskSheet remembered defaults", () => {

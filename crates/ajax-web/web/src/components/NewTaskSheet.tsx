@@ -5,6 +5,7 @@ import { startTaskHandle } from "../taskSlug";
 import { useSheetDrag } from "../react/useSheetDrag";
 import FullscreenLayer from "./FullscreenLayer";
 import { Button } from "./ui/button";
+import { Sheet, SheetContent, SheetTitle } from "./ui/sheet";
 
 interface Props {
   repos: RepoSummary[];
@@ -62,8 +63,17 @@ export default function NewTaskSheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<HTMLDivElement>(null);
 
+  // Focus restore is ours, not Radix's: modal DialogContent always preventDefaults
+  // onCloseAutoFocus and focuses its triggerRef, and this sheet has no Dialog.Trigger,
+  // so FocusScope would restore nothing. Radix still supplies the focus trap and
+  // background aria-hidden. Focus lands on the container, never the repo <select> —
+  // focusing a select pops the iOS picker the moment the sheet opens.
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     sheetRef.current?.focus();
+    return () => {
+      opener?.focus();
+    };
   }, []);
 
   useSheetDrag(grabRef, {
@@ -124,29 +134,47 @@ export default function NewTaskSheet({
 
   return (
     <FullscreenLayer zIndex={50}>
-      <div
-        id="new-task-sheet"
-        data-testid="new-task-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="new-task-title"
-        tabIndex={-1}
-        ref={sheetRef}
-        onClick={handleBackdropClick}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose?.();
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose?.();
         }}
       >
-        <form
-          className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}`}
-          autoComplete="off"
-          onSubmit={submit}
-          style={{ transform: `translateY(${dragOffset}px)` }}
+        <SheetContent
+          asChild
+          aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+          }}
         >
-          <div className="sheet-grab" aria-hidden="true" ref={grabRef}>
-            <span className="sheet-grabber" />
-          </div>
-          <h2 id="new-task-title">New task</h2>
+          {/* Backdrop dismissal only. This element IS the Radix content node, so a
+              backdrop tap is *inside* it and onPointerDownOutside never fires; the
+              target===currentTarget guard stays ours. Escape is Radix's, so there is
+              deliberately no keyboard handler here. */}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
+          <div
+            id="new-task-sheet"
+            data-testid="new-task-sheet"
+            role="dialog"
+            aria-modal="true"
+            tabIndex={-1}
+            ref={sheetRef}
+            onClick={handleBackdropClick}
+          >
+            <form
+              className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}`}
+              autoComplete="off"
+              onSubmit={submit}
+              style={{ transform: `translateY(${dragOffset}px)` }}
+            >
+              <div className="sheet-grab" aria-hidden="true" ref={grabRef}>
+                <span className="sheet-grabber" />
+              </div>
+              {/* No id here: Slot lets child props win, so a hand-written id would
+                  override Radix's titleId and leave aria-labelledby dangling. */}
+              <SheetTitle asChild>
+                <h2>New task</h2>
+              </SheetTitle>
 
           <label htmlFor="new-task-repo">Repository</label>
           {repos.length ? (
@@ -201,9 +229,11 @@ export default function NewTaskSheet({
             <Button type="submit" variant="default" disabled={submitting}>
               Start
             </Button>
-          </div>
-        </form>
-      </div>
+            </div>
+          </form>
+        </div>
+        </SheetContent>
+      </Sheet>
     </FullscreenLayer>
   );
 }

@@ -1,0 +1,176 @@
+You are a bounded implementation worker for a parent agent.
+Current directory is the task worktree.
+Never commit, push, merge, rebase, create branches, or change branches.
+
+Complete exactly one bounded task from the packet below.
+Edit only Allowed files. Do not touch Forbidden changes. Follow Code anchors.
+Run the failing test first only when TEST_FIRST is REQUIRED.
+Edit production code only when PRODUCTION_EDIT is REQUIRED.
+Make the smallest allowed edit needed.
+Run Verification commands.
+Stop if any Stop condition is hit, or if the patch would exceed roughly 400 changed lines.
+No drive-by cleanup, renames, formatting sweeps, or broad refactors.
+Do not edit production code.
+
+Return exactly the router's DELEGATE_REPORT schema between these marker lines:
+ROUTER_REPORT_BEGIN
+<DELEGATE_REPORT YAML>
+ROUTER_REPORT_END
+Include every command's actual exit code and a short output excerpt. Do not
+summarize missing evidence.
+
+# Packet — Slice 7 Round 0: dismiss characterization
+
+```yaml
+PACKET_STATUS: READY
+TASK_KIND: tests-only
+TEST_FIRST: NOT_APPLICABLE
+PRODUCTION_EDIT: FORBIDDEN
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+```
+
+## Goal
+
+Add two characterization tests to `NewTaskSheet.test.tsx` that pin the sheet's
+two undocumented dismiss paths — Escape and backdrop click — against the
+current hand-rolled dialog. Both must pass immediately; no production code
+changes. These lock the baseline before a later slice replaces the dialog
+internals.
+
+## Allowed files
+
+- `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx`
+
+## Forbidden changes
+
+- Any edit to `crates/ajax-web/web/src/components/NewTaskSheet.tsx`.
+- Any edit to `crates/ajax-web/web/src/styles.css`.
+- Any other file in the repository, including `package.json` and lockfiles.
+- Editing, renaming, reordering, deleting, or weakening any of the 16 existing
+  `it(...)` blocks. The change is strictly additive.
+- Adding imports beyond what the file already imports.
+- Any commit, branch, push, rebase, or branch switch.
+
+## Context evidence
+
+**Desired behavior — Escape dismiss.**
+`NewTaskSheet.tsx:136-138`, `onKeyDown` on the dialog element:
+
+```tsx
+onKeyDown={(event) => {
+  if (event.key === "Escape") onClose?.();
+}}
+```
+
+The handler is bound to the element carrying `data-testid="new-task-sheet"`
+(`NewTaskSheet.tsx:128-139`). React's synthetic `keydown` bubbles, so firing on
+that element or any descendant reaches it.
+
+**Desired behavior — backdrop dismiss with an inside-click guard.**
+`NewTaskSheet.tsx:121-123`:
+
+```tsx
+function handleBackdropClick(event: MouseEvent<HTMLDivElement>) {
+  if (event.target === event.currentTarget) onClose?.();
+}
+```
+
+Bound as `onClick` on the same dialog element (`NewTaskSheet.tsx:135`). The
+`target === currentTarget` guard is the whole behavior: a click landing on the
+dialog element itself dismisses; a click landing on the `<form class="sheet-card">`
+(`NewTaskSheet.tsx:140-145`) or anything inside it bubbles up with a different
+`target` and must NOT dismiss.
+
+**Existing test patterns to reuse.** `NewTaskSheet.test.tsx`:
+- imports, line 1-8: `describe, it, expect, vi, afterEach` from `vitest`;
+  `render, fireEvent` from `@testing-library/react`. All needed symbols are
+  already imported — add none.
+- fixture, line 13: `const repos = [{ name: "web" }, { name: "api" }];`
+- cleanup, line 15: `afterEach(() => vi.restoreAllMocks());`
+- the `onClose` + `vi.fn()` + `container.querySelector` idiom, lines 77-93
+  ("dismisses when the grabber is dragged down past the threshold") — closest
+  analog; reuse its shape.
+- `getByTestId` idiom, lines 18-21.
+
+**Boundaries.** Pure component-level vitest/jsdom. No API, no network, no
+localStorage, no module boundary crossed. `vi.spyOn(api, ...)` is unnecessary
+because neither dismiss path calls `startTask`.
+
+## Code anchors
+
+- Append point: `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx:196`
+  — immediately after the closing `});` of the last test
+  ("remembers the agent and repo after a successful start"), and immediately
+  before the file's final `});` on line 197 that closes
+  `describe("NewTaskSheet", ...)`.
+- Behavior under test (read-only): `NewTaskSheet.tsx:121-123`, `:135-138`.
+
+## Test-first instructions
+
+`NOT_APPLICABLE: characterization of already-shipped behavior. Both tests must
+pass on the first run against unmodified production code. A red phase would
+indicate the test is wrong, not the implementation.`
+
+## Edit instructions
+
+`PRODUCTION_EDIT: FORBIDDEN` — do not modify `NewTaskSheet.tsx` or any other
+source file. The entire change is two new `it(...)` blocks inserted at the
+append point above.
+
+Test 1 — name it exactly:
+`"closes when Escape is pressed on the dialog"`
+
+- Render `<NewTaskSheet repos={repos} onClose={onClose} />` with
+  `const onClose = vi.fn();`.
+- Fire a keyDown with `key: "Escape"` on the element returned by
+  `getByTestId("new-task-sheet")`.
+- Assert `onClose` was called exactly once (`toHaveBeenCalledTimes(1)`).
+
+Test 2 — name it exactly:
+`"closes on a backdrop click but not on a click inside the card"`
+
+- Render with a fresh `const onClose = vi.fn();`.
+- First assert the negative: fire a click on the `.sheet-card` element
+  (`container.querySelector(".sheet-card")!`) and assert `onClose` has **not**
+  been called. Assert the element is non-null before clicking, matching the
+  `expect(grab).not.toBeNull()` guard at line 81.
+- Then fire a click on the dialog element itself
+  (`getByTestId("new-task-sheet")`) and assert `onClose` was called exactly
+  once — proving both the dismiss and that the inside-click did not contribute.
+
+Both tests: use `fireEvent` (already imported), destructured queries from
+`render`, and no `async`/`await` — neither path is asynchronous.
+
+## Verification commands
+
+```bash
+npm run web:test -- --run src/components/NewTaskSheet.test.tsx
+npm run web:check
+```
+
+Run from `crates/ajax-web/web`.
+
+## Acceptance criteria
+
+- `NewTaskSheet.test.tsx` reports **18** passing tests, 0 failing, 0 skipped
+  (16 pre-existing + 2 new).
+- Both new tests pass on their first execution with no production change.
+- `npm run web:check` exits 0.
+- `git status --porcelain` lists exactly one modified path:
+  `crates/ajax-web/web/src/components/NewTaskSheet.test.tsx`.
+- The diff is purely additive within the `describe` block: no existing line
+  removed or reordered, no import added.
+
+## Stop conditions
+
+- `NewTaskSheet.tsx:121-123` or `:135-138` does not match the excerpts above —
+  the behavior moved; stop and report.
+- Either new test fails against unmodified production code — stop and report
+  the actual behavior rather than editing production code to suit the test.
+- Making a test pass appears to require touching any file outside Allowed files,
+  or adding an import — stop and report.
+- The last test in the file is not the one at line 186-196, or the file does not
+  end with `});` closing the `describe` at line 197 — the anchor is stale; stop.
+- Any pre-existing test starts failing.
+- The patch exceeds roughly 40 changed lines.
