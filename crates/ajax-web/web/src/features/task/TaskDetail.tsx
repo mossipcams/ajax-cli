@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { formatDuration, relativeTime, statusMeta } from "@/shared/lib/state";
 import { copyText } from "@/shared/lib/clipboard";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
-import TaskTerminal from "./TaskTerminal";
 import TestInDevPanel from "./TestInDevPanel";
+
+const TaskTerminal = lazy(() => import("./TaskTerminal"));
 
 interface Props {
   detail: BrowserTaskDetail;
@@ -77,7 +78,9 @@ export default function TaskDetail({
       </section>
 
       <div>
-        <TaskTerminal handle={detail.qualified_handle} />
+        <Suspense fallback={null}>
+          <TaskTerminal handle={detail.qualified_handle} />
+        </Suspense>
       </div>
 
       {detail.repo === "ajax-cli" ? (

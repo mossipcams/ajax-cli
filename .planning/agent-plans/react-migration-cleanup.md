@@ -48,8 +48,8 @@ dev deploy → iPhone checklist → **wait for Matt** → PR.
 | 7 | Dialog/Sheet + NewTaskSheet | — | not started |
 | 8 | RadioGroup + remaining low-risk primitives | — | not started |
 | 9 | App composition cleanup (feature folders) | — | not started |
-| 10 | Terminal-controller extraction | — | not started |
-| 11 | Bundle / code-splitting investigation | — | not started |
+| 10 | Terminal-controller extraction | `react-cleanup-s10-terminal-controller.md` | done (r1+r2a) |
+| 11 | Bundle / code-splitting investigation | `react-cleanup-s11-bundle.md` | done — deferred `terminal.js` |
 | 12 | Remaining audit findings | — | not started |
 
 ## Slice ordering rationale
@@ -63,17 +63,14 @@ Ordering differs from a naive read of the request in one place, deliberately:
   files and changing their contents in the same slice makes every diff unreviewable.
   Boundaries are enforced by ESLint from slice 2; the physical moves come once
   the contents have stopped changing.
-- **Slice 11 is investigation-first.** See the risk below.
+- **Slice 11 implemented** the deferred `terminal.js` embed (not deferred).
 
 ## Known risks
 
-1. **Code splitting vs. the embed contract (slice 11).** `web-build-check.mjs`
-   and the Rust asset adapter both assume exactly one JS file with a fixed name.
-   Lazy-loading xterm is not a Vite config tweak — it needs deterministic chunk
-   names, an amended build check, an amended Rust adapter, and a new assertion
-   that every emitted asset is embedded and served. If the evidence does not
-   justify that, slice 11 records the measured bundle numbers and defers, rather
-   than forcing it.
+1. **Code splitting vs. the embed contract (slice 11) — resolved.** Embed is now
+   four assets (`index.html`, `app.js`, `app.css`, `terminal.js`). Do not use
+   `manualChunks` for TaskTerminal/@xterm: that pulled `api.ts` into the
+   deferred chunk. Natural dynamic import + `chunkFileNames` → `terminal.js`.
 2. **Strict Mode vs. terminal socket cardinality (slice 5).** `docs/react-migration-plan.md:300`
    records an explicit S5 decision *not* to enable Strict Mode because of
    double-effect socket opening. Slice 5 reverses that decision, so it must fix

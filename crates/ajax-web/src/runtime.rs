@@ -382,6 +382,7 @@ where
         .route("/index.html", get(axum_browser_shell::<C, B>))
         .route("/app.css", get(axum_app_css))
         .route("/app.js", get(axum_app_js))
+        .route("/terminal.js", get(axum_terminal_js))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
@@ -606,6 +607,10 @@ async fn axum_app_css() -> AxumResponse {
 
 async fn axum_app_js() -> AxumResponse {
     static_asset_response("/app.js")
+}
+
+async fn axum_terminal_js() -> AxumResponse {
+    static_asset_response("/terminal.js")
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1719,6 +1724,7 @@ mod tests {
             ("GET", "/"),
             ("GET", "/index.html"),
             ("GET", "/app.js"),
+            ("GET", "/terminal.js"),
             ("GET", "/api/health"),
             ("POST", "/api/session"),
         ] {

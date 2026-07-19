@@ -47,10 +47,13 @@ mod tests {
         // The build-time placeholder is replaced with the live version.
         assert!(shell.contains(app_version()));
         assert!(!shell.contains("__AJAX_APP_VERSION__"));
-        // One local module script and one local stylesheet.
+        // One local module script and one local stylesheet. terminal.js is
+        // fetched by the app via dynamic import — not listed in the shell.
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(shell.contains("type=\"module\""));
+        assert!(!shell.contains("src=\"/terminal.js\""));
+        assert!(!shell.contains("href=\"/terminal.js\""));
         // React mounts into this single node.
         assert!(shell.contains("id=\"app\""));
     }
@@ -148,11 +151,27 @@ mod tests {
     }
 
     #[test]
+    fn terminal_chunk_is_embedded_and_distinct_from_app() {
+        let app = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        let term = std::str::from_utf8(static_asset("/terminal.js").unwrap().body).unwrap();
+        assert!(!app.is_empty());
+        assert!(!term.is_empty());
+        assert_ne!(app, term);
+        // xterm lives in the deferred chunk, not the boot shell.
+        assert!(
+            term.contains("xterm") || term.contains("XTerm") || term.contains("FitAddon"),
+            "terminal.js should carry the xterm surface"
+        );
+    }
+
+    #[test]
     fn bundle_targets_the_same_origin_api_and_never_registers_a_worker() {
-        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
-        assert!(!script.is_empty());
-        // String literals survive minification — assert the same-origin API
-        // surface the client speaks to.
+        let app = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        let term = std::str::from_utf8(static_asset("/terminal.js").unwrap().body).unwrap();
+        assert!(!app.is_empty());
+        assert!(!term.is_empty());
+        // Boot graph owns the same-origin HTTP API surface (ActionBar, sheets).
+        // String literals survive minification.
         for endpoint in [
             "/api/cockpit",
             "/api/operations",
@@ -162,17 +181,25 @@ mod tests {
             "no-store",
         ] {
             assert!(
-                script.contains(endpoint),
-                "bundle missing API usage {endpoint}"
+                app.contains(endpoint),
+                "app.js missing API usage {endpoint}"
             );
         }
-        // Safari-first: never register a service worker, never use push.
-        assert!(!script.contains("serviceWorker"));
-        assert!(!script.contains("pushManager.subscribe"));
-        assert!(!script.contains("/api/push"));
-        // The legacy polling pane bridge was removed in favor of the live
-        // terminal websocket; its endpoints must not survive in the bundle.
-        assert!(!script.contains("/answer"));
-        assert!(!script.contains("/input"));
+        // xterm must stay deferred — not in the boot shell.
+        assert!(
+            !app.contains("FitAddon"),
+            "app.js must not embed the xterm FitAddon (belongs in terminal.js)"
+        );
+        // Safari-first: never register a service worker, never use push —
+        // scan both embedded scripts.
+        for script in [app, term] {
+            assert!(!script.contains("serviceWorker"));
+            assert!(!script.contains("pushManager.subscribe"));
+            assert!(!script.contains("/api/push"));
+            // The legacy polling pane bridge was removed in favor of the live
+            // terminal websocket; its endpoints must not survive in the bundle.
+            assert!(!script.contains("/answer"));
+            assert!(!script.contains("/input"));
+        }
     }
 }

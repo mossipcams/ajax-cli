@@ -556,7 +556,8 @@ substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
-the HTML shell, client JavaScript, and stylesheet from that directory.
+the HTML shell, the boot client JavaScript (`app.js`), the deferred terminal
+chunk (`terminal.js`), and the stylesheet from that directory.
 `ajax-web::runtime` owns HTTP transport wiring, local TLS setup, and shell asset
 delivery.
 `ajax-web::adapters::browser_session` owns browser-session token persistence,
@@ -694,8 +695,9 @@ best-effort and never derives task truth in JavaScript.
 
 ### `ajax-web::slices::install`
 
-Owns the browser shell. It serves the HTML shell, client JavaScript, and
-stylesheet. It must not serve a web manifest,
+Owns the browser shell. It serves the HTML shell, the boot client JavaScript
+(`app.js`), the deferred terminal chunk (`terminal.js`), and the stylesheet. It
+must not serve a web manifest,
 service worker, install icon, or offline cache surface.
 
 ### `ajax-web::slices::terminal`

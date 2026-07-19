@@ -272,6 +272,7 @@ describe("TaskDetail projection surface", () => {
     );
 
     await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Task terminal" })).toBeInTheDocument();
       expect(screen.getByRole("region", { name: "Test in Dev" })).toBeInTheDocument();
     });
     // Visible on the page, not buried in the collapsed Task details disclosure.
