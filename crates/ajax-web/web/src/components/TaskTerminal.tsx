@@ -1010,37 +1010,44 @@ export default function TaskTerminal({ handle }: Props) {
     interactionEl.addEventListener("touchend", onTouchEnd, { passive: true });
     interactionEl.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    const connection = connectTaskTerminal(handle, {
-      onOutput: (text) => {
-        termRef.current?.write(text, applyOutput);
-      },
-      onServerError: (message) => {
-        setStatusDetail(message);
-      },
-      onStatus: (next) => {
-        setStatus(next);
-        if (next === "connected") {
+    let connection: TerminalConnection | undefined;
+
+    // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
+    // never constructs a socket on the aborted first mount; cleanup sets `disposed`.
+    queueMicrotask(() => {
+      if (disposed) return;
+      connection = connectTaskTerminal(handle, {
+        onOutput: (text) => {
+          termRef.current?.write(text, applyOutput);
+        },
+        onServerError: (message) => {
+          setStatusDetail(message);
+        },
+        onStatus: (next) => {
+          setStatus(next);
+          if (next === "connected") {
+            setStatusDetail("");
+          }
+        },
+        onOpen: (isReconnect, seeded) => {
           setStatusDetail("");
-        }
-      },
-      onOpen: (isReconnect, seeded) => {
-        setStatusDetail("");
-        resetDedupe();
-        if (isReconnect && seeded && termRef.current) {
-          followLive = true;
-          setHasUnseenOutput(false);
-          syncingScroll = true;
-          termRef.current.reset();
-          syncSpacer();
-          termRef.current.scrollToBottom();
-          scrollInteractionToBottom();
-          syncingScroll = false;
-          refreshFollow();
-        }
-        scheduleImmediate();
-      },
+          resetDedupe();
+          if (isReconnect && seeded && termRef.current) {
+            followLive = true;
+            setHasUnseenOutput(false);
+            syncingScroll = true;
+            termRef.current.reset();
+            syncSpacer();
+            termRef.current.scrollToBottom();
+            scrollInteractionToBottom();
+            syncingScroll = false;
+            refreshFollow();
+          }
+          scheduleImmediate();
+        },
+      });
+      connectionRef.current = connection;
     });
-    connectionRef.current = connection;
 
     resizeObserver = new ResizeObserver(onViewportChange);
     resizeObserver.observe(hostEl);
@@ -1092,8 +1099,8 @@ export default function TaskTerminal({ handle }: Props) {
       viewport?.removeEventListener("resize", onViewportChange);
       clearExpandedInert();
       document.documentElement.classList.remove(EXPANDED_CLASS);
-      connection.dispose();
-      if (connectionRef.current === connection) {
+      connection?.dispose();
+      if (connection && connectionRef.current === connection) {
         connectionRef.current = undefined;
       }
       fitAddon?.dispose();

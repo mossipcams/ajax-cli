@@ -534,8 +534,9 @@ It fired, and passed again on restore.
 Validation: `verify` exit 0 — 37 files / **330 tests**, 1628 Rust tests,
 `web:lint` 0, `web:check` 0, mobile-webkit e2e 92 passed / 0 failed.
 
-**Device validation still outstanding** — first slice in this program that
-changes shipped runtime behaviour. iPhone checklist issued; awaiting Matt.
+**Device validation: PASSED.** Matt validated 2c on a real iPhone (2026-07-18),
+covering the adaptive polling cadences and the background/foreground resume path
+that exercises the `useEffectEvent` conversion. Slice 2c is cleared for PR.
 
 ## Deviations
 
