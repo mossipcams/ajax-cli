@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.1...ajax-cli-v0.51.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **web:** recover the PWA connection on load ([#608](https://github.com/mossipcams/ajax-cli/issues/608)) ([f2ec2c4](https://github.com/mossipcams/ajax-cli/commit/f2ec2c4844f4ce7dc5ae2b6373c893f1f327e345))
+
+
+### Code Refactoring
+
+* **web:** extract TaskMetaDetails from task details dropdown ([#606](https://github.com/mossipcams/ajax-cli/issues/606)) ([d19687c](https://github.com/mossipcams/ajax-cli/commit/d19687c99845dc2841f73af6f38a352e5eba12d0))
+
 ## [0.51.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.0...ajax-cli-v0.51.1) (2026-07-20)
 
 
