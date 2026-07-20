@@ -1,7 +1,10 @@
 //! Browser-submitted operator actions.
 
 use ajax_core::{
-    adapters::{environment::origin_fetch_age, CommandOutput, CommandRunError, CommandRunner},
+    adapters::{
+        environment::{local_branch_exists, origin_fetch_age},
+        CommandOutput, CommandRunError, CommandRunner,
+    },
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
@@ -133,14 +136,26 @@ fn start_plan_observation<R: Registry>(
     context: &CommandContext<R>,
     request: &NewTaskRequest,
 ) -> commands::StartPlanObservation {
-    let origin_fetch_age = context
+    let repo = context
         .config
         .repos
         .iter()
-        .find(|repo| repo.name == request.repo)
-        .and_then(|repo| origin_fetch_age(&repo.path));
+        .find(|repo| repo.name == request.repo);
+    let origin_fetch_age = repo.and_then(|repo| origin_fetch_age(&repo.path));
+    let branch = format!(
+        "ajax/{}",
+        commands::start_task_identity(&request.repo, &request.title)
+            .as_str()
+            .split_once('/')
+            .map(|(_, handle)| handle)
+            .unwrap_or_default()
+    );
+    let target_branch_exists = repo.is_some_and(|repo| local_branch_exists(&repo.path, &branch));
 
-    commands::StartPlanObservation { origin_fetch_age }
+    commands::StartPlanObservation {
+        origin_fetch_age,
+        target_branch_exists,
+    }
 }
 
 /// Single agent allowlist for web task starts; the route pre-check and the

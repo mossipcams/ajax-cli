@@ -129,6 +129,10 @@ impl IsolatedAjaxHome {
   printf '\n'
 } >> "$AJAX_FAKE_LIFECYCLE_LOG"
 case "$*" in
+  *" show-ref --verify --quiet "*)
+    # Start planning probes whether ajax/<handle> already exists; absent ⇒ exit 1.
+    exit 1
+    ;;
   *" fetch origin "*)
     printf 'fake git fetch'
     ;;

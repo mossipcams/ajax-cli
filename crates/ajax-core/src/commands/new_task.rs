@@ -29,6 +29,7 @@ pub struct NewTaskRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StartPlanObservation {
     pub origin_fetch_age: Option<Duration>,
+    pub target_branch_exists: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +48,7 @@ pub fn new_task_plan<R: Registry>(
         request,
         &StartPlanObservation {
             origin_fetch_age: None,
+            target_branch_exists: false,
         },
     )
 }
@@ -86,6 +88,39 @@ pub fn new_task_plan_with_observation<R: Registry>(
         &handle,
     );
     let worktree_path_string = worktree_path.display().to_string();
+
+    if worktree_path.exists() {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "worktree path already exists: {}",
+            worktree_path.display()
+        )]));
+    }
+    if observation.target_branch_exists {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "branch already exists: {branch}"
+        )]));
+    }
+    if let Some(task) = context.registry.list_tasks().into_iter().find(|task| {
+        task.lifecycle_status != LifecycleStatus::Removed && task.worktree_path == worktree_path
+    }) {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "worktree path already claimed by task {}: {}",
+            task.qualified_handle(),
+            worktree_path_string
+        )]));
+    }
+    if let Some(task) = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.lifecycle_status != LifecycleStatus::Removed && task.branch == branch)
+    {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "branch already claimed by task {}: {branch}",
+            task.qualified_handle()
+        )]));
+    }
+
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
@@ -536,7 +571,7 @@ mod tests {
         is_git_worktree_add_command, is_task_window_new_session_command,
         mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
         record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
-        StartProvisioningStep,
+        StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
     };
     use crate::{
         adapters::{CommandSpec, GitAdapter},
@@ -825,6 +860,7 @@ mod tests {
         };
         let observation = StartPlanObservation {
             origin_fetch_age: Some(Duration::from_secs(30)),
+            target_branch_exists: false,
         };
 
         let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
@@ -856,6 +892,7 @@ mod tests {
         };
         let observation = StartPlanObservation {
             origin_fetch_age: Some(Duration::from_secs(120)),
+            target_branch_exists: false,
         };
 
         let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
@@ -878,6 +915,7 @@ mod tests {
         };
         let observation = StartPlanObservation {
             origin_fetch_age: None,
+            target_branch_exists: false,
         };
 
         let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
@@ -1069,5 +1107,162 @@ mod tests {
         assert!(task.has_side_flag(SideFlag::AgentRunning));
         assert_eq!(task.agent_attempts.len(), 1);
         assert_eq!(task.agent_attempts[0].status, AgentRuntimeStatus::Running);
+    }
+
+    fn start_collision_task(
+        repo: &str,
+        handle: &str,
+        branch: &str,
+        worktree_path: std::path::PathBuf,
+    ) -> crate::models::Task {
+        use crate::models::{AgentClient, Task, TaskId};
+        let tmux_session = format!("ajax-{repo}-{handle}");
+        Task::new(
+            TaskId::new(format!("{repo}/{handle}")),
+            repo.to_string(),
+            handle.to_string(),
+            handle.to_string(),
+            branch.to_string(),
+            "main".to_string(),
+            worktree_path,
+            tmux_session,
+            DEFAULT_TASK_WINDOW_NAME.to_string(),
+            AgentClient::Codex,
+        )
+    }
+
+    #[test]
+    fn new_task_plan_blocks_when_worktree_path_already_exists() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-start-blocked-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo_path = root.join("web");
+        let worktree_path = root.join("web__worktrees").join("ajax-fix-login");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
+        let context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new(
+                    "web",
+                    repo_path.display().to_string(),
+                    "main",
+                )],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let error = new_task_plan(&context, request).unwrap_err();
+        let crate::commands::CommandError::PlanBlocked(messages) = &error else {
+            panic!("expected PlanBlocked, got {error:?}");
+        };
+        let message = messages.join("\n");
+        assert!(
+            message.contains(&worktree_path.display().to_string()),
+            "expected message to mention worktree path: {message}"
+        );
+        assert!(message.contains("already exists"), "message: {message}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn new_task_plan_blocks_when_target_branch_already_exists() {
+        let context = context();
+        let observation = StartPlanObservation {
+            origin_fetch_age: None,
+            target_branch_exists: true,
+        };
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let error = new_task_plan_with_observation(&context, request, &observation).unwrap_err();
+        let crate::commands::CommandError::PlanBlocked(messages) = &error else {
+            panic!("expected PlanBlocked, got {error:?}");
+        };
+        let message = messages.join("\n");
+        assert!(message.contains("ajax/fix-login"), "message: {message}");
+        assert!(message.contains("branch"), "message: {message}");
+    }
+
+    #[test]
+    fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
+        use std::path::PathBuf;
+
+        // worktree-path claim
+        {
+            let mut context = context();
+            context
+                .registry
+                .create_task(start_collision_task(
+                    "web",
+                    "owasp",
+                    "ajax/owasp",
+                    PathBuf::from("/repo/web__worktrees/ajax-fix-login"),
+                ))
+                .unwrap();
+            let request = NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            };
+
+            let error = new_task_plan(&context, request).unwrap_err();
+            let crate::commands::CommandError::PlanBlocked(messages) = &error else {
+                panic!("expected PlanBlocked, got {error:?}");
+            };
+            let message = messages.join("\n");
+            assert!(
+                message.contains("web/owasp"),
+                "expected claiming handle: {message}"
+            );
+            assert!(
+                message.contains("/repo/web__worktrees/ajax-fix-login"),
+                "message: {message}"
+            );
+        }
+
+        // branch claim
+        {
+            let mut context = context();
+            context
+                .registry
+                .create_task(start_collision_task(
+                    "web",
+                    "owasp",
+                    "ajax/fix-login",
+                    PathBuf::from("/repo/web__worktrees/ajax-owasp"),
+                ))
+                .unwrap();
+            let request = NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            };
+
+            let error = new_task_plan(&context, request).unwrap_err();
+            let crate::commands::CommandError::PlanBlocked(messages) = &error else {
+                panic!("expected PlanBlocked, got {error:?}");
+            };
+            let message = messages.join("\n");
+            assert!(
+                message.contains("web/owasp"),
+                "expected claiming handle: {message}"
+            );
+            assert!(message.contains("ajax/fix-login"), "message: {message}");
+        }
     }
 }

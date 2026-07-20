@@ -7,12 +7,13 @@ use ajax_core::{
     registry::{InMemoryRegistry, Registry},
     remediation::{self, RemediationError},
     task_operations::drop_task::plan_drop_confirmation,
-    task_operations::start::plan_start_task_operation,
+    task_operations::start::plan_start_task_operation_with_observation,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
 };
 
+use crate::execution_dispatch::start_plan_observation;
 #[cfg(test)]
 use crate::render::render_execution_outputs;
 use crate::{
@@ -206,8 +207,12 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             title,
             agent: "codex".to_string(),
         };
-        let (_intent, plan) =
-            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
+        let (_intent, plan) = plan_start_task_operation_with_observation(
+            context,
+            request.clone(),
+            start_plan_observation(context, &request),
+        )
+        .map_err(command_error)?;
         let (outputs, task) =
             execute_start_task_operation(context, runner, &request, &plan, true, open_mode)
                 .map_err(|error| command_error(error).after_state_change())
@@ -334,8 +339,12 @@ where
             title,
             agent: "codex".to_string(),
         };
-        let (_intent, plan) =
-            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
+        let (_intent, plan) = plan_start_task_operation_with_observation(
+            context,
+            request.clone(),
+            start_plan_observation(context, &request),
+        )
+        .map_err(command_error)?;
         match execute_new_task_plan_with_task_session_and_checkpoint(
             context,
             runner,
