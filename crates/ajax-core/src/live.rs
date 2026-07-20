@@ -815,17 +815,13 @@ fn pane_evidence(line: &str) -> Option<PaneEvidence> {
             "please log in",
             "log in to",
             "login to continue",
-            "authenticate",
             "auth required",
         ],
     ) {
         return Some(PaneEvidence::AuthRequired);
     }
 
-    if contains_any(
-        &lower,
-        &["rate limit", "too many requests", "try again later"],
-    ) {
+    if contains_any(&lower, &["rate limit", "too many requests"]) {
         return Some(PaneEvidence::RateLimited);
     }
 
@@ -833,10 +829,7 @@ fn pane_evidence(line: &str) -> Option<PaneEvidence> {
         return Some(PaneEvidence::ContextLimit);
     }
 
-    if contains_any(
-        &lower,
-        &["blocked", "cannot continue", "manual intervention required"],
-    ) {
+    if contains_any(&lower, &["cannot continue", "manual intervention required"]) {
         return Some(PaneEvidence::Blocked);
     }
 
@@ -1417,6 +1410,49 @@ mod tests {
         }
     }
 
+    /// Casual "try again later" phrasing alone is not a rate limit: agents say
+    /// it while planning their next attempt without any upstream rate-limit
+    /// condition. Only real rate-limit phrases (`rate limit`, `too many
+    /// requests`) classify as `RateLimited`; bare reassurance must stay neutral
+    /// so it neither projects a stuck state nor fires an attention webhook.
+    #[test]
+    fn try_again_later_alone_is_not_rate_limited() {
+        for pane in [
+            "Looks stuck — I'll try again later.",
+            "I'll try again later",
+            "hmm, let me try again later and see what happens",
+        ] {
+            assert_ne!(
+                classify_agent_pane(AgentClient::Claude, pane).kind,
+                LiveStatusKind::RateLimited,
+                "casual pane {pane:?} must not classify as Rate limited"
+            );
+            assert_eq!(
+                project_pane_stuck_status(AgentClient::Claude, pane),
+                None,
+                "casual pane {pane:?} must not project a Rate limited stuck state"
+            );
+        }
+
+        // Real rate-limit phrasing still classifies as RateLimited and still
+        // projects the stuck state, even when it also says "try again later".
+        for pane in [
+            "rate limit exceeded",
+            "rate limit exceeded; try again later",
+        ] {
+            assert_eq!(
+                classify_agent_pane(AgentClient::Claude, pane).kind,
+                LiveStatusKind::RateLimited,
+                "pane {pane:?} should still classify as Rate limited"
+            );
+            assert_eq!(
+                project_pane_stuck_status(AgentClient::Claude, pane).map(|o| o.kind),
+                Some(LiveStatusKind::RateLimited),
+                "pane {pane:?} should still project the Rate limited stuck state"
+            );
+        }
+    }
+
     /// The redesign's thesis is that historical pane text is not live evidence.
     /// A stuck line buried in scrollback, with the agent visibly producing
     /// output since, must not project a stuck state — otherwise it fires an
@@ -1460,6 +1496,30 @@ mod tests {
                 "pane {pane:?} must not yield a stuck state"
             );
         }
+    }
+
+    /// Single-token needles like bare `"blocked"` and `"authenticate"` must not
+    /// match casual agent prose. Real stuck phrases are multi-word and survive
+    /// elsewhere (e.g. `pane_stuck_states_survive_the_activity_projection`,
+    /// `pane_classifier_detects_agent_attention_states`).
+    #[test]
+    fn broad_stuck_needles_do_not_match_casual_agent_prose() {
+        assert_eq!(
+            project_pane_stuck_status(
+                AgentClient::Claude,
+                "The deploy path is blocked by the existing lockfile."
+            ),
+            None,
+            "casual 'blocked' prose must not project a stuck state"
+        );
+        assert_eq!(
+            project_pane_stuck_status(
+                AgentClient::Claude,
+                "Next we authenticate the webhook signature before storing it."
+            ),
+            None,
+            "casual 'authenticate' prose must not project a stuck state"
+        );
     }
 
     #[test]

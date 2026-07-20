@@ -263,6 +263,9 @@ where
 {
     let state = state.clone();
     Arc::new(move || {
+        // Typing in the PWA terminal is active presence; refresh the notify
+        // suppress TTL even when cockpit polls have stalled.
+        state.mark_browser_cockpit_seen();
         let mut guard = state.shared();
         let acknowledged = {
             let WebSharedState {
@@ -964,6 +967,9 @@ where
     if !websocket_origin_allowed(req.headers()) {
         return text_axum_response(403, "websocket origin forbidden");
     }
+    // A same-origin browser client reached the terminal socket; refresh
+    // cockpit presence so the notify tick stays suppressed while it is open.
+    state.mark_browser_cockpit_seen();
 
     let plan = {
         let guard = state.shared();
@@ -1135,6 +1141,9 @@ where
             );
         }
     };
+    // The browser is actively driving an operate/action; refresh cockpit
+    // presence so the background notify tick stays suppressed while it works.
+    state.mark_browser_cockpit_seen();
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();
     if let Err(rejection) = state
@@ -2256,6 +2265,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn axum_operations_marks_browser_connected() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (state, cookie, app) = app_with(
+            context,
+            TestBridge::default(),
+            "axum-operations-browser-connected",
+        );
+
+        assert!(!state.browser_connected());
+
+        let operation = r#"{"request_id":"req-1","task_handle":"web/fix-login","action":"review"}"#;
+        let response = post_json(&app, &cookie, "/api/operations", operation).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert!(state.browser_connected());
+    }
+
+    #[tokio::test]
     async fn refresh_cockpit_and_cache_passes_deliver_notifications_flag() {
         let (state, _cookie, _app) = app_with(
             context_with_task(),
@@ -3239,6 +3266,31 @@ mod tests {
             std::str::from_utf8(&body).unwrap(),
             "websocket origin forbidden"
         );
+    }
+
+    #[tokio::test]
+    async fn axum_task_terminal_marks_browser_connected_after_origin_ok() {
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "terminal-same-origin-browser-connected",
+        );
+
+        assert!(!state.browser_connected());
+
+        let response = websocket_get(
+            &app,
+            &cookie,
+            "/api/tasks/web%2Ffix-login/terminal",
+            Some("https://localhost"),
+        )
+        .await;
+
+        // The same-origin request passed the websocket origin gate; the exact
+        // upgrade outcome (101/400) is irrelevant once the handler ran past it.
+        assert_ne!(response.status(), StatusCode::FORBIDDEN);
+
+        assert!(state.browser_connected());
     }
 
     #[test]

@@ -503,6 +503,36 @@ mod tests {
         }
     }
 
+    /// Characterization: dwell only gates Running↔attention. Once a task is
+    /// already Waiting (no running evidence), Error-class pane evidence applies
+    /// on the first sample — so CLI 1s flaps Waiting↔Blocked update live_status
+    /// every tick and each flip can notify.
+    #[test]
+    fn waiting_to_error_applies_immediately_when_not_running() {
+        let mut task = claude_active_task();
+        let t0 = UNIX_EPOCH + Duration::from_secs(400);
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+            t0,
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
+            t0 + Duration::from_secs(1),
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::Blocked),
+            "Waiting→Error must not be dwell-gated when the task is not Running"
+        );
+    }
+
     #[test]
     fn acknowledgment_round_trip_gates_actionability_until_new_evidence() {
         let mut task = claude_active_task();
