@@ -502,7 +502,7 @@ pub fn project_pane_activity(
 /// these).
 ///
 /// Membership is derived, never hand-listed: a kind qualifies when
-/// [`live_kind_to_activity`] cannot express it *and* its
+/// `live_kind_to_activity` (private) cannot express it *and* its
 /// [`crate::models::LiveStatusClass`] is `Waiting` or `Error`. That yields
 /// exactly `AuthRequired`, `RateLimited`, `ContextLimit`, `Blocked`,
 /// `MergeConflict`, and `CiFailed`, and it cannot drift from the activity
