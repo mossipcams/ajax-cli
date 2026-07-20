@@ -3,7 +3,7 @@
 // addInitScript before boot, matching e2e/smoke.test.ts.
 
 import { test, expect, type Page } from "@playwright/test";
-import { COCKPIT_FIXTURE, mockFetch } from "./fixtures";
+import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket } from "./fixtures";
 
 /** Sane upper bound for a single compact task row (min-height + padding + subline). */
 const MAX_TASK_ROW_HEIGHT_PX = 96;
@@ -173,4 +173,68 @@ test("new task sheet stays inside the simulated keyboard viewport band", async (
   expect(sheetBox!.y + sheetBox!.height).toBeLessThanOrEqual(band.bottom);
   expect(inputBox!.y).toBeGreaterThanOrEqual(band.top);
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(band.bottom);
+});
+
+function tallTaskDetailFixture() {
+  return {
+    ...DETAIL_FIXTURE,
+    annotations: [
+      "Note one with enough text to grow the meta body on a narrow phone viewport",
+      "Note two with enough text to grow the meta body on a narrow phone viewport",
+      "Note three with enough text to grow the meta body on a narrow phone viewport",
+      "Note four — last annotation must stay reachable via route-scroll",
+    ],
+    agent_attempts: [
+      {
+        started_unix_secs: 1_700_000_000,
+        completed_unix_secs: 1_700_000_300,
+        outcome: "completed",
+      },
+      {
+        started_unix_secs: 1_700_001_000,
+        completed_unix_secs: null,
+        outcome: "running",
+      },
+    ],
+  };
+}
+
+test("open mobile task meta keeps a usable terminal and route-scroll reaches the last note", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockFetch(page, { __detail__: tallTaskDetailFixture() });
+  await mockTerminalWebSocket(page);
+
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(page.locator('[data-testid="task-terminal-panel"]')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const summary = page.locator(".meta-details summary");
+  await summary.click();
+  await expect(page.locator(".meta-details[open]")).toBeVisible();
+
+  const terminalHeight = await page
+    .locator('[data-testid="task-terminal-panel"]')
+    .evaluate((el) => Math.round(el.getBoundingClientRect().height));
+  expect(terminalHeight).toBeGreaterThanOrEqual(120);
+
+  const routeScroll = page.locator('[data-testid="route-scroll"]');
+  const scrollDims = await routeScroll.evaluate((el) => ({
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  }));
+  expect(scrollDims.scrollHeight).toBeGreaterThan(scrollDims.clientHeight + 1);
+
+  await routeScroll.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+
+  const lastNote = page.locator('[data-testid="task-annotations"] li').last();
+  await expect(lastNote).toBeInViewport();
+
+  const { routeScrollCount, rogueOwners } = await probeNormalRouteScrollOwners(page);
+  expect(routeScrollCount, "route-scroll elements").toBe(1);
+  expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
 });
