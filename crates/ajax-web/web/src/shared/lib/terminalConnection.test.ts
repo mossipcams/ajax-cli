@@ -5,6 +5,14 @@ import {
   type TerminalConnectionStatus,
 } from "./terminalConnection";
 
+// The socket renews the browser session once per disconnected episode. Stub it
+// so tests drive the outcome instead of hitting fetch.
+const renewBrowserSession = vi.fn<() => Promise<void>>();
+vi.mock("./api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api")>();
+  return { ...actual, renewBrowserSession: () => renewBrowserSession() };
+});
+
 type SocketHandler = (event?: Event | MessageEvent) => void;
 
 class MockWebSocket {
@@ -51,6 +59,8 @@ describe("connectTaskTerminal", () => {
     MockWebSocket.instances = [];
     statuses = [];
     serverErrors = [];
+    renewBrowserSession.mockReset();
+    renewBrowserSession.mockResolvedValue(undefined);
     vi.stubGlobal("WebSocket", MockWebSocket);
   });
 
@@ -80,17 +90,25 @@ describe("connectTaskTerminal", () => {
     return socket;
   }
 
-  function fireCloseWithoutOpen() {
+  async function fireCloseWithoutOpen() {
     latestSocket().fire("close");
+    // Let the one-shot session renewal settle before running backoff timers.
+    await vi.advanceTimersByTimeAsync(0);
     vi.runOnlyPendingTimers();
   }
 
-  it("gives up after repeated immediate failures", () => {
+  /** Spend the one-shot session-renewal redial that the first failed dial buys. */
+  async function exhaustSessionRenewalRetry() {
+    await fireCloseWithoutOpen();
+  }
+
+  it("gives up after repeated immediate failures", async () => {
     createConnection();
     expect(MockWebSocket.instances).toHaveLength(1);
 
+    await exhaustSessionRenewalRetry();
     for (let i = 0; i < IMMEDIATE_FAILURE_LIMIT; i += 1) {
-      fireCloseWithoutOpen();
+      await fireCloseWithoutOpen();
     }
     latestSocket().fire("close");
 
@@ -101,6 +119,83 @@ describe("connectTaskTerminal", () => {
     vi.advanceTimersByTime(60_000);
     expect(MockWebSocket.instances.length).toBe(dialsBefore);
     expect(statuses.slice(statusesBefore)).toEqual([]);
+  });
+
+  // A stale session cookie fails the WebSocket upgrade with a 401 the browser
+  // never exposes. Without renewing, the socket burns its retry budget and
+  // latches to "unavailable" for good.
+  it("renews the browser session and redials when the first dial never opens", async () => {
+    createConnection();
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    latestSocket().fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(renewBrowserSession).toHaveBeenCalledTimes(1);
+    // Redial is immediate — it must not wait out the backoff.
+    expect(MockWebSocket.instances).toHaveLength(2);
+    // Nothing was seeded on the failed dial, so the retry still asks for history.
+    expect(MockWebSocket.instances[1].url).not.toContain("seed=0");
+    expect(statuses.at(-1)).toBe("connecting");
+  });
+
+  it("renews at most once per disconnected episode", async () => {
+    createConnection();
+
+    await fireCloseWithoutOpen();
+    await fireCloseWithoutOpen();
+    await fireCloseWithoutOpen();
+
+    expect(renewBrowserSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to backoff when session renewal fails", async () => {
+    renewBrowserSession.mockRejectedValue(new Error("offline"));
+    createConnection();
+
+    latestSocket().fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(renewBrowserSession).toHaveBeenCalledTimes(1);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(statuses.at(-1)).toBe("reconnecting");
+
+    vi.runOnlyPendingTimers();
+    expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
+  // Mobile Safari drops the socket on background; that is not an auth failure
+  // and must not cost a session renewal.
+  it("does not renew when an established socket drops", async () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(renewBrowserSession).not.toHaveBeenCalled();
+  });
+
+  // A renewed session after a reconnect episode must be available again later.
+  it("re-arms the renewal after a successful open", async () => {
+    createConnection();
+
+    await fireCloseWithoutOpen();
+    expect(renewBrowserSession).toHaveBeenCalledTimes(1);
+
+    const reopened = latestSocket();
+    reopened.readyState = MockWebSocket.OPEN;
+    reopened.fire("open");
+
+    reopened.fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+    vi.runOnlyPendingTimers();
+    latestSocket().fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(renewBrowserSession).toHaveBeenCalledTimes(2);
   });
 
   it("keeps reconnecting after a socket has opened", () => {
@@ -204,7 +299,7 @@ describe("connectTaskTerminal", () => {
     expect(openCalls[1]).toEqual({ isReconnect: true, seeded: false });
   });
 
-  it("manual reconnectNow dials a full seed (seed)", () => {
+  it("manual reconnectNow dials a full seed (seed)", async () => {
     const openCalls: Array<{ isReconnect: boolean; seeded: boolean }> = [];
     connection = connectTaskTerminal("test-handle", {
       onOutput: () => {},
@@ -217,8 +312,9 @@ describe("connectTaskTerminal", () => {
       },
     });
 
+    await exhaustSessionRenewalRetry();
     for (let i = 0; i < IMMEDIATE_FAILURE_LIMIT; i += 1) {
-      fireCloseWithoutOpen();
+      await fireCloseWithoutOpen();
     }
     latestSocket().fire("close");
     expect(statuses.at(-1)).toBe("unavailable");
@@ -234,11 +330,12 @@ describe("connectTaskTerminal", () => {
     expect(openCalls.at(-1)?.seeded).toBe(true);
   });
 
-  it("manual reconnectNow retries from unavailable", () => {
+  it("manual reconnectNow retries from unavailable", async () => {
     createConnection();
 
+    await exhaustSessionRenewalRetry();
     for (let i = 0; i < IMMEDIATE_FAILURE_LIMIT; i += 1) {
-      fireCloseWithoutOpen();
+      await fireCloseWithoutOpen();
     }
     latestSocket().fire("close");
     expect(statuses.at(-1)).toBe("unavailable");

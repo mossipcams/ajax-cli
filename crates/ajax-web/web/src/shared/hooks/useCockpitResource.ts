@@ -77,8 +77,11 @@ export function useCockpitResource(): CockpitResource {
     setConnectionDetail(null);
   }, []);
 
+  // No document.hidden guard here: an iOS home-screen PWA mounts while the
+  // splash screen still reports the document hidden, and swallowing the mount
+  // load stranded the app on "checking" until the (60s, hidden) interval fired.
+  // Skipping while hidden is a *background poll* concern — see App.tsx.
   const loadCockpit = useCallback(async (options?: LoadCockpitOptions) => {
-    if (document.hidden) return;
     await cockpitPollGuardRef.current.run(
       async () => {
         try {

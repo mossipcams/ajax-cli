@@ -42,8 +42,9 @@ use tower_http::compression::CompressionLayer;
 pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
-    html_response, json_response, json_value_response, operation_response_with_request_id,
-    response_from_web_error, static_bytes_axum_response, text_axum_response, web_error_response,
+    bytes_axum_response, html_response, json_response, json_value_response,
+    operation_response_with_request_id, response_from_web_error, static_bytes_axum_response,
+    text_axum_response, web_error_response,
 };
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
@@ -602,16 +603,16 @@ fn cloudflare_access_error_response(error: CloudflareAccessError) -> AxumRespons
     )
 }
 
-async fn axum_app_css() -> AxumResponse {
-    static_asset_response("/app.css")
+async fn axum_app_css(uri: Uri) -> AxumResponse {
+    static_asset_response("/app.css", version_busted(&uri))
 }
 
-async fn axum_app_js() -> AxumResponse {
-    static_asset_response("/app.js")
+async fn axum_app_js(uri: Uri) -> AxumResponse {
+    static_asset_response("/app.js", version_busted(&uri))
 }
 
-async fn axum_terminal_js() -> AxumResponse {
-    static_asset_response("/terminal.js")
+async fn axum_terminal_js(uri: Uri) -> AxumResponse {
+    static_asset_response("/terminal.js", version_busted(&uri))
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1170,11 +1171,29 @@ async fn axum_fallback(uri: Uri) -> AxumResponse {
     text_axum_response(404, "not found")
 }
 
-fn static_asset_response(path: &str) -> AxumResponse {
+/// `immutable` is only truthful for a content-addressed URL. The shell busts
+/// these assets with `?v=<app_version()>`; a bare path is not content-addressed,
+/// so promising immutability there pins a stale bundle for a year — and
+/// `immutable` suppresses revalidation even on an explicit reload, which an
+/// installed PWA cannot recover from without clearing site data.
+fn static_asset_response(path: &str, version_busted: bool) -> AxumResponse {
     match install::static_asset(path) {
-        Some(asset) => static_bytes_axum_response(asset.content_type, asset.body.to_vec()),
+        Some(asset) if version_busted => {
+            static_bytes_axum_response(asset.content_type, asset.body.to_vec())
+        }
+        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
         None => text_axum_response(404, "not found"),
     }
+}
+
+/// True when the request carries a non-empty `?v=` cache-busting query.
+fn version_busted(uri: &Uri) -> bool {
+    uri.query().is_some_and(|query| {
+        query.split('&').any(|pair| {
+            pair.strip_prefix("v=")
+                .is_some_and(|value| !value.is_empty())
+        })
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1838,13 +1857,33 @@ mod tests {
             app_with(context, TestBridge::default(), "axum-static-cache-gzip");
         let immutable_cache = "public, max-age=31536000, immutable";
 
+        let version = crate::slices::install::app_version();
         for path in ["/app.js", "/app.css", "/terminal.js"] {
-            let response = get_public(&app, path).await;
+            let response = get_public(&app, &format!("{path}?v={version}")).await;
             assert_eq!(response.status(), StatusCode::OK, "{path}");
             assert_eq!(
                 response.headers()["cache-control"],
                 immutable_cache,
-                "{path} should be long-cached + immutable"
+                "version-busted {path} should be long-cached + immutable"
+            );
+
+            // A bare path is not content-addressed. `immutable` there would pin
+            // a stale bundle for a year with no revalidation even on reload,
+            // which an installed PWA cannot recover from.
+            let bare = get_public(&app, path).await;
+            assert_eq!(bare.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                bare.headers()["cache-control"],
+                "no-store",
+                "bare {path} must not claim immutability"
+            );
+
+            // An empty version is not a fingerprint either.
+            let empty = get_public(&app, &format!("{path}?v=")).await;
+            assert_eq!(
+                empty.headers()["cache-control"],
+                "no-store",
+                "empty ?v= on {path} must not claim immutability"
             );
         }
 

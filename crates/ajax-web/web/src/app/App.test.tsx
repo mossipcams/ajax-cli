@@ -57,6 +57,13 @@ describe("App shell", () => {
   beforeEach(() => {
     window.location.hash = "";
     document.title = "";
+    // Tests that fake a hidden document redefine these; unstubAllGlobals does
+    // not undo defineProperty, so reset them here.
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
     vi.stubGlobal("WebSocket", class {
       readyState = 1;
       close() {}
@@ -536,6 +543,37 @@ describe("App shell", () => {
 
     await vi.waitFor(() => expect(banner).toBeVisible());
     expect(banner).toHaveTextContent("Update ready — tap to reload");
+  });
+
+  // iOS launches a home-screen PWA with the document still hidden behind the
+  // splash screen. The mount load must go through anyway; only the repeating
+  // background poll may skip while hidden.
+  it("loads the cockpit on mount while hidden, but skips the background poll", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    const cockpitCalls = () =>
+      fetchMock.mock.calls.filter(([path]) => String(path) === "/api/cockpit").length;
+
+    // Mount load is not swallowed by the hidden document.
+    await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
+
+    // Hidden interval is 60s; firing it must not add a background fetch.
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(cockpitCalls()).toBe(1);
   });
 
   it("reports reachable cockpit HTTP failures as disconnected", async () => {

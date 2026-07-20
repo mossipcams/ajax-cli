@@ -84,7 +84,10 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function renewBrowserSession(): Promise<void> {
+/** Re-issues the browser session cookie. Concurrent callers share one in-flight
+ * request. Exported for the terminal socket, which cannot see the handshake
+ * status and so renews on any dial that failed to open. */
+export async function renewBrowserSession(): Promise<void> {
   if (!browserSessionRenewal) {
     browserSessionRenewal = (async () => {
       let response: Response;

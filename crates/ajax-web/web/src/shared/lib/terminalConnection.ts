@@ -8,7 +8,7 @@
  * decoding; the component only reacts through the event callbacks.
  */
 
-import { openTaskTerminalSocket } from "./api";
+import { openTaskTerminalSocket, renewBrowserSession } from "./api";
 
 export type TerminalConnectionStatus =
   | "connecting"
@@ -47,6 +47,11 @@ export function connectTaskTerminal(
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let everOpened = false;
+  // Did *this* dial's socket open? A dial that never opened is a rejected
+  // handshake (possibly 401); an established socket dropping is not.
+  let dialOpened = false;
+  // One session renewal per disconnected episode; reset on every open.
+  let sessionRenewTried = false;
   let attachFailed = false;
   let disposed = false;
   let status: TerminalConnectionStatus = "connecting";
@@ -167,6 +172,7 @@ export function connectTaskTerminal(
 
   function connect(seedHistory: boolean) {
     lastDialSeeded = seedHistory;
+    dialOpened = false;
     socket = openTaskTerminalSocket(handle, seedHistory);
     socket.addEventListener("open", () => {
       // A successful open resets the backoff. A fresh tmux attach repaints the
@@ -174,6 +180,8 @@ export function connectTaskTerminal(
       // explicit refresh frame is needed on reconnect.
       const isReconnect = everOpened;
       everOpened = true;
+      dialOpened = true;
+      sessionRenewTried = false;
       reconnectAttempts = 0;
       attachFailed = false;
       setStatus("connected");
@@ -185,7 +193,30 @@ export function connectTaskTerminal(
     socket.addEventListener("error", () => {});
     socket.addEventListener("close", () => {
       if (disposed) return;
-      if (attachFailed || (!everOpened && reconnectAttempts >= IMMEDIATE_FAILURE_LIMIT)) {
+      if (attachFailed) {
+        setStatus("unavailable");
+        return;
+      }
+      // The browser WebSocket API hides the handshake status, so a 401 from a
+      // stale session cookie is indistinguishable from any other failed dial.
+      // The HTTP transport self-heals via /api/session; without the same retry
+      // here the socket burns its attempts and latches to "unavailable"
+      // forever. Only a dial that never opened can be an auth rejection, so a
+      // backgrounded socket dropping never triggers this.
+      if (!dialOpened && !sessionRenewTried) {
+        sessionRenewTried = true;
+        setStatus("reconnecting");
+        void renewBrowserSession().then(
+          () => {
+            if (!disposed) redialNow(lastDialSeeded);
+          },
+          () => {
+            if (!disposed) scheduleReconnect();
+          },
+        );
+        return;
+      }
+      if (!everOpened && reconnectAttempts >= IMMEDIATE_FAILURE_LIMIT) {
         setStatus("unavailable");
         return;
       }
