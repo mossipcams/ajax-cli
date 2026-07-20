@@ -1,0 +1,139 @@
+```yaml
+PACKET_STATUS: READY
+TASK_KIND: behavior
+TEST_FIRST: REQUIRED
+PRODUCTION_EDIT: REQUIRED
+UNRESOLVED_UNCERTAINTY: NONE
+BLOCKERS: []
+```
+
+## Goal
+
+Bound the web cockpit's idempotent GET transport and the browser-session
+renewal POST with a 10 s timeout so a stalled request rejects as a `network`
+ApiError instead of hanging forever. Today one hung mount fetch bricks the PWA
+on `checking`/skeleton until a manual reload, because `createInFlightGuard`
+drops every overlapping poll until the in-flight promise settles (it never
+does). With a timeout, the guard clears and the existing 1 s dashboard
+interval recovers automatically.
+
+## Allowed files
+
+- `crates/ajax-web/web/src/shared/lib/polling.ts`
+- `crates/ajax-web/web/src/shared/lib/api.ts`
+- `crates/ajax-web/web/src/shared/lib/api.test.ts`
+
+## Forbidden changes
+
+- No timeout/signal on mutation POSTs (`/api/operations`, `/api/tasks`,
+  `/api/server/restart`, dev-deploy start) — task starts legitimately exceed
+  10 s.
+- No changes to `cockpitPoll.ts`, `useCockpitResource.ts`, `App.tsx`,
+  `terminalConnection.ts`, or any server/Rust code.
+- No poll-cadence changes; no new dependencies.
+
+## Context evidence
+
+- Desired behavior: stalled GET → `ApiError` kind `network` within ~10 s →
+  `applyConnectionError` shows `backend unreachable` → in-flight guard clears
+  → next interval poll retries. Existing recovery machinery then works
+  unmodified.
+- Anchor: `api.ts` `GET_OPTIONS` / `SESSION_RENEW_OPTIONS` module constants —
+  no `signal` anywhere in the file. All GETs route through
+  `fetchProtectedWithSessionRenewal(path, init)`; `getJson` passes
+  `GET_OPTIONS`; `checkHealth` passes `GET_OPTIONS`; `renewBrowserSession`
+  passes `SESSION_RENEW_OPTIONS`.
+- Trap: `AbortSignal.timeout(ms)` starts counting **at creation**. The option
+  objects are module-level constants shared across requests, so the signal
+  must be created **per call** — convert the constants to factory functions.
+- Pattern: `polling.ts` already owns timeout constants (`CONFIRM_TIMEOUT_MS`,
+  `RESTART_TIMEOUT_MS`); add the new one there.
+- Test pattern: `api.test.ts` stubs fetch via
+  `vi.stubGlobal("fetch", vi.fn(impl))`; `mockFetch` receives `(input, init)`.
+  Existing describe `"GET transport options"` asserts `init.credentials`.
+- `AbortSignal.timeout` is available on iOS Safari 16+ and Node 17.3+; no
+  fallback needed for the "normal iOS Safari" target or vitest.
+
+## Code anchors
+
+- `crates/ajax-web/web/src/shared/lib/polling.ts` — add
+  `export const GET_REQUEST_TIMEOUT_MS = 10000;` near `CONFIRM_TIMEOUT_MS`.
+- `crates/ajax-web/web/src/shared/lib/api.ts`:
+  - `const GET_OPTIONS: RequestInit = { cache: "no-store", credentials: "same-origin" };`
+  - `const SESSION_RENEW_OPTIONS: RequestInit = { method: "POST", cache: "no-store", credentials: "same-origin" };`
+  - call sites: `renewBrowserSession` (`fetch("/api/session", SESSION_RENEW_OPTIONS)`),
+    `getJson` (`fetchProtectedWithSessionRenewal(path, GET_OPTIONS)`),
+    `checkHealth` (`fetch("/api/health", GET_OPTIONS)`).
+
+## Test-first instructions
+
+Add to `crates/ajax-web/web/src/shared/lib/api.test.ts`, inside or beside the
+existing `"GET transport options"` describe:
+
+1. `GET requests carry a per-call abort timeout signal` — mock fetch captures
+   `init`; `await fetchCockpit()`; assert `init.signal` is an `AbortSignal`
+   and `init.signal.aborted === false`. **Fails now** (`signal` undefined).
+2. `session renewal POST carries an abort timeout signal` — mock fetch: first
+   `/api/cockpit` returns 401, capture the `init` of the `/api/session` POST,
+   then return ok. Assert the session request's `init.signal` is an
+   `AbortSignal`. **Fails now.**
+3. `mutation POSTs stay unbounded` — `await postOperation(...)`; assert the
+   mutation request's `init.signal` is `undefined` (guard test; passes before
+   and after).
+4. `each call gets a fresh, unaborted signal` — two sequential `fetchCockpit`
+   calls; assert the two signals are different objects and neither is aborted.
+   **Fails now.**
+
+Focused red command:
+
+```bash
+cd crates/ajax-web/web && npx vitest run src/shared/lib/api.test.ts
+```
+
+Expected red: tests 1, 2, 4 fail on `signal` being undefined.
+
+## Edit instructions
+
+In `polling.ts`: add `export const GET_REQUEST_TIMEOUT_MS = 10000;` with a
+one-line comment (bounds stalled LAN/TLS GETs; recovery comes from the
+existing poll interval).
+
+In `api.ts`:
+
+1. Import `GET_REQUEST_TIMEOUT_MS` from `./polling` (extend the existing
+   `RESTART_POLL_MS, RESTART_TIMEOUT_MS` import).
+2. Replace the `GET_OPTIONS` and `SESSION_RENEW_OPTIONS` constants with
+   per-call factories, e.g. `function getOptions(): RequestInit` and
+   `function sessionRenewOptions(): RequestInit`, each returning the same
+   fields plus `signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS)`.
+3. Update the three call sites (`renewBrowserSession`, `getJson`,
+   `checkHealth`) to call the factories. Do not touch `postJson` or any
+   mutation caller.
+
+## Verification commands
+
+```bash
+cd crates/ajax-web/web && npx vitest run src/shared/lib/api.test.ts
+cd crates/ajax-web/web && npx vitest run
+npm run web:check
+npm run web:lint
+```
+
+## Acceptance criteria
+
+- New tests 1–4 pass; full vitest suite green (no regressions in the existing
+  session-renewal and transport tests).
+- Every GET (`/api/cockpit`, `/api/tasks/:handle`, `/api/version`,
+  `/api/health`, dev-deploy status) and the `/api/session` renewal POST carry
+  a fresh 10 s `AbortSignal.timeout` per call.
+- Mutation POSTs carry no signal.
+- `web:check` and `web:lint` clean.
+
+## Stop conditions
+
+- An anchor above does not match the current file contents.
+- Any edit would be needed outside the three allowed files.
+- Existing tests fail for reasons unrelated to the added signal (e.g. a test
+  asserting exact `RequestInit` equality) — report, do not rewrite them
+  beyond accommodating the new `signal` field.
+- Patch would exceed ~120 changed lines.
