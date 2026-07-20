@@ -29,7 +29,7 @@ Approval status: approved by user on 2026-07-20.
   - Verification: rerun the focused test to green, then run
     `cargo test -p ajax-core`, `cargo fmt --check`, and
     `cargo clippy -p ajax-core --all-targets --all-features -- -D warnings`.
-- [ ] Task 2 — Create and validate the pull request.
+- [x] Task 2 — Create and validate the pull request.
   - Test: run the repository's blocking local PR gate (`npm prepare`,
     `npm run verify`, `cargo build --release -p ajax-cli`, and
     `cargo install --path crates/ajax-cli --locked --force`) unless the enabled
@@ -76,3 +76,14 @@ Approval status: approved by user on 2026-07-20.
   was absent and `husky` was unavailable. `rtk npm ci` installed the locked
   dependencies with zero vulnerabilities, and the following `rtk npm prepare`
   passed.
+- Commit `32267d3` (`fix(core): block repair for occupied worktree path`)
+  passed the enabled Husky pre-commit hook, including `npm run verify`,
+  `cargo build --release -p ajax-cli`, and
+  `cargo install --path crates/ajax-cli --locked --force`.
+- Branch `ajax/tmux-worktree-missing` pushed to origin and PR #597 created:
+  `https://github.com/mossipcams/ajax-cli/pull/597`, targeting `main` with a
+  valid `fix(core): ...` title.
+- The first `gh pr checks 597 --watch --interval 10` ended with a transient
+  GitHub API connection reset. A direct `gh pr view` poll then confirmed all
+  checks successful: PR Title, Release PR Bypass, Format, Web, Cargo Check,
+  Clippy, Nextest and Doc Tests, Documentation, Cargo Audit, and aggregate CI.
