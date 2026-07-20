@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.2...ajax-cli-v0.51.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* **web:** version sibling chunk imports so the app loads once ([#609](https://github.com/mossipcams/ajax-cli/issues/609)) ([ebe5d48](https://github.com/mossipcams/ajax-cli/commit/ebe5d4810fa13db191a8c6b32af1b857b9c48fe6))
+
 ## [0.51.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.1...ajax-cli-v0.51.2) (2026-07-20)
 
 
