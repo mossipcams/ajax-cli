@@ -1,3 +1,15 @@
+# Rebuild the embedded web bundle before verifying, so dist/ can never lag
+# web/src/. The bundle is compiled into the Rust binary and nothing tests it —
+# Playwright serves the Vite dev server and never reads dist/ — so a stale
+# bundle ships silently (that was #593). Staging it here keeps the rebuild
+# inside the same commit as the source change.
+#
+# `web:build`, never `web:build:check`: the check script strips trailing
+# whitespace that web:build emits and writes the files back, so it would
+# produce spurious dist churn. The committed bundle is raw web:build output.
+npm run web:build
+git add crates/ajax-web/web/dist
+
 npm run verify
 cargo build --release -p ajax-cli
 cargo install --path crates/ajax-cli --locked --force
