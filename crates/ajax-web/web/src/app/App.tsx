@@ -135,7 +135,9 @@ export default function App() {
   const versionIntervalMs = versionPollIntervalMs(pollingInput);
 
   useEffect(() => {
-    const cockpitTimer = window.setInterval(loadCockpit, cockpitIntervalMs);
+    const cockpitTimer = window.setInterval(() => {
+      if (!document.hidden) void loadCockpit();
+    }, cockpitIntervalMs);
     const versionTimer = window.setInterval(checkVersion, versionIntervalMs);
     return () => {
       window.clearInterval(cockpitTimer);
