@@ -1,5 +1,5 @@
 use crate::{
-    adapters::{CommandOutput, CommandRunner},
+    adapters::{environment::local_branch_exists, CommandOutput, CommandRunner},
     commands::{
         self, CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode,
         StartPlanObservation, StartProvisioningStep,
@@ -13,11 +13,29 @@ pub fn plan_start_task_operation<R: Registry>(
     context: &CommandContext<R>,
     request: NewTaskRequest,
 ) -> Result<(TaskIntent, CommandPlan), CommandError> {
+    // Derive the same handle the start planner would use, then form the
+    // `ajax/<handle>` branch without re-implementing slugify. The repo/handle
+    // identity is already public via `start_task_identity`.
+    let branch = format!(
+        "ajax/{}",
+        commands::start_task_identity(&request.repo, &request.title)
+            .as_str()
+            .split_once('/')
+            .map(|(_, handle)| handle)
+            .unwrap_or_default()
+    );
+    let target_branch_exists = context
+        .config
+        .repos
+        .iter()
+        .find(|repo| repo.name == request.repo)
+        .is_some_and(|repo| local_branch_exists(&repo.path, &branch));
     plan_start_task_operation_with_observation(
         context,
         request,
         StartPlanObservation {
             origin_fetch_age: None,
+            target_branch_exists,
         },
     )
 }

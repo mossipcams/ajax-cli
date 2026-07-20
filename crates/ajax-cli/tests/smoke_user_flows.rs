@@ -397,6 +397,10 @@ case "$*" in
   *" fetch origin "*)
     exit 0
     ;;
+  *" show-ref --verify --quiet "*)
+    # Start planning probes whether ajax/<handle> already exists; absent ⇒ exit 1.
+    exit 1
+    ;;
   *" worktree add "*)
     worktree="${7:-}"
     mkdir -p "$worktree"
@@ -748,10 +752,17 @@ fn smoke_new_plan_has_no_side_effects() {
 
     let tasks = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
     assert_eq!(tasks["tasks"], Value::Array(vec![]));
-    assert_eq!(
-        sandbox.command_log(),
-        "",
-        "plan-only new should not run fake lifecycle tools"
+    let command_log = sandbox.command_log();
+    assert!(
+        command_log
+            .lines()
+            .filter(|line| !line.is_empty())
+            .all(|line| line.contains("show-ref --verify --quiet")),
+        "plan-only new may probe branch existence, but must not mutate substrate:\n{command_log}"
+    );
+    assert!(
+        !sandbox.expected_worktree_path("web", "fix-login").exists(),
+        "plan-only new must not create a worktree"
     );
     assert!(
         !sandbox.state_file.exists(),

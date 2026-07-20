@@ -5,7 +5,7 @@ use ajax_core::commands::{self, CommandContext};
 use ajax_core::events::apply_monitor_event_to_registry;
 use ajax_core::task_operations::kernel::execute_external_plan_with_success;
 use ajax_core::{
-    adapters::environment::origin_fetch_age,
+    adapters::environment::{local_branch_exists, origin_fetch_age},
     registry::InMemoryRegistry,
     task_operations::start::{
         execute_start_task_operation, execute_start_task_operation_with_checkpoint,
@@ -177,18 +177,33 @@ pub(crate) fn render_matches_mut(
     }
 }
 
-fn start_plan_observation(
+pub(crate) fn start_plan_observation(
     context: &CommandContext<InMemoryRegistry>,
     request: &commands::NewTaskRequest,
 ) -> commands::StartPlanObservation {
-    let origin_fetch_age = context
+    let repo = context
         .config
         .repos
         .iter()
-        .find(|repo| repo.name == request.repo)
-        .and_then(|repo| origin_fetch_age(&repo.path));
+        .find(|repo| repo.name == request.repo);
+    let origin_fetch_age = repo.and_then(|repo| origin_fetch_age(&repo.path));
+    // Derive the same handle the start planner would use, then form the
+    // `ajax/<handle>` branch without re-implementing slugify. The repo/handle
+    // identity is already public via `start_task_identity`.
+    let branch = format!(
+        "ajax/{}",
+        commands::start_task_identity(&request.repo, &request.title)
+            .as_str()
+            .split_once('/')
+            .map(|(_, handle)| handle)
+            .unwrap_or_default()
+    );
+    let target_branch_exists = repo.is_some_and(|repo| local_branch_exists(&repo.path, &branch));
 
-    commands::StartPlanObservation { origin_fetch_age }
+    commands::StartPlanObservation {
+        origin_fetch_age,
+        target_branch_exists,
+    }
 }
 
 fn render_refreshed_read_command<R: CommandRunner>(
