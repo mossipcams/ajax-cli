@@ -80,6 +80,15 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     if missing_substrate_blocks_operation(task, operation) {
         reasons.push("task has missing substrate".to_string());
     }
+    if matches!(
+        operation,
+        TaskOperation::Merge | TaskOperation::Clean | TaskOperation::Remove
+    ) && task.has_checkout_mismatch()
+    {
+        if let Some(explanation) = task.checkout_mismatch_explanation() {
+            reasons.push(explanation);
+        }
+    }
 
     if reasons.is_empty() {
         OperationEligibility::Allowed
@@ -160,5 +169,84 @@ mod tests {
             ])
         );
         assert!(!eligibility.is_allowed());
+    }
+
+    fn task_with_git_checkout(status: LifecycleStatus, current_branch: Option<&str>) -> Task {
+        let mut task = task_with_status(status);
+        task.git_status = Some(crate::models::GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: current_branch.map(str::to_string),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: status == LifecycleStatus::Cleanable,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task
+    }
+
+    #[test]
+    fn branch_sensitive_checkout_mismatch_operations_are_blocked_with_details() {
+        let named_mismatch =
+            task_with_git_checkout(LifecycleStatus::Reviewable, Some("fix/pane-stuck"));
+        let detached_mismatch = task_with_git_checkout(LifecycleStatus::Cleanable, None);
+        let named_detail = "Worktree on fix/pane-stuck; expected ajax/fix-login";
+        let detached_detail = "Worktree detached; expected ajax/fix-login";
+
+        for operation in [
+            TaskOperation::Open,
+            TaskOperation::Check,
+            TaskOperation::Diff,
+        ] {
+            assert_eq!(
+                task_operation_eligibility(&named_mismatch, operation),
+                OperationEligibility::Allowed,
+                "{operation:?} should stay available for named mismatch"
+            );
+            assert_eq!(
+                task_operation_eligibility(&detached_mismatch, operation),
+                OperationEligibility::Allowed,
+                "{operation:?} should stay available for detached mismatch"
+            );
+        }
+
+        assert_eq!(
+            task_operation_eligibility(&named_mismatch, TaskOperation::Merge),
+            OperationEligibility::Blocked(vec![named_detail.to_string()])
+        );
+        assert_eq!(
+            task_operation_eligibility(&detached_mismatch, TaskOperation::Clean),
+            OperationEligibility::Blocked(vec![detached_detail.to_string()])
+        );
+        assert_eq!(
+            task_operation_eligibility(&named_mismatch, TaskOperation::Remove),
+            OperationEligibility::Blocked(vec![named_detail.to_string()])
+        );
+
+        let mut missing_worktree = task_with_git_checkout(LifecycleStatus::Cleanable, None);
+        missing_worktree
+            .git_status
+            .as_mut()
+            .unwrap()
+            .worktree_exists = false;
+        missing_worktree.add_side_flag(SideFlag::WorktreeMissing);
+        let clean_eligibility = task_operation_eligibility(&missing_worktree, TaskOperation::Clean);
+        assert!(
+            matches!(clean_eligibility, OperationEligibility::Blocked(ref reasons)
+                if reasons.iter().any(|reason| reason == "task has missing substrate")
+                    && !reasons.iter().any(|reason| reason.contains("expected ajax/fix-login")))
+        );
+
+        let mut mismatch_with_missing_tmux =
+            task_with_git_checkout(LifecycleStatus::Reviewable, Some("fix/pane-stuck"));
+        mismatch_with_missing_tmux.add_side_flag(SideFlag::TmuxMissing);
+        assert_eq!(
+            task_operation_eligibility(&mismatch_with_missing_tmux, TaskOperation::Merge),
+            OperationEligibility::Blocked(vec![named_detail.to_string()])
+        );
     }
 }

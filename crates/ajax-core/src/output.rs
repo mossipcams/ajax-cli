@@ -66,22 +66,48 @@ pub struct TasksResponse {
     pub tasks: Vec<TaskSummary>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct TaskSummary {
     pub id: String,
     pub qualified_handle: String,
     pub title: String,
     pub lifecycle_status: String,
-    #[serde(skip_serializing)]
     pub status: TaskStatus,
-    #[serde(skip_serializing)]
     pub status_explanation: Option<String>,
     #[serde(default)]
     pub runtime_observation_error: Option<String>,
     pub needs_attention: bool,
     pub live_status: Option<LiveObservation>,
-    #[serde(default, skip_serializing)]
+    #[serde(default)]
     pub actions: Vec<String>,
+}
+
+impl Serialize for TaskSummary {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let omit_operator_state = self.status == TaskStatus::Running;
+        let field_count = if omit_operator_state { 7 } else { 10 };
+        let mut state = serializer.serialize_struct("TaskSummary", field_count)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("qualified_handle", &self.qualified_handle)?;
+        state.serialize_field("title", &self.title)?;
+        state.serialize_field("lifecycle_status", &self.lifecycle_status)?;
+        if !omit_operator_state {
+            state.serialize_field("status", &self.status)?;
+            state.serialize_field("status_explanation", &self.status_explanation)?;
+        }
+        state.serialize_field("runtime_observation_error", &self.runtime_observation_error)?;
+        state.serialize_field("needs_attention", &self.needs_attention)?;
+        state.serialize_field("live_status", &self.live_status)?;
+        if !omit_operator_state {
+            state.serialize_field("actions", &self.actions)?;
+        }
+        state.end()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -349,12 +375,15 @@ mod tests {
                     "qualified_handle": "web/fix-login",
                     "title": "Fix login",
                     "lifecycle_status": "active",
+                    "status": "waiting",
+                    "status_explanation": "Waiting for approval",
                     "runtime_observation_error": null,
                     "needs_attention": false,
                     "live_status": {
                         "kind": "WaitingForApproval",
                         "summary": "waiting for approval"
-                    }
+                    },
+                    "actions": ["resume"]
                 }]
             })
         );

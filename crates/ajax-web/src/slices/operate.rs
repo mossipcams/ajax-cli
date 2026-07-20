@@ -5,7 +5,7 @@ use ajax_core::{
         environment::{local_branch_exists, origin_fetch_age},
         CommandOutput, CommandRunError, CommandRunner,
     },
-    commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
+    commands::{self, BranchAdoptionPlan, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
     remediation::{self, RemediationError},
@@ -27,6 +27,8 @@ use crate::adapters::skills::resolve_skill_path;
 pub struct OperateRequest {
     pub task_handle: String,
     pub action: String,
+    pub confirmed: bool,
+    pub branch_adoption: Option<BranchAdoptionPlan>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -74,7 +76,7 @@ pub fn operate<R: Registry>(
         | OperatorAction::Repair
         | OperatorAction::Resume => {
             let kind = task_command_kind(action)?;
-            execute_task_command(context, runner, kind, &request.task_handle)
+            execute_task_command(context, runner, kind, &request)
         }
     }
 }
@@ -168,8 +170,9 @@ fn execute_task_command<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
     kind: TaskCommandKind,
-    task_handle: &str,
+    request: &OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
+    let task_handle = &request.task_handle;
     if matches!(kind, TaskCommandKind::Review | TaskCommandKind::Repair) {
         let _ = commands::refresh_git_substrate_evidence(context, runner);
     }
@@ -179,9 +182,14 @@ fn execute_task_command<R: Registry>(
     } else {
         OpenMode::Attach
     };
-    let plan = plan_task_command_operation(context, kind, task_handle, open_mode)
+    let mut plan = plan_task_command_operation(context, kind, task_handle, open_mode)
         .map_err(|error| OperateError::Command(error, false))?;
-    let confirmed = !plan.requires_confirmation;
+    if kind == TaskCommandKind::Repair {
+        if let Some(request_adoption) = &request.branch_adoption {
+            plan.branch_adoption = Some(request_adoption.clone());
+        }
+    }
+    let confirmed = task_command_confirmed(kind, request, &plan);
     let (outputs, state_changed) =
         execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
             .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
@@ -190,6 +198,21 @@ fn execute_task_command<R: Registry>(
         state_changed,
         output: format_execution_outputs(&outputs),
     })
+}
+
+fn task_command_confirmed(
+    kind: TaskCommandKind,
+    request: &OperateRequest,
+    plan: &commands::CommandPlan,
+) -> bool {
+    if kind == TaskCommandKind::Repair && plan.branch_adoption.is_some() {
+        return request.branch_adoption.is_some() && request.confirmed;
+    }
+    if plan.requires_confirmation {
+        request.confirmed
+    } else {
+        true
+    }
 }
 
 fn execute_drop<R: Registry>(
@@ -421,6 +444,8 @@ mod tests {
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: "resume".to_string(),
+                confirmed: false,
+                branch_adoption: None,
             },
         )
         .unwrap();
@@ -468,6 +493,8 @@ mod tests {
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: "repair".to_string(),
+                confirmed: false,
+                branch_adoption: None,
             },
         )
         .unwrap();
@@ -507,6 +534,8 @@ mod tests {
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: "review".to_string(),
+                confirmed: false,
+                branch_adoption: None,
             },
         )
         .unwrap();
@@ -539,6 +568,8 @@ mod tests {
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: remediation::FIX_CI.to_string(),
+                confirmed: false,
+                branch_adoption: None,
             },
         )
         .unwrap();
@@ -804,5 +835,255 @@ mod tests {
             ..Config::default()
         };
         CommandContext::new(config, InMemoryRegistry::default())
+    }
+
+    fn context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_reviewable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        context
+    }
+
+    struct QueuedRefreshRunner {
+        outputs: std::collections::VecDeque<CommandOutput>,
+        commands: Vec<ajax_core::adapters::CommandSpec>,
+    }
+
+    impl QueuedRefreshRunner {
+        fn new(outputs: Vec<CommandOutput>) -> Self {
+            Self {
+                outputs: outputs.into(),
+                commands: Vec::new(),
+            }
+        }
+    }
+
+    impl ajax_core::adapters::CommandRunner for QueuedRefreshRunner {
+        fn run(
+            &mut self,
+            command: &ajax_core::adapters::CommandSpec,
+        ) -> Result<CommandOutput, ajax_core::adapters::CommandRunError> {
+            self.commands.push(command.clone());
+            self.outputs
+                .pop_front()
+                .ok_or(ajax_core::adapters::CommandRunError::SpawnFailed(
+                    "queued refresh runner exhausted".to_string(),
+                ))
+        }
+    }
+
+    fn mismatch_refresh_outputs(observed_branch: &str) -> Vec<CommandOutput> {
+        vec![
+            CommandOutput {
+                status_code: 0,
+                stdout: format!(
+                    "worktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/{observed_branch}\n\n"
+                ),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status_code: 0,
+                stdout: "main\najax/fix-login\n".to_string(),
+                stderr: String::new(),
+            },
+        ]
+    }
+
+    fn is_git_substrate_observation(command: &ajax_core::adapters::CommandSpec) -> bool {
+        command.program == "git"
+            && (command
+                .args
+                .windows(2)
+                .any(|window| window == ["worktree", "list"])
+                || command
+                    .args
+                    .windows(2)
+                    .any(|window| window == ["branch", "--format=%(refname:short)"]))
+    }
+
+    fn assert_only_git_substrate_observations(commands: &[ajax_core::adapters::CommandSpec]) {
+        assert_eq!(
+            commands.len(),
+            2,
+            "expected only git substrate observations"
+        );
+        assert!(commands.iter().all(is_git_substrate_observation));
+        assert!(!commands.iter().any(|command| {
+            command.args.iter().any(|arg| {
+                arg == "switch"
+                    || arg == "checkout"
+                    || arg == "worktree" && command.args.contains(&"add".to_string())
+            }) || command.program == "tmux"
+                || command.program == "ajax-cli"
+        }));
+    }
+
+    #[test]
+    fn operate_slice_mismatch_repair_requires_typed_confirmation() {
+        let mut context = context_with_named_checkout_mismatch();
+        let branch_before = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .branch
+            .clone();
+        let events_before = context
+            .registry
+            .events_for_task(&TaskId::new("web/fix-login"))
+            .len();
+        let mut runner = QueuedRefreshRunner::new(mismatch_refresh_outputs("fix/pane-stuck"));
+
+        let error = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "repair".to_string(),
+                confirmed: true,
+                branch_adoption: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            OperateError::Command(
+                ajax_core::commands::CommandError::ConfirmationRequired,
+                false
+            )
+        ));
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .branch,
+            branch_before
+        );
+        assert_eq!(
+            context
+                .registry
+                .events_for_task(&TaskId::new("web/fix-login"))
+                .len(),
+            events_before
+        );
+        assert_only_git_substrate_observations(runner.commands.as_slice());
+    }
+
+    #[test]
+    fn operate_slice_confirmed_mismatch_repair_adopts_requested_pair_without_mutation_commands() {
+        let mut context = context_with_named_checkout_mismatch();
+        let task_before = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .clone();
+        let mut runner = QueuedRefreshRunner::new(mismatch_refresh_outputs("fix/pane-stuck"));
+
+        let outcome = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "repair".to_string(),
+                confirmed: true,
+                branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
+                    expected_branch: "ajax/fix-login".to_string(),
+                    observed_branch: "fix/pane-stuck".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.state_changed);
+        assert!(outcome.output.is_empty());
+        let task_after = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task_after.branch, "fix/pane-stuck");
+        assert_eq!(task_after.id, task_before.id);
+        assert_eq!(task_after.worktree_path, task_before.worktree_path);
+        assert_eq!(task_after.tmux_session, task_before.tmux_session);
+        assert!(!task_after.has_checkout_mismatch());
+        assert_only_git_substrate_observations(runner.commands.as_slice());
+    }
+
+    #[test]
+    fn operate_slice_stale_mismatch_confirmation_rejects_changed_checkout() {
+        const STALE_REASON: &str = "checkout changed since repair was planned; refresh and retry";
+        let mut context = context_with_named_checkout_mismatch();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .git_status
+            .as_mut()
+            .unwrap()
+            .current_branch = Some("other/branch".to_string());
+        let branch_before = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .branch
+            .clone();
+        let events_before = context
+            .registry
+            .events_for_task(&TaskId::new("web/fix-login"))
+            .len();
+        let mut runner = QueuedRefreshRunner::new(mismatch_refresh_outputs("other/branch"));
+
+        let error = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "repair".to_string(),
+                confirmed: true,
+                branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
+                    expected_branch: "ajax/fix-login".to_string(),
+                    observed_branch: "fix/pane-stuck".to_string(),
+                }),
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            OperateError::Command(ajax_core::commands::CommandError::PlanBlocked(reasons), false)
+            if reasons == [STALE_REASON.to_string()]
+        ));
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .branch,
+            branch_before
+        );
+        assert_eq!(
+            context
+                .registry
+                .events_for_task(&TaskId::new("web/fix-login"))
+                .len(),
+            events_before
+        );
+        assert_only_git_substrate_observations(runner.commands.as_slice());
     }
 }

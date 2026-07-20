@@ -39,6 +39,17 @@ pub fn merge_safety(task: &Task) -> SafetyReport {
         );
     }
 
+    if task.has_checkout_mismatch() {
+        if let Some(explanation) = task.checkout_mismatch_explanation() {
+            mark(
+                &mut classification,
+                SafetyClassification::Blocked,
+                &mut reasons,
+                &explanation,
+            );
+        }
+    }
+
     if git_status.conflicted || task.has_side_flag(SideFlag::Conflicted) {
         mark(
             &mut classification,
@@ -99,6 +110,17 @@ pub fn cleanup_safety(task: &Task) -> SafetyReport {
             &mut reasons,
             "branch is missing",
         );
+    }
+
+    if task.has_checkout_mismatch() {
+        if let Some(explanation) = task.checkout_mismatch_explanation() {
+            mark(
+                &mut classification,
+                SafetyClassification::Blocked,
+                &mut reasons,
+                &explanation,
+            );
+        }
     }
 
     if git_status.conflicted || task.has_side_flag(SideFlag::Conflicted) {
@@ -650,5 +672,66 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason == "git status is unknown"));
+    }
+
+    fn task_with_present_checkout(current_branch: Option<&str>) -> Task {
+        let mut task = reviewable_clean_task();
+        task.git_status.as_mut().unwrap().current_branch = current_branch.map(str::to_string);
+        task
+    }
+
+    #[test]
+    fn branch_sensitive_checkout_mismatch_safety_is_blocked_with_details() {
+        let named_detail = "Worktree on fix/pane-stuck; expected ajax/fix-login";
+        let detached_detail = "Worktree detached; expected ajax/fix-login";
+
+        let named_mismatch = task_with_present_checkout(Some("fix/pane-stuck"));
+        let merge_report = merge_safety(&named_mismatch);
+        assert_eq!(merge_report.classification, SafetyClassification::Blocked);
+        assert!(merge_report
+            .reasons
+            .iter()
+            .any(|reason| reason == named_detail));
+
+        let detached_mismatch = task_with_present_checkout(None);
+        let cleanup_report = cleanup_safety(&detached_mismatch);
+        assert_eq!(cleanup_report.classification, SafetyClassification::Blocked);
+        assert!(cleanup_report
+            .reasons
+            .iter()
+            .any(|reason| reason == detached_detail));
+
+        let mut mismatch_with_missing_tmux = task_with_present_checkout(Some("fix/pane-stuck"));
+        mismatch_with_missing_tmux.add_side_flag(SideFlag::TmuxMissing);
+        let merge_with_tmux_gap = merge_safety(&mismatch_with_missing_tmux);
+        assert_eq!(
+            merge_with_tmux_gap.classification,
+            SafetyClassification::Blocked
+        );
+        assert!(merge_with_tmux_gap
+            .reasons
+            .iter()
+            .any(|reason| reason == named_detail));
+
+        let mut missing_worktree = clean_merged_task();
+        missing_worktree
+            .git_status
+            .as_mut()
+            .unwrap()
+            .worktree_exists = false;
+        missing_worktree.add_side_flag(SideFlag::WorktreeMissing);
+        let cleanup_missing = cleanup_safety(&missing_worktree);
+        assert_eq!(
+            cleanup_missing.classification,
+            SafetyClassification::Blocked
+        );
+        assert!(cleanup_missing
+            .reasons
+            .iter()
+            .any(|reason| reason == "worktree is missing"));
+        assert!(!cleanup_missing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("expected ajax/fix-login")));
     }
 }

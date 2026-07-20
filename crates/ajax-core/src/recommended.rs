@@ -1,7 +1,7 @@
 use crate::{
     models::{
         AgentRuntimeStatus, Annotation, Evidence, LifecycleStatus, LiveStatusKind, OperatorAction,
-        SideFlag, Task,
+        RuntimeHealth, SideFlag, Task,
     },
     operation::{task_operation_eligibility, TaskOperation},
     policy::merge_safety,
@@ -121,6 +121,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             crate::models::SubstrateGap::BranchMissing => "branch_missing",
         },
         Evidence::RuntimeObservationFailed => "runtime_observation_failed",
+        Evidence::CheckoutMismatch => "checkout_mismatch",
     }
 }
 
@@ -172,6 +173,13 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
+    if !task.has_missing_substrate()
+        && (task.has_checkout_mismatch()
+            || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch)
+    {
+        return vec![OperatorAction::Repair, OperatorAction::Resume];
+    }
+
     // A missing worktree is recoverable while the branch still exists — the
     // repair plan recreates it (see `task_window_repair_plan`). Offer Repair
     // (plus Drop) instead of collapsing to Drop-only. Shell-only gaps
@@ -338,6 +346,39 @@ mod tests {
             last_commit: Some("abc123 Fix task".to_string()),
         });
         t
+    }
+
+    #[test]
+    fn stale_checkout_mismatch_health_defers_to_missing_worktree_actions() {
+        let mut t = clean_reviewable_task("fix-login");
+        t.git_status.as_mut().unwrap().worktree_exists = false;
+        t.mark_resource_missing(crate::models::SideFlag::WorktreeMissing);
+        t.runtime_projection.health = RuntimeHealth::CheckoutMismatch;
+
+        let plan = operator_action(&t);
+
+        assert!(t.has_missing_substrate());
+        assert_ne!(plan.reason, "checkout_mismatch");
+        assert_eq!(
+            plan.available_actions,
+            vec![OperatorAction::Repair, OperatorAction::Drop]
+        );
+        assert!(!plan.available_actions.contains(&OperatorAction::Resume));
+    }
+
+    #[test]
+    fn checkout_mismatch_recommends_repair_and_only_safe_terminal_access() {
+        let mut t = clean_reviewable_task("fix-login");
+        t.git_status.as_mut().unwrap().current_branch = Some("fix/pane-stuck".to_string());
+
+        let plan = operator_action(&t);
+
+        assert_eq!(plan.action, OperatorAction::Repair);
+        assert_eq!(plan.reason, "checkout_mismatch");
+        assert_eq!(
+            plan.available_actions,
+            vec![OperatorAction::Repair, OperatorAction::Resume]
+        );
     }
 
     #[test]

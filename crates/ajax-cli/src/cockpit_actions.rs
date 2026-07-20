@@ -52,25 +52,34 @@ pub(crate) fn handle_pending_cockpit_result(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn tui_cockpit_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, false)
+    let mut retained_plan = None;
+    cockpit_action_outcome(item, context, false, &mut retained_plan)
 }
 
+#[cfg(test)]
 pub(crate) fn tui_cockpit_confirmed_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, true)
+    let mut retained_plan = None;
+    cockpit_action_outcome(item, context, true, &mut retained_plan)
 }
 
-fn tui_cockpit_action_with_confirmation(
+pub(crate) fn cockpit_action_outcome(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
     confirmed: bool,
+    retained_plan: &mut Option<commands::CommandPlan>,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
+    if !confirmed {
+        retained_plan.take();
+    }
+
     let handle = &item.task_handle;
     let action = OperatorAction::from_label(item.action.as_str());
 
@@ -92,16 +101,46 @@ fn tui_cockpit_action_with_confirmation(
                 },
             ))
         }
-        Some(
-            OperatorAction::Resume
-            | OperatorAction::Review
-            | OperatorAction::Ship
-            | OperatorAction::Repair,
-        ) => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
-            task_handle: handle.clone(),
-            action: item.action.clone(),
-            task_title: None,
-        })),
+        Some(OperatorAction::Repair) if !confirmed => {
+            let plan = plan_task_command_operation(
+                context,
+                TaskCommandKind::Repair,
+                handle,
+                commands::OpenMode::NoAttach,
+            )
+            .map_err(command_error_as_io)?;
+            if plan.requires_confirmation {
+                let message = if let Some(adoption) = &plan.branch_adoption {
+                    format!(
+                        "press enter again to adopt branch {} (expected {})",
+                        adoption.observed_branch, adoption.expected_branch
+                    )
+                } else {
+                    "press enter again to confirm repair".to_string()
+                };
+                *retained_plan = Some(plan);
+                return Ok(ajax_tui::ActionOutcome::Confirm(message));
+            }
+            Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+                task_handle: handle.clone(),
+                action: item.action.clone(),
+                task_title: None,
+            }))
+        }
+        Some(OperatorAction::Repair) => {
+            Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+                task_handle: handle.clone(),
+                action: item.action.clone(),
+                task_title: None,
+            }))
+        }
+        Some(OperatorAction::Resume | OperatorAction::Review | OperatorAction::Ship) => {
+            Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+                task_handle: handle.clone(),
+                action: item.action.clone(),
+                task_title: None,
+            }))
+        }
         Some(OperatorAction::Start) => Ok(ajax_tui::ActionOutcome::Message(
             "select a project, then choose start task to enter a task name".to_string(),
         )),
@@ -300,6 +339,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
+    retained_repair_plan: Option<&commands::CommandPlan>,
 ) -> Result<PendingCockpitExecution, CliError> {
     execute_pending_cockpit_action_with_task_session_and_checkpoint(
         pending,
@@ -307,6 +347,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         runner,
         state_changed,
         task_session,
+        retained_repair_plan,
         |_| Ok(()),
     )
 }
@@ -321,6 +362,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session_and_checkpoint<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
+    retained_repair_plan: Option<&commands::CommandPlan>,
     mut checkpoint: C,
 ) -> Result<PendingCockpitExecution, CliError>
 where
@@ -418,12 +460,15 @@ where
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
         CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
     })?;
-    let plan =
-        plan_task_command_operation(context, kind, &pending.task_handle, task_entry_open_mode)
-            .map_err(command_error)?;
+    let (plan, confirmed) = resolve_task_command_plan(
+        context,
+        kind,
+        &pending.task_handle,
+        task_entry_open_mode,
+        retained_repair_plan,
+    )?;
 
     if kind != TaskCommandKind::Resume {
-        let confirmed = !plan.requires_confirmation;
         let (_outputs, operation_state_changed) = execute_task_command_operation(
             context,
             kind,
@@ -458,6 +503,25 @@ fn open_new_task_after_task_session(
         CliError::CommandFailed("task handle did not include a repo for create-task".to_string())
     })?;
     Ok(PendingCockpitExecution::OpenNewTask { repo })
+}
+
+fn resolve_task_command_plan(
+    context: &CommandContext<InMemoryRegistry>,
+    kind: TaskCommandKind,
+    qualified_handle: &str,
+    open_mode: commands::OpenMode,
+    retained_repair_plan: Option<&commands::CommandPlan>,
+) -> Result<(commands::CommandPlan, bool), CliError> {
+    if kind == TaskCommandKind::Repair {
+        if let Some(plan) = retained_repair_plan {
+            return Ok((plan.clone(), true));
+        }
+    }
+
+    let plan = plan_task_command_operation(context, kind, qualified_handle, open_mode)
+        .map_err(command_error)?;
+    let confirmed = !plan.requires_confirmation;
+    Ok((plan, confirmed))
 }
 
 fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {

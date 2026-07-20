@@ -1951,6 +1951,41 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_registry_store_round_trips_checkout_mismatch_runtime_health() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let expected_runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::CheckoutMismatch,
+            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_120, 0),
+            RuntimeObservationSource::TmuxProbe,
+        );
+        registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .runtime_projection = expected_runtime_projection.clone();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}-checkout-mismatch.db",
+            std::process::id(),
+            "runtime"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .runtime_projection,
+            expected_runtime_projection
+        );
+    }
+
+    #[test]
     fn sqlite_registry_store_normalizes_legacy_waiting_to_active_runtime_condition() {
         let mut registry = InMemoryRegistry::default();
         let mut legacy_task = task("task-1", "web", "fix-login");

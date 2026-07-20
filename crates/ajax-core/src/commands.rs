@@ -16,7 +16,7 @@ pub(crate) use check::check_task_plan_after_worktree_recreate;
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
-pub use context::{CommandContext, CommandError, CommandPlan, OpenMode};
+pub use context::{BranchAdoptionPlan, CommandContext, CommandError, CommandPlan, OpenMode};
 pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
@@ -44,7 +44,7 @@ pub use teardown::{
 
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
-    analysis::git_evidence::{interpret_git_status, worktree_matches_task_intent},
+    analysis::git_evidence::interpret_git_status,
     config::Config,
     models::{GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
@@ -355,17 +355,11 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
             .collect::<BTreeSet<_>>();
 
         for task in repo_tasks {
-            let observed_worktree = worktrees.iter().find(|worktree| {
-                worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch)
-            });
             let path_worktree = worktrees
                 .iter()
                 .find(|worktree| Path::new(&worktree.path) == task.worktree_path.as_path());
-            let worktree_exists = observed_worktree.is_some();
-            let branch_exists = branches.contains(&task.branch)
-                || observed_worktree
-                    .and_then(|worktree| worktree.branch.as_ref())
-                    .is_some_and(|branch| branch == &task.branch);
+            let worktree_exists = path_worktree.is_some();
+            let branch_exists = branches.contains(&task.branch);
             let current_branch = path_worktree.and_then(|worktree| worktree.branch.clone());
             let git_status = substrate_git_status(
                 task.git_status.as_ref(),
@@ -1928,7 +1922,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_git_substrate_evidence_rejects_other_branch_at_expected_path() {
+    fn refresh_git_substrate_evidence_treats_other_branch_at_expected_path_as_present() {
         let mut context = context_with_tasks();
         let task_id = TaskId::new("task-1");
         context
@@ -1963,18 +1957,18 @@ mod tests {
         assert!(changed);
         let task = context.registry.get_task(&task_id).unwrap();
         let git_status = task.git_status.as_ref().unwrap();
-        assert!(!git_status.worktree_exists);
+        assert!(git_status.worktree_exists);
         assert!(git_status.branch_exists);
         assert_eq!(
             git_status.current_branch.as_deref(),
             Some("dependabot/pip/minor")
         );
-        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(!task.has_side_flag(SideFlag::BranchMissing));
     }
 
     #[test]
-    fn repair_plan_blocks_when_expected_worktree_path_is_occupied_by_another_branch() {
+    fn repair_plan_does_not_add_worktree_when_expected_path_is_on_another_branch() {
         let mut context = context_with_tasks();
         let task_id = TaskId::new("task-1");
         context
@@ -2015,12 +2009,11 @@ mod tests {
 
         let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
-        assert!(plan.commands.is_empty());
+        assert!(!plan
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("occupied")));
         assert!(!plan.commands.iter().any(super::is_git_worktree_add_command));
-        assert_eq!(plan.blocked_reasons.len(), 1);
-        let blocker = &plan.blocked_reasons[0];
-        assert!(blocker.contains("/tmp/worktrees/web-fix-login"));
-        assert!(blocker.contains("dependabot/pip/minor"));
     }
 
     #[test]
@@ -2596,10 +2589,8 @@ mod tests {
         assert_eq!(plan.title, "diff task: web/fix-login");
         assert_eq!(
             plan.commands,
-            vec![
-                CommandSpec::new("git", ["diff", "--stat", "main...ajax/fix-login"])
-                    .with_cwd("/tmp/worktrees/web-fix-login")
-            ]
+            vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")]
         );
     }
 
@@ -2612,10 +2603,8 @@ mod tests {
         assert_eq!(plan.title, "diff task: web/fix-login");
         assert_eq!(
             plan.commands,
-            vec![
-                CommandSpec::new("git", ["diff", "--stat", "main...ajax/fix-login"])
-                    .with_cwd("/tmp/worktrees/web-fix-login")
-            ]
+            vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")]
         );
     }
 
@@ -2641,6 +2630,52 @@ mod tests {
 
         assert!(plan.commands.is_empty());
         assert_eq!(plan.blocked_reasons, vec!["task worktree is missing"]);
+    }
+
+    #[test]
+    fn checkout_mismatch_keeps_open_check_and_review_available() {
+        let mut context = context_with_test_command();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
+            "/tmp/worktrees/web-fix-login",
+        ));
+
+        let open_plan = open_task_plan(&context, "web/fix-login", OpenMode::NoAttach).unwrap();
+        assert!(open_plan.blocked_reasons.is_empty());
+
+        let check_plan = check_task_plan(&context, "web/fix-login").unwrap();
+        assert!(check_plan.blocked_reasons.is_empty());
+        assert_eq!(
+            check_plan.commands,
+            vec![CommandSpec::new("sh", ["-lc", "cargo test"])
+                .with_cwd("/tmp/worktrees/web-fix-login")]
+        );
+
+        let diff_plan = diff_task_plan(&context, "web/fix-login").unwrap();
+        assert!(diff_plan.blocked_reasons.is_empty());
+        assert_eq!(
+            diff_plan.commands,
+            vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")]
+        );
     }
 
     #[test]
@@ -4502,6 +4537,53 @@ mod tests {
                     .with_mode(CommandMode::InheritStdio)
             ]
         );
+    }
+
+    #[test]
+    fn task_window_repair_plan_ignores_stale_current_branch_when_worktree_is_missing() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.blocked_reasons.is_empty());
+        assert!(!plan
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("occupied")));
+        let worktree_add = plan
+            .commands
+            .iter()
+            .find(|command| super::is_git_worktree_add_command(command))
+            .expect("expected git worktree add command");
+        assert_eq!(
+            worktree_add.args,
+            vec![
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "/tmp/worktrees/web-fix-login",
+                "ajax/fix-login",
+            ]
+        );
+        assert!(!worktree_add.args.iter().any(|arg| arg == "-b"));
     }
 
     #[test]

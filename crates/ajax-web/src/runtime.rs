@@ -1246,6 +1246,10 @@ struct MobileActionRequest {
     request_id: Option<String>,
     task_handle: String,
     action: String,
+    #[serde(default)]
+    confirmed: bool,
+    #[serde(default)]
+    branch_adoption: Option<ajax_core::commands::BranchAdoptionPlan>,
 }
 
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
@@ -1277,6 +1281,8 @@ fn handle_action_request<C: CommandRunner>(
         crate::slices::operate::OperateRequest {
             task_handle: request.task_handle,
             action: request.action,
+            confirmed: request.confirmed,
+            branch_adoption: request.branch_adoption,
         },
         context,
         runner,
@@ -2414,6 +2420,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn axum_operation_preserves_branch_adoption_confirmation() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "adoption-confirm");
+
+        let response = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"task_handle":"web/fix-login","action":"repair","confirmed":true,"branch_adoption":{"expected_branch":"ajax/fix-login","observed_branch":"fix/pane-stuck"}}"#,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            state.shared().bridge.operate,
+            Some(OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "repair".to_string(),
+                confirmed: true,
+                branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
+                    expected_branch: "ajax/fix-login".to_string(),
+                    observed_branch: "fix/pane-stuck".to_string(),
+                }),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn axum_operations_are_idempotent_by_request_id() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let (state, cookie, app) = app_with(context, TestBridge::default(), "axum-idempotency");
@@ -3107,6 +3141,8 @@ mod tests {
             Some(OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: "review".to_string(),
+                confirmed: false,
+                branch_adoption: None,
             })
         );
     }

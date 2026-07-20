@@ -17,6 +17,16 @@ const drop: WebAction = {
   destructive: true,
   confirmation_required: true,
 };
+const repair: WebAction = {
+  action: "repair",
+  label: "Repair",
+  destructive: false,
+  confirmation_required: true,
+  branch_adoption: {
+    expected_branch: "ajax/fix-login",
+    observed_branch: "fix/pane-stuck",
+  },
+};
 
 describe("ActionBar", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -42,7 +52,9 @@ describe("ActionBar", () => {
     expect(spy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(DROP_UNDO_MS);
     await vi.runAllTimersAsync();
-    expect(spy).toHaveBeenCalledOnce();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ confirmed: true }),
+    );
   });
 
   it("delays the Drop API until the undo window elapses, then dismisses", async () => {
@@ -137,5 +149,68 @@ describe("ActionBar", () => {
     fireEvent.click(screen.getByText("Review"));
     await vi.runAllTimersAsync();
     expect(onCockpit).toHaveBeenCalledWith(cockpit);
+  });
+
+  it("sends the retained branch adoption only on the confirming tap", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    render(<ActionBar actions={[repair]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Repair"));
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.getByText("Tap to confirm")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Tap to confirm"));
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        task_handle: "web/x",
+        action: "repair",
+        confirmed: true,
+        branch_adoption: {
+          expected_branch: "ajax/fix-login",
+          observed_branch: "fix/pane-stuck",
+        },
+        request_id: expect.any(String),
+      }),
+    );
+  });
+
+  it("does not replace a pending adoption pair when actions refresh", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const refreshedRepair: WebAction = {
+      ...repair,
+      branch_adoption: {
+        expected_branch: "ajax/fix-login",
+        observed_branch: "fix/new-checkout",
+      },
+    };
+    const { rerender } = render(<ActionBar actions={[repair]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Repair"));
+    rerender(<ActionBar actions={[refreshedRepair]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Tap to confirm"));
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        branch_adoption: {
+          expected_branch: "ajax/fix-login",
+          observed_branch: "fix/pane-stuck",
+        },
+      }),
+    );
+  });
+
+  it("marks ordinary actions unconfirmed and runs them immediately", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    render(<ActionBar actions={[review]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Review"));
+    await vi.runAllTimersAsync();
+    expect(screen.queryByText("Tap to confirm")).toBeNull();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        task_handle: "web/x",
+        action: "review",
+        confirmed: false,
+        request_id: expect.any(String),
+      }),
+    );
+    expect(spy.mock.calls[0][0]).not.toHaveProperty("branch_adoption");
   });
 });

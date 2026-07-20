@@ -934,6 +934,121 @@ mod tests {
     }
 
     #[test]
+    fn web_bridge_persists_confirmed_mismatch_branch_adoption() {
+        let dir = scratch_dir("mismatch-adoption");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let mut saved_context = reviewable_context();
+        {
+            let task = saved_context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .unwrap();
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.git_status = Some(GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some("fix/pane-stuck".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+        }
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&saved_context.registry)
+            .unwrap();
+        let mut context = saved_context;
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+        let mut runner = MismatchAdoptionRunner::default();
+
+        let outcome = bridge
+            .execute_operate(
+                super::OperateRequest {
+                    task_handle: "web/fix-login".to_string(),
+                    action: "repair".to_string(),
+                    confirmed: true,
+                    branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
+                        expected_branch: "ajax/fix-login".to_string(),
+                        observed_branch: "fix/pane-stuck".to_string(),
+                    }),
+                },
+                &mut context,
+                &mut runner,
+            )
+            .expect("confirmed mismatch repair should adopt");
+
+        assert!(outcome.state_changed);
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .branch,
+            "fix/pane-stuck"
+        );
+        assert_eq!(runner.commands.len(), 2);
+        assert!(runner.commands.iter().all(|command| {
+            command.program == "git"
+                && (command
+                    .args
+                    .windows(2)
+                    .any(|window| window == ["worktree", "list"])
+                    || command
+                        .args
+                        .windows(2)
+                        .any(|window| window == ["branch", "--format=%(refname:short)"]))
+        }));
+
+        let reloaded = crate::context::load_context(&paths).expect("reload after adoption");
+        let task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task.branch, "fix/pane-stuck");
+        assert_eq!(
+            task.worktree_path,
+            std::path::Path::new("/repo/web__worktrees/ajax-fix-login")
+        );
+        assert_eq!(task.tmux_session, "ajax-web-fix-login");
+        assert!(!task.has_checkout_mismatch());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[derive(Default)]
+    struct MismatchAdoptionRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for MismatchAdoptionRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, ..] if repo == "/repo/web" && subcommand == "worktree" => {
+                    "worktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/fix/pane-stuck\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/repo/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
+                _ => "",
+            };
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
     fn web_bridge_drop_of_last_task_persists_empty_registry() {
         let dir = scratch_dir("drop-empty-registry");
         let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
@@ -950,6 +1065,8 @@ mod tests {
                 super::OperateRequest {
                     task_handle: "web/fix-login".to_string(),
                     action: "drop".to_string(),
+                    confirmed: false,
+                    branch_adoption: None,
                 },
                 &mut context,
                 &mut runner,

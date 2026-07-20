@@ -419,6 +419,28 @@ impl Task {
                 .is_some_and(|status| !status.branch_exists)
     }
 
+    pub fn has_checkout_mismatch(&self) -> bool {
+        self.git_status.as_ref().is_some_and(|status| {
+            status.worktree_exists && status.current_branch.as_deref() != Some(self.branch.as_str())
+        })
+    }
+
+    pub fn checkout_mismatch_explanation(&self) -> Option<String> {
+        if !self.has_checkout_mismatch()
+            && self.runtime_projection.health != RuntimeHealth::CheckoutMismatch
+        {
+            return None;
+        }
+        let expected = self.branch.as_str();
+        let observed = self.git_status.as_ref().and_then(|status| {
+            status
+                .current_branch
+                .as_deref()
+                .map(|branch| format!("Worktree on {branch}; expected {expected}"))
+        });
+        Some(observed.unwrap_or_else(|| format!("Worktree detached; expected {expected}")))
+    }
+
     pub fn has_missing_git_substrate(&self) -> bool {
         self.has_missing_worktree() || self.has_missing_branch()
     }
@@ -491,6 +513,7 @@ impl Task {
                 tmux_status: self.tmux_status.clone(),
                 task_window_status: self.task_window_status.clone(),
             },
+            &self.branch,
             SystemTime::now(),
             source,
         );
@@ -670,6 +693,7 @@ impl TaskWindowStatus {
 pub enum RuntimeHealth {
     Healthy,
     MissingWorktree,
+    CheckoutMismatch,
     MissingSession,
     MissingTaskWindow,
     WrongTaskWindowPath,
@@ -681,6 +705,7 @@ impl RuntimeHealth {
         match self {
             Self::Healthy => "healthy",
             Self::MissingWorktree => "missing_worktree",
+            Self::CheckoutMismatch => "checkout_mismatch",
             Self::MissingSession => "missing_session",
             Self::MissingTaskWindow => "missing_task_window",
             Self::WrongTaskWindowPath => "wrong_task_window_path",
@@ -692,6 +717,7 @@ impl RuntimeHealth {
         match value {
             "healthy" => Some(Self::Healthy),
             "missing_worktree" => Some(Self::MissingWorktree),
+            "checkout_mismatch" => Some(Self::CheckoutMismatch),
             "missing_session" => Some(Self::MissingSession),
             "missing_task_window" => Some(Self::MissingTaskWindow),
             "wrong_task_window_path" => Some(Self::WrongTaskWindowPath),
@@ -938,6 +964,7 @@ pub enum Evidence {
     Lifecycle(LifecycleStatus),
     Substrate(SubstrateGap),
     RuntimeObservationFailed,
+    CheckoutMismatch,
 }
 
 impl Evidence {
@@ -1008,6 +1035,7 @@ impl Evidence {
                 SubstrateGap::BranchMissing => "branch missing",
             },
             Evidence::RuntimeObservationFailed => "status unavailable",
+            Evidence::CheckoutMismatch => "checkout mismatch",
         }
     }
 
@@ -1523,6 +1551,40 @@ mod tests {
         assert!(!task.points_at_expected_path);
     }
 
+    fn git_status_for_checkout(worktree_exists: bool, current_branch: Option<&str>) -> GitStatus {
+        GitStatus {
+            worktree_exists,
+            branch_exists: true,
+            current_branch: current_branch.map(str::to_string),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }
+    }
+
+    #[test]
+    fn task_checkout_mismatch_requires_present_observed_worktree() {
+        let mut task = sample_task();
+        assert!(!task.has_checkout_mismatch());
+
+        task.git_status = Some(git_status_for_checkout(true, Some("ajax/generated")));
+        assert!(!task.has_checkout_mismatch());
+
+        task.git_status = Some(git_status_for_checkout(true, Some("ajax/other")));
+        assert!(task.has_checkout_mismatch());
+
+        task.git_status = Some(git_status_for_checkout(true, None));
+        assert!(task.has_checkout_mismatch());
+
+        task.git_status = Some(git_status_for_checkout(false, Some("ajax/other")));
+        assert!(!task.has_checkout_mismatch());
+    }
+
     #[test]
     fn task_status_updates_refresh_runtime_projection_health() {
         let mut task = sample_task();
@@ -1615,6 +1677,7 @@ mod tests {
             (RuntimeHealth::MissingSession, "missing_session"),
             (RuntimeHealth::MissingTaskWindow, "missing_task_window"),
             (RuntimeHealth::WrongTaskWindowPath, "wrong_task_window_path"),
+            (RuntimeHealth::CheckoutMismatch, "checkout_mismatch"),
             (RuntimeHealth::Unobservable, "unobservable"),
         ];
         for (health, label) in health_labels {
@@ -1677,6 +1740,15 @@ mod tests {
         );
 
         assert_eq!(annotation.row_label(), "waiting for approval");
+    }
+
+    #[test]
+    fn checkout_mismatch_evidence_labels_are_specific() {
+        assert_eq!(Evidence::CheckoutMismatch.label(), "checkout mismatch");
+        assert_eq!(
+            Evidence::CheckoutMismatch.attention_label(),
+            "checkout mismatch"
+        );
     }
 
     #[test]
