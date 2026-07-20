@@ -8,7 +8,14 @@ pub struct StaticAsset {
 }
 
 pub fn browser_shell_html() -> String {
-    include_str!("../../web/dist/index.html").replace("__AJAX_APP_VERSION__", app_version())
+    let version = app_version();
+    include_str!("../../web/dist/index.html")
+        .replace("__AJAX_APP_VERSION__", version)
+        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
+        .replace(
+            "href=\"/app.css\"",
+            &format!("href=\"/app.css?v={version}\""),
+        )
 }
 
 /// Fingerprint the embedded shell assets into the version string.
@@ -61,7 +68,7 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
         }),
         "/app.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/dist/app.js"),
+            body: versioned_app_js(),
         }),
         "/terminal.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
@@ -69,6 +76,25 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
         }),
         _ => None,
     }
+}
+
+/// Served `/app.js` body with the deferred terminal import cache-busted by
+/// the live app version. The fingerprint in `app_version` is still computed
+/// from the raw embedded bytes, so this rewrite does not feed back into the
+/// version string.
+fn versioned_app_js() -> &'static [u8] {
+    static VERSIONED: OnceLock<&'static [u8]> = OnceLock::new();
+    VERSIONED.get_or_init(|| {
+        let version = app_version();
+        let raw = include_bytes!("../../web/dist/app.js");
+        let rewritten = std::str::from_utf8(raw)
+            .expect("embedded app.js must be utf8")
+            .replace(
+                "import(\"./terminal.js\")",
+                &format!("import(\"./terminal.js?v={version}\")"),
+            );
+        Box::leak(rewritten.into_bytes().into_boxed_slice())
+    })
 }
 
 #[cfg(test)]

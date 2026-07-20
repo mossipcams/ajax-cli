@@ -110,6 +110,26 @@ pub fn bytes_axum_response(
     response
 }
 
+/// Version-busted static shell asset response (JS/CSS). These filenames are
+/// content-fingerprinted via `?v=<app_version()>`, so they can be long-cached
+/// by browsers/CDNs as immutable. The HTML shell and `/api/*` keep `no-store`.
+pub fn static_bytes_axum_response(content_type: &'static str, body: Vec<u8>) -> AxumResponse {
+    let mut response = (StatusCode::OK, body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    apply_immutable_cache(&mut response);
+    apply_security_headers(&mut response);
+    response
+}
+
+pub fn apply_immutable_cache(response: &mut AxumResponse) {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+}
+
 pub fn web_error_response(error: WebError) -> AxumResponse {
     json_value_response(
         500,

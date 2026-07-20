@@ -37,13 +37,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tower_http::compression::CompressionLayer;
 
 pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
-    bytes_axum_response, html_response, json_response, json_value_response,
-    operation_response_with_request_id, response_from_web_error, text_axum_response,
-    web_error_response,
+    html_response, json_response, json_value_response, operation_response_with_request_id,
+    response_from_web_error, static_bytes_axum_response, text_axum_response, web_error_response,
 };
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
@@ -404,6 +404,7 @@ where
             session_state,
             require_browser_session::<C, B>,
         ))
+        .layer(CompressionLayer::new())
         .with_state(state)
 }
 
@@ -1171,7 +1172,7 @@ async fn axum_fallback(uri: Uri) -> AxumResponse {
 
 fn static_asset_response(path: &str) -> AxumResponse {
     match install::static_asset(path) {
-        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
+        Some(asset) => static_bytes_axum_response(asset.content_type, asset.body.to_vec()),
         None => text_axum_response(404, "not found"),
     }
 }
@@ -1827,6 +1828,78 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&missing_asset_body).unwrap(),
             "not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn static_shell_assets_are_long_cached_and_gzipped() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) =
+            app_with(context, TestBridge::default(), "axum-static-cache-gzip");
+        let immutable_cache = "public, max-age=31536000, immutable";
+
+        for path in ["/app.js", "/app.css", "/terminal.js"] {
+            let response = get_public(&app, path).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                response.headers()["cache-control"],
+                immutable_cache,
+                "{path} should be long-cached + immutable"
+            );
+        }
+
+        // HTML shell and API remain no-store (do not get the immutable cache).
+        let shell = get_public(&app, "/").await;
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert_eq!(shell.headers()["cache-control"], "no-store");
+
+        let cockpit = get(&app, &cookie, "/api/cockpit").await;
+        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(cockpit.headers()["cache-control"], "no-store");
+
+        // Negotiated gzip applies to compressible static JS when requested.
+        let app_js_gz = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/app.js")
+                    .header("accept-encoding", "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(app_js_gz.status(), StatusCode::OK);
+        assert_eq!(app_js_gz.headers()["content-encoding"], "gzip");
+    }
+
+    #[tokio::test]
+    async fn shell_versions_static_asset_urls() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, _cookie, app) =
+            app_with(context, TestBridge::default(), "axum-static-version-urls");
+        let version = crate::slices::install::app_version();
+
+        let shell_body = to_bytes(get_public(&app, "/").await.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let shell = std::str::from_utf8(&shell_body).unwrap();
+        assert!(
+            shell.contains(&format!("src=\"/app.js?v={version}\"")),
+            "shell must cache-bust app.js with the live version"
+        );
+        assert!(
+            shell.contains(&format!("href=\"/app.css?v={version}\"")),
+            "shell must cache-bust app.css with the live version"
+        );
+
+        let app_js_body = to_bytes(get_public(&app, "/app.js").await.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let app_js = std::str::from_utf8(&app_js_body).unwrap();
+        assert!(
+            app_js.contains(&format!("import(\"./terminal.js?v={version}\")")),
+            "app.js must cache-bust the deferred terminal.js import with the live version"
         );
     }
 
