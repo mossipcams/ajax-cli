@@ -201,6 +201,16 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
         );
     }
 
+    if !task.has_missing_substrate()
+        && (task.has_checkout_mismatch()
+            || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch)
+    {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(AnnotationKind::Broken, Evidence::CheckoutMismatch),
+        );
+    }
+
     if let Some(kind) = annotation_kind_for_agent_status(task.agent_status) {
         push_collapsed_annotation(
             &mut annotations,
@@ -261,11 +271,13 @@ fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
             Evidence::AgentStatus(_) => 1,
             Evidence::SideFlag(_) => 2,
             Evidence::Lifecycle(_) => 3,
-            Evidence::Substrate(_) | Evidence::RuntimeObservationFailed => 4,
+            Evidence::Substrate(_)
+            | Evidence::RuntimeObservationFailed
+            | Evidence::CheckoutMismatch => 4,
         },
         AnnotationKind::Broken => match evidence {
             Evidence::LiveStatus(_) => 0,
-            Evidence::Substrate(_) => 1,
+            Evidence::Substrate(_) | Evidence::CheckoutMismatch => 1,
             Evidence::RuntimeObservationFailed => 2,
             Evidence::SideFlag(_) => 3,
             Evidence::AgentStatus(_) => 4,
@@ -276,7 +288,9 @@ fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
             Evidence::LiveStatus(_) => 1,
             Evidence::AgentStatus(_) => 2,
             Evidence::SideFlag(_) => 3,
-            Evidence::Substrate(_) | Evidence::RuntimeObservationFailed => 4,
+            Evidence::Substrate(_)
+            | Evidence::RuntimeObservationFailed
+            | Evidence::CheckoutMismatch => 4,
         },
     }
 }
@@ -354,7 +368,9 @@ fn substrate_gap_for_runtime_health(health: RuntimeHealth) -> Option<SubstrateGa
         RuntimeHealth::MissingTaskWindow | RuntimeHealth::WrongTaskWindowPath => {
             Some(SubstrateGap::TaskWindowMissing)
         }
-        RuntimeHealth::Healthy | RuntimeHealth::Unobservable => None,
+        RuntimeHealth::Healthy | RuntimeHealth::Unobservable | RuntimeHealth::CheckoutMismatch => {
+            None
+        }
     }
 }
 
@@ -363,8 +379,8 @@ mod tests {
     use crate::lifecycle::{mark_active, mark_cleanable, mark_merged, mark_reviewable};
     use crate::models::{
         AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LiveObservation,
-        LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, SubstrateGap, Task,
-        TaskId,
+        LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, SideFlag,
+        SubstrateGap, Task, TaskId,
     };
     use crate::ui_state::TaskStatus;
 
@@ -487,6 +503,84 @@ mod tests {
             vec![Annotation::new(
                 AnnotationKind::Broken,
                 Evidence::SideFlag(SideFlag::AgentDead),
+            )]
+        );
+        assert_eq!(annotations[0].suggests, OperatorAction::Repair);
+    }
+
+    #[test]
+    fn checkout_mismatch_runtime_health_is_not_substrate_gap() {
+        assert_eq!(
+            super::substrate_gap_for_runtime_health(RuntimeHealth::CheckoutMismatch),
+            None
+        );
+    }
+
+    #[test]
+    fn stale_checkout_mismatch_health_defers_to_missing_worktree_annotation() {
+        use crate::models::GitStatus;
+
+        let mut task = task_with_flags("stale-mismatch", &[SideFlag::WorktreeMissing]);
+        mark_active(&mut task).unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123".to_string()),
+        });
+        task.runtime_projection.health = RuntimeHealth::CheckoutMismatch;
+
+        let annotations = super::annotate(&task);
+
+        assert!(task.has_missing_substrate());
+        assert_eq!(
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::Broken,
+                Evidence::Substrate(SubstrateGap::WorktreeMissing),
+            )]
+        );
+        assert!(!annotations
+            .iter()
+            .any(|annotation| annotation.evidence == Evidence::CheckoutMismatch));
+    }
+
+    #[test]
+    fn annotate_emits_broken_for_checkout_mismatch_without_substrate_gap() {
+        use crate::models::GitStatus;
+
+        let mut task = task_with_flags("checkout-mismatch", &[]);
+        mark_active(&mut task).unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123".to_string()),
+        });
+        task.runtime_projection.health = RuntimeHealth::CheckoutMismatch;
+
+        let annotations = super::annotate(&task);
+
+        assert!(!task.has_missing_substrate());
+        assert_eq!(
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::Broken,
+                Evidence::CheckoutMismatch,
             )]
         );
         assert_eq!(annotations[0].suggests, OperatorAction::Repair);

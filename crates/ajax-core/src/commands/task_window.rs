@@ -28,16 +28,6 @@ pub fn task_window_repair_plan_with_open_mode<R: Registry>(
     }
     if let Some(git_status) = task.git_status.as_ref() {
         if !git_status.worktree_exists {
-            if let Some(current_branch) = git_status.current_branch.as_ref() {
-                if current_branch != &task.branch {
-                    plan.blocked_reasons.push(format!(
-                        "expected worktree path {} is occupied by branch {}",
-                        task.worktree_path.display(),
-                        current_branch
-                    ));
-                    return Ok(plan);
-                }
-            }
             if !git_status.branch_exists {
                 plan.blocked_reasons.push(format!(
                     "task worktree is missing: {}",

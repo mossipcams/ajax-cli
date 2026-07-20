@@ -47,6 +47,9 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
     if let Some(explanation) = canonical_missing_substrate_explanation(task) {
         return canonical(TaskStatus::Error, explanation);
     }
+    if let Some(explanation) = canonical_checkout_mismatch_explanation(task) {
+        return canonical(TaskStatus::Error, explanation);
+    }
     if let Some(live) = task.live_status.as_ref() {
         if let Some(explanation) = canonical_error_explanation(live.kind) {
             return canonical(TaskStatus::Error, explanation);
@@ -174,6 +177,13 @@ fn canonical_error_explanation(kind: LiveStatusKind) -> Option<&'static str> {
         LiveStatusKind::Blocked => Some("Agent blocked"),
         _ => None,
     }
+}
+
+fn canonical_checkout_mismatch_explanation(task: &Task) -> Option<String> {
+    if task.has_missing_substrate() {
+        return None;
+    }
+    task.checkout_mismatch_explanation()
 }
 
 fn canonical_missing_substrate_explanation(task: &Task) -> Option<&'static str> {
@@ -736,6 +746,74 @@ mod tests {
                 "running membership diverged for {kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn stale_checkout_mismatch_health_defers_to_missing_worktree_status() {
+        use crate::lifecycle::mark_active;
+        use crate::models::RuntimeHealth;
+
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        let mut git = clean_git_status();
+        git.worktree_exists = false;
+        git.current_branch = Some("fix/pane-stuck".to_string());
+        task.git_status = Some(git);
+        task.mark_resource_missing(SideFlag::WorktreeMissing);
+        task.runtime_projection.health = RuntimeHealth::CheckoutMismatch;
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Error);
+        assert_eq!(status.explanation.as_deref(), Some("Worktree missing"));
+        assert!(!status
+            .explanation
+            .as_deref()
+            .is_some_and(|explanation| explanation.contains("expected")));
+        assert!(task.has_missing_substrate());
+    }
+
+    #[test]
+    fn checkout_mismatch_status_names_observed_and_expected_checkout() {
+        use crate::lifecycle::mark_active;
+        use crate::models::RuntimeHealth;
+
+        let mut named_branch = base_task();
+        mark_active(&mut named_branch).unwrap();
+        let mut git = clean_git_status();
+        git.current_branch = Some("fix/pane-stuck".to_string());
+        named_branch.git_status = Some(git);
+        named_branch.runtime_projection.health = RuntimeHealth::CheckoutMismatch;
+
+        let named_status = derive_operator_status(&named_branch);
+        assert_eq!(named_status.status, TaskStatus::Error);
+        assert_eq!(
+            named_status.explanation.as_deref(),
+            Some("Worktree on fix/pane-stuck; expected ajax/fix-login")
+        );
+        assert!(!named_status
+            .explanation
+            .as_deref()
+            .is_some_and(|explanation| explanation.contains("missing")));
+        assert!(!named_branch.has_missing_substrate());
+
+        let mut detached = base_task();
+        mark_active(&mut detached).unwrap();
+        let mut detached_git = clean_git_status();
+        detached_git.current_branch = None;
+        detached.git_status = Some(detached_git);
+
+        let detached_status = derive_operator_status(&detached);
+        assert_eq!(detached_status.status, TaskStatus::Error);
+        assert_eq!(
+            detached_status.explanation.as_deref(),
+            Some("Worktree detached; expected ajax/fix-login")
+        );
+        assert!(!detached_status
+            .explanation
+            .as_deref()
+            .is_some_and(|explanation| explanation.contains("missing")));
+        assert!(!detached.has_missing_substrate());
     }
 
     #[test]

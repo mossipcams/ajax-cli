@@ -859,6 +859,355 @@ mod tests {
         );
     }
 
+    fn context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_reviewable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.add_side_flag(SideFlag::BranchMissing);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: false,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.refresh_runtime_projection();
+        context
+    }
+
+    fn context_with_detached_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_reviewable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: None,
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.refresh_runtime_projection();
+        context
+    }
+
+    #[test]
+    fn checkout_mismatch_repair_plans_confirmed_branch_adoption_or_blocks_detached() {
+        let named_context = context_with_named_checkout_mismatch();
+        let named_plan = plan_task_command_operation(
+            &named_context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert_eq!(named_plan.title, "repair task: web/fix-login");
+        assert!(named_plan.commands.is_empty());
+        assert!(named_plan.blocked_reasons.is_empty());
+        assert!(named_plan.requires_confirmation);
+        let adoption = named_plan.branch_adoption.as_ref().unwrap();
+        assert_eq!(adoption.expected_branch, "ajax/fix-login");
+        assert_eq!(adoption.observed_branch, "fix/pane-stuck");
+
+        let detached_context = context_with_detached_checkout_mismatch();
+        let detached_plan = plan_task_command_operation(
+            &detached_context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert!(detached_plan.commands.is_empty());
+        assert!(detached_plan.branch_adoption.is_none());
+        assert_eq!(
+            detached_plan.blocked_reasons,
+            vec!["cannot adopt a detached worktree; switch to a branch and refresh"]
+        );
+    }
+
+    #[test]
+    fn checkout_mismatch_repair_adopts_without_external_commands() {
+        let mut context = context_with_named_checkout_mismatch();
+        let task_before = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .clone();
+        let events_before: Vec<_> = context
+            .registry
+            .events_for_task(&TaskId::new("web/fix-login"))
+            .iter()
+            .map(|event| (event.kind, event.message.clone()))
+            .collect();
+
+        let repair_plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let mut runner = RecordingQueuedRunner::default();
+
+        let (outputs, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            &repair_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(outputs.is_empty());
+        assert!(state_changed);
+        assert!(runner.commands.is_empty());
+
+        let task_after = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task_after.branch, "fix/pane-stuck");
+        assert_eq!(task_after.id, task_before.id);
+        assert_eq!(task_after.handle, task_before.handle);
+        assert_eq!(task_after.title, task_before.title);
+        assert_eq!(task_after.worktree_path, task_before.worktree_path);
+        assert_eq!(task_after.tmux_session, task_before.tmux_session);
+        assert_eq!(task_after.task_window, task_before.task_window);
+        assert_eq!(task_after.lifecycle_status, task_before.lifecycle_status);
+        assert_eq!(task_after.agent_attempts, task_before.agent_attempts);
+        assert!(!task_after.has_checkout_mismatch());
+        assert!(!task_after.has_side_flag(SideFlag::BranchMissing));
+
+        let git_before = task_before.git_status.as_ref().unwrap();
+        let git_after = task_after.git_status.as_ref().unwrap();
+        assert!(!git_before.branch_exists);
+        assert!(git_after.branch_exists);
+        assert_eq!(git_after.current_branch.as_deref(), Some("fix/pane-stuck"));
+        assert_ne!(task_before.branch, task_after.branch);
+        assert_ne!(
+            task_before.runtime_projection.health,
+            task_after.runtime_projection.health
+        );
+
+        let events_after: Vec<_> = context
+            .registry
+            .events_for_task(&TaskId::new("web/fix-login"))
+            .iter()
+            .map(|event| (event.kind, event.message.clone()))
+            .collect();
+        assert_eq!(
+            events_after.len(),
+            events_before.len() + 1,
+            "expected one adoption event"
+        );
+        for (index, event) in events_before.iter().enumerate() {
+            assert_eq!(&events_after[index], event);
+        }
+        assert_eq!(
+            events_after.last().unwrap().0,
+            crate::registry::RegistryEventKind::SubstrateChanged
+        );
+        assert_eq!(
+            events_after.last().unwrap().1,
+            "task branch adopted from ajax/fix-login to fix/pane-stuck"
+        );
+    }
+
+    #[test]
+    fn checkout_mismatch_repair_rejects_stale_or_declined_adoption() {
+        const STALE_REASON: &str = "checkout changed since repair was planned; refresh and retry";
+
+        let mut context = context_with_named_checkout_mismatch();
+        let repair_plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let branch_before = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .branch
+            .clone();
+        let event_count_before = context
+            .registry
+            .events_for_task(&TaskId::new("web/fix-login"))
+            .len();
+
+        let (error, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            &repair_plan,
+            false,
+            &mut RecordingQueuedRunner::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, CommandError::ConfirmationRequired));
+        assert!(!state_changed);
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .branch,
+            branch_before
+        );
+        assert_eq!(
+            context
+                .registry
+                .events_for_task(&TaskId::new("web/fix-login"))
+                .len(),
+            event_count_before
+        );
+
+        let mut tampered_plan = repair_plan.clone();
+        tampered_plan.requires_confirmation = false;
+        let (error, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            &tampered_plan,
+            false,
+            &mut RecordingQueuedRunner::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, CommandError::ConfirmationRequired));
+        assert!(!state_changed);
+
+        type StaleCase = (
+            &'static str,
+            Box<dyn Fn(&mut CommandContext<InMemoryRegistry>)>,
+        );
+        let stale_cases: Vec<StaleCase> = vec![
+            (
+                "observed branch changed",
+                Box::new(|context| {
+                    context
+                        .registry
+                        .get_task_mut(&TaskId::new("web/fix-login"))
+                        .unwrap()
+                        .git_status
+                        .as_mut()
+                        .unwrap()
+                        .current_branch = Some("other/branch".to_string());
+                }),
+            ),
+            (
+                "detached checkout",
+                Box::new(|context| {
+                    context
+                        .registry
+                        .get_task_mut(&TaskId::new("web/fix-login"))
+                        .unwrap()
+                        .git_status
+                        .as_mut()
+                        .unwrap()
+                        .current_branch = None;
+                }),
+            ),
+            (
+                "missing worktree",
+                Box::new(|context| {
+                    let task = context
+                        .registry
+                        .get_task_mut(&TaskId::new("web/fix-login"))
+                        .unwrap();
+                    task.git_status.as_mut().unwrap().worktree_exists = false;
+                    task.add_side_flag(SideFlag::WorktreeMissing);
+                }),
+            ),
+            (
+                "task intent changed",
+                Box::new(|context| {
+                    context
+                        .registry
+                        .get_task_mut(&TaskId::new("web/fix-login"))
+                        .unwrap()
+                        .branch = "ajax/other-branch".to_string();
+                }),
+            ),
+        ];
+
+        for (label, mutate) in stale_cases {
+            let mut stale_context = context_with_named_checkout_mismatch();
+            let stale_plan = plan_task_command_operation(
+                &stale_context,
+                TaskCommandKind::Repair,
+                "web/fix-login",
+                OpenMode::Attach,
+            )
+            .unwrap();
+            mutate(&mut stale_context);
+            let branch_before = stale_context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .branch
+                .clone();
+            let events_before = stale_context
+                .registry
+                .events_for_task(&TaskId::new("web/fix-login"))
+                .len();
+
+            let (error, state_changed) = execute_task_command_operation(
+                &mut stale_context,
+                TaskCommandKind::Repair,
+                "web/fix-login",
+                &stale_plan,
+                true,
+                &mut RecordingQueuedRunner::default(),
+            )
+            .unwrap_err();
+
+            assert!(
+                matches!(
+                    &error,
+                    CommandError::PlanBlocked(reasons) if reasons == &[STALE_REASON.to_string()]
+                ),
+                "case {label}: got {error:?}"
+            );
+            assert!(!state_changed, "case {label}");
+            assert_eq!(
+                stale_context
+                    .registry
+                    .get_task(&TaskId::new("web/fix-login"))
+                    .unwrap()
+                    .branch,
+                branch_before,
+                "case {label}"
+            );
+            assert_eq!(
+                stale_context
+                    .registry
+                    .events_for_task(&TaskId::new("web/fix-login"))
+                    .len(),
+                events_before,
+                "case {label}"
+            );
+        }
+    }
+
     #[test]
     fn repair_operation_promotes_task_to_reviewable_on_check_success() {
         let mut context = context_with_reviewable_task();
@@ -990,52 +1339,64 @@ mod tests {
     }
 
     #[test]
-    fn drop_operation_does_not_remove_other_branch_at_expected_path() {
+    fn branch_sensitive_checkout_mismatch_drop_stops_before_observation() {
         let mut context = context_with_cleanable_task();
-        let mut outputs = vec![
-            output(0, "ajax-web-fix-login\n", ""),
-            output(
-                0,
-                "worktree /repo/web__worktrees/ajax-fix-login\nbranch refs/heads/dependabot/pip/minor\n\n",
-                "",
-            ),
-            output(0, "ajax/fix-login\n", ""),
-        ];
-        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
-        outputs.extend(absent_drop_observation_outputs());
-        let mut runner = RecordingQueuedRunner::new(outputs);
+        let blocker = "Worktree on dependabot/pip/minor; expected ajax/fix-login";
+        context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("dependabot/pip/minor".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let mut runner = RecordingQueuedRunner::default();
+
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        let (outputs, completion) = execute_drop_task_operation(
+        assert_eq!(
+            operation.confirmation_plan.blocked_reasons,
+            vec![blocker.to_string()]
+        );
+        assert_eq!(operation.observation.agent, ResourceState::Unknown);
+        assert_eq!(operation.observation.tmux_session, ResourceState::Unknown);
+        assert_eq!(operation.observation.worktree, ResourceState::Unknown);
+        assert_eq!(operation.observation.branch, ResourceState::Unknown);
+        assert!(runner.commands.is_empty());
+
+        let error = execute_drop_task_operation(
             &mut context,
             "web/fix-login",
             operation,
             true,
             &mut runner,
         )
-        .unwrap();
-
-        assert_eq!(completion, DropTaskCompletion::Removed);
-        assert_eq!(outputs.len(), 2);
-        assert!(runner.commands.iter().any(|command| {
-            command.program == "git"
-                && command.args.iter().any(|arg| arg == "branch")
-                && command.args.iter().any(|arg| arg == "ajax/fix-login")
-        }));
-        assert!(!runner.commands.iter().any(|command| {
-            command.program == "git"
-                && command.args.iter().any(|arg| arg == "worktree")
-                && command.args.iter().any(|arg| arg == "remove")
-        }));
-        assert!(!runner.commands.iter().any(|command| {
-            command.program == "sh"
-                && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
-        }));
-        assert!(context
+        .unwrap_err();
+        assert!(
+            matches!(error, CommandError::PlanBlocked(ref reasons) if reasons == &[blocker.to_string()])
+        );
+        let task = context
             .registry
             .get_task(&TaskId::new("web/fix-login"))
-            .is_none());
+            .unwrap();
+        assert_eq!(task.branch, "ajax/fix-login");
+        assert_eq!(
+            task.git_status
+                .as_ref()
+                .and_then(|status| status.current_branch.as_deref()),
+            Some("dependabot/pip/minor")
+        );
+        assert!(runner.commands.is_empty());
     }
 
     #[test]

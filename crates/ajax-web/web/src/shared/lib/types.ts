@@ -19,11 +19,17 @@ export type ConnectionState =
 /** Hash-route kinds. */
 export type RouteKind = "dashboard" | "project" | "task" | "settings";
 
+export interface BranchAdoptionPlan {
+  expected_branch: string;
+  observed_branch: string;
+}
+
 export interface WebAction {
   action: string;
   label: string;
   destructive: boolean;
   confirmation_required: boolean;
+  branch_adoption?: BranchAdoptionPlan;
 }
 
 export interface RepoSummary {
@@ -122,6 +128,8 @@ export interface OperationRequest {
   task_handle: string;
   action: string;
   request_id: string;
+  confirmed?: boolean;
+  branch_adoption?: BranchAdoptionPlan;
 }
 
 /** Operation/start envelopes return a refreshed projection on state change. */

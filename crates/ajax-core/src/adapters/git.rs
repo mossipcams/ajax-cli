@@ -215,10 +215,7 @@ fn parse_worktree_entry(entry: &str) -> Option<GitWorktree> {
         }
     }
 
-    path.zip(branch).map(|(path, branch)| GitWorktree {
-        path,
-        branch: Some(branch),
-    })
+    path.map(|path| GitWorktree { path, branch })
 }
 
 fn parse_current_branch(branch_line: &str) -> Option<String> {
@@ -328,10 +325,12 @@ detached
 
         let worktrees = GitAdapter::parse_worktrees(output);
 
-        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees.len(), 3);
         assert_eq!(worktrees[0].path, "/repos/ajax-cli");
         assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
         assert_eq!(worktrees[1].path, "/repos/ajax-cli__worktrees/ajax-code");
         assert_eq!(worktrees[1].branch.as_deref(), Some("ajax/code"));
+        assert_eq!(worktrees[2].path, "/repos/ajax-cli__worktrees/manual");
+        assert_eq!(worktrees[2].branch, None);
     }
 }

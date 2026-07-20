@@ -72,11 +72,19 @@ pub enum CommandError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct BranchAdoptionPlan {
+    pub expected_branch: String,
+    pub observed_branch: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CommandPlan {
     pub title: String,
     pub commands: Vec<CommandSpec>,
     pub requires_confirmation: bool,
     pub blocked_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_adoption: Option<BranchAdoptionPlan>,
 }
 
 impl CommandPlan {
@@ -86,7 +94,19 @@ impl CommandPlan {
             commands: Vec::new(),
             requires_confirmation: false,
             blocked_reasons: Vec::new(),
+            branch_adoption: None,
         }
+    }
+
+    pub fn set_branch_adoption(
+        &mut self,
+        expected_branch: impl Into<String>,
+        observed_branch: impl Into<String>,
+    ) {
+        self.branch_adoption = Some(BranchAdoptionPlan {
+            expected_branch: expected_branch.into(),
+            observed_branch: observed_branch.into(),
+        });
     }
 }
 

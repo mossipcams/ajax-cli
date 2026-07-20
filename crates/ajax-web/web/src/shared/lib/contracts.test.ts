@@ -60,6 +60,70 @@ describe("assertCockpit", () => {
     };
     expect(() => assertCockpit(bad)).toThrow(IncompatibleResponseError);
   });
+
+  it("validates optional branch adoption metadata", () => {
+    const withAdoption = {
+      ...valid,
+      cards: [
+        {
+          qualified_handle: "x/y",
+          repo: "x",
+          status: "idle",
+          actions: [
+            {
+              action: "repair",
+              label: "Repair",
+              destructive: false,
+              confirmation_required: true,
+              branch_adoption: {
+                expected_branch: "ajax/fix-login",
+                observed_branch: "fix/pane-stuck",
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(assertCockpit(withAdoption).cards[0].actions[0].branch_adoption).toEqual({
+      expected_branch: "ajax/fix-login",
+      observed_branch: "fix/pane-stuck",
+    });
+
+    const missingObserved = {
+      ...withAdoption,
+      cards: [
+        {
+          ...withAdoption.cards[0],
+          actions: [
+            {
+              ...withAdoption.cards[0].actions[0],
+              branch_adoption: { expected_branch: "ajax/fix-login" },
+            },
+          ],
+        },
+      ],
+    };
+    expect(() => assertCockpit(missingObserved)).toThrow(IncompatibleResponseError);
+
+    const nonStringObserved = {
+      ...withAdoption,
+      cards: [
+        {
+          ...withAdoption.cards[0],
+          actions: [
+            {
+              ...withAdoption.cards[0].actions[0],
+              branch_adoption: {
+                expected_branch: "ajax/fix-login",
+                observed_branch: 42,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(() => assertCockpit(nonStringObserved)).toThrow(IncompatibleResponseError);
+  });
 });
 
 describe("assertOperationResponse", () => {

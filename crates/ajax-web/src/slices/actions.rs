@@ -1,6 +1,12 @@
 //! Shared browser action capability vocabulary for Web Cockpit slices.
 
-use ajax_core::{models::OperatorAction, output::TaskCard};
+use ajax_core::{
+    commands::{BranchAdoptionPlan, CommandContext, OpenMode},
+    models::OperatorAction,
+    output::TaskCard,
+    registry::Registry,
+    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct WebAction {
@@ -8,6 +14,8 @@ pub struct WebAction {
     pub label: String,
     pub destructive: bool,
     pub confirmation_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_adoption: Option<BranchAdoptionPlan>,
 }
 
 pub fn web_action(action: OperatorAction) -> Option<WebAction> {
@@ -19,6 +27,7 @@ pub fn web_action(action: OperatorAction) -> Option<WebAction> {
         label: operator_action_label(action).to_string(),
         destructive: action == OperatorAction::Drop,
         confirmation_required: action == OperatorAction::Drop,
+        branch_adoption: None,
     })
 }
 
@@ -39,10 +48,14 @@ pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOpti
         label: option.label.clone(),
         destructive: false,
         confirmation_required: false,
+        branch_adoption: None,
     }
 }
 
-pub fn browser_actions(card: &TaskCard) -> Vec<WebAction> {
+pub fn browser_actions<R: Registry>(
+    context: &CommandContext<R>,
+    card: &TaskCard,
+) -> Vec<WebAction> {
     let mut actions: Vec<WebAction> = card
         .remediations
         .iter()
@@ -53,11 +66,40 @@ pub fn browser_actions(card: &TaskCard) -> Vec<WebAction> {
         card.available_actions
             .iter()
             .copied()
-            .filter_map(web_action),
+            .filter_map(|action| web_action_for_card(context, card, action)),
     );
     let mut seen = std::collections::HashSet::new();
     actions.retain(|action| seen.insert(action.action.clone()));
     actions
+}
+
+fn web_action_for_card<R: Registry>(
+    context: &CommandContext<R>,
+    card: &TaskCard,
+    action: OperatorAction,
+) -> Option<WebAction> {
+    if !supported_web_action(action) {
+        return None;
+    }
+    let mut state = WebAction {
+        action: action.as_str().to_string(),
+        label: operator_action_label(action).to_string(),
+        destructive: action == OperatorAction::Drop,
+        confirmation_required: action == OperatorAction::Drop,
+        branch_adoption: None,
+    };
+    if action == OperatorAction::Repair {
+        if let Ok(plan) = plan_task_command_operation(
+            context,
+            TaskCommandKind::Repair,
+            &card.qualified_handle,
+            OpenMode::NoAttach,
+        ) {
+            state.confirmation_required = plan.requires_confirmation;
+            state.branch_adoption = plan.branch_adoption;
+        }
+    }
+    Some(state)
 }
 
 pub fn supported_web_action(action: OperatorAction) -> bool {
@@ -82,10 +124,13 @@ pub fn supported_browser_action(action: &str) -> bool {
 mod tests {
     use super::{browser_actions, supported_browser_action, supported_web_action, web_action};
     use ajax_core::{
+        commands::CommandContext,
+        config::Config,
         models::{
             LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag, TaskId,
         },
         output::TaskCard,
+        registry::InMemoryRegistry,
         remediation::FIX_CI,
     };
 
@@ -122,8 +167,9 @@ mod tests {
             available_actions: vec![OperatorAction::Resume, OperatorAction::Review],
             remediations: Vec::new(),
         };
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
-        let states = browser_actions(&card);
+        let states = browser_actions(&context, &card);
 
         assert!(states.iter().any(|state| state.action == "resume"));
         assert!(states.iter().any(|state| state.action == "review"));
@@ -147,8 +193,9 @@ mod tests {
             available_actions: vec![OperatorAction::Resume],
             remediations: ajax_core::remediation::remediations_for_task(&blocked_ci_task()),
         };
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
-        let states = browser_actions(&card);
+        let states = browser_actions(&context, &card);
         let fix_ci = states
             .iter()
             .find(|state| state.action == FIX_CI)

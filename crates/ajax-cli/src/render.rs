@@ -143,6 +143,13 @@ fn render_plan_human(plan: &commands::CommandPlan) -> String {
         lines.push("requires confirmation".to_string());
     }
 
+    if let Some(adoption) = &plan.branch_adoption {
+        lines.push(format!(
+            "adopt branch: {} (expected {})",
+            adoption.observed_branch, adoption.expected_branch
+        ));
+    }
+
     lines.extend(
         plan.blocked_reasons
             .iter()
@@ -217,6 +224,39 @@ mod tests {
     }
 
     #[test]
+    fn render_plan_human_surfaces_typed_branch_adoption() {
+        let mut plan = CommandPlan::new("repair task: web/fix-login");
+        plan.set_branch_adoption("ajax/fix-login", "fix/pane-stuck");
+        plan.requires_confirmation = true;
+
+        let rendered = render_plan_human(&plan);
+
+        assert_eq!(
+            rendered,
+            "repair task: web/fix-login\nrequires confirmation\nadopt branch: fix/pane-stuck (expected ajax/fix-login)"
+        );
+    }
+
+    #[test]
+    fn render_plan_json_preserves_branch_adoption_fields() {
+        let mut plan = CommandPlan::new("repair task: web/fix-login");
+        plan.set_branch_adoption("ajax/fix-login", "fix/pane-stuck");
+        plan.requires_confirmation = true;
+
+        let rendered = render_plan(plan, true).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(
+            parsed["branch_adoption"]["expected_branch"],
+            "ajax/fix-login"
+        );
+        assert_eq!(
+            parsed["branch_adoption"]["observed_branch"],
+            "fix/pane-stuck"
+        );
+    }
+
+    #[test]
     fn render_plan_json_remains_structured() {
         let mut plan = CommandPlan::new("copy safe");
         plan.commands.push(
@@ -257,6 +297,39 @@ mod tests {
             rendered,
             "web/fix-login\tWaiting - Ready for review\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
         );
+    }
+
+    #[test]
+    fn checkout_mismatch_renders_identically_in_human_and_json() {
+        const EXPLANATION: &str = "Worktree on fix/pane-stuck; expected ajax/fix-login";
+        let response = TasksResponse {
+            tasks: vec![TaskSummary {
+                id: "task-1".to_string(),
+                qualified_handle: "web/fix-login".to_string(),
+                title: "Fix login".to_string(),
+                lifecycle_status: "Active".to_string(),
+                status: ajax_core::ui_state::TaskStatus::Error,
+                status_explanation: Some(EXPLANATION.to_string()),
+                runtime_observation_error: None,
+                needs_attention: true,
+                live_status: None,
+                actions: vec!["repair".to_string(), "resume".to_string()],
+            }],
+        };
+
+        let human = super::render_tasks_human(&response);
+        assert_eq!(
+            human,
+            format!("web/fix-login\tError - {EXPLANATION}\tFix login")
+        );
+
+        let json = super::render_response(response, true, super::render_tasks_human).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let task = &parsed["tasks"][0];
+
+        assert_eq!(task["status"], "error");
+        assert_eq!(task["status_explanation"], EXPLANATION);
+        assert_eq!(task["actions"], serde_json::json!(["repair", "resume"]));
     }
 
     #[test]
