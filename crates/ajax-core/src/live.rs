@@ -496,6 +496,41 @@ pub fn project_pane_activity(
     None
 }
 
+/// Project pane text onto an actionable *stuck* status — a state that blocks
+/// the agent but is not agent activity, so [`project_pane_activity`] cannot
+/// carry it (there is deliberately no [`crate::agent_status::ActivityKind`] for
+/// these).
+///
+/// Membership is derived, never hand-listed: a kind qualifies when
+/// `live_kind_to_activity` (private) cannot express it *and* its
+/// [`crate::models::LiveStatusClass`] is `Waiting` or `Error`. That yields
+/// exactly `AuthRequired`, `RateLimited`, `ContextLimit`, `Blocked`,
+/// `MergeConflict`, and `CiFailed`, and it cannot drift from the activity
+/// mapping the way a duplicated list would.
+///
+/// Returns `None` for activity, completion, missing-substrate, and neutral
+/// panes, so this can never re-assert `AgentRunning` from pane text alone.
+pub fn project_pane_stuck_status(agent: AgentClient, pane: &str) -> Option<LiveObservation> {
+    // Only the pane tail counts as live evidence. A stuck line buried under
+    // fresh output describes a condition the agent has already moved past, and
+    // acting on it fires an actionable notification about nothing. Reuses
+    // `BUSY_WINDOW` so "recent enough to be live" means one thing across every
+    // pane projection here.
+    let lines = meaningful_lines(pane.trim());
+    let tail = lines[lines.len().saturating_sub(BUSY_WINDOW)..].join("\n");
+
+    let observation = classify_agent_pane(agent, &tail);
+    if live_kind_to_activity(observation.kind).is_some() {
+        return None;
+    }
+    match observation.kind.class() {
+        crate::models::LiveStatusClass::Waiting | crate::models::LiveStatusClass::Error => {
+            Some(observation)
+        }
+        _ => None,
+    }
+}
+
 fn pane_status_observation(
     observation: LiveObservation,
     source: crate::agent_status::ObservationSource,
@@ -1326,7 +1361,7 @@ mod tests {
 
     use super::{
         apply_observation, apply_observation_at, classify_agent_status_value, classify_pane,
-        reduce_agent_status_values,
+        project_pane_stuck_status, reduce_agent_status_values,
     };
 
     fn base_task() -> Task {
@@ -1342,6 +1377,89 @@ mod tests {
             "task",
             AgentClient::Codex,
         )
+    }
+
+    /// Regression: the conservative status redesign routed pane capture through
+    /// `project_pane_activity`, which drops every kind `live_kind_to_activity`
+    /// cannot express. That silently removed six actionable, notification-firing
+    /// stuck states from the tmux polling path.
+    #[test]
+    fn pane_stuck_states_survive_the_activity_projection() {
+        for (pane, expected) in [
+            (
+                "starting work\nthis is blocked, cannot continue\n",
+                LiveStatusKind::Blocked,
+            ),
+            (
+                "calling api\nrate limit exceeded\n",
+                LiveStatusKind::RateLimited,
+            ),
+            (
+                "running\nplease login to continue\n",
+                LiveStatusKind::AuthRequired,
+            ),
+            (
+                "working\ncontext limit reached\n",
+                LiveStatusKind::ContextLimit,
+            ),
+            (
+                "git merge\nCONFLICT (content): merge conflict in a.rs\n",
+                LiveStatusKind::MergeConflict,
+            ),
+            ("pushed\nci failed on main\n", LiveStatusKind::CiFailed),
+        ] {
+            let observed = project_pane_stuck_status(AgentClient::Claude, pane);
+            assert_eq!(
+                observed.map(|observation| observation.kind),
+                Some(expected),
+                "pane {pane:?} should project the {expected:?} stuck state"
+            );
+        }
+    }
+
+    /// The redesign's thesis is that historical pane text is not live evidence.
+    /// A stuck line buried in scrollback, with the agent visibly producing
+    /// output since, must not project a stuck state — otherwise it fires an
+    /// actionable notification about a condition that already resolved.
+    #[test]
+    fn stale_scrollback_stuck_lines_are_not_live_evidence() {
+        let buried = format!(
+            "this is blocked, cannot continue\n{}",
+            "ordinary working output\n".repeat(60)
+        );
+        assert_eq!(
+            project_pane_stuck_status(AgentClient::Claude, &buried),
+            None,
+            "a stuck line buried under fresh output is not live evidence"
+        );
+
+        // Still recent enough to be live: the same line near the pane tail.
+        let recent = "ordinary working output\nthis is blocked, cannot continue\n";
+        assert_eq!(
+            project_pane_stuck_status(AgentClient::Claude, recent).map(|o| o.kind),
+            Some(LiveStatusKind::Blocked),
+            "a stuck line at the pane tail is live evidence"
+        );
+    }
+
+    /// The stuck-state fallback must never reopen the false-positive hole the
+    /// redesign closed: activity and terminal kinds stay the reducer's job.
+    #[test]
+    fn pane_stuck_states_never_project_activity_or_completion() {
+        for pane in [
+            "esc to interrupt",
+            "Running tests…  (1234 tokens)",
+            "some ordinary output\n$ ",
+            "",
+            "Do you want to proceed? [y/n]",
+            "all done, task complete",
+        ] {
+            assert_eq!(
+                project_pane_stuck_status(AgentClient::Claude, pane),
+                None,
+                "pane {pane:?} must not yield a stuck state"
+            );
+        }
     }
 
     #[test]

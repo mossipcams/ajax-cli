@@ -25,7 +25,7 @@ pub fn apply_observation_at(
     observed_at: SystemTime,
 ) {
     let observation = reduce_task_live_observation(task, observation);
-    if defers_unconfirmed_waiting(task, observation.kind, observed_at) {
+    if defers_unconfirmed_attention(task, observation.kind, observed_at) {
         return;
     }
     if defers_unconfirmed_running(task, observation.kind, observed_at) {
@@ -34,16 +34,29 @@ pub fn apply_observation_at(
     apply_reduced_observation(task, observation, observed_at);
 }
 
-/// Waiting evidence on a busy task must persist for the dwell window before it
-/// is applied: pane classification sometimes misreads a working agent as
-/// waiting for one sample, and that flap must not change visible status or
-/// fire notifications. Trusted wrapper/hook paths bypass this gate.
-fn defers_unconfirmed_waiting(
+/// Attention-worthy evidence on a busy task must persist for the dwell window
+/// before it is applied: pane classification sometimes misreads a working agent
+/// as waiting or stuck for one sample, and that flap must not change visible
+/// status or fire notifications.
+///
+/// Covers `Waiting` *and* `Error` class alike. Both reach the operator through
+/// [`crate::attention::take_attention_transition`] — `Error` unconditionally —
+/// so gating only `Waiting` let one noisy `blocked`/`ci failed` pane line fire
+/// an instant phone notification.
+///
+/// Trusted wrapper/hook paths bypass this gate entirely
+/// ([`apply_trusted_observation_at`] / [`apply_authoritative_observation_at`]),
+/// so authoritative failures stay immediate.
+fn defers_unconfirmed_attention(
     task: &mut Task,
     kind: LiveStatusKind,
     observed_at: SystemTime,
 ) -> bool {
-    if kind.class() != LiveStatusClass::Waiting || !shows_running_evidence(task) {
+    if !matches!(
+        kind.class(),
+        LiveStatusClass::Waiting | LiveStatusClass::Error
+    ) || !shows_running_evidence(task)
+    {
         return false;
     }
     defer_class_candidate(
@@ -366,6 +379,70 @@ mod tests {
         );
         task.lifecycle_status = LifecycleStatus::Active;
         task
+    }
+
+    /// Notification alignment: Waiting-class pane evidence on a running task is
+    /// dwell-gated so a one-sample misread cannot ping. Error-class pane
+    /// evidence must be held to the same bar — otherwise a single noisy
+    /// "blocked"/"ci failed" line fires an instant phone notification.
+    /// Trusted wrapper/hook failures bypass this gate and stay immediate.
+    #[rstest::rstest]
+    #[case(LiveStatusKind::Blocked)]
+    #[case(LiveStatusKind::MergeConflict)]
+    #[case(LiveStatusKind::CiFailed)]
+    fn error_class_pane_evidence_is_dwell_gated_like_waiting(#[case] kind: LiveStatusKind) {
+        let mut task = claude_active_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        let t0 = UNIX_EPOCH + Duration::from_secs(400);
+
+        // First sighting must not apply, and must not notify.
+        apply_observation_at(&mut task, LiveObservation::new(kind, "error"), t0);
+        assert_ne!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(kind),
+            "{kind:?} must not apply on first unconfirmed pane sample"
+        );
+        assert_eq!(
+            take_attention_transition_at(&mut task, t0),
+            None,
+            "{kind:?} must not notify before dwell confirmation"
+        );
+
+        // Same evidence past the dwell window confirms and notifies once.
+        let confirmed = t0 + Duration::from_secs(5);
+        apply_observation_at(&mut task, LiveObservation::new(kind, "error"), confirmed);
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(kind),
+            "{kind:?} must apply once the dwell window confirms it"
+        );
+        assert!(
+            take_attention_transition_at(&mut task, confirmed).is_some(),
+            "{kind:?} must notify after dwell confirmation"
+        );
+    }
+
+    /// A wrapper/hook-reported failure is authoritative and must stay instant —
+    /// the dwell gate above applies only to untrusted pane evidence.
+    #[test]
+    fn trusted_error_evidence_is_not_dwell_gated() {
+        let mut task = claude_active_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        let t0 = UNIX_EPOCH + Duration::from_secs(400);
+
+        super::apply_trusted_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CommandFailed, "command failed"),
+            t0,
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::CommandFailed),
+            "trusted failure must apply immediately"
+        );
     }
 
     #[rstest::rstest]
