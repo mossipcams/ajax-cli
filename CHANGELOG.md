@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.11...ajax-cli-v0.50.12) (2026-07-20)
+
+
+### Bug Fixes
+
+* **web:** rebuild dist so Open Dev removal ships ([#593](https://github.com/mossipcams/ajax-cli/issues/593)) ([f2c9a07](https://github.com/mossipcams/ajax-cli/commit/f2c9a070b84fa3ee785742cb254830c9855135d7))
+
 ## [0.50.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.10...ajax-cli-v0.50.11) (2026-07-19)
 
 
