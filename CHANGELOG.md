@@ -2,6 +2,20 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.3...ajax-cli-v0.51.4) (2026-07-20)
+
+
+### Bug Fixes
+
+* **core:** block start when worktree path or branch is occupied ([#611](https://github.com/mossipcams/ajax-cli/issues/611)) ([582d4ae](https://github.com/mossipcams/ajax-cli/commit/582d4ae138a01b1579de7c49c6c1af4d553b281e))
+* **core:** separate worktree presence from checkout state ([#613](https://github.com/mossipcams/ajax-cli/issues/613)) ([113244c](https://github.com/mossipcams/ajax-cli/commit/113244c3845bdfd28a75031e653153540c3f8959))
+* **core:** stop false and redundant attention webhook spam ([#615](https://github.com/mossipcams/ajax-cli/issues/615)) ([de1cc44](https://github.com/mossipcams/ajax-cli/commit/de1cc4409b8919e9ffa1142ea20e0863443051f0))
+
+
+### Code Refactoring
+
+* **web:** polish Task details dropdown density and typography ([#614](https://github.com/mossipcams/ajax-cli/issues/614)) ([c2779a6](https://github.com/mossipcams/ajax-cli/commit/c2779a6c988c89aa562f005f00487ad2b0a5a89d))
+
 ## [0.51.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.2...ajax-cli-v0.51.3) (2026-07-20)
 
 
