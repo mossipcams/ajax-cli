@@ -13,7 +13,8 @@
     "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
     "web:build:check": "node scripts/web-build-check.mjs",
     "web:dev": "vite --config crates/ajax-web/web/vite.config.mts",
-    "web:smoke": "playwright test --config crates/ajax-web/web/playwright.config.mts",
+    "web:smoke": "playwright test --config crates/ajax-web/web/playwright.config.mts --project=mobile-webkit",
+    "web:smoke:desktop": "playwright test --config crates/ajax-web/web/playwright.config.mts --project=desktop-chromium",
     "prepare": "husky"
   },
   "devDependencies": {

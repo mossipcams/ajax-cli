@@ -79,6 +79,55 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+  web-bundle:
+    name: Web Bundle
+    runs-on: ubuntu-latest
+    needs: [pr-title, release-pr-bypass]
+    # Same-repo PRs only: a fork's branch is not writable with GITHUB_TOKEN.
+    if: >-
+      ${{ needs.release-pr-bypass.outputs.skip-ci != 'true'
+      && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      contents: write
+
+    steps:
+      # Check out the PR branch itself, not the merge commit, so the rebuilt
+      # bundle can be pushed back to it.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      # `web:build`, never `web:build:check` — the check script rewrites dist to
+      # strip trailing whitespace, so it would report a diff on every run. The
+      # committed bundle is raw `web:build` output.
+      - name: Rebuild web bundle
+        run: npm run web:build
+
+      - name: Commit rebuilt bundle when stale
+        run: |
+          if git diff --quiet -- crates/ajax-web/web/dist; then
+            echo "Web bundle already current; nothing to commit."
+            exit 0
+          fi
+          echo "Web bundle was stale. Committing rebuild:"
+          git diff --stat -- crates/ajax-web/web/dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/ajax-web/web/dist
+          git commit -m "chore(web): rebuild dist"
+          git push
+
   web:
     name: Web
     runs-on: ubuntu-latest
@@ -107,6 +156,9 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps webkit
 
+      # The flag is redundant now that `web:smoke` pins mobile-webkit, but it is
+      # asserted by the `ci_web_job_runs_mobile_webkit_smoke` guard test and
+      # documents the target at the call site. Passing it twice is a no-op.
       - name: Smoke and visual-regression tests
         run: npm run web:smoke -- --project=mobile-webkit
 
