@@ -59,7 +59,7 @@ use projection::{
     count_attention_items, count_lifecycle, inbox_from_cards, is_cockpit_menu_task,
     is_visible_task, task_card, task_summary,
 };
-use std::{collections::BTreeSet, time::Duration, time::SystemTime};
+use std::{collections::BTreeSet, path::Path, time::Duration, time::SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -358,12 +358,15 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
             let observed_worktree = worktrees.iter().find(|worktree| {
                 worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch)
             });
+            let path_worktree = worktrees
+                .iter()
+                .find(|worktree| Path::new(&worktree.path) == task.worktree_path.as_path());
             let worktree_exists = observed_worktree.is_some();
             let branch_exists = branches.contains(&task.branch)
                 || observed_worktree
                     .and_then(|worktree| worktree.branch.as_ref())
                     .is_some_and(|branch| branch == &task.branch);
-            let current_branch = observed_worktree.and_then(|worktree| worktree.branch.clone());
+            let current_branch = path_worktree.and_then(|worktree| worktree.branch.clone());
             let git_status = substrate_git_status(
                 task.git_status.as_ref(),
                 worktree_exists,
@@ -1962,9 +1965,62 @@ mod tests {
         let git_status = task.git_status.as_ref().unwrap();
         assert!(!git_status.worktree_exists);
         assert!(git_status.branch_exists);
-        assert_eq!(git_status.current_branch, None);
+        assert_eq!(
+            git_status.current_branch.as_deref(),
+            Some("dependabot/pip/minor")
+        );
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(!task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn repair_plan_blocks_when_expected_worktree_path_is_occupied_by_another_branch() {
+        let mut context = context_with_tasks();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: false,
+                    branch_exists: true,
+                    current_branch: None,
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: Some("abc123".to_string()),
+                },
+            )
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /tmp/worktrees/web-fix-login\nHEAD 1111111\nbranch refs/heads/dependabot/pip/minor\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+        ]);
+
+        refresh_git_substrate_evidence(&mut context, &mut runner).unwrap();
+
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert_eq!(
+            git_status.current_branch.as_deref(),
+            Some("dependabot/pip/minor")
+        );
+
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert!(!plan.commands.iter().any(super::is_git_worktree_add_command));
+        assert_eq!(plan.blocked_reasons.len(), 1);
+        let blocker = &plan.blocked_reasons[0];
+        assert!(blocker.contains("/tmp/worktrees/web-fix-login"));
+        assert!(blocker.contains("dependabot/pip/minor"));
     }
 
     #[test]
