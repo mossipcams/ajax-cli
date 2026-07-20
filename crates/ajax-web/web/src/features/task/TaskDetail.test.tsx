@@ -215,4 +215,21 @@ describe("TaskDetail projection surface", () => {
     );
     expect(mobileBlock).toMatch(/\.interact-panel\s+\.action[\s\S]*?padding:\s*[0-4]px/);
   });
+
+  it("releases the mobile fill pin and caps the terminal when meta details are open", () => {
+    expect(stylesSource).toMatch(
+      /\.task-detail:has\(\.meta-details\[open\]\)[\s\S]*?flex:\s*0\s+0\s+auto/,
+    );
+    expect(stylesSource).toMatch(
+      /\.task-detail:has\(\.meta-details\[open\]\)[\s\S]*?min-height:\s*auto/,
+    );
+
+    const openMetaWrap = stylesSource.match(
+      /\.task-detail:has\(\.meta-details\[open\]\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+    );
+    expect(openMetaWrap).not.toBeNull();
+    const wrapBody = openMetaWrap![1];
+    expect(wrapBody).toMatch(/min-height:\s*120px/);
+    expect(wrapBody).toMatch(/(?:height|max-height):/);
+  });
 });

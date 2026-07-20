@@ -603,6 +603,26 @@ header .bar h1 {
     min-height: 0;
   }
 
+  /* Open meta: release the fill pin so route-scroll can grow and scroll. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.meta-details[open]) > [data-outlet="task"] {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) > div:has([data-testid="task-terminal-panel"]) {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) .terminal-panel:not(.is-expanded) {
+    flex: 0 0 auto;
+  }
+
   [data-testid="route-scroll"] {
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
@@ -1623,6 +1643,13 @@ header .bar h1 {
   .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
     height: auto;
     flex: 1 1 0%;
+  }
+
+  .task-detail:has(.meta-details[open]) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+    flex: none;
+    height: 28vh;
+    min-height: 120px;
+    max-height: 36vh;
   }
 
   .terminal-panel:not(.is-expanded) .terminal-host {
