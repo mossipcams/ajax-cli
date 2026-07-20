@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.14...ajax-cli-v0.51.0) (2026-07-20)
+
+
+### Features
+
+* **web:** skip permission prompts on agent launch, swap OpenCode for Pi ([#600](https://github.com/mossipcams/ajax-cli/issues/600)) ([83ef47c](https://github.com/mossipcams/ajax-cli/commit/83ef47c2df50069e2bd94ae97b66e521df2ab2e6))
+
 ## [0.50.14](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.13...ajax-cli-v0.50.14) (2026-07-20)
 
 
