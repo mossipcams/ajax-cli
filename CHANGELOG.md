@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.0...ajax-cli-v0.51.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **web:** keep PWA first paint dark and harden restart probe ([#604](https://github.com/mossipcams/ajax-cli/issues/604)) ([8b42360](https://github.com/mossipcams/ajax-cli/commit/8b42360eb7088019c47d59247456aa1e6b1da799))
+
 ## [0.51.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.14...ajax-cli-v0.51.0) (2026-07-20)
 
 
