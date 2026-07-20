@@ -44,26 +44,26 @@ describe("NewTaskSheet", () => {
     expect(layerCss).not.toMatch(/bottom:\s*max/);
   });
 
-  it("offers every supported agent including opencode", () => {
+  it("offers every supported agent including pi", () => {
     render(<NewTaskSheet repos={repos} />);
     expect(screen.getByRole("radio", { name: "Codex" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Claude" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Cursor" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "OpenCode" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Pi" })).toBeInTheDocument();
     expect(newTaskSheetSource).toMatch(/role="radiogroup"/);
     expect(newTaskSheetSource).not.toMatch(/<select id="new-task-agent"/);
   });
 
-  it("submits the selected opencode agent", async () => {
+  it("submits the selected pi agent", async () => {
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     render(<NewTaskSheet repos={repos} />);
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenCode" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Pi" }));
     fireEvent.submit(screen.getByRole("form", { name: "New task" }));
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0][0].agent).toBe("opencode");
+    expect(spy.mock.calls[0][0].agent).toBe("pi");
   });
 
   it("preselects the matching repo for the selected project", () => {
@@ -177,7 +177,7 @@ describe("NewTaskSheet", () => {
     expect(screen.getByRole("radio", { name: "Codex" })).toHaveAttribute("tabindex", "0");
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("radio", { name: "Cursor" })).toHaveAttribute("tabindex", "-1");
-    expect(screen.getByRole("radio", { name: "OpenCode" })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("radio", { name: "Pi" })).toHaveAttribute("tabindex", "-1");
   });
 
   it("moves selection and focus with arrow keys", () => {
@@ -189,7 +189,7 @@ describe("NewTaskSheet", () => {
     // Wraps backwards off the first option.
     fireEvent.keyDown(screen.getByRole("radio", { name: "Claude" }), { key: "ArrowLeft" });
     fireEvent.keyDown(screen.getByRole("radio", { name: "Codex" }), { key: "ArrowLeft" });
-    expect(screen.getByRole("radio", { name: "OpenCode" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Pi" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("restores focus to the opener when the sheet unmounts", () => {
@@ -238,9 +238,9 @@ describe("NewTaskSheet remembered defaults", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenCode" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Pi" }));
     fireEvent.submit(screen.getByRole("form", { name: "New task" }));
-    await waitFor(() => expect(localStorage.getItem("ajax.newTask.agent")).toBe("opencode"));
+    await waitFor(() => expect(localStorage.getItem("ajax.newTask.agent")).toBe("pi"));
     expect(localStorage.getItem("ajax.newTask.repo")).toBe("web");
   });
 });

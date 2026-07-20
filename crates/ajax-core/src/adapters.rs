@@ -515,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_adapter_claude_launch_omits_cd_flag() {
+    fn agent_adapter_claude_launch_omits_cd_flag_and_skips_permissions() {
         use crate::models::AgentClient;
 
         let launch = AgentLaunch {
@@ -525,7 +525,7 @@ mod tests {
 
         assert_eq!(
             agent_launch_spec("claude", AgentClient::Claude, &launch),
-            CommandSpec::new("claude", [])
+            CommandSpec::new("claude", ["--dangerously-skip-permissions"])
         );
     }
 
