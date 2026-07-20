@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.10...ajax-cli-v0.50.11) (2026-07-19)
+
+
+### Bug Fixes
+
+* **core:** stop false AgentRunning from process liveness alone ([#591](https://github.com/mossipcams/ajax-cli/issues/591)) ([89e61f3](https://github.com/mossipcams/ajax-cli/commit/89e61f3cabccff913bcb29d8d71ab1d97a199f1e))
+
 ## [0.50.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.9...ajax-cli-v0.50.10) (2026-07-19)
 
 
