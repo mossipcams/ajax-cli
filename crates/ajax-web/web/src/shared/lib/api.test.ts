@@ -88,22 +88,72 @@ describe("GET transport options", () => {
     await checkHealth();
     await fetchDetail("web/x");
 
-    expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
-      cache: "no-store",
-      credentials: "same-origin",
+    const getInit = { cache: "no-store", credentials: "same-origin", signal: expect.any(AbortSignal) };
+    expect(fetch).toHaveBeenCalledWith("/api/cockpit", getInit);
+    expect(fetch).toHaveBeenCalledWith("/api/version", getInit);
+    expect(fetch).toHaveBeenCalledWith("/api/health", getInit);
+    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx", getInit);
+  });
+});
+
+describe("GET request timeouts", () => {
+  it("GET requests carry a per-call abort timeout signal", async () => {
+    mockFetch(() => json(validCockpit));
+    await fetchCockpit();
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect((init?.signal as AbortSignal).aborted).toBe(false);
+  });
+
+  it("session renewal POST carries an abort timeout signal", async () => {
+    let cockpitCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        return Promise.resolve(
+          cockpitCalls === 1
+            ? json({ ok: false, error: "browser session required" }, 401)
+            : json(validCockpit),
+        );
+      }
+      if (path === "/api/session") return Promise.resolve(json({ ok: true }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
     });
-    expect(fetch).toHaveBeenCalledWith("/api/version", {
-      cache: "no-store",
-      credentials: "same-origin",
+
+    await fetchCockpit();
+
+    const sessionCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([path]) => String(path) === "/api/session");
+    const sessionInit = sessionCall?.[1];
+    expect(sessionInit?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("mutation POSTs stay unbounded", async () => {
+    mockFetch(() => json({ ok: true, state_changed: false }));
+    await postOperation({
+      task_handle: "web/x",
+      action: "review",
+      request_id: "r",
     });
-    expect(fetch).toHaveBeenCalledWith("/api/health", {
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx", {
-      cache: "no-store",
-      credentials: "same-origin",
-    });
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init?.signal).toBeUndefined();
+  });
+
+  it("each call gets a fresh, unaborted signal", async () => {
+    mockFetch(() => json(validCockpit));
+    await fetchCockpit();
+    await fetchCockpit();
+    const initA = vi.mocked(fetch).mock.calls[0][1];
+    const initB = vi.mocked(fetch).mock.calls[1][1];
+    const signalA = initA?.signal as AbortSignal;
+    const signalB = initB?.signal as AbortSignal;
+    expect(signalA).toBeInstanceOf(AbortSignal);
+    expect(signalB).toBeInstanceOf(AbortSignal);
+    expect(signalA).not.toBe(signalB);
+    expect(signalA.aborted).toBe(false);
+    expect(signalB.aborted).toBe(false);
   });
 });
 
@@ -130,15 +180,18 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -177,6 +230,7 @@ describe("browser session renewal", () => {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/operations", {
       method: "POST",
@@ -292,6 +346,7 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenCalledWith("/api/health", {
       cache: "no-store",
       credentials: "same-origin",
+      signal: expect.any(AbortSignal),
     });
   });
 });

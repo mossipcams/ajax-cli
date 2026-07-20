@@ -8,7 +8,7 @@ import {
   assertDetail,
   assertOperationResponse,
 } from "./contracts";
-import { RESTART_POLL_MS, RESTART_TIMEOUT_MS } from "./polling";
+import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
   BrowserTaskDetail,
@@ -61,16 +61,22 @@ function classifyStatus(status: number): ApiErrorKind {
   return "http";
 }
 
-const GET_OPTIONS: RequestInit = {
-  cache: "no-store",
-  credentials: "same-origin",
-};
+function getOptions(): RequestInit {
+  return {
+    cache: "no-store",
+    credentials: "same-origin",
+    signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
+  };
+}
 
-const SESSION_RENEW_OPTIONS: RequestInit = {
-  method: "POST",
-  cache: "no-store",
-  credentials: "same-origin",
-};
+function sessionRenewOptions(): RequestInit {
+  return {
+    method: "POST",
+    cache: "no-store",
+    credentials: "same-origin",
+    signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
+  };
+}
 
 let browserSessionRenewal: Promise<void> | null = null;
 
@@ -92,7 +98,7 @@ export async function renewBrowserSession(): Promise<void> {
     browserSessionRenewal = (async () => {
       let response: Response;
       try {
-        response = await fetch("/api/session", SESSION_RENEW_OPTIONS);
+        response = await fetch("/api/session", sessionRenewOptions());
       } catch (error) {
         throw new ApiError(
           "stale-session",
@@ -143,7 +149,7 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
 }
 
 async function getJson(path: string): Promise<unknown> {
-  const response = await fetchProtectedWithSessionRenewal(path, GET_OPTIONS);
+  const response = await fetchProtectedWithSessionRenewal(path, getOptions());
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
   }
@@ -218,7 +224,7 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch("/api/health", GET_OPTIONS);
+    const response = await fetch("/api/health", getOptions());
     return response.ok;
   } catch {
     return false;

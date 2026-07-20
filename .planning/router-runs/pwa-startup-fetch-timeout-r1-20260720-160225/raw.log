@@ -1,0 +1,71 @@
+All verification commands pass.
+
+ROUTER_REPORT_BEGIN
+```yaml
+status: COMPLETE
+task_kind: behavior
+test_first: REQUIRED_RUN_RED
+production_edit: REQUIRED
+
+changes:
+  - file: crates/ajax-web/web/src/shared/lib/polling.ts
+    kind: added_constant
+    detail: "Added `export const GET_REQUEST_TIMEOUT_MS = 10000;` near RESTART_TIMEOUT_MS with one-line comment."
+  - file: crates/ajax-web/web/src/shared/lib/api.ts
+    kind: refactor_to_factories
+    detail: |
+      Imported GET_REQUEST_TIMEOUT_MS; converted module-level GET_OPTIONS and
+      SESSION_RENEW_OPTIONS constants into per-call factory functions
+      getOptions() and sessionRenewOptions() each returning signal:
+      AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS). Updated three call sites
+      (renewBrowserSession, getJson, checkHealth). postJson/mutations untouched.
+  - file: crates/ajax-web/web/src/shared/lib/api.test.ts
+    kind: tests_added_and_accommodated
+    detail: |
+      Added new describe "GET request timeouts" with tests 1-4 (per-call abort
+      signal, session-renewal abort signal, mutation POSTs unbounded, fresh
+      unaborted signals per call). Accommodated new `signal` field in three
+      existing exact-equality assertions for GET/session renewal (permitted by
+      stop conditions) using `signal: expect.any(AbortSignal)`. Mutation POST
+      exact-equality assertions left unchanged.
+
+red_phase:
+  command: "npx vitest run --config crates/ajax-web/web/vite.config.mts crates/ajax-web/web/src/shared/lib/api.test.ts"
+  exit_code: 1
+  excerpt: |
+    Tests 3 failed | 21 passed (24)
+    × GET requests carry a per-call abort timeout signal
+    × session renewal POST carries an abort timeout signal
+    × each call gets a fresh, unaborted signal
+    AssertionError: expected undefined to be an instance of AbortSignal
+
+verification:
+  - command: "npx vitest run --config crates/ajax-web/web/vite.config.mts crates/ajax-web/web/src/shared/lib/api.test.ts"
+    exit_code: 0
+    excerpt: "Test Files 1 passed (1) | Tests 24 passed (24)"
+  - command: "npm run web:test -- --run"
+    exit_code: 0
+    excerpt: "Test Files 46 passed (46) | Tests 412 passed (412)"
+  - command: "npm run web:check"
+    exit_code: 0
+    excerpt: "tsc --noEmit (no output, clean)"
+  - command: "npm run web:lint"
+    exit_code: 0
+    excerpt: "eslint (no output, clean)"
+
+acceptance:
+  new_tests_pass: true
+  full_suite_green: true
+  gets_carry_timeout_signal: true
+  session_renew_post_carries_signal: true
+  mutation_posts_unbounded: true
+  web_check_clean: true
+  web_lint_clean: true
+
+notes:
+  - "Node_modules were absent in the fresh worktree; ran `npm install` (no new dependencies added) before running vitest."
+  - "Existing exact-equality assertions for GETs and /api/session renewal POSTs were accommodated with `signal: expect.any(AbortSignal)`; mutation-equality assertions unchanged. This is within the permitted accommodation rule."
+  - "fetchProtectedWithSessionRenewal retries with the same per-call init (and thus the same signal); the retry's remaining timeout budget is reduced by renewal time, which is acceptable per the stated recovery behavior."
+  - "Approx. changed lines well under the 120-line budget."
+```
+ROUTER_REPORT_END
