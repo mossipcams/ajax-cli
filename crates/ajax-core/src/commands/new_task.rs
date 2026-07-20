@@ -648,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn new_task_plan_claude_agent_command_omits_cd_flag() {
+    fn new_task_plan_claude_agent_command_omits_cd_flag_and_skips_permissions() {
         let context = context();
         let plan = new_task_plan(
             &context,
@@ -662,7 +662,7 @@ mod tests {
 
         let launch = agent_send_keys_line(&plan);
         assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
-        assert!(launch.ends_with("-- claude"));
+        assert!(launch.ends_with("-- claude --dangerously-skip-permissions"));
         assert!(!launch.contains("--cd"));
     }
 

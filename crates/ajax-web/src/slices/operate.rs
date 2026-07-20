@@ -146,7 +146,7 @@ fn start_plan_observation<R: Registry>(
 /// Single agent allowlist for web task starts; the route pre-check and the
 /// slice validation must never disagree.
 pub fn supported_start_agent(agent: &str) -> bool {
-    matches!(agent, "codex" | "claude" | "cursor" | "opencode")
+    matches!(agent, "codex" | "claude" | "cursor" | "pi")
 }
 
 fn execute_task_command<R: Registry>(
@@ -583,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn start_task_opencode_agent_command_runs_opencode_in_task_window() {
+    fn start_task_pi_agent_command_runs_pi_in_task_window() {
         let mut context = context_with_managed_repo();
         let mut runner = RecordingCommandRunner::default();
 
@@ -593,22 +593,22 @@ mod tests {
             super::StartTaskRequest {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
-                agent: "opencode".to_string(),
+                agent: "pi".to_string(),
                 request_id: String::new(),
             },
         )
         .unwrap();
 
-        // opencode opens in the current directory; the task window's cwd is
+        // pi opens in the current directory; the task window's cwd is
         // the worktree, so the launch needs no extra arguments.
         assert_eq!(
             agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- opencode"
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
         );
     }
 
     #[test]
-    fn start_task_claude_agent_command_omits_cd_flag() {
+    fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
         let mut context = context_with_managed_repo();
         let mut runner = RecordingCommandRunner::default();
 
@@ -626,7 +626,7 @@ mod tests {
 
         assert_eq!(
             agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude"
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude --dangerously-skip-permissions"
         );
     }
 

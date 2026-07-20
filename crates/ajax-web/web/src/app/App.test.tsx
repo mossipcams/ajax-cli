@@ -312,6 +312,14 @@ describe("App shell", () => {
     );
   });
 
+  it("hides the xterm DOM scrollbar the viewport override cannot reach", () => {
+    const stylesSource = loadStylesSource();
+
+    expect(stylesSource).toMatch(
+      /\.terminal-host\s+\.xterm-scrollable-element\s*>\s*\.scrollbar\s*\{[^}]*display:\s*none\s*!important/,
+    );
+  });
+
   it("sets the document title per route", async () => {
     vi.stubGlobal(
       "fetch",

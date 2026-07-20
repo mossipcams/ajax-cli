@@ -17,7 +17,7 @@ pub fn agent_launch_spec(
         AgentClient::Codex => {
             vec!["--cd".to_string(), launch.worktree_path.clone()]
         }
-        AgentClient::Claude => Vec::new(),
+        AgentClient::Claude => vec!["--dangerously-skip-permissions".to_string()],
         AgentClient::Other if program == "cursor" => vec!["agent".to_string()],
         AgentClient::Other => Vec::new(),
     };

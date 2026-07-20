@@ -1401,6 +1401,14 @@ header .bar h1 {
   overflow: hidden !important;
 }
 
+/* xterm ships a VS Code-derived DOM scrollbar and sizes it with an inline
+   width, so neither the viewport override above nor ::-webkit-scrollbar
+   reaches it. Scrolling runs through .terminal-interaction-wrap, so this bar
+   is redundant chrome. */
+.terminal-host .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+}
+
 .terminal-host textarea.xterm-helper-textarea {
   position: absolute !important;
   left: 0 !important;
