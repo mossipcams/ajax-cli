@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.14](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.13...ajax-cli-v0.50.14) (2026-07-20)
+
+
+### Bug Fixes
+
+* **core:** restore pane stuck statuses and align notifications ([#598](https://github.com/mossipcams/ajax-cli/issues/598)) ([d735dfb](https://github.com/mossipcams/ajax-cli/commit/d735dfb2252cf7be38b9e5f972d17f84129428b5))
+
 ## [0.50.13](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.12...ajax-cli-v0.50.13) (2026-07-20)
 
 
