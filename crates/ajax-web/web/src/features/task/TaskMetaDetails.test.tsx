@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import TaskMetaDetails from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
+
+const stylesSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
+  "utf8",
+);
 
 const fetchDevDeploy = vi.fn();
 
@@ -88,6 +96,33 @@ describe("TaskMetaDetails", () => {
   it("omits the annotations block when the task has none", () => {
     render(<TaskMetaDetails detail={detail()} />);
     expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
+  });
+
+  it("uses sentence-case field labels without uppercase dt styling", () => {
+    const dtBlock = stylesSource.match(/\.detail-grid dt\s*\{([\s\S]*?)\}/);
+    expect(dtBlock).not.toBeNull();
+    expect(dtBlock![1]).not.toMatch(/text-transform:\s*uppercase/);
+  });
+
+  it("flattens task details into one detail grid without group labels", () => {
+    render(<TaskMetaDetails detail={detail()} />);
+    expect(screen.queryAllByText(/^Branch$/)).toHaveLength(1);
+    expect(screen.queryByText(/^Agent$/)).toBeNull();
+    expect(screen.queryByText(/^Activity$/)).toBeNull();
+  });
+
+  it("renders Attempts as a list heading", () => {
+    const now = Math.floor(Date.now() / 1000);
+    render(
+      <TaskMetaDetails
+        detail={detail({
+          agent_attempts: [
+            { started_unix_secs: now - 600, completed_unix_secs: now - 480, outcome: "completed" },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: /attempts/i })).toBeInTheDocument();
   });
 
   it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {
