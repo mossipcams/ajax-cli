@@ -25,8 +25,10 @@ pub struct AttentionTransition {
 
 /// Episode detector for operator attention webhooks. Fires once when a task
 /// enters actionable Waiting (needs input) or Error; lifecycle-only
-/// "Ready for review" stays inbox-visible but does not phone-ping. Returning
-/// to Running/Idle clears the stamp only after the episode-clear dwell (30s),
+/// "Ready for review" stays inbox-visible but does not phone-ping. In-flight
+/// drop (`Removing` / `Removed`) never pings — teardown substrate gaps are
+/// expected; durable `TeardownIncomplete` still does. Returning to
+/// Running/Idle clears the stamp only after the episode-clear dwell (30s),
 /// so one Waiting episode interrupted by short Running bursts delivers one
 /// ping. [`silence_notify_episode`] (from acknowledge) stamps the current
 /// episode without delivering so opening a task stops further pings until new
@@ -41,6 +43,15 @@ pub fn take_attention_transition_at(
     task: &mut Task,
     now: std::time::SystemTime,
 ) -> Option<AttentionTransition> {
+    // Drop teardown intentionally removes tmux/worktree; missing substrate
+    // during `Removing`/`Removed` would otherwise project as Error and ping.
+    // `TeardownIncomplete` is a durable lifecycle error and still notifies.
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Removing | LifecycleStatus::Removed
+    ) {
+        return None;
+    }
     let operator_status = derive_operator_status(task);
     match operator_status.status {
         TaskStatus::Waiting | TaskStatus::Error => {
@@ -109,6 +120,7 @@ fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
         TaskStatus::Waiting => {
             let explanation = status.explanation.as_deref().unwrap_or("");
             explanation != "Ready for review"
+                && explanation != "Rate limited"
                 && !crate::agent_status::is_delegated_waiting_summary(explanation)
         }
         TaskStatus::Running | TaskStatus::Idle => false,
@@ -378,9 +390,9 @@ fn substrate_gap_for_runtime_health(health: RuntimeHealth) -> Option<SubstrateGa
 mod tests {
     use crate::lifecycle::{mark_active, mark_cleanable, mark_merged, mark_reviewable};
     use crate::models::{
-        AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LiveObservation,
-        LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, SideFlag,
-        SubstrateGap, Task, TaskId,
+        AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus,
+        LiveObservation, LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource,
+        SideFlag, SubstrateGap, Task, TaskId,
     };
     use crate::ui_state::TaskStatus;
 
@@ -940,6 +952,26 @@ mod tests {
     }
 
     #[test]
+    fn removing_with_missing_substrate_does_not_notify() {
+        let mut task = active_task("removing");
+        task.mark_resource_missing(SideFlag::TmuxMissing);
+        task.lifecycle_status = LifecycleStatus::Removing;
+
+        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
+    }
+
+    #[test]
+    fn teardown_incomplete_still_notifies() {
+        let mut task = active_task("teardown");
+        task.lifecycle_status = LifecycleStatus::TeardownIncomplete;
+
+        let first = super::take_attention_transition(&mut task);
+        assert_eq!(first.map(|t| t.status), Some(TaskStatus::Error));
+        assert_eq!(super::take_attention_transition(&mut task), None);
+    }
+
+    #[test]
     fn delegated_waiting_does_not_notify() {
         let mut task = active_task("delegated");
         crate::live::apply_observation(
@@ -997,6 +1029,75 @@ mod tests {
                 transition.explanation.unwrap_or_default()
             )),
             Some((TaskStatus::Waiting, "Waiting for approval".to_string()))
+        );
+    }
+
+    /// A rate-limited wait is transient and retryable, not actionable operator
+    /// input. It still shows as Waiting/"Rate limited" in the UI but must not
+    /// phone-ping or stamp a notify episode.
+    #[test]
+    fn rate_limited_waiting_does_not_notify() {
+        let mut task = active_task("rate-limited");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::RateLimited, "rate limited"),
+        );
+
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task).status,
+            TaskStatus::Waiting
+        );
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some("Rate limited")
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert!(task.metadata.is_empty());
+    }
+
+    /// Characterization: notify keys off `status|explanation`. Flipping between
+    /// distinct actionable reasons re-fires immediately — no quiet window and
+    /// no dwell between attention states. CLI/TUI Full refresh (~1s) plus loose
+    /// pane matchers turn this into phone spam.
+    #[test]
+    fn distinct_attention_reasons_refire_immediately_without_quiet_window() {
+        let mut task = active_task("churn");
+
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            at(1_000),
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_001))
+                .map(|t| t.explanation.unwrap_or_default()),
+            Some("Waiting for input".to_string())
+        );
+
+        // One second later: different actionable reason (e.g. pane matched "blocked").
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
+            at(1_002),
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_002))
+                .map(|t| (t.status, t.explanation.unwrap_or_default())),
+            Some((TaskStatus::Error, "Agent blocked".to_string()))
+        );
+
+        // Back to the original waiting reason — third ping, still no 30s quiet.
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            at(1_003),
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_003))
+                .map(|t| t.explanation.unwrap_or_default()),
+            Some("Waiting for input".to_string())
         );
     }
 }
