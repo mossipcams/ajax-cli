@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.50.13](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.12...ajax-cli-v0.50.13) (2026-07-20)
+
+
+### Bug Fixes
+
+* **core:** block repair for occupied worktree path ([#597](https://github.com/mossipcams/ajax-cli/issues/597)) ([bf4ce14](https://github.com/mossipcams/ajax-cli/commit/bf4ce14c0460ab8561528dd39a4217882e9a2f7e))
+
+
+### Performance Improvements
+
+* **web:** gzip and long-cache version-busted shell assets ([#595](https://github.com/mossipcams/ajax-cli/issues/595)) ([5902dab](https://github.com/mossipcams/ajax-cli/commit/5902dab6d56499dc2e9aa5d53e555182f53b96b4))
+
 ## [0.50.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.50.11...ajax-cli-v0.50.12) (2026-07-20)
 
 
