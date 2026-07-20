@@ -42,6 +42,18 @@ function assertOptionalNullableString(
   }
 }
 
+function assertBranchAdoption(value: unknown): void {
+  if (!isObject(value)) {
+    throw new IncompatibleResponseError("action.branch_adoption is not an object");
+  }
+  if (typeof value.expected_branch !== "string") {
+    throw new IncompatibleResponseError("action.branch_adoption.expected_branch is not a string");
+  }
+  if (typeof value.observed_branch !== "string") {
+    throw new IncompatibleResponseError("action.branch_adoption.observed_branch is not a string");
+  }
+}
+
 function assertAction(value: unknown): WebAction {
   if (!isObject(value) || typeof value.action !== "string") {
     throw new IncompatibleResponseError("action missing string `action` id");
@@ -54,6 +66,9 @@ function assertAction(value: unknown): WebAction {
   }
   if (typeof value.confirmation_required !== "boolean") {
     throw new IncompatibleResponseError("action.confirmation_required is not a boolean");
+  }
+  if (value.branch_adoption !== undefined) {
+    assertBranchAdoption(value.branch_adoption);
   }
   return value as unknown as WebAction;
 }

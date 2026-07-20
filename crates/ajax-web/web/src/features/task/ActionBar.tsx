@@ -32,12 +32,12 @@ const actionRowStyle: CSSProperties = {
 function actionClassName(
   action: WebAction,
   index: number,
-  pendingAction: string | null,
+  pendingAction: WebAction | null,
   runningAction: string | null,
 ): string {
   const classes = ["action"];
   if (index === 0) classes.push("primary");
-  if (pendingAction === action.action) classes.push("confirming");
+  if (pendingAction?.action === action.action) classes.push("confirming");
   if (runningAction === action.action) classes.push("is-running");
   if (REMEDIATION.has(action.action)) classes.push("remediation-action");
   return classes.join(" ");
@@ -51,7 +51,7 @@ export default function ActionBar({
   onMutated,
   onDismiss,
 }: Props) {
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<WebAction | null>(null);
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,18 +76,20 @@ export default function ActionBar({
   }, []);
 
   const label = (action: WebAction): string => {
-    if (pendingAction === action.action) return "Tap to confirm";
+    if (pendingAction?.action === action.action) return "Tap to confirm";
     if (runningAction === action.action) return `${action.label} …`;
     return action.label;
   };
 
-  const run = async (action: WebAction) => {
+  const run = async (action: WebAction, confirmed: boolean) => {
     setRunningAction(action.action);
     try {
       const result = await postOperation({
         task_handle: handle,
         action: action.action,
         request_id: requestId(),
+        confirmed,
+        ...(action.branch_adoption ? { branch_adoption: action.branch_adoption } : {}),
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {
@@ -118,7 +120,7 @@ export default function ActionBar({
       if (dropResolvedRef.current) return;
       dropResolvedRef.current = true;
       clearDropTimer();
-      void run(action);
+      void run(action, true);
     };
     const undo = () => {
       if (dropResolvedRef.current) return;
@@ -133,19 +135,20 @@ export default function ActionBar({
   const handleClick = (action: WebAction) => {
     if (runningAction) return;
     const needsConfirm = action.destructive || action.confirmation_required;
-    if (needsConfirm && pendingAction !== action.action) {
+    if (needsConfirm && pendingAction?.action !== action.action) {
       clearConfirm();
-      setPendingAction(action.action);
+      setPendingAction(action);
       confirmTimerRef.current = setTimeout(clearConfirm, CONFIRM_TIMEOUT_MS);
       return;
     }
+    const retained = pendingAction?.action === action.action ? pendingAction : action;
     clearConfirm();
     // Only Drop is delayed for pre-commit undo; other actions run immediately.
-    if (action.action === "drop") {
-      armDrop(action);
+    if (retained.action === "drop") {
+      armDrop(retained);
       return;
     }
-    void run(action);
+    void run(retained, needsConfirm);
   };
 
   return (

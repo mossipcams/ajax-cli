@@ -173,18 +173,26 @@ pub struct ObservedTaskRuntime {
 
 pub fn reconcile_runtime(
     observed: &ObservedTaskRuntime,
+    expected_branch: &str,
     observed_at: SystemTime,
     source: RuntimeObservationSource,
 ) -> RuntimeProjection {
-    RuntimeProjection::new(runtime_health(observed), observed_at, source)
+    RuntimeProjection::new(
+        runtime_health(observed, expected_branch),
+        observed_at,
+        source,
+    )
 }
 
-fn runtime_health(observed: &ObservedTaskRuntime) -> RuntimeHealth {
+fn runtime_health(observed: &ObservedTaskRuntime, expected_branch: &str) -> RuntimeHealth {
     let Some(git_status) = observed.git_status.as_ref() else {
         return RuntimeHealth::Unobservable;
     };
     if !git_status.worktree_exists {
         return RuntimeHealth::MissingWorktree;
+    }
+    if git_status.current_branch.as_deref() != Some(expected_branch) {
+        return RuntimeHealth::CheckoutMismatch;
     }
 
     let Some(tmux_status) = observed.tmux_status.as_ref() else {
@@ -219,10 +227,14 @@ mod tests {
     use std::{path::PathBuf, time::SystemTime};
 
     fn git_status(worktree_exists: bool) -> GitStatus {
+        git_status_with_branch(worktree_exists, Some("ajax/fix-login"))
+    }
+
+    fn git_status_with_branch(worktree_exists: bool, current_branch: Option<&str>) -> GitStatus {
         GitStatus {
             worktree_exists,
             branch_exists: true,
-            current_branch: Some("ajax/fix-login".to_string()),
+            current_branch: current_branch.map(str::to_string),
             dirty: false,
             ahead: 0,
             behind: 0,
@@ -231,6 +243,22 @@ mod tests {
             unpushed_commits: 0,
             conflicted: false,
             last_commit: Some("abc123 Fix login".to_string()),
+        }
+    }
+
+    fn tmux_missing() -> TmuxStatus {
+        TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        }
+    }
+
+    fn task_window_missing() -> TaskWindowStatus {
+        TaskWindowStatus {
+            exists: false,
+            window_name: "task".to_string(),
+            current_path: PathBuf::new(),
+            points_at_expected_path: false,
         }
     }
 
@@ -243,6 +271,61 @@ mod tests {
             git_status: git,
             tmux_status: tmux,
             task_window_status: task,
+        }
+    }
+
+    #[test]
+    fn runtime_reconciliation_distinguishes_checkout_mismatch_from_missing_or_unobserved() {
+        let now = SystemTime::UNIX_EPOCH;
+        let source = RuntimeObservationSource::TmuxProbe;
+        let expected_branch = "ajax/fix-login";
+        let healthy = observed(
+            Some(git_status(true)),
+            Some(TmuxStatus::present("ajax-web-fix-login")),
+            Some(TaskWindowStatus::present(
+                "task",
+                PathBuf::from("/tmp/worktrees/web-fix-login"),
+            )),
+        );
+
+        let cases = [
+            (healthy, RuntimeHealth::Healthy),
+            (
+                observed(
+                    Some(git_status_with_branch(true, Some("ajax/other"))),
+                    Some(tmux_missing()),
+                    Some(task_window_missing()),
+                ),
+                RuntimeHealth::CheckoutMismatch,
+            ),
+            (
+                observed(
+                    Some(git_status_with_branch(true, None)),
+                    Some(tmux_missing()),
+                    Some(task_window_missing()),
+                ),
+                RuntimeHealth::CheckoutMismatch,
+            ),
+            (
+                observed(
+                    Some(git_status_with_branch(false, Some("ajax/other"))),
+                    Some(tmux_missing()),
+                    None,
+                ),
+                RuntimeHealth::MissingWorktree,
+            ),
+            (
+                observed(None, Some(tmux_missing()), None),
+                RuntimeHealth::Unobservable,
+            ),
+        ];
+
+        for (observed, expected_health) in cases {
+            let projection = reconcile_runtime(&observed, expected_branch, now, source);
+
+            assert_eq!(projection.health, expected_health);
+            assert_eq!(projection.observed_at, now);
+            assert_eq!(projection.source, source);
         }
     }
 
@@ -316,7 +399,7 @@ mod tests {
         ];
 
         for (observed, expected_health) in cases {
-            let projection = reconcile_runtime(&observed, now, source);
+            let projection = reconcile_runtime(&observed, "ajax/fix-login", now, source);
 
             assert_eq!(projection.health, expected_health);
             assert_eq!(projection.observed_at, now);

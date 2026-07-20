@@ -90,6 +90,37 @@ can render quickly. Cached substrate evidence must be treated as staleable
 evidence, not authority. Git, tmux, and supervised processes remain the
 authoritative sources for their own reality.
 
+### Worktree presence, branch intent, and checkout
+
+Ajax tracks three independent Git facts for each task:
+
+- **Registered-path presence** (`worktree_exists`) — whether the task's
+  registered worktree path appears in Git's worktree list. Absence is missing
+  substrate, not checkout mismatch.
+- **Expected branch intent** (`Task.branch`) — Ajax-owned durable intent for
+  which branch the task should use. **Expected-branch existence**
+  (`branch_exists`) is observed separately: whether that branch name exists in
+  the repo. Intent and existence are independent facts.
+- **Observed checkout** (`current_branch`) — the named branch checked out at the
+  registered path when the worktree is present, or detached checkout when
+  `current_branch` is unset.
+
+**Checkout mismatch** applies only when the worktree is present: the observed
+named branch differs from expected intent, or the checkout is detached. A
+present worktree on the wrong or detached branch is never classified as missing
+substrate.
+
+Reconciliation precedence:
+
+- True physical absence at the registered path remains **missing substrate** and
+  follows missing-worktree repair.
+- A present but misaligned checkout is **checkout mismatch** with its own
+  status explanation and Repair adoption path.
+- A refresh that aligns observed checkout with intent clears mismatch without
+  changing intent.
+- Missing-path repair ignores stale `current_branch` evidence and plans from
+  expected-branch existence (`branch_exists`) instead.
+
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence for terminal exit (`done`/`failed`) and for process liveness only.
 Hook files and pane text are observational hints with explicit confidence.
@@ -144,7 +175,19 @@ The task operation boundary now owns the main mutable task actions:
 - Single-task command operations plan and execute `resume`, `review`, `repair`,
   and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
   core owns post-execution reducers such as opened, merged, repair/check
-  succeeded, and merge/check failure state.
+  succeeded, and merge/check failure state. When checkout mismatch is present
+  (worktree exists, checkout misaligned), Open/Resume, Check, and Review remain
+  available; Review diffs `base...HEAD` at the worktree path. Ship and
+  Drop/Cleanup are blocked until reconciliation. Repair on mismatch offers a
+  zero-command, confirmation-required `BranchAdoptionPlan` carrying the exact
+  expected/observed branch pair; core revalidates that pair at execution, updates
+  only task branch intent, records a substrate-change event, and preserves task
+  identity, path, session, lifecycle, and history. Adoption runs no
+  branch-switch command. Detached checkout cannot be adopted; the operator must
+  switch to a named branch externally and refresh to clear mismatch without
+  changing intent. CLI and Cockpit adapters display the core-provided pair in
+  confirmation prompts, retain it between activations, and resubmit it
+  unchanged; core rejects stale or altered evidence.
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
 - Confirmed worktree teardown renames the worktree into a sibling
@@ -704,7 +747,11 @@ action support-state records are absent. Raw live, lifecycle, pane, and runtime
 values may remain detail diagnostics, but browser JavaScript must not derive or
 override headline status from them. The browser may style the first returned
 action as prominent; it does not receive or invent a separate `primary_action`
-contract.
+contract. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
+expose the exact expected/observed branch pair from core; the browser retains
+that payload between activations and resubmits it unchanged. Core alone
+revalidates the pair and mutates task truth; stale or altered evidence is
+rejected.
 
 ### `ajax-web::slices::operate`
 
@@ -719,7 +766,10 @@ Opening a task in the browser is the resume gesture: entering a task route
 dispatches the `resume` operation (acknowledging attention through core, exactly
 like Enter in the native Cockpit) before attaching the terminal. The browser
 renders no separate resume control; the implicit open=resume acknowledgment is
-best-effort and never derives task truth in JavaScript.
+best-effort and never derives task truth in JavaScript. Confirmed operator
+actions must echo the exact `branch_adoption` plan core attached to the action;
+the slice forwards that payload to core without recomputing branch policy or
+comparing branches in the browser.
 
 ### `ajax-web::slices::install`
 

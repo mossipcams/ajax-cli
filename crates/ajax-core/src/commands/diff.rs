@@ -19,7 +19,7 @@ pub fn diff_task_plan<R: Registry>(
         return Ok(plan);
     }
 
-    let range = format!("{}...{}", task.base_branch, task.branch);
+    let range = format!("{}...HEAD", task.base_branch);
     plan.commands.push(
         CommandSpec::new("git", ["diff", "--stat", range.as_str()])
             .with_cwd(task.worktree_path.display().to_string()),

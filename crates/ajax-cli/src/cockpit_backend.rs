@@ -18,9 +18,9 @@ use std::{
 use crate::{
     agent_status_cache::TmuxAgentStatusSnapshot,
     cockpit_actions::{
-        execute_pending_cockpit_action_with_task_session,
+        cockpit_action_outcome, execute_pending_cockpit_action_with_task_session,
         execute_pending_cockpit_action_with_task_session_and_checkpoint,
-        handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
+        handle_pending_cockpit_result,
     },
     context::{load_context, save_context_with_state, state_file_mtime},
     render::render_response,
@@ -78,6 +78,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     let mut state_changed = false;
     let mut cockpit_flash = None;
     let mut open_new_task_repo = None;
+    let mut retained_repair_plan = None;
     let mut last_loaded_mtime = paths.and_then(state_file_mtime);
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
@@ -107,6 +108,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 paths,
                 last_loaded_mtime: &mut last_loaded_mtime,
                 save_state: save_state.as_deref_mut(),
+                retained_repair_plan: &mut retained_repair_plan,
             },
             open_new_task_repo.take(),
         )
@@ -127,6 +129,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                     runner,
                     &mut state_changed,
                     &mut task_session,
+                    retained_repair_plan.as_ref(),
                     |checkpoint_context| {
                         save_context_with_state(paths, checkpoint_context, save_state).map_err(
                             |error| {
@@ -146,6 +149,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                     runner,
                     &mut state_changed,
                     &mut task_session,
+                    retained_repair_plan.as_ref(),
                 )
             };
 
@@ -565,6 +569,7 @@ struct InteractiveCockpitHandler<'a, R: CommandRunner> {
     paths: Option<&'a CliContextPaths>,
     last_loaded_mtime: &'a mut Option<SystemTime>,
     save_state: Option<&'a mut crate::context::ContextSaveState>,
+    retained_repair_plan: &'a mut Option<commands::CommandPlan>,
 }
 
 impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
@@ -572,14 +577,14 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_action(item, self.context)
+        cockpit_action_outcome(item, self.context, false, self.retained_repair_plan)
     }
 
     fn on_confirmed_action(
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_confirmed_action(item, self.context)
+        cockpit_action_outcome(item, self.context, true, self.retained_repair_plan)
     }
 
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
@@ -1795,6 +1800,7 @@ mod cockpit_persistence_tests {
         let mut runner = EmptyTmuxRunner;
 
         let first = {
+            let mut retained_repair_plan = None;
             let mut handler = InteractiveCockpitHandler {
                 context: &mut context,
                 runner: &mut runner,
@@ -1803,6 +1809,7 @@ mod cockpit_persistence_tests {
                 paths: Some(&paths),
                 last_loaded_mtime: &mut last_loaded_mtime,
                 save_state: None,
+                retained_repair_plan: &mut retained_repair_plan,
             };
             handler.on_refresh().unwrap().expect("first snapshot")
         };
@@ -1818,6 +1825,7 @@ mod cockpit_persistence_tests {
 
         let mut runner = EmptyTmuxRunner;
         let second = {
+            let mut retained_repair_plan = None;
             let mut handler = InteractiveCockpitHandler {
                 context: &mut context,
                 runner: &mut runner,
@@ -1826,6 +1834,7 @@ mod cockpit_persistence_tests {
                 paths: Some(&paths),
                 last_loaded_mtime: &mut last_loaded_mtime,
                 save_state: None,
+                retained_repair_plan: &mut retained_repair_plan,
             };
             handler.on_refresh().unwrap().expect("second snapshot")
         };

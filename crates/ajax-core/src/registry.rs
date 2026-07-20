@@ -52,6 +52,68 @@ pub trait Registry {
     fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent>;
     fn record_step_receipt(&mut self, receipt: StepReceipt) -> Result<(), RegistryError>;
     fn step_receipts_for_task(&self, task_id: &TaskId) -> Vec<&StepReceipt>;
+
+    fn adopt_task_branch(
+        &mut self,
+        task_id: &TaskId,
+        expected_branch: &str,
+        observed_branch: &str,
+    ) -> Result<(), RegistryError> {
+        if expected_branch == observed_branch {
+            return Err(RegistryError::InvalidBranchAdoption(
+                "expected and observed branches must differ".to_string(),
+            ));
+        }
+
+        let Some(task) = self.get_task_mut(task_id) else {
+            return Err(RegistryError::TaskNotFound(task_id.clone()));
+        };
+
+        if task.branch != expected_branch {
+            return Err(RegistryError::InvalidBranchAdoption(format!(
+                "task branch intent is {}; expected {expected_branch}",
+                task.branch
+            )));
+        }
+
+        if !task.has_checkout_mismatch() {
+            return Err(RegistryError::InvalidBranchAdoption(
+                "task no longer has a checkout mismatch".to_string(),
+            ));
+        }
+
+        let Some(git_status) = task.git_status.clone() else {
+            return Err(RegistryError::InvalidBranchAdoption(
+                "git evidence is missing".to_string(),
+            ));
+        };
+
+        if !git_status.worktree_exists {
+            return Err(RegistryError::InvalidBranchAdoption(
+                "worktree is not present".to_string(),
+            ));
+        }
+
+        if git_status.current_branch.as_deref() != Some(observed_branch) {
+            return Err(RegistryError::InvalidBranchAdoption(format!(
+                "observed checkout is {}; expected {observed_branch}",
+                git_status.current_branch.as_deref().unwrap_or("detached")
+            )));
+        }
+
+        task.branch = observed_branch.to_string();
+        let mut reconciled = git_status;
+        reconciled.branch_exists = true;
+        reconciled.current_branch = Some(observed_branch.to_string());
+        task.apply_git_status(reconciled);
+        refresh_task_annotations(task);
+
+        self.record_event(
+            task_id.clone(),
+            RegistryEventKind::SubstrateChanged,
+            format!("task branch adopted from {expected_branch} to {observed_branch}"),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -282,6 +344,7 @@ pub enum RegistryError {
     DuplicateTask(TaskId),
     TaskNotFound(TaskId),
     InvalidLifecycleTransition(LifecycleTransitionError),
+    InvalidBranchAdoption(String),
 }
 
 impl fmt::Display for RegistryError {
@@ -298,6 +361,9 @@ impl fmt::Display for RegistryError {
                 "invalid lifecycle transition: {:?} -> {:?} ({:?})",
                 error.from, error.to, error.reason
             ),
+            Self::InvalidBranchAdoption(message) => {
+                write!(formatter, "invalid branch adoption: {message}")
+            }
         }
     }
 }
@@ -847,6 +913,99 @@ mod tests {
         assert!(registry.get_task(&task_id).is_none());
         assert!(registry.events_for_task(&task_id).is_empty());
         assert!(registry.step_receipts_for_task(&task_id).is_empty());
+    }
+
+    #[test]
+    fn registry_adopts_branch_intent_and_reconciles_without_rekeying_task() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-1", "web", "fix-login");
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::BranchMissing);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: false,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.task_window_status = Some(TaskWindowStatus::present("task", "/tmp/web"));
+        task.refresh_runtime_projection();
+        assert_eq!(
+            task.runtime_projection.health,
+            RuntimeHealth::CheckoutMismatch
+        );
+
+        let expected_identity = (
+            task.id.clone(),
+            task.handle.clone(),
+            task.title.clone(),
+            task.worktree_path.clone(),
+            task.tmux_session.clone(),
+            task.task_window.clone(),
+            task.lifecycle_status,
+            task.repo.clone(),
+            task.base_branch.clone(),
+            task.selected_agent,
+        );
+
+        registry.create_task(task).unwrap();
+        registry
+            .record_event(
+                TaskId::new("task-1"),
+                RegistryEventKind::UserNote,
+                "existing note",
+            )
+            .unwrap();
+
+        registry
+            .adopt_task_branch(&TaskId::new("task-1"), "ajax/fix-login", "fix/pane-stuck")
+            .unwrap();
+
+        let task = registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.branch, "fix/pane-stuck");
+        assert_eq!(
+            (
+                task.id.clone(),
+                task.handle.clone(),
+                task.title.clone(),
+                task.worktree_path.clone(),
+                task.tmux_session.clone(),
+                task.task_window.clone(),
+                task.lifecycle_status,
+                task.repo.clone(),
+                task.base_branch.clone(),
+                task.selected_agent,
+            ),
+            expected_identity
+        );
+
+        let events = registry.events_for_task(&TaskId::new("task-1"));
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
+        assert_eq!(events[1].kind, RegistryEventKind::UserNote);
+        assert_eq!(events[1].message, "existing note");
+        assert_eq!(events[2].kind, RegistryEventKind::SubstrateChanged);
+        assert_eq!(
+            events[2].message,
+            "task branch adopted from ajax/fix-login to fix/pane-stuck"
+        );
+
+        let git = task.git_status.as_ref().unwrap();
+        assert!(git.branch_exists);
+        assert_eq!(git.current_branch.as_deref(), Some("fix/pane-stuck"));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
+        assert!(!task.has_checkout_mismatch());
+        assert_ne!(
+            task.runtime_projection.health,
+            RuntimeHealth::CheckoutMismatch
+        );
     }
 
     #[test]

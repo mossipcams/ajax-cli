@@ -24,7 +24,7 @@ pub fn open_task_plan<R: Registry>(
     if task
         .git_status
         .as_ref()
-        .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
+        .is_some_and(|status| !status.worktree_exists)
         || task
             .tmux_status
             .as_ref()

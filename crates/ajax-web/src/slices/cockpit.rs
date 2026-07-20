@@ -49,7 +49,11 @@ pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> Browser
     BrowserCockpitView {
         backend: host_native_backend(),
         repos: view.repos,
-        cards: view.cards.iter().map(browser_task_card).collect(),
+        cards: view
+            .cards
+            .iter()
+            .map(|card| browser_task_card(context, card))
+            .collect(),
         inbox: view.inbox,
     }
 }
@@ -62,7 +66,7 @@ fn host_native_backend() -> BrowserBackend {
     }
 }
 
-fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
+fn browser_task_card<R: Registry>(context: &CommandContext<R>, card: &TaskCard) -> BrowserTaskCard {
     BrowserTaskCard {
         id: card.id.as_str().to_string(),
         qualified_handle: card.qualified_handle.clone(),
@@ -71,7 +75,7 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         status: card.status,
         status_explanation: card.status_explanation.clone(),
         last_activity_unix_secs: unix_secs(card.last_activity_at),
-        actions: browser_actions(card),
+        actions: browser_actions(context, card),
     }
 }
 
@@ -128,7 +132,7 @@ pub fn browser_task_detail_view<R: Registry>(
         .iter()
         .find(|card| card.qualified_handle == qualified_handle)?;
     let task = context.registry.get_task(&card.id)?.clone();
-    let actions = browser_actions(card);
+    let actions = browser_actions(context, card);
     let live_status_kind = task
         .live_status
         .as_ref()
@@ -192,7 +196,7 @@ pub(crate) mod tests {
         commands::CommandContext,
         config::Config,
         models::{
-            LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
+            GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
             RuntimeObservationSource, SideFlag, TaskId,
         },
         output::TaskCard,
@@ -301,6 +305,115 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn browser_cockpit_mismatch_repair_projects_exact_adoption_confirmation() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = crate::test_support::fix_login_task();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123 Fix login".to_string()),
+        });
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let card_repair = &value["cards"][0]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["action"] == "repair")
+            .expect("repair action on card");
+        assert_eq!(card_repair["confirmation_required"], true);
+        assert_eq!(
+            card_repair["branch_adoption"],
+            serde_json::json!({
+                "expected_branch": "ajax/fix-login",
+                "observed_branch": "fix/pane-stuck",
+            })
+        );
+        let card_resume = value["cards"][0]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["action"] == "resume")
+            .expect("resume action on card");
+        assert_eq!(card_resume["confirmation_required"], false);
+        assert!(card_resume.get("branch_adoption").is_none());
+
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
+        let detail_repair = detail
+            .actions
+            .iter()
+            .find(|action| action.action == "repair")
+            .expect("repair action in detail");
+        assert!(detail_repair.confirmation_required);
+        assert_eq!(
+            detail_repair.branch_adoption,
+            Some(ajax_core::commands::BranchAdoptionPlan {
+                expected_branch: "ajax/fix-login".to_string(),
+                observed_branch: "fix/pane-stuck".to_string(),
+            })
+        );
+        let detail_resume = detail
+            .actions
+            .iter()
+            .find(|action| action.action == "resume")
+            .expect("resume action in detail");
+        assert!(!detail_resume.confirmation_required);
+        assert!(detail_resume.branch_adoption.is_none());
+    }
+
+    #[test]
+    fn browser_cockpit_and_detail_pass_through_checkout_mismatch() {
+        const EXPLANATION: &str = "Worktree on fix/pane-stuck; expected ajax/fix-login";
+        let mut registry = InMemoryRegistry::default();
+        let mut task = crate::test_support::fix_login_task();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("fix/pane-stuck".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123 Fix login".to_string()),
+        });
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let card = &value["cards"][0];
+
+        assert_eq!(card["qualified_handle"], "web/fix-login");
+        assert_eq!(card["status"], "error");
+        assert_eq!(card["status_explanation"], EXPLANATION);
+        assert_eq!(card["actions"][0]["action"], "repair");
+        assert_eq!(card["actions"][1]["action"], "resume");
+
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
+
+        assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
+        assert_eq!(detail.status_explanation.as_deref(), Some(EXPLANATION));
+        assert_eq!(detail.actions[0].action, "repair");
+        assert_eq!(detail.actions[1].action, "resume");
+    }
+
+    #[test]
     fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
         let mut registry = InMemoryRegistry::default();
         let mut task = crate::test_support::fix_login_task();
@@ -391,7 +504,9 @@ pub(crate) mod tests {
             remediations: Vec::new(),
         };
 
-        let browser = browser_task_card(&card);
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let browser = browser_task_card(&context, &card);
 
         assert_eq!(browser.last_activity_unix_secs, 1_700_000_000);
         assert_eq!(browser.qualified_handle, "web/fix-login");
@@ -432,7 +547,9 @@ pub(crate) mod tests {
             remediations: ajax_core::remediation::remediations_for_task(&source),
         };
 
-        let browser = browser_task_card(&card);
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let browser = browser_task_card(&context, &card);
         let fix_ci = browser
             .actions
             .iter()
@@ -463,7 +580,9 @@ pub(crate) mod tests {
             remediations: Vec::new(),
         };
 
-        let browser = browser_task_card(&card);
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let browser = browser_task_card(&context, &card);
         let states: Vec<(&str, &str, bool, bool)> = browser
             .actions
             .iter()
@@ -503,7 +622,9 @@ pub(crate) mod tests {
             remediations: Vec::new(),
         };
 
-        let browser = browser_task_card(&card);
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let browser = browser_task_card(&context, &card);
 
         // The browser must not split `qualified_handle` to learn the repo.
         assert_eq!(browser.repo, "web");

@@ -464,6 +464,78 @@ fn git_live_outputs() -> Vec<CommandOutput> {
     ]
 }
 
+fn checkout_mismatch_refresh_outputs() -> Vec<CommandOutput> {
+    vec![
+        output(
+            0,
+            "worktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/fix/pane-stuck\n\n",
+        ),
+        output(0, "main\najax/fix-login\nfix/pane-stuck\n"),
+    ]
+}
+
+fn expected_git_observation_commands() -> Vec<CommandSpec> {
+    vec![
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain",
+            ],
+        ),
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)",
+            ],
+        ),
+    ]
+}
+
+fn assert_git_observation_only(commands: &[CommandSpec]) {
+    assert_eq!(commands, &expected_git_observation_commands());
+    for command in commands {
+        assert_ne!(command.program, "tmux");
+        assert_ne!(command.program, "sh");
+        let joined = std::iter::once(command.program.as_str())
+            .chain(command.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!joined.contains("switch"));
+        assert!(!joined.contains("checkout"));
+    }
+}
+
+fn sample_context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
+    let mut context = sample_context();
+    context
+        .registry
+        .update_git_status(
+            &TaskId::new("task-1"),
+            GitStatus {
+                worktree_exists: true,
+                branch_exists: false,
+                current_branch: Some("fix/pane-stuck".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            },
+        )
+        .unwrap();
+    context
+}
+
 fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
     vec![
         output(0, "ajax-web-fix-login\n"),
@@ -3091,6 +3163,109 @@ fn merge_command_renders_json_plan() {
 }
 
 #[test]
+fn repair_mismatch_cli_plan_renders_typed_adoption_and_requires_confirmation() {
+    let context = sample_context_with_named_checkout_mismatch();
+
+    let human = run_with_context(["ajax", "repair", "web/fix-login"], &context).unwrap();
+    assert_eq!(
+        human,
+        "repair task: web/fix-login\nrequires confirmation\nadopt branch: fix/pane-stuck (expected ajax/fix-login)"
+    );
+
+    let json_output =
+        run_with_context(["ajax", "repair", "web/fix-login", "--json"], &context).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json_output).unwrap();
+    assert_eq!(parsed["requires_confirmation"], true);
+    assert_eq!(parsed["commands"], serde_json::json!([]));
+    assert_eq!(
+        parsed["branch_adoption"]["expected_branch"],
+        "ajax/fix-login"
+    );
+    assert_eq!(
+        parsed["branch_adoption"]["observed_branch"],
+        "fix/pane-stuck"
+    );
+}
+
+#[test]
+fn repair_mismatch_cli_decline_preserves_branch_intent() {
+    let mut context = sample_context_with_named_checkout_mismatch();
+    let mut runner = QueuedRunner::new(checkout_mismatch_refresh_outputs());
+
+    let error = run_with_context_and_runner(
+        ["ajax", "repair", "web/fix-login", "--execute"],
+        &mut context,
+        &mut runner,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("confirmation required; pass --yes".to_string())
+    );
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task.branch, "ajax/fix-login");
+    assert_git_observation_only(&runner.commands);
+}
+
+#[test]
+fn repair_mismatch_cli_yes_persists_adopted_branch_without_switching() {
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-repair-mismatch-{}-{}",
+        std::process::id(),
+        "adopt"
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config_file = directory.join("config.toml");
+    let state_file = directory.join("state.db");
+    std::fs::write(
+        &config_file,
+        r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+    )
+    .unwrap();
+    let context = sample_context_with_named_checkout_mismatch();
+    let task_before = context
+        .registry
+        .get_task(&TaskId::new("task-1"))
+        .unwrap()
+        .clone();
+    SqliteRegistryStore::new(&state_file)
+        .save(&context.registry)
+        .unwrap();
+    let paths = CliContextPaths::new(&config_file, &state_file);
+    let mut runner = QueuedRunner::new(checkout_mismatch_refresh_outputs());
+
+    let output = run_with_context_paths_and_runner(
+        ["ajax", "repair", "web/fix-login", "--execute", "--yes"],
+        &paths,
+        &mut runner,
+    )
+    .unwrap();
+
+    let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+    let task_after = restored.get_task(&TaskId::new("task-1")).unwrap();
+
+    std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+
+    assert!(output.is_empty());
+    assert_eq!(task_after.branch, "fix/pane-stuck");
+    assert_eq!(task_after.id, task_before.id);
+    assert_eq!(
+        task_after.qualified_handle(),
+        task_before.qualified_handle()
+    );
+    assert_eq!(task_after.worktree_path, task_before.worktree_path);
+    assert_eq!(task_after.tmux_session, task_before.tmux_session);
+    assert!(!task_after.has_checkout_mismatch());
+    assert_git_observation_only(&runner.commands);
+}
+
+#[test]
 fn repair_command_renders_configured_test_plan() {
     let mut context = sample_context();
     context.config.test_commands = vec![ajax_core::config::TestCommand::new("web", "cargo test")];
@@ -3112,7 +3287,7 @@ fn review_command_renders_diff_summary_plan() {
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines[0], "diff task: web/fix-login");
     assert!(lines.iter().any(|line| {
-        *line == "$ (cd /tmp/worktrees/web-fix-login && git diff --stat main...ajax/fix-login)"
+        *line == "$ (cd /tmp/worktrees/web-fix-login && git diff --stat main...HEAD)"
     }));
 }
 
@@ -5723,10 +5898,8 @@ fn diff_execute_uses_injected_runner() {
 
     assert_eq!(
         runner.commands(),
-        &[
-            CommandSpec::new("git", ["diff", "--stat", "main...ajax/fix-login"])
-                .with_cwd("/tmp/worktrees/web-fix-login")
-        ]
+        &[CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
+            .with_cwd("/tmp/worktrees/web-fix-login")]
     );
 }
 
@@ -6436,6 +6609,7 @@ fn cockpit_start_persists_task_before_first_external_command() {
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
         |checkpoint_context| {
             crate::context::save_context_with_state(&paths, checkpoint_context, &mut save_state)
                 .map_err(|error| {
@@ -7091,6 +7265,205 @@ fn confirmed_cockpit_remove_action_optimistically_removes_and_defers_cleanup() {
     );
 }
 
+#[test]
+fn cockpit_mismatch_repair_prompts_for_exact_branch_adoption() {
+    let mut context = sample_context_with_named_checkout_mismatch();
+    let item = cockpit_item("web/fix-login", "repair");
+    let mut retained_plan = None;
+    let outcome = super::cockpit_actions::cockpit_action_outcome(
+        &item,
+        &mut context,
+        false,
+        &mut retained_plan,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        ajax_tui::ActionOutcome::Confirm(ref message)
+            if message == "press enter again to adopt branch fix/pane-stuck (expected ajax/fix-login)"
+    ));
+    let plan = retained_plan.expect("first repair activation should retain the core plan");
+    assert!(plan.commands.is_empty());
+    assert!(plan.requires_confirmation);
+    let adoption = plan
+        .branch_adoption
+        .as_ref()
+        .expect("repair confirmation should retain typed adoption");
+    assert_eq!(adoption.expected_branch, "ajax/fix-login");
+    assert_eq!(adoption.observed_branch, "fix/pane-stuck");
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .branch,
+        "ajax/fix-login"
+    );
+}
+
+#[test]
+fn confirmed_cockpit_mismatch_repair_adopts_original_plan_without_commands() {
+    let mut context = sample_context_with_named_checkout_mismatch();
+    let task_before = context
+        .registry
+        .get_task(&TaskId::new("task-1"))
+        .unwrap()
+        .clone();
+    let item = cockpit_item("web/fix-login", "repair");
+    let mut retained_plan = None;
+    super::cockpit_actions::cockpit_action_outcome(&item, &mut context, false, &mut retained_plan)
+        .unwrap();
+    let outcome = super::cockpit_actions::cockpit_action_outcome(
+        &item,
+        &mut context,
+        true,
+        &mut retained_plan,
+    )
+    .unwrap();
+    let ajax_tui::ActionOutcome::Defer(pending) = outcome else {
+        panic!("confirmed mismatch repair should defer the retained plan");
+    };
+    assert_eq!(pending.action, "repair");
+    assert_eq!(pending.task_handle, "web/fix-login");
+
+    let mut runner = RecordingCommandRunner::default();
+    let mut task_session = RecordingTaskSessionRunner::default();
+    let mut state_changed = false;
+    let result = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        &pending,
+        &mut context,
+        &mut runner,
+        &mut state_changed,
+        &mut task_session,
+        retained_plan.as_ref(),
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        super::cockpit_actions::PendingCockpitExecution::Continue(None)
+    );
+    assert!(runner.commands().is_empty());
+    assert!(task_session.commands.is_empty());
+    assert!(state_changed);
+
+    let task_after = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task_after.branch, "fix/pane-stuck");
+    assert!(!task_after.has_checkout_mismatch());
+    assert_eq!(task_after.id, task_before.id);
+    assert_eq!(task_after.worktree_path, task_before.worktree_path);
+    assert_eq!(task_after.tmux_session, task_before.tmux_session);
+}
+
+#[test]
+fn stale_cockpit_mismatch_confirmation_does_not_adopt_changed_checkout() {
+    let mut context = sample_context_with_named_checkout_mismatch();
+    let item = cockpit_item("web/fix-login", "repair");
+    let mut retained_plan = None;
+    super::cockpit_actions::cockpit_action_outcome(&item, &mut context, false, &mut retained_plan)
+        .unwrap();
+    let outcome = super::cockpit_actions::cockpit_action_outcome(
+        &item,
+        &mut context,
+        true,
+        &mut retained_plan,
+    )
+    .unwrap();
+    let ajax_tui::ActionOutcome::Defer(pending) = outcome else {
+        panic!("confirmed mismatch repair should defer execution");
+    };
+
+    context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap()
+        .git_status
+        .as_mut()
+        .unwrap()
+        .current_branch = Some("other/branch".to_string());
+    let event_count_before = context
+        .registry
+        .events_for_task(&TaskId::new("task-1"))
+        .len();
+
+    let mut runner = RecordingCommandRunner::default();
+    let mut task_session = RecordingTaskSessionRunner::default();
+    let mut state_changed = false;
+    let error = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        &pending,
+        &mut context,
+        &mut runner,
+        &mut state_changed,
+        &mut task_session,
+        retained_plan.as_ref(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("checkout changed since repair was planned; refresh and retry"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .branch,
+        "ajax/fix-login"
+    );
+    assert_eq!(
+        context
+            .registry
+            .events_for_task(&TaskId::new("task-1"))
+            .len(),
+        event_count_before
+    );
+    assert!(runner.commands().is_empty());
+    assert!(task_session.commands.is_empty());
+    assert!(!state_changed);
+}
+
+#[test]
+fn declined_cockpit_mismatch_confirmation_does_not_mutate_intent() {
+    let mut context = sample_context_with_named_checkout_mismatch();
+    let item = cockpit_item("web/fix-login", "repair");
+    let event_count_before = context
+        .registry
+        .events_for_task(&TaskId::new("task-1"))
+        .len();
+    let mut retained_plan = None;
+    let outcome = super::cockpit_actions::cockpit_action_outcome(
+        &item,
+        &mut context,
+        false,
+        &mut retained_plan,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        ajax_tui::ActionOutcome::Confirm(ref message)
+            if message == "press enter again to adopt branch fix/pane-stuck (expected ajax/fix-login)"
+    ));
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .branch,
+        "ajax/fix-login"
+    );
+    assert_eq!(
+        context
+            .registry
+            .events_for_task(&TaskId::new("task-1"))
+            .len(),
+        event_count_before
+    );
+}
+
 fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
     vec![
         output(0, "ajax-other\n"),
@@ -7326,6 +7699,7 @@ fn task_session_pending_drop_uses_observed_drop_semantics() {
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
     )
     .unwrap();
 
@@ -7384,6 +7758,7 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
     )
     .unwrap();
 
@@ -7408,6 +7783,7 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
             &mut runner,
             &mut state_changed,
             &mut OpenNewTaskTaskSessionRunner,
+            None,
         )
         .unwrap(),
         super::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } if repo == "web"
@@ -7435,6 +7811,7 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
     )
     .unwrap();
 
@@ -7481,6 +7858,7 @@ fn pending_cockpit_resume_task_session_failure_stays_in_cockpit_without_lifecycl
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
     )
     .unwrap_err();
 
@@ -7532,6 +7910,7 @@ fn pending_cockpit_create_task_session_failure_requests_cockpit_reload() {
         &mut runner,
         &mut state_changed,
         &mut task_session,
+        None,
     )
     .unwrap_err();
 

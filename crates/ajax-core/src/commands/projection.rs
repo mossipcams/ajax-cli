@@ -132,6 +132,7 @@ fn attention_reason(card: &TaskCard, annotation: &Annotation) -> String {
     if matches!(
         annotation.evidence,
         Evidence::Lifecycle(LifecycleStatus::Reviewable | LifecycleStatus::Mergeable)
+            | Evidence::CheckoutMismatch
     ) {
         if let Some(explanation) = card.status_explanation.clone() {
             return explanation;
@@ -182,11 +183,13 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, Task, TaskId,
+            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
+            LiveObservation, LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag,
+            Task, TaskId,
         },
         output::CockpitSummary,
         remediation::{FIX_CI, RESOLVE_MERGE_CONFLICTS},
+        ui_state::TaskStatus,
     };
 
     fn task(handle: &str) -> Task {
@@ -213,6 +216,55 @@ mod tests {
             reviewable_tasks: 1,
             cleanable_tasks: 0,
         }
+    }
+
+    fn clean_reviewable_task(handle: &str) -> Task {
+        let mut task = task(handle);
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some(format!("ajax/{handle}")),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123 Fix task".to_string()),
+        });
+        task
+    }
+
+    #[test]
+    fn checkout_mismatch_card_and_inbox_share_canonical_explanation() {
+        let mut task = clean_reviewable_task("fix-login");
+        task.git_status.as_mut().unwrap().current_branch = Some("fix/pane-stuck".to_string());
+
+        let card = task_card(&task);
+        let explanation = "Worktree on fix/pane-stuck; expected ajax/fix-login";
+
+        assert_eq!(card.status, TaskStatus::Error);
+        assert_eq!(card.status_explanation.as_deref(), Some(explanation));
+        let mismatch_annotation = card
+            .annotations
+            .iter()
+            .find(|annotation| annotation.evidence == Evidence::CheckoutMismatch)
+            .expect("checkout mismatch annotation");
+        assert_eq!(mismatch_annotation.kind, AnnotationKind::Broken);
+        assert_eq!(card.primary_action, OperatorAction::Repair);
+        assert_eq!(
+            card.available_actions,
+            vec![OperatorAction::Repair, OperatorAction::Resume]
+        );
+
+        let projection = cockpit_projection(&[&task], summary());
+        let next = projection
+            .next
+            .expect("checkout mismatch should surface in inbox");
+        assert_eq!(next.reason, explanation);
     }
 
     #[test]
