@@ -651,7 +651,7 @@ web runtime only hosts its background poll.
 
 The notify adapter fires once per actionable episode and only for statuses
 the operator can act on. `NeedsInput` waiting evidence (waiting for input,
-waiting for approval, auth required, rate limited, context limit) and
+waiting for approval, auth required, context limit) and
 `Error`-class evidence (CI failed, merge conflict, command failed, blocked,
 runtime probe failure) each fire a single webhook. Lifecycle-only
 "Ready for review" stays inbox-visible but does **not** phone-ping. Returning
@@ -681,7 +681,10 @@ the crate:
   and revision-checked commit) so attention webhooks fire without a browser
   polling; the interval comes from `[notify] poll_seconds`. The tick skips
   webhook delivery while a browser has polled `/api/cockpit` within the last
-  90 seconds.
+  90 seconds. Presence is refreshed not only by `/api/cockpit` polls but also
+  by recent terminal-WebSocket attaches and operate/action requests that pass
+  their origin/JSON-parse gates, so the tick stays suppressed while the operator
+  is actively using the PWA terminal or submitting actions.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
