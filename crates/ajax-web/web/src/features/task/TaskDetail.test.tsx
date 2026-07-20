@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, fireEvent, waitFor, screen, within } from "@testing-library/react";
+import { render, fireEvent, screen } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
@@ -14,18 +14,7 @@ const stylesSource = readFileSync(
   "utf8",
 );
 
-const fetchDevDeploy = vi.fn();
-
-vi.mock("@/shared/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/shared/lib/api")>();
-  return {
-    ...actual,
-    fetchDevDeploy: (...args: unknown[]) => fetchDevDeploy(...args),
-  };
-});
-
 beforeEach(() => {
-  fetchDevDeploy.mockReset();
   vi.stubGlobal(
     "ResizeObserver",
     class MockResizeObserver {
@@ -177,49 +166,10 @@ describe("TaskDetail projection surface", () => {
     expect(screen.getByTestId("agent-activity").textContent).toContain("waiting on approval");
   });
 
-  it("renders created and last-activity relative times in task details", () => {
-    const now = Math.floor(Date.now() / 1000);
-    render(
-      <TaskDetail
-        detail={detail({
-          created_unix_secs: now - 2 * 86400,
-          last_activity_unix_secs: now - 5 * 60,
-        })}
-      />,
-    );
-    expect(screen.getByText("2d ago")).toBeInTheDocument();
-    expect(screen.getByText("5m ago")).toBeInTheDocument();
-  });
-
-  it("lists agent attempts with outcome and duration", () => {
-    const now = Math.floor(Date.now() / 1000);
-    render(
-      <TaskDetail
-        detail={detail({
-          agent_attempts: [
-            { started_unix_secs: now - 600, completed_unix_secs: now - 480, outcome: "completed" },
-            { started_unix_secs: now - 300, completed_unix_secs: null, outcome: "running" },
-          ],
-        })}
-      />,
-    );
-    const attempts = screen.getByTestId("agent-attempts");
-    expect(attempts.textContent).toContain("completed");
-    expect(attempts.textContent).toContain("2m");
-    expect(attempts.textContent).toContain("running");
-  });
-
-  it("lists annotations when the task carries notes", () => {
-    render(
-      <TaskDetail detail={detail({ annotations: ["needs rebase", "check CI"] })} />,
-    );
-    expect(screen.getByTestId("task-annotations").textContent).toContain("needs rebase");
-    expect(screen.getByTestId("task-annotations").textContent).toContain("check CI");
-  });
-
-  it("omits the annotations block when the task has none", () => {
+  it("composes TaskMetaDetails with the task details disclosure", () => {
     render(<TaskDetail detail={detail()} />);
-    expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
+    expect(screen.getByRole("group")).toBeInTheDocument();
+    expect(screen.getByText("Task details")).toBeInTheDocument();
   });
 
   it("clamps status explanation and activity to a single row", () => {
@@ -248,38 +198,6 @@ describe("TaskDetail projection surface", () => {
     expect(interactPanelCss).toMatch(/flex-direction:\s*row/);
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?min-width:\s*0/);
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
-  });
-
-  it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {
-    fetchDevDeploy.mockResolvedValue({
-      ok: true,
-      deploy: {
-        phase: "ready_to_deploy",
-        phase_label: "Ready to deploy",
-        shared_slot: true,
-        active: false,
-        error: null,
-        occupant: null,
-      },
-    });
-
-    render(
-      <TaskDetail detail={detail({ repo: "ajax-cli", qualified_handle: "ajax-cli/demo" })} />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("region", { name: "Task terminal" })).toBeInTheDocument();
-      expect(screen.getByRole("region", { name: "Test in Dev" })).toBeInTheDocument();
-    });
-
-    const detailsGroup = screen.getByRole("group");
-    expect(
-      within(detailsGroup).getByRole("region", { name: "Test in Dev" }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
-      "Task terminal",
-      "Test in Dev",
-    ]);
   });
 
   it("compacts the mobile status panel and action buttons", () => {
