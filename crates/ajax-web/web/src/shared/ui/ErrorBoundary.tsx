@@ -1,26 +1,47 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
 }
 
 interface State {
-  hasError: boolean;
+  error: Error | null;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+function isIncompatibleResponse(error: Error): boolean {
+  return (error as Error & { kind?: string }).kind === "incompatible";
+}
 
-  static getDerivedStateFromError(): State {
-    return { hasError: true };
+/**
+ * Whole-app boundary. It previously discarded the error and rendered
+ * "Incompatible server response" for *every* crash, so a render bug was
+ * indistinguishable from a real contract failure and the message actively
+ * pointed diagnosis at the server. Keep that wording only for genuine
+ * contract failures, show the real message otherwise, and always log.
+ */
+export class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ajax] render crash:", error, info.componentStack);
   }
 
   render(): ReactNode {
-    if (this.state.hasError) {
-      return (
-        <div role="alert">Incompatible server response</div>
-      );
-    }
-    return this.props.children;
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    return (
+      <div role="alert" className="error-boundary">
+        <p>
+          {isIncompatibleResponse(error)
+            ? "Incompatible server response"
+            : "Something went wrong rendering this view"}
+        </p>
+        <pre className="error-boundary-detail">{error.message}</pre>
+      </div>
+    );
   }
 }
