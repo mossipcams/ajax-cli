@@ -445,28 +445,41 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             }
         };
         let pane_now = SystemTime::now();
-        let Some(pane_observation) =
-            live::project_pane_activity(task_snapshot.selected_agent, &pane_output, pane_now)
-        else {
-            continue;
-        };
-        let pane_projection =
-            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
-                now: pane_now,
-                primary_run_id: "primary".to_string(),
-                process_liveness: Some(crate::agent_status::ProcessLiveness {
-                    alive: decision.process_alive,
-                    observed_at: pane_now,
-                }),
-                observations: &[pane_observation],
-            });
-        if pane_projection.phase == crate::agent_status::ParentPhase::Unknown {
-            // Ambiguous or low-confidence pane evidence must not overwrite
-            // credible prior state or fabricate AgentRunning from process liveness.
-            continue;
-        }
-        let observation = pane_projection.live;
-        let observed_at = pane_projection.selected_observed_at.unwrap_or(pane_now);
+        let (observation, observed_at) =
+            match live::project_pane_activity(task_snapshot.selected_agent, &pane_output, pane_now)
+            {
+                Some(pane_observation) => {
+                    let pane_projection = crate::agent_status::reduce_agent_status(
+                        crate::agent_status::ReduceInput {
+                            now: pane_now,
+                            primary_run_id: "primary".to_string(),
+                            process_liveness: Some(crate::agent_status::ProcessLiveness {
+                                alive: decision.process_alive,
+                                observed_at: pane_now,
+                            }),
+                            observations: &[pane_observation],
+                        },
+                    );
+                    if pane_projection.phase == crate::agent_status::ParentPhase::Unknown {
+                        // Ambiguous or low-confidence pane evidence must not overwrite
+                        // credible prior state or fabricate AgentRunning from process liveness.
+                        continue;
+                    }
+                    let observed_at = pane_projection.selected_observed_at.unwrap_or(pane_now);
+                    (pane_projection.live, observed_at)
+                }
+                // Stuck states (auth/rate-limit/context-limit/blocked/merge-conflict/
+                // CI-failed) are not agent *activity*, so the reducer cannot carry
+                // them. Without this the redesign silently dropped six actionable,
+                // notification-firing statuses from the tmux polling path.
+                None => match live::project_pane_stuck_status(
+                    task_snapshot.selected_agent,
+                    &pane_output,
+                ) {
+                    Some(stuck) => (stuck, pane_now),
+                    None => continue,
+                },
+            };
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let live_status_unchanged = task.live_status.as_ref() == Some(&observation);
             let had_recoverable_missing_flag = task
