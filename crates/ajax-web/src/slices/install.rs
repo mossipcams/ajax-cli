@@ -59,6 +59,10 @@ mod tests {
         assert!(!shell.contains("href=\"/terminal.js\""));
         // React mounts into this single node.
         assert!(shell.contains("id=\"app\""));
+        assert!(
+            shell.contains("ajax-boot-paint"),
+            "shell must paint dark before /app.css arrives"
+        );
     }
 
     #[test]

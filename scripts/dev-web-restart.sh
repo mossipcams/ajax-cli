@@ -177,7 +177,9 @@ fi
 stop_listener() {
   local port="$1"
   local pids
-  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  # Absolute lsof: agent shells often lack /usr/sbin on PATH, and a missing
+  # lsof makes the post-start probe fail and kill a healthy tmux web session.
+  pids="$(/usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
     return 0
   fi
@@ -240,8 +242,8 @@ start_web() {
   tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT" \
     "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"
 
-  sleep 1
-  NEW_PID="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  sleep 2
+  NEW_PID="$(/usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | /usr/bin/head -1 || true)"
   if [[ -z "$NEW_PID" ]] || ! kill -0 "$NEW_PID" 2>/dev/null; then
     return 1
   fi

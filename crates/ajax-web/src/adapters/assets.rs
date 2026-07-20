@@ -9,13 +9,24 @@ pub struct StaticAsset {
 
 pub fn browser_shell_html() -> String {
     let version = app_version();
-    include_str!("../../web/dist/index.html")
+    let mut html = include_str!("../../web/dist/index.html")
         .replace("__AJAX_APP_VERSION__", version)
         .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
         .replace(
             "href=\"/app.css\"",
             &format!("href=\"/app.css?v={version}\""),
-        )
+        );
+    // iOS PWA: launch splash is theme-color #161616, then the bare document
+    // paints white until /app.css loads. Keep the first paint dark even when
+    // CSS is slow or the radio blips.
+    if !html.contains("ajax-boot-paint") {
+        html = html.replacen(
+            "<head>",
+            "<head>\n  <style id=\"ajax-boot-paint\">html,body,#app{background:#161616;color:#e6e6e6;margin:0;min-height:100%}</style>",
+            1,
+        );
+    }
+    html
 }
 
 /// Fingerprint the embedded shell assets into the version string.
