@@ -91,15 +91,19 @@ native client (claude|codex|cursor|pi) in tmux pane
 - [x] Verify: live:: 107, runtime_refresh:: 50, agent_status_cache 12 passed;
       clippy + fmt clean
 
-### 3. Hook installers
+### 3. Hook installers — DONE 2026-07-21
 
-- [ ] Test: idempotent merge into existing Claude settings hooks (no clobber
-      of user entries; second run is a no-op)
-- [ ] Test: Cursor hooks.json + Pi extension + Codex config merges idempotent
-- [ ] Implement: `ajax agent-hooks install` writing global configs; every
-      installed command is env-guarded (`AJAX_TASK_ID` unset → exit 0)
-- [ ] Verify: install twice against fixture configs; run a real instrumented
-      task per client where available
+- [x] Test: idempotent merge into existing Claude settings hooks (no clobber
+      of user entries; second run is a no-op, byte-identical)
+- [x] Test: Cursor hooks.json + Pi extension + Codex hooks.json idempotent
+- [x] Implement: `ajax agent-hooks install`; commands env-guarded via
+      `__agent-event`'s AJAX_TASK_ID no-op
+- [x] Formats verified against live configs/docs: Codex uses Claude-schema
+      `~/.codex/hooks.json` with the SAME event names (UserPromptSubmit /
+      PostToolUse / Stop) — translation table corrected; Pi maps
+      `agent_settled` (not `agent_end`) → done, which is the already-coalesced
+      settle event, so no flicker mitigation needed
+- [ ] Live smoke per client (deferred to post-merge: needs installed binary)
 
 ### 4. Cut the patchwork (only after 1–3 verified against live panes)
 

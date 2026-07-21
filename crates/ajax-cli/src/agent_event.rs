@@ -86,12 +86,12 @@ pub(crate) fn translate_agent_event(
                 Some("done")
             }
         }
-        ("codex", "prompt-submit") => Some("working"),
-        ("codex", "turn-complete") => Some("done"),
+        ("codex", "UserPromptSubmit" | "PreToolUse" | "PostToolUse") => Some("working"),
+        ("codex", "Stop") => Some("done"),
         ("cursor", "beforeSubmitPrompt") => Some("working"),
         ("cursor", "stop") => Some("done"),
         ("pi", "before_agent_start") => Some("working"),
-        ("pi", "agent_end") => Some("done"),
+        ("pi", "agent_settled") => Some("done"),
         _ => None,
     }
 }
@@ -205,6 +205,24 @@ mod tests {
             translate_agent_event("claude", "Notification", &idle),
             Some("wait")
         );
+    }
+
+    #[test]
+    fn translate_codex_and_pi_verified_events() {
+        let payload = serde_json::json!({});
+        assert_eq!(
+            translate_agent_event("codex", "UserPromptSubmit", &payload),
+            Some("working")
+        );
+        assert_eq!(
+            translate_agent_event("codex", "Stop", &payload),
+            Some("done")
+        );
+        assert_eq!(
+            translate_agent_event("pi", "agent_settled", &payload),
+            Some("done")
+        );
+        assert_eq!(translate_agent_event("pi", "agent_end", &payload), None);
     }
 
     #[test]

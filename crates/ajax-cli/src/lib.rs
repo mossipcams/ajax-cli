@@ -1,4 +1,5 @@
 mod agent_event;
+mod agent_hooks;
 mod agent_runtime;
 mod agent_status_cache;
 mod cli;
@@ -113,6 +114,10 @@ pub fn run_with_args(
         return agent_event::run_agent_event_command(subcommand);
     }
 
+    if let Some(("agent-hooks", subcommand)) = matches.subcommand() {
+        return agent_hooks::run_agent_hooks_command(subcommand);
+    }
+
     let paths = context_paths_from_matches(&matches)?;
     if let Some(("runtime", subcommand)) = matches.subcommand() {
         return snapshot_dispatch::render_runtime_paths(
@@ -163,6 +168,11 @@ pub fn run_with_args_to_writer(
 
     if let Some(("__agent-event", subcommand)) = matches.subcommand() {
         let output = agent_event::run_agent_event_command(subcommand)?;
+        return write_command_output(writer, &output);
+    }
+
+    if let Some(("agent-hooks", subcommand)) = matches.subcommand() {
+        let output = agent_hooks::run_agent_hooks_command(subcommand)?;
         return write_command_output(writer, &output);
     }
 

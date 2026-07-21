@@ -49,6 +49,7 @@ pub fn build_cli() -> Command {
         .subcommand(supervise_command())
         .subcommand(agent_runtime_command())
         .subcommand(agent_event_command())
+        .subcommand(agent_hooks_command())
         .subcommand(web_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
@@ -130,6 +131,14 @@ fn supervise_command() -> Command {
                 .long("cursor-bin")
                 .value_name("PATH")
                 .hide(true),
+        )
+}
+
+fn agent_hooks_command() -> Command {
+    Command::new("agent-hooks")
+        .about("Manage agent status hooks for supported clients")
+        .subcommand(
+            Command::new("install").about("Install agent status hooks for supported clients"),
         )
 }
 
