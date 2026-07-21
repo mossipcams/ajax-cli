@@ -47,13 +47,14 @@ mod tests {
         // The build-time placeholder is replaced with the live version.
         assert!(shell.contains(app_version()));
         assert!(!shell.contains("__AJAX_APP_VERSION__"));
-        // One local module script and one local stylesheet at bare URLs.
-        // terminal.js is fetched by the app via dynamic import — not listed in
-        // the shell.
-        assert!(shell.contains("src=\"/app.js\""));
-        assert!(shell.contains("href=\"/app.css\""));
-        assert!(!shell.contains("src=\"/app.js?"));
-        assert!(!shell.contains("href=\"/app.css?"));
+        // Entry URLs carry ?v=<app_version> so Cloudflare/iOS cannot keep a
+        // stale bare /app.js while /api/version looks fresh. terminal.js stays
+        // a bare dynamic import inside the bundle.
+        let version = app_version();
+        assert!(shell.contains(&format!("src=\"/app.js?v={version}\"")));
+        assert!(shell.contains(&format!("href=\"/app.css?v={version}\"")));
+        assert!(!shell.contains("src=\"/app.js\"></script>"));
+        assert!(!shell.contains("href=\"/app.css\">"));
         assert!(shell.contains("type=\"module\""));
         assert!(!shell.contains("src=\"/terminal.js\""));
         assert!(!shell.contains("href=\"/terminal.js\""));
@@ -62,6 +63,10 @@ mod tests {
         assert!(
             shell.contains("ajax-boot-paint"),
             "shell must paint dark before /app.css arrives"
+        );
+        assert!(
+            shell.contains("ajax-retire-sw"),
+            "shell must unregister leftover service workers from the retired PWA"
         );
     }
 
