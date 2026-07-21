@@ -175,6 +175,18 @@ repo = "web"
 command = "cargo nextest run --all-features"
 ```
 
+For this repository, prefer the checked-in task bootstrap so every new
+worktree gets Node 22 (CI pin), `npm ci` (husky via `prepare`), and — when
+`ajax-model-router` is present locally — the dispatch script symlinks:
+
+```toml
+[[repos]]
+name = "ajax-cli"
+path = "/Users/matt/Desktop/Projects/ajax-cli"
+default_branch = "main"
+bootstrap = "./scripts/task-bootstrap.sh"
+```
+
 Each managed repo should have a matching test command so `ajax-cli repair` and
 `ajax-cli doctor` can verify the workflow end to end.
 
