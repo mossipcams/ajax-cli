@@ -158,7 +158,7 @@ impl FoldState {
 
 pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
     let mut state = FoldState::new();
-    for (index, event) in events.iter().enumerate() {
+    for event in events.iter() {
         if matches!(event.kind, CanonicalEventKind::Heartbeat) {
             continue;
         }
@@ -174,10 +174,9 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                     activity_id,
                 }) = &event.detail
                 {
-                    let id = activity_id
-                        .clone()
-                        .unwrap_or_else(|| format!("anon-{index}"));
-                    state.active_tools.insert(id, ());
+                    if let Some(id) = activity_id {
+                        state.active_tools.insert(id.clone(), ());
+                    }
                     state.activity = Some(ActivityKind::Tool);
                     state.phase = RunPhase::Active;
                 }
@@ -185,10 +184,19 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
             CanonicalEventKind::ActivityFinished => {
                 if let Some(CanonicalEventDetail::Activity {
                     activity: ActivityKind::Tool,
-                    activity_id: Some(id),
+                    activity_id,
                 }) = &event.detail
                 {
-                    state.active_tools.remove(id);
+                    match activity_id {
+                        Some(id) => {
+                            state.active_tools.remove(id);
+                        }
+                        None => {
+                            state
+                                .active_tools
+                                .retain(|key, _| !key.starts_with("anon-"));
+                        }
+                    }
                 }
                 if state.active_tools.is_empty() {
                     state.activity = None;
@@ -429,6 +437,55 @@ mod tests {
             process_liveness: None,
         });
         assert_eq!(projection.live.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn fold_activity_started_without_id_then_settled_is_done() {
+        let events = vec![
+            envelope(
+                CanonicalEventKind::ActivityStarted,
+                Some(CanonicalEventDetail::Activity {
+                    activity: ActivityKind::Tool,
+                    activity_id: None,
+                }),
+                1,
+            ),
+            envelope(
+                CanonicalEventKind::TurnSettled,
+                Some(CanonicalEventDetail::Outcome {
+                    outcome: TurnOutcome::Completed,
+                }),
+                2,
+            ),
+        ];
+        let snapshot = fold_envelopes(&events);
+        assert!(snapshot.active_tools.is_empty());
+        assert_eq!(project_snapshot(&snapshot), Some("done"));
+    }
+
+    #[test]
+    fn fold_activity_finished_without_id_does_not_clear_named_tools() {
+        let events = vec![
+            tool_started("a", 1),
+            envelope(
+                CanonicalEventKind::ActivityFinished,
+                Some(CanonicalEventDetail::Activity {
+                    activity: ActivityKind::Tool,
+                    activity_id: None,
+                }),
+                2,
+            ),
+            envelope(
+                CanonicalEventKind::TurnSettled,
+                Some(CanonicalEventDetail::Outcome {
+                    outcome: TurnOutcome::Completed,
+                }),
+                3,
+            ),
+        ];
+        let snapshot = fold_envelopes(&events);
+        assert!(snapshot.active_tools.contains_key("a"));
+        assert_eq!(project_snapshot(&snapshot), Some("working"));
     }
 
     #[test]

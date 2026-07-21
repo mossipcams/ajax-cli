@@ -465,10 +465,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     let live_status_unchanged = task
                         .live_status
                         .as_ref()
-                        .is_some_and(|status| status.kind == observation.kind)
-                        && task
-                            .live_status_observed_at
-                            .is_some_and(|current| current >= pane_now);
+                        .is_some_and(|status| status.kind == observation.kind);
                     if live_status_unchanged {
                         continue;
                     }
@@ -1671,6 +1668,73 @@ mod tests {
             Some(LiveStatusKind::WaitingForInput)
         );
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[derive(Default)]
+    struct IdlePromptRefreshRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for IdlePromptRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => {
+                    "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n"
+                }
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn pane_fallback_same_kind_skips_reapply() {
+        let mut context = context_with_active_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .selected_agent = AgentClient::Other;
+        let cache = ScriptedAgentStatusCache { entries: vec![] };
+        let mut runner = IdlePromptRefreshRunner::default();
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let observed_at = context
+            .registry
+            .get_task(&TaskId::new(TASK_ID))
+            .unwrap()
+            .live_status_observed_at
+            .expect("pane fallback should apply wait hint");
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new(TASK_ID))
+                .unwrap()
+                .live_status
+                .as_ref()
+                .map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+
+        let changed =
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+                .unwrap();
+        assert!(!changed);
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.live_status_observed_at, Some(observed_at));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
     }
 
     #[test]

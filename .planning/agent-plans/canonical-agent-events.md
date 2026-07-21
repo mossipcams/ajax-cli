@@ -25,7 +25,8 @@ event files (`{task}.json` with a single `value`).
 - No restoring broad pane-text activity classification. Pane fallback only for
   capabilities marked `unavailable` / `unverified`, low confidence, short TTL.
 - No inventing wait/ask for Cursor/Pi when native coverage is absent.
-- No implementing socket/spool in the same round as the event schema (phase later).
+- No implementing socket/spool in the same round as the event schema (completed in
+  Phase 3; socket notify is best-effort, JSONL fold on refresh is durable).
 
 ## Approval
 
@@ -130,7 +131,7 @@ Absence of an event ≠ absence of state. Cursor marks question/permission
 | Fact | Claude | Codex | Cursor | Pi |
 | --- | --- | --- | --- | --- |
 | SessionOpened | SessionStart | SessionStart | sessionStart | session_start |
-| SessionClosed | SessionEnd | wrapper exit | sessionEnd | session_shutdown |
+| SessionClosed | SessionEnd | SessionEnd (native; wrapper exit backup) | sessionEnd | session_shutdown |
 | TurnStarted | UserPromptSubmit | UserPromptSubmit | beforeSubmitPrompt | before_agent_start |
 | Tool activity | Pre/PostToolUse | Pre/PostToolUse | pre/postToolUse | tool_execution_* |
 | Permission | PermissionRequest | PermissionRequest | unavailable | extension UI only |

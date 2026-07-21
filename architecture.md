@@ -135,7 +135,11 @@ event envelope; Ajax folds the log into an orthogonal per-run snapshot
 and projects operator status. Capability profiles mark which facts each client
 can supply (`native` / `wrapper` / `unavailable` / `unverified`); absence of an
 event must never be treated as absence of a state. Concurrent tools and
-subagents use open sets, not last-event-wins.
+subagents use open sets, not last-event-wins. Hooks append versioned JSONL;
+`notify.sock` is best-effort transport only — when a listener is bound it
+accepts and drains lines with bounded reads but does not yet fan out immediate
+status delivery to Cockpit. Durable operator status comes from folding the JSONL
+log on runtime refresh.
 
 Legacy provider hook files remain observational hints with explicit confidence
 during migration. Pane text is not classified for agent activity except where a

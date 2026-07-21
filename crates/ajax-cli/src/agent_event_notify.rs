@@ -16,11 +16,13 @@ fn spawn_notify_listener_with_sink(
     sink: Option<std::sync::mpsc::Sender<String>>,
 ) -> std::io::Result<()> {
     use std::fs;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
     use std::os::unix::net::UnixListener;
     use std::thread;
 
     use crate::agent_event::notify_socket_path;
+
+    const MAX_NOTIFY_LINE_BYTES: u64 = 64 * 1024;
 
     fs::create_dir_all(&events_dir)?;
     let sock_path = notify_socket_path(&events_dir);
@@ -31,9 +33,9 @@ fn spawn_notify_listener_with_sink(
         let Ok((stream, _)) = listener.accept() else {
             continue;
         };
-        let mut reader = BufReader::new(stream);
+        let mut limited = BufReader::new(stream).take(MAX_NOTIFY_LINE_BYTES);
         let mut line = String::new();
-        if reader.read_line(&mut line).is_err() {
+        if limited.read_line(&mut line).is_err() {
             continue;
         }
         if let Some(ref tx) = sink {

@@ -252,11 +252,8 @@ fn claude_stop(payload: &serde_json::Value) -> CanonicalAgentEvent {
         .is_some_and(|tasks| !tasks.is_empty())
     {
         CanonicalAgentEvent {
-            kind: CanonicalEventKind::ActivityStarted,
-            detail: Some(CanonicalEventDetail::Activity {
-                activity: ActivityKind::Tool,
-                activity_id: None,
-            }),
+            kind: CanonicalEventKind::TurnStarted,
+            detail: None,
         }
     } else {
         turn_settled(TurnOutcome::Completed)
@@ -277,7 +274,7 @@ fn cursor_stop(payload: &serde_json::Value) -> CanonicalAgentEvent {
 }
 
 fn activity_id_from_payload(payload: &serde_json::Value) -> Option<String> {
-    ["tool_name", "tool", "tool_id", "id"]
+    ["tool_call_id", "tool_id", "id", "tool_name", "tool"]
         .iter()
         .find_map(|key| payload.get(*key).and_then(|value| value.as_str()))
         .map(str::to_string)
@@ -499,7 +496,7 @@ mod tests {
     fn claude_stop_with_background_tasks_does_not_settle() {
         let with_tasks = serde_json::json!({"background_tasks":[{"id":1}]});
         let canonical = translate_native_event("claude", "Stop", &with_tasks).unwrap();
-        assert_eq!(canonical.kind, CanonicalEventKind::ActivityStarted);
+        assert_eq!(canonical.kind, CanonicalEventKind::TurnStarted);
         assert_ne!(canonical.kind, CanonicalEventKind::TurnSettled);
         assert_eq!(
             translate_agent_event("claude", "Stop", &with_tasks),
