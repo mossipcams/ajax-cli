@@ -80,10 +80,10 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     if missing_substrate_blocks_operation(task, operation) {
         reasons.push("task has missing substrate".to_string());
     }
-    if matches!(
-        operation,
-        TaskOperation::Merge | TaskOperation::Clean | TaskOperation::Remove
-    ) && task.has_checkout_mismatch()
+    // Remove must stay allowed on checkout mismatch so Drop can tear down a
+    // drifted worktree; Merge/Clean stay blocked until the checkout matches.
+    if matches!(operation, TaskOperation::Merge | TaskOperation::Clean)
+        && task.has_checkout_mismatch()
     {
         if let Some(explanation) = task.checkout_mismatch_explanation() {
             reasons.push(explanation);
@@ -224,7 +224,12 @@ mod tests {
         );
         assert_eq!(
             task_operation_eligibility(&named_mismatch, TaskOperation::Remove),
-            OperationEligibility::Blocked(vec![named_detail.to_string()])
+            OperationEligibility::Allowed,
+            "Remove/Drop must stay allowed so mismatched worktrees can be torn down"
+        );
+        assert_eq!(
+            task_operation_eligibility(&detached_mismatch, TaskOperation::Remove),
+            OperationEligibility::Allowed,
         );
 
         let mut missing_worktree = task_with_git_checkout(LifecycleStatus::Cleanable, None);

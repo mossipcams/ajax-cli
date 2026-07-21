@@ -1,7 +1,6 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
-    analysis::git_evidence::worktree_matches_task_intent,
     lifecycle::force_mark_removed,
     models::{
         AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
@@ -618,11 +617,11 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
         ObservationOutput::Output(output) => GitAdapter::parse_worktrees(output),
         ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
     };
-    let observed_worktree = parsed_worktrees
+    let path_matched_worktree = parsed_worktrees
         .iter()
-        .find(|worktree| worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch));
+        .find(|worktree| Path::new(&worktree.path) == task.worktree_path.as_path());
     let worktree = match worktrees_output {
-        ObservationOutput::Output(_) => state_from_bool(observed_worktree.is_some()),
+        ObservationOutput::Output(_) => state_from_bool(path_matched_worktree.is_some()),
         ObservationOutput::Unsupported => task
             .git_status
             .as_ref()
@@ -637,7 +636,7 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
     }
     .into_iter()
     .collect::<BTreeSet<_>>();
-    let branch_seen_in_worktree = observed_worktree
+    let branch_seen_in_worktree = path_matched_worktree
         .and_then(|worktree| worktree.branch.as_ref())
         .is_some_and(|branch| branch == &task.branch);
     let branch = match branches_output {

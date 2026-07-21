@@ -201,7 +201,13 @@ The task operation boundary now owns the main mutable task actions:
 - Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
   candidates, executes each candidate, sweeps stale `.ajax-trash` entries per
   worktree root, marks completed cleanup state, and reports whether an error
-  happened after partial state changes.
+  happened after partial state changes. With `--orphans` / `--orphans=ajax`, tidy
+  also plans and (when confirmed with `--execute --yes`) force-removes
+  unregistered Ajax-shaped leftovers: local `ajax/*` branches and `ajax-*`
+  worktrees under the legacy sibling `*__worktrees/` directory or configured
+  worktree root. `--orphans=all` also removes unregistered foreign sibling
+  worktrees (still never force-deletes non-`ajax/*` branches; skips a `main`
+  worktree basename).
 
 Command modules still expose substrate-oriented planning helpers. Task
 operations compose those helpers into vertical operator transactions.

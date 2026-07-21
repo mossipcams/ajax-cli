@@ -1339,9 +1339,8 @@ mod tests {
     }
 
     #[test]
-    fn branch_sensitive_checkout_mismatch_drop_stops_before_observation() {
+    fn branch_sensitive_checkout_mismatch_drop_uses_remove_plan() {
         let mut context = context_with_cleanable_task();
-        let blocker = "Worktree on dependabot/pip/minor; expected ajax/fix-login";
         context
             .registry
             .get_task_mut(&TaskId::new("web/fix-login"))
@@ -1359,44 +1358,25 @@ mod tests {
             conflicted: false,
             last_commit: None,
         });
-        let mut runner = RecordingQueuedRunner::default();
+        let mut runner = RecordingQueuedRunner::new(present_drop_observation_outputs());
 
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        assert_eq!(
-            operation.confirmation_plan.blocked_reasons,
-            vec![blocker.to_string()]
-        );
-        assert_eq!(operation.observation.agent, ResourceState::Unknown);
-        assert_eq!(operation.observation.tmux_session, ResourceState::Unknown);
-        assert_eq!(operation.observation.worktree, ResourceState::Unknown);
-        assert_eq!(operation.observation.branch, ResourceState::Unknown);
-        assert!(runner.commands.is_empty());
-
-        let error = execute_drop_task_operation(
-            &mut context,
-            "web/fix-login",
-            operation,
-            true,
-            &mut runner,
-        )
-        .unwrap_err();
         assert!(
-            matches!(error, CommandError::PlanBlocked(ref reasons) if reasons == &[blocker.to_string()])
+            operation.confirmation_plan.blocked_reasons.is_empty(),
+            "Drop/Remove must stay available on checkout mismatch"
         );
-        let task = context
-            .registry
-            .get_task(&TaskId::new("web/fix-login"))
-            .unwrap();
-        assert_eq!(task.branch, "ajax/fix-login");
-        assert_eq!(
-            task.git_status
-                .as_ref()
-                .and_then(|status| status.current_branch.as_deref()),
-            Some("dependabot/pip/minor")
+        assert!(
+            operation
+                .confirmation_plan
+                .title
+                .starts_with("remove task:"),
+            "clean is blocked on mismatch; drop should fall through to remove"
         );
-        assert!(runner.commands.is_empty());
+        assert_eq!(operation.observation.worktree, ResourceState::Present);
+        assert_eq!(operation.observation.branch, ResourceState::Present);
+        assert!(!runner.commands.is_empty());
     }
 
     #[test]
@@ -1636,11 +1616,9 @@ mod tests {
         }
         let mut outputs = present_drop_observation_outputs();
         outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
-        outputs.extend([
-            output(0, "", ""),
-            output(0, "worktree /repo/web__worktrees/ajax-fix-login\n", ""),
-            output(0, "", ""),
-        ]);
+        // Final re-observe after successful tear-down: path must be gone (path-only
+        // presence would correctly keep TeardownIncomplete).
+        outputs.extend(absent_drop_observation_outputs());
         let mut runner = RecordingQueuedRunner::new(outputs);
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
@@ -1682,7 +1660,7 @@ mod tests {
     }
 
     #[test]
-    fn unforced_dirty_drop_keeps_plain_git_worktree_remove() {
+    fn execute_drop_always_force_deletes_branch_with_d() {
         let mut context = context_with_cleanable_task();
         let mut outputs = present_drop_observation_outputs();
         outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
@@ -1700,23 +1678,62 @@ mod tests {
         )
         .unwrap();
 
-        let git = crate::adapters::GitAdapter::new("git");
-        let worktree_remove = runner
-            .commands
-            .iter()
-            .find(|command| {
-                command.program == "git"
-                    && command.args.iter().any(|arg| arg == "worktree")
-                    && command.args.iter().any(|arg| arg == "remove")
-            })
-            .expect("plain worktree remove");
-        assert_eq!(
-            worktree_remove,
-            &git.remove_worktree("/repo/web", "/repo/web__worktrees/ajax-fix-login")
-        );
+        assert!(runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "branch")
+                && command.args.iter().any(|arg| arg == "-D")
+                && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        }));
         assert!(!runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "branch")
+                && command.args.iter().any(|arg| arg == "-d")
+                && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        }));
+        let uses_force_worktree_remove = runner.commands.iter().any(|command| {
             command.program == "sh"
                 && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+        }) || runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "worktree")
+                && command.args.iter().any(|arg| arg == "remove")
+                && command.args.iter().any(|arg| arg == "--force")
+        });
+        assert!(
+            uses_force_worktree_remove,
+            "drop execute must force-remove worktree"
+        );
+        assert_eq!(completion, DropTaskCompletion::Removed);
+    }
+
+    #[test]
+    fn drop_execute_always_uses_force_worktree_remove_when_cleanable_merged() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(runner.commands.iter().any(|command| {
+            command.program == "sh"
+                && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+        }));
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "worktree")
+                && command.args.iter().any(|arg| arg == "remove")
+                && !command.args.iter().any(|arg| arg == "--force")
         }));
         assert_eq!(completion, DropTaskCompletion::Removed);
     }
@@ -2153,7 +2170,7 @@ mod tests {
         runner_outputs.extend(plan.commands.iter().map(|_| output(0, "", "")));
         let mut runner = RecordingQueuedRunner::new(runner_outputs);
 
-        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
 
         let task = context
             .registry
@@ -2186,7 +2203,7 @@ mod tests {
         let mut runner = RecordingQueuedRunner::new(runner_outputs);
 
         let (_outputs, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
 
         let task = context.registry.get_task(&task_id).unwrap();
         assert!(state_changed);
@@ -2210,7 +2227,7 @@ mod tests {
         let mut context = context_with_cleanable_task();
         let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
 
-        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
 
         let trash_sweep = runner
             .commands
@@ -2235,7 +2252,7 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
 
-        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
 
         let list_sessions = runner
             .commands
@@ -2310,7 +2327,7 @@ mod tests {
         let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
 
         let (outputs, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
 
         assert_eq!(outputs.len(), total_plan_commands + trash_sweeps.len());
         assert!(state_changed);
@@ -2341,7 +2358,7 @@ mod tests {
         let mut runner = RecordingQueuedRunner::new(outputs);
 
         let (error, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap_err();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap_err();
 
         assert!(state_changed);
         assert!(matches!(

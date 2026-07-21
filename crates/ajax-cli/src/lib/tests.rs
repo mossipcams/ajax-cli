@@ -4505,7 +4505,7 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
                     "-C",
                     "/Users/matt/projects/web",
                     "branch",
-                    "-d",
+                    "-D",
                     "ajax/fix-login"
                 ]
             ),
@@ -4536,24 +4536,9 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
 }
 
 #[test]
-fn cleanup_execute_uses_safe_cleanup_path() {
+fn cleanup_execute_force_removes_cleanable_task() {
     let mut context = cleanable_context();
-    let mut runner = QueuedRunner::new(vec![
-            output(0, ""),
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
-            ),
-            output(0, "main\najax/fix-login\n"),
-            output(0, ""),
-            output(0, ""),
-            output(0, ""),
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
-            ),
-            output(0, "main\n"),
-        ]);
+    let mut runner = QueuedRunner::new(present_cleanable_drop_outputs());
 
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
@@ -4562,73 +4547,7 @@ fn cleanup_execute_uses_safe_cleanup_path() {
     )
     .unwrap();
 
-    assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
-    );
+    assert_present_cleanable_force_drop_commands(&runner.commands);
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 
@@ -4988,73 +4907,7 @@ fn drop_execute_continues_when_tmux_session_is_already_missing() {
     )
     .unwrap();
 
-    assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
-    );
+    assert_present_cleanable_force_drop_commands(&runner.commands);
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 
@@ -5221,7 +5074,7 @@ fn drop_execute_continues_when_worktree_is_already_missing() {
                     "-C",
                     "/Users/matt/projects/web",
                     "branch",
-                    "-d",
+                    "-D",
                     "ajax/fix-login"
                 ]
             ),
@@ -5277,53 +5130,17 @@ fn drop_execute_completes_when_branch_is_already_missing() {
     )
     .unwrap();
 
-    assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
-    );
+    // Path-only Present still force-removes a drifted checkout even when the
+    // ajax/* branch is already gone.
+    assert_eq!(runner.commands.len(), 7);
+    assert_eq!(runner.commands[3].program, "sh");
+    assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
+    assert!(!runner.commands.iter().any(|command| {
+        command.program == "git"
+            && command.args.iter().any(|arg| arg == "branch")
+            && (command.args.iter().any(|arg| arg == "-d")
+                || command.args.iter().any(|arg| arg == "-D"))
+    }));
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 
@@ -5456,7 +5273,7 @@ fn drop_execute_keeps_task_when_worktree_remove_fails_before_tmux_session_kill()
     );
     assert_eq!(
         task.metadata.get("drop_failed_detail").map(String::as_str),
-        Some("git exited with status 2: error: failed to remove worktree: permission denied")
+        Some("sh exited with status 2: error: failed to remove worktree: permission denied")
     );
     assert!(task
         .tmux_status
@@ -7533,10 +7350,15 @@ fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
         ]
 }
 
-fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
-    vec![
+fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
+    assert_eq!(commands.len(), 8);
+    assert_eq!(
+        commands[0],
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-            .with_timeout(std::time::Duration::from_secs(8)),
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        commands[1],
         CommandSpec::new(
             "git",
             [
@@ -7546,7 +7368,10 @@ fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
                 "list",
                 "--porcelain",
             ],
-        ),
+        )
+    );
+    assert_eq!(
+        commands[2],
         CommandSpec::new(
             "git",
             [
@@ -7555,29 +7380,38 @@ fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
                 "branch",
                 "--format=%(refname:short)",
             ],
-        ),
-        CommandSpec::new(
-            "git",
-            [
-                "-C",
-                "/Users/matt/projects/web",
-                "worktree",
-                "remove",
-                "/tmp/worktrees/web-fix-login",
-            ],
-        ),
+        )
+    );
+    assert_eq!(commands[3].program, "sh");
+    assert_eq!(commands[3].args[0], "-c");
+    assert_eq!(
+        commands[3].args[1],
+        "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+    );
+    assert_eq!(commands[3].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(commands[3].args[3], "/Users/matt/projects/web");
+    assert_eq!(commands[3].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(
+        commands[4],
         CommandSpec::new(
             "git",
             [
                 "-C",
                 "/Users/matt/projects/web",
                 "branch",
-                "-d",
+                "-D",
                 "ajax/fix-login",
             ],
-        ),
+        )
+    );
+    assert_eq!(
+        commands[5],
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-            .with_timeout(std::time::Duration::from_secs(8)),
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        commands[6],
         CommandSpec::new(
             "git",
             [
@@ -7587,7 +7421,10 @@ fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
                 "list",
                 "--porcelain",
             ],
-        ),
+        )
+    );
+    assert_eq!(
+        commands[7],
         CommandSpec::new(
             "git",
             [
@@ -7596,8 +7433,8 @@ fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
                 "branch",
                 "--format=%(refname:short)",
             ],
-        ),
-    ]
+        )
+    );
 }
 
 #[test]
@@ -8328,7 +8165,7 @@ fn pending_cockpit_clean_action_runs_task_and_marks_removed() {
     .unwrap();
 
     assert_eq!(output, None);
-    assert_eq!(runner.commands, present_cleanable_drop_commands());
+    assert_present_cleanable_force_drop_commands(&runner.commands);
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     assert!(state_changed);
 }

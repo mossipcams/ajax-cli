@@ -5,7 +5,7 @@ use crate::{
     commands::{
         self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
     },
-    models::{LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskOperationKind},
+    models::{StepReceipt, StepReceiptStatus, Task, TaskOperationKind},
     registry::{Registry, RegistryEventKind},
 };
 
@@ -121,14 +121,8 @@ pub fn execute_drop_task_operation<R: Registry>(
         return Err(CommandError::ConfirmationRequired);
     }
 
-    let cleanup_lifecycle = task_is_in_cleanup_lifecycle(context, qualified_handle)?;
     commands::mark_task_removing(context, qualified_handle)?;
-    let force = drop_needs_force(
-        context,
-        qualified_handle,
-        &operation.confirmation_plan,
-        cleanup_lifecycle,
-    )?;
+    let force = true;
     record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
     let mut outputs = Vec::new();
     let drop_ops = planned_drop_ops(context, qualified_handle, &operation.observation)?;
@@ -219,16 +213,6 @@ fn unknown_observation() -> DropObservation {
     }
 }
 
-fn task_is_in_cleanup_lifecycle<R: Registry>(
-    context: &CommandContext<R>,
-    qualified_handle: &str,
-) -> Result<bool, CommandError> {
-    Ok(matches!(
-        task(context, qualified_handle)?.lifecycle_status,
-        LifecycleStatus::Merged | LifecycleStatus::Cleanable
-    ))
-}
-
 fn task<'a, R: Registry>(
     context: &'a CommandContext<R>,
     qualified_handle: &str,
@@ -304,44 +288,6 @@ fn fast_remove_trash_path(task: &Task) -> Result<String, CommandError> {
         .join(format!("{}-{nanos}", task.handle))
         .display()
         .to_string())
-}
-
-fn drop_needs_force<R: Registry>(
-    context: &CommandContext<R>,
-    qualified_handle: &str,
-    confirmation_plan: &CommandPlan,
-    cleanup_lifecycle: bool,
-) -> Result<bool, CommandError> {
-    if confirmation_plan.title.starts_with("remove task:") {
-        return Ok(true);
-    }
-    let task = task(context, qualified_handle)?;
-    if cleanup_lifecycle {
-        // Merged lifecycle means ship already landed the branch; don't force-delete
-        // just because cached git_status.merged is stale. Cleanable + !merged still
-        // needs -D so confirmed cleanup actually removes the ajax/* branch.
-        let unmerged_cleanable = task.lifecycle_status != LifecycleStatus::Merged
-            && task
-                .git_status
-                .as_ref()
-                .is_some_and(|status| !status.merged);
-        return Ok(task.has_side_flag(SideFlag::Dirty)
-            || task.has_side_flag(SideFlag::Conflicted)
-            || unmerged_cleanable
-            || task.git_status.as_ref().is_some_and(|status| {
-                status.dirty || status.untracked_files > 0 || status.conflicted
-            }));
-    }
-    Ok(task.has_side_flag(SideFlag::Dirty)
-        || task.has_side_flag(SideFlag::Conflicted)
-        || task.has_side_flag(SideFlag::Unpushed)
-        || task.git_status.as_ref().is_some_and(|status| {
-            status.dirty
-                || status.untracked_files > 0
-                || status.conflicted
-                || status.unpushed_commits > 0
-                || !status.merged
-        }))
 }
 
 fn record_drop_step_event<R: Registry>(
@@ -501,6 +447,12 @@ fn drop_cleanup_resource_is_already_missing(command: &CommandSpec, output: &Comm
         return stderr.contains("can't find session")
             || stderr.contains("no server running")
             || stderr.contains("session not found");
+    }
+
+    if commands::is_fast_worktree_remove_command(command) {
+        // Fast-remove wraps mkdir/mv/git; broad "no such file" matches mv failures
+        // that must remain hard failures. Only git's worktree-identity errors count.
+        return stderr.contains("is not a working tree") || stderr.contains("is not a worktree");
     }
 
     if command.program == "git"

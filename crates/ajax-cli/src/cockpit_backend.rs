@@ -1253,6 +1253,13 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .expect("fixture task should exist");
         task.lifecycle_status = LifecycleStatus::Removed;
+        // Fully dropped ghosts have no remaining git substrate; Removed rows that
+        // still report a worktree/branch stay visible so Drop can finish teardown.
+        if let Some(git_status) = task.git_status.as_mut() {
+            git_status.worktree_exists = false;
+            git_status.branch_exists = false;
+            git_status.current_branch = None;
+        }
 
         let mut runner = EmptyTmuxRunner;
         let mut state_changed = false;

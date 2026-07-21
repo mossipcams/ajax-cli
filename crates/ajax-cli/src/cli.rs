@@ -37,7 +37,18 @@ pub fn build_cli() -> Command {
         .subcommand(executable_command(task_command("ship")))
         .subcommand(executable_command(task_command("drop")))
         .subcommand(executable_command(
-            json_command("tidy").about("Clean safe task environments across repos"),
+            json_command("tidy")
+                .about("Clean safe task environments across repos")
+                .arg(
+                    Arg::new("orphans")
+                        .long("orphans")
+                        .num_args(0..=1)
+                        .default_missing_value("ajax")
+                        .value_parser(["ajax", "all"])
+                        .help(
+                            "Also force-remove unregistered leftovers: ajax (ajax/* branches and ajax-* worktrees) or all (includes foreign sibling worktrees; still skips non-ajax/* branch deletes and main)",
+                        ),
+                ),
         ))
         .subcommand(json_command("next").about("Show the next task needing attention"))
         .subcommand(json_command("inbox").about("Show global attention inbox"))
