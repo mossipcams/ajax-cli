@@ -656,6 +656,9 @@ impl CommandRunner for AgentStatusMutatingRunner {
     }
 }
 
+/// Anchored Claude permission menu: structurally recognized as
+/// waiting-for-approval. Bare keyword text ("Do you want to proceed? y/n")
+/// no longer classifies — pane hints require positional prompt anchors.
 #[test]
 fn command_flow_fixture_records_partial_success_before_failure() {
     let mut plan = ajax_core::commands::CommandPlan::new("partial failure");

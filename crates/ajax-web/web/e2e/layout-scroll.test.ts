@@ -175,9 +175,13 @@ test("new task sheet stays inside the simulated keyboard viewport band", async (
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(band.bottom);
 });
 
+const LONG_WORKTREE_PATH =
+  "/very/long/repo/path/web__worktrees/ajax-fix-login-with-extra-segments-that-would-overflow-without-shrink";
+
 function tallTaskDetailFixture() {
   return {
     ...DETAIL_FIXTURE,
+    worktree_path: LONG_WORKTREE_PATH,
     annotations: [
       "Note one with enough text to grow the meta body on a narrow phone viewport",
       "Note two with enough text to grow the meta body on a narrow phone viewport",
@@ -215,12 +219,18 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
   await summary.click();
   await expect(page.locator(".meta-details[open]")).toBeVisible();
 
+  const routeScroll = page.locator('[data-testid="route-scroll"]');
+  const routeOverflow = await routeScroll.evaluate((el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+  }));
+  expect(routeOverflow.scrollWidth).toBeLessThanOrEqual(routeOverflow.clientWidth + 1);
+
   const terminalHeight = await page
     .locator('[data-testid="task-terminal-panel"]')
     .evaluate((el) => Math.round(el.getBoundingClientRect().height));
   expect(terminalHeight).toBeGreaterThanOrEqual(120);
 
-  const routeScroll = page.locator('[data-testid="route-scroll"]');
   const scrollDims = await routeScroll.evaluate((el) => ({
     scrollHeight: el.scrollHeight,
     clientHeight: el.clientHeight,
@@ -230,6 +240,25 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
   await routeScroll.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
+
+  const activeClearance = await page.evaluate(() => {
+    const activeLabel = Array.from(document.querySelectorAll(".detail-grid dt")).find(
+      (dt) => dt.textContent?.trim() === "Active",
+    );
+    const activeValue = activeLabel?.nextElementSibling;
+    const bottomNav = document.querySelector(".bottom-nav");
+    if (!activeValue || !bottomNav) return { ok: false, activeBottom: 0, navTop: 0 };
+    const activeRect = activeValue.getBoundingClientRect();
+    const navRect = bottomNav.getBoundingClientRect();
+    return {
+      ok: activeRect.bottom <= navRect.top + 1,
+      activeBottom: activeRect.bottom,
+      navTop: navRect.top,
+    };
+  });
+  expect(activeClearance.ok, `Active bottom ${activeClearance.activeBottom} vs nav top ${activeClearance.navTop}`).toBe(
+    true,
+  );
 
   const lastNote = page.locator('[data-testid="task-annotations"] li').last();
   await expect(lastNote).toBeInViewport();
