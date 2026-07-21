@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.52.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.0...ajax-cli-v0.52.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** bust Cloudflare-stale shell assets without rewriting the module graph ([#633](https://github.com/mossipcams/ajax-cli/issues/633)) ([611f0fd](https://github.com/mossipcams/ajax-cli/commit/611f0fdde8dce3d9caa27757ed5b6956d6daf431))
+
 ## [0.52.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.8...ajax-cli-v0.52.0) (2026-07-21)
 
 
