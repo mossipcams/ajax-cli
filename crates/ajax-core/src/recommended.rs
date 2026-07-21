@@ -34,14 +34,21 @@ pub fn operator_action(task: &Task) -> OperatorActionPlan {
         .map(|annotation| annotation.suggests)
         .filter(|action| available_actions.contains(action))
         .unwrap_or_else(|| fallback_operator_action(task));
-    let action = if available_actions.contains(&candidate) {
+    let mut action = if available_actions.contains(&candidate) {
         candidate
     } else {
         available_actions.first().copied().unwrap_or(candidate)
     };
-    let reason = primary_annotation
+    let mut reason = primary_annotation
         .map(annotation_reason)
         .unwrap_or_else(|| fallback_operator_reason(task).to_string());
+
+    if available_actions.contains(&OperatorAction::Resume) {
+        if matches!(reason.as_str(), "ship" | "review") {
+            reason = "resume".to_string();
+        }
+        action = OperatorAction::Resume;
+    }
 
     OperatorActionPlan {
         action,
@@ -367,13 +374,38 @@ mod tests {
     }
 
     #[test]
+    fn safe_reviewable_task_primary_is_resume_not_ship() {
+        let t = clean_reviewable_task("reviewable");
+
+        let plan = operator_action(&t);
+
+        assert!(plan.available_actions.contains(&OperatorAction::Resume));
+        assert!(plan.available_actions.contains(&OperatorAction::Ship));
+        assert_eq!(plan.action, OperatorAction::Resume);
+    }
+
+    #[test]
+    fn mergeable_task_primary_is_resume_not_ship() {
+        use crate::lifecycle::mark_mergeable;
+
+        let mut t = clean_reviewable_task("mergeable");
+        mark_mergeable(&mut t).unwrap();
+
+        let plan = operator_action(&t);
+
+        assert!(plan.available_actions.contains(&OperatorAction::Resume));
+        assert!(plan.available_actions.contains(&OperatorAction::Ship));
+        assert_eq!(plan.action, OperatorAction::Resume);
+    }
+
+    #[test]
     fn checkout_mismatch_recommends_repair_and_only_safe_terminal_access() {
         let mut t = clean_reviewable_task("fix-login");
         t.git_status.as_mut().unwrap().current_branch = Some("fix/pane-stuck".to_string());
 
         let plan = operator_action(&t);
 
-        assert_eq!(plan.action, OperatorAction::Repair);
+        assert_eq!(plan.action, OperatorAction::Resume);
         assert_eq!(plan.reason, "checkout_mismatch");
         assert_eq!(
             plan.available_actions,
@@ -454,10 +486,10 @@ mod tests {
 
         let plan = operator_action(&t);
 
-        assert_eq!(plan.action, OperatorAction::Repair);
+        assert_eq!(plan.action, OperatorAction::Resume);
         assert_eq!(plan.reason, "runtime_observation_failed");
         assert!(plan.available_actions.contains(&OperatorAction::Repair));
-        assert_ne!(plan.action, OperatorAction::Drop);
+        assert!(plan.available_actions.contains(&OperatorAction::Resume));
     }
 
     #[test]
