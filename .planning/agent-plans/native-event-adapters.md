@@ -51,9 +51,9 @@ native client (claude|codex|cursor|pi) in tmux pane
 | Client | Event → observation |
 | --- | --- |
 | Claude | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → working; `Notification`(permission) → ask; `Notification`(idle prompt) → wait; `Stop` → done **only if** stdin payload `background_tasks` is empty, else working |
-| Codex | prompt-submit → working; turn-complete/stop → done (verify exact hook/notify surface against installed Codex version at implementation) |
-| Cursor | `beforeSubmitPrompt` → working; `stop` → done; ignore subagent hooks (upstream parent-linkage defect) |
-| Pi | `before_agent_start` → working; `agent_end` → done; retry/compaction continuation simply overwrites done with working (newest-wins — brief done flicker accepted, no coalescing patchwork) |
+| Codex | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → working; `PermissionRequest` → ask; `Stop` → done |
+| Cursor | `beforeSubmitPrompt`, `preToolUse`, `postToolUse` → working; `stop` → done; no native wait/ask (Cursor omits Notification/PermissionRequest); ignore subagent hooks (upstream parent-linkage defect) |
+| Pi | `before_agent_start` → working; `agent_settled` → done; no native wait/ask |
 
 ### Freshness policy (replaces the per-agent table)
 

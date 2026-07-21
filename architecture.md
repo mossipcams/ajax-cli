@@ -378,9 +378,9 @@ live status is a local check failure (`CiFailed` with summary `check failed`). P
 by the per-task `ci_checks_probed_at` metadata timestamp, using a fixed
 300-second interval shared by Live and Full tiers. Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
-never project the task to Error. Notification dedup keys on canonical
-`status|explanation`, so distinct error reasons re-fire while identical
-evidence stays deduped.
+never project the task to Error. Notification dedup keys on operator status
+class only (`Waiting` / `Error`), so explanation churn inside one class stays
+one episode; a class change (Waiting→Error) re-fires.
 
 ### Live Status
 
@@ -404,11 +404,15 @@ advances lifecycle to `Reviewable` only when the run-graph aggregation reports
 the parent as fully completed (no active non-detached descendants).
 
 Attention webhooks (`attention::take_attention_transition`) fire on actionable
-Waiting and Error operator status. Parent phases that wait on delegated
-children (`Waiting on delegated runs`, `Delegated runs still active`) remain
-visible as Waiting but are not actionable: they do not set `NeedsInput`, do not
-annotate `NeedsMe`, and do not phone-ping. Ordinary user waits and approvals
-still notify.
+Waiting and Error operator status. Actionable Waiting comes from structured
+wait/ask evidence (Claude `Notification`, Codex `PermissionRequest`, and
+legacy provider hook files that write `wait`/`ask`). Cursor and Pi have no
+native wait/ask hook today — they still notify on Error-class evidence
+(CI/wrapper/substrate). Parent phases that wait on delegated children
+(`Waiting on delegated runs`, `Delegated runs still active`) remain visible as
+Waiting but are not actionable: they do not set `NeedsInput`, do not annotate
+`NeedsMe`, and do not phone-ping. Ordinary user waits and approvals still
+notify.
 
 Opening a task persists an attention acknowledgment without changing lifecycle
 or deleting evidence. `live::acknowledge_attention` is agent-neutral:
@@ -665,18 +669,23 @@ notify adapter (`[notify]` config) is the supported notification channel; the
 web runtime only hosts its background poll.
 
 The notify adapter fires once per actionable episode and only for statuses
-the operator can act on. `NeedsInput` waiting evidence (waiting for input,
-waiting for approval, auth required, context limit) and
+the operator can act on. Actionable Waiting (`waiting for input` /
+`waiting for approval` from structured hooks/lifecycle events) and
 `Error`-class evidence (CI failed, merge conflict, command failed, blocked,
-runtime probe failure) each fire a single webhook. Lifecycle-only
-"Ready for review" stays inbox-visible but does **not** phone-ping. Returning
-to `Running`/`Idle` arms the next episode only after a quiet window
-(`EPISODE_CLEAR_DWELL`, 30s) of sustained clear evidence, so a turn boundary
-inside one episode delivers one ping. Opening a task records an attention
-acknowledgment that silences the current episode (the next actionable
-evidence re-arms), preventing re-fires while the operator is already looking.
-There is no fixed re-arm cooldown — only the quiet-clear gate plus the
-acknowledge-suppress path.
+runtime probe failure) each fire a single webhook. Transient
+`Rate limited` Waiting is inbox-visible but does **not** phone-ping.
+Lifecycle-only "Ready for review" stays inbox-visible but does **not**
+phone-ping. Episode dedup is status-class only; the webhook body still
+includes the agent client and explanation
+(`repo/handle: Waiting (codex) — …`). Delivery stays on CLI/cockpit refresh
+and the web background tick — hooks only write event files and must stay
+instant. Returning to `Running`/`Idle` arms the next episode only after a
+quiet window (`EPISODE_CLEAR_DWELL`, 30s) of sustained clear evidence, so a
+turn boundary inside one episode delivers one ping. Opening a task records
+an attention acknowledgment that silences the current episode (the next
+actionable evidence re-arms), preventing re-fires while the operator is
+already looking. There is no fixed re-arm cooldown — only the quiet-clear
+gate plus the acknowledge-suppress path.
 
 Browser validation should check local-only shell assets, stable/dev port
 separation, clear browser error states for failed live requests or unsupported

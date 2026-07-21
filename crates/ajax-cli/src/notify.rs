@@ -6,10 +6,11 @@ use std::time::Duration;
 
 pub(crate) fn webhook_command(webhook_url: &str, transition: &AttentionTransition) -> CommandSpec {
     let mut body = format!(
-        "{}/{}: {}",
+        "{}/{}: {} ({})",
         transition.repo,
         transition.handle,
-        transition.status.as_str()
+        transition.status.as_str(),
+        transition.client
     );
     if let Some(explanation) = transition.explanation.as_deref() {
         body.push_str(" — ");
@@ -78,6 +79,7 @@ mod tests {
             handle: "fix-login".to_string(),
             status: TaskStatus::Waiting,
             explanation: Some("Waiting for input".to_string()),
+            client: "codex".to_string(),
         };
 
         let spec = webhook_command("https://ntfy.sh/topic", &transition);
@@ -90,7 +92,7 @@ mod tests {
                 "--max-time",
                 "10",
                 "-d",
-                "web/fix-login: Waiting — Waiting for input",
+                "web/fix-login: Waiting (codex) — Waiting for input",
                 "https://ntfy.sh/topic",
             ]
             .map(String::from)
@@ -106,11 +108,12 @@ mod tests {
             handle: "fix-login".to_string(),
             status: TaskStatus::Error,
             explanation: None,
+            client: "codex".to_string(),
         };
 
         let spec = webhook_command("https://ntfy.sh/topic", &transition);
 
-        assert_eq!(spec.args[4], "web/fix-login: Error");
+        assert_eq!(spec.args[4], "web/fix-login: Error (codex)");
     }
 
     struct RecordingRunner {

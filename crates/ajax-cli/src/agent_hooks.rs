@@ -62,7 +62,13 @@ fn install_claude_hooks(home: &Path) -> Result<&'static str, CliError> {
 fn install_codex_hooks(home: &Path) -> Result<&'static str, CliError> {
     let path = home.join(".codex/hooks.json");
     let mut root = read_json_or_empty(&path)?;
-    let events = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"];
+    let events = [
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PermissionRequest",
+        "Stop",
+    ];
     let mut changed = false;
     for event in events {
         let command = hook_command("codex", event);
@@ -87,7 +93,7 @@ fn install_cursor_hooks(home: &Path) -> Result<&'static str, CliError> {
 
     let mut root = read_json_or_empty(&path)?;
     ensure_cursor_version(&mut root);
-    let events = ["beforeSubmitPrompt", "stop"];
+    let events = ["beforeSubmitPrompt", "preToolUse", "postToolUse", "stop"];
     let mut changed = false;
     for event in events {
         let command = hook_command("cursor", event);
@@ -283,12 +289,18 @@ mod tests {
         ]
     }
 
-    fn codex_events() -> [&'static str; 4] {
-        ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
+    fn codex_events() -> [&'static str; 5] {
+        [
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PermissionRequest",
+            "Stop",
+        ]
     }
 
-    fn cursor_events() -> [&'static str; 2] {
-        ["beforeSubmitPrompt", "stop"]
+    fn cursor_events() -> [&'static str; 4] {
+        ["beforeSubmitPrompt", "preToolUse", "postToolUse", "stop"]
     }
 
     fn assert_claude_hooks(home: &std::path::Path) {

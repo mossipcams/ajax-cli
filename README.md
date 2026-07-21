@@ -204,18 +204,21 @@ webhook_url = "https://ntfy.sh/your-topic"
 # poll_seconds = 30   # background poll interval for `ajax web`; 0 disables
 ```
 
-Webhooks fire once per episode for `NeedsInput` waiting evidence (waiting
-for input, waiting for approval, auth required, rate limited, context limit)
-and `Error`-class evidence (CI failed, merge conflict, command failed,
-blocked, runtime probe failure). Lifecycle-only "Ready for review" stays
-inbox-visible in the Cockpit but does **not** phone-ping. Sustained
-`Running`/`Idle` evidence for 30 seconds re-arms the detector so the next
-actionable episode delivers one ping; opening a task silences the current
-episode so further pings wait for new evidence.
+Webhooks fire once per episode for actionable Waiting (structured wait/ask
+from agent hooks/lifecycle events — Claude `Notification`, Codex
+`PermissionRequest`) and `Error`-class evidence (CI failed, merge conflict,
+command failed, blocked, runtime probe failure). Cursor and Pi have no native
+wait/ask hook yet; they still notify on Error-class evidence. Transient
+`Rate limited` Waiting and lifecycle-only "Ready for review" stay
+inbox-visible but do **not** phone-ping. Dedup is by status class
+(`Waiting` / `Error`); the body includes the agent client and explanation
+(`repo/handle: Waiting (codex) — …`). Sustained `Running`/`Idle` for 30
+seconds re-arms the detector; opening a task silences the current episode.
 
 Notifications fire from CLI/cockpit refreshes and from a background poll inside
 `ajax web`, so a running web server delivers them even when no browser tab is
-open. Webhooks stay quiet while a browser is actively polling Web Cockpit.
+open. Hooks only write status event files — they never call the webhook.
+Webhooks stay quiet while a browser is actively polling Web Cockpit.
 `poll_seconds` defaults to 30 when `[notify]` is present.
 
 GitHub CI failure surfacing requires the `gh` CLI installed and authenticated
