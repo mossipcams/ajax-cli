@@ -1,0 +1,88 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: >-
+    Recovery round fixed cargo fmt in assets.rs/runtime.rs, scoped
+    playwright.rust-server.config.mts to rust-server-assets.test.ts only,
+    proved TDD RED→GREEN on the three focused Rust asset-contract tests, and
+    passed all packet verification commands including the real release-server
+    WebKit smoke.
+  FILES_CHANGED:
+    - crates/ajax-web/src/adapters/assets.rs
+    - crates/ajax-web/src/adapters/http.rs
+    - crates/ajax-web/src/runtime.rs
+    - crates/ajax-web/src/slices/install.rs
+    - crates/ajax-web/web/src/app/App.test.tsx
+    - crates/ajax-web/web/e2e/rust-server-assets.test.ts
+    - crates/ajax-web/web/playwright.rust-server.config.mts
+    - package.json
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: >-
+        cargo nextest run -p ajax-web -E 'test(static_assets_are_raw_and_use_one_bare_module_graph) | test(static_shell_assets_are_no_store_and_gzipped) | test(shell_uses_bare_static_asset_urls)'
+      EXIT_CODE: 100
+      OUTPUT_EXCERPT: |-
+        FAIL ajax-web runtime::tests::shell_uses_bare_static_asset_urls
+        thread panicked at crates/ajax-web/src/runtime.rs:1919:9:
+        shell must load app.js at a bare URL
+        FAIL ajax-web runtime::tests::static_shell_assets_are_no_store_and_gzipped
+        thread panicked at crates/ajax-web/src/runtime.rs:1876:17:
+        assertion `left == right` failed: /app.js?v=0.11.0-b1e31a3e15ea975d must be no-store
+          left: "public, max-age=31536000, immutable"
+         right: "no-store"
+        FAIL ajax-web adapters::assets::tests::static_assets_are_raw_and_use_one_bare_module_graph
+        thread panicked at crates/ajax-web/src/adapters/assets.rs:135:9:
+        assertion `left == right` failed
+        Summary: 3 tests run: 0 passed, 3 failed
+    - PHASE: GREEN
+      COMMAND: >-
+        cargo nextest run -p ajax-web -E 'test(static_assets_are_raw_and_use_one_bare_module_graph) | test(static_shell_assets_are_no_store_and_gzipped) | test(shell_uses_bare_static_asset_urls)'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |-
+        PASS ajax-web runtime::tests::static_shell_assets_are_no_store_and_gzipped
+        PASS ajax-web adapters::assets::tests::static_assets_are_raw_and_use_one_bare_module_graph
+        PASS ajax-web runtime::tests::shell_uses_bare_static_asset_urls
+        Summary [0.023s] 3 tests run: 3 passed, 169 skipped
+    - PHASE: VERIFY
+      COMMAND: >-
+        npm run web:test -- --run src/app/App.test.tsx -t 'loads the cockpit on mount while hidden|timed-out cockpit GET releases polling for recovery'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |-
+        Test Files  1 passed (1)
+        Tests  2 passed | 42 skipped (44)
+    - PHASE: VERIFY
+      COMMAND: >-
+        npm run web:test -- --run src/shared/lib/api.test.ts src/shared/lib/terminalConnection.test.ts src/shared/ui/ErrorBoundary.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |-
+        Test Files  3 passed (3)
+        Tests  51 passed (51)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: tsc --noEmit completed with no errors
+    - PHASE: VERIFY
+      COMMAND: npm run web:lint
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: eslint completed with no output (clean)
+    - PHASE: VERIFY
+      COMMAND: npm run web:smoke:rust
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |-
+        Running 1 test using 1 worker
+        ✓ [mobile-webkit] › rust-server-assets.test.ts:14:5 › release rust server serves bare shell assets on task route (1.5s)
+        1 passed (14.9s)
+    - PHASE: VERIFY
+      COMMAND: git diff --check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: no whitespace errors
+    - PHASE: VERIFY
+      COMMAND: cargo fmt --check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: no formatting diffs (assets.rs and runtime.rs formatted via cargo fmt)
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS: []
+```
+ROUTER_REPORT_END
