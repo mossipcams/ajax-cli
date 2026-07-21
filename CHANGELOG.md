@@ -2,6 +2,19 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.7...ajax-cli-v0.51.8) (2026-07-21)
+
+
+### Bug Fixes
+
+* **core:** eliminate status false positives from pane keyword classification ([#626](https://github.com/mossipcams/ajax-cli/issues/626)) ([093be4d](https://github.com/mossipcams/ajax-cli/commit/093be4d0dfb9406752ed008ff12cddb03294cae2))
+* **web:** keep Task details meta grid inside the phone width ([#623](https://github.com/mossipcams/ajax-cli/issues/623)) ([4dd660a](https://github.com/mossipcams/ajax-cli/commit/4dd660a99cbb738246b68da84ab15828bed7ef56))
+
+
+### Performance Improvements
+
+* **web:** revalidate shell assets with a weak ETag instead of refetching ([#625](https://github.com/mossipcams/ajax-cli/issues/625)) ([cec2045](https://github.com/mossipcams/ajax-cli/commit/cec2045875c0a4aea880de0196a68a7841436ccd))
+
 ## [0.51.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.6...ajax-cli-v0.51.7) (2026-07-21)
 
 
