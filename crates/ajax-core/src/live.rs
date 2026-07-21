@@ -1,28 +1,27 @@
+use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 #[path = "live_application.rs"]
 mod application;
-#[path = "live_recognize.rs"]
-mod recognize;
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
     apply_observation, apply_observation_at, apply_trusted_observation,
-    apply_trusted_observation_at, has_pending_live_class_candidate, has_pending_running_candidate,
-    has_pending_waiting_candidate, RUNNING_CANDIDATE_SINCE_KEY, WAITING_CANDIDATE_SINCE_KEY,
+    apply_trusted_observation_at,
 };
 
-/// Freshness window for a Codex `working` hook value.
-const CODEX_WORKING_FRESH_FOR: Duration = Duration::from_secs(20);
-/// Freshness window for hook waiting/approval values and Claude hook states.
+/// Freshness window for hook waiting/approval values and hook running states.
 const HOOK_DEFAULT_FRESH_FOR: Duration = Duration::from_secs(120);
 /// Freshness window for an active runtime-wrapper heartbeat.
 const WRAPPER_RUNNING_FRESH_FOR: Duration = Duration::from_secs(30);
 
 /// Wrapper terminal evidence decays on the same clock as hook completion
-/// evidence: the wrapper only vouches for the process it supervised, and an
-/// agent relaunched directly in the session must win via pane capture.
+/// evidence: the wrapper only vouches for the process it supervised.
 const WRAPPER_TERMINAL_FRESH_FOR: Duration = HOOK_DEFAULT_FRESH_FOR;
+/// Freshness window for non-terminal structured provider lifecycle events.
+const LIFECYCLE_FRESH_FOR: Duration = Duration::from_secs(30 * 60);
+/// Terminal lifecycle events persist until superseded by newer evidence.
+const LIFECYCLE_TERMINAL_FRESH_FOR: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// Value-typed input for the pure per-agent hook freshness decision.
 ///
@@ -104,7 +103,6 @@ fn hook_observation_if_eligible(
 fn hook_freshness_window(agent: AgentClient, kind: LiveStatusKind) -> Option<Duration> {
     match (agent, kind) {
         (AgentClient::Other, _) => None,
-        (AgentClient::Codex, LiveStatusKind::AgentRunning) => Some(CODEX_WORKING_FRESH_FOR),
         (
             _,
             LiveStatusKind::AgentRunning
@@ -144,6 +142,8 @@ pub enum AgentEvidenceSource {
     RuntimeWrapper,
     /// Hook-backed status file: observational hint.
     Hook,
+    /// Structured provider lifecycle event from the `__agent-event` sink.
+    Lifecycle,
 }
 
 /// A single agent-status candidate considered by [`select_status_observation`].
@@ -187,8 +187,8 @@ pub struct StatusDecisionInput<'a> {
     pub acknowledged_at: Option<SystemTime>,
     pub now: SystemTime,
     pub candidates: &'a [StatusCandidate],
-    /// Additional observations (pane projections, delegated child runs) merged
-    /// into the reducer after wrapper/hook candidates.
+    /// Additional observations (delegated child runs) merged into the reducer
+    /// after wrapper/hook candidates.
     pub extra_observations: &'a [crate::agent_status::StatusObservation],
 }
 
@@ -330,10 +330,54 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
                     kind: activity,
                 });
             }
+            AgentEvidenceSource::Lifecycle => {
+                let Some(observation) = classify_agent_status_value(&candidate.value) else {
+                    continue;
+                };
+                let (eligible, window) = match observation.kind {
+                    LiveStatusKind::Done | LiveStatusKind::CommandFailed => {
+                        (true, LIFECYCLE_TERMINAL_FRESH_FOR)
+                    }
+                    LiveStatusKind::AgentRunning
+                    | LiveStatusKind::WaitingForInput
+                    | LiveStatusKind::WaitingForApproval => {
+                        let window = LIFECYCLE_FRESH_FOR;
+                        (within_window(now, candidate.observed_at, window), window)
+                    }
+                    _ => continue,
+                };
+                if !eligible {
+                    continue;
+                }
+                if is_acknowledgeable_kind(observation.kind)
+                    && input
+                        .acknowledged_at
+                        .is_some_and(|ack| candidate.observed_at <= ack)
+                {
+                    acknowledged_hold = true;
+                    continue;
+                }
+                let Some(activity) = live_kind_to_activity(observation.kind) else {
+                    continue;
+                };
+                observations.push(crate::agent_status::StatusObservation {
+                    source: crate::agent_status::ObservationSource::ProviderLifecycle,
+                    observed_at: candidate.observed_at,
+                    expires_at: candidate.observed_at + window,
+                    confidence: crate::agent_status::Confidence::High,
+                    run_id: candidate
+                        .run_id
+                        .clone()
+                        .unwrap_or_else(|| PRIMARY_RUN_ID.to_string()),
+                    parent_run_id: candidate.parent_run_id.clone(),
+                    kind: activity,
+                });
+            }
         }
     }
 
     observations.extend_from_slice(input.extra_observations);
+    drop_hooks_superseded_by_lifecycle(&mut observations, now);
 
     let projection = crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
         now,
@@ -352,6 +396,29 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
         input.prior,
         now,
     )
+}
+
+/// Fresh lifecycle evidence on a run supersedes hook files so equal-timestamp
+/// class disagreements never downgrade lifecycle into reducer conflict.
+fn drop_hooks_superseded_by_lifecycle(
+    observations: &mut Vec<crate::agent_status::StatusObservation>,
+    now: SystemTime,
+) {
+    let lifecycle_runs: BTreeSet<String> = observations
+        .iter()
+        .filter(|observation| {
+            observation.source == crate::agent_status::ObservationSource::ProviderLifecycle
+                && observation.expires_at >= now
+        })
+        .map(|observation| observation.run_id.clone())
+        .collect();
+    if lifecycle_runs.is_empty() {
+        return;
+    }
+    observations.retain(|observation| {
+        observation.source != crate::agent_status::ObservationSource::ProviderHook
+            || !lifecycle_runs.contains(&observation.run_id)
+    });
 }
 
 /// Map a reducer projection onto the CLI/refresh [`StatusDecision`] surface.
@@ -381,6 +448,9 @@ fn status_decision_from_projection(
         }
         Some(crate::agent_status::ObservationSource::ProviderHook) => {
             Some(AgentEvidenceSource::Hook)
+        }
+        Some(crate::agent_status::ObservationSource::ProviderLifecycle) => {
+            Some(AgentEvidenceSource::Lifecycle)
         }
         _ => None,
     };
@@ -415,59 +485,6 @@ fn live_kind_to_activity(kind: LiveStatusKind) -> Option<crate::agent_status::Ac
     })
 }
 
-const STRUCTURED_PANE_FRESH_FOR: Duration = Duration::from_secs(60);
-const GENERIC_PANE_FRESH_FOR: Duration = Duration::from_secs(15);
-
-/// Project a visible-pane capture onto a single conservative
-/// [`crate::agent_status::StatusObservation`].
-///
-/// Pane text is weak evidence. The only signals it may emit are
-/// `Busy`, `IdlePrompt`, and `ApprovalPrompt`, all
-/// positionally anchored to the visible screen bottom. Pane text never
-/// asserts completion, failure, or stuck states — those belong to the
-/// runtime wrapper exit snapshot, provider hooks/lifecycle events, and
-/// git/`gh` substrate evidence. Busy chrome maps to a Low-confidence
-/// `GenericPane` observation (which cannot alone assert `AgentRunning`
-/// through the reducer); structured recognition (stream-json, anchored
-/// prompt chrome) maps to Medium-confidence `StructuredPane`.
-///
-/// Returns `None` when the pane yields no hint, so neutral or unparseable
-/// panes preserve prior credible state instead of overwriting it.
-pub fn project_pane_activity(
-    agent: AgentClient,
-    pane: &str,
-    now: SystemTime,
-) -> Option<crate::agent_status::StatusObservation> {
-    let (hint, recognition) = recognize::recognize_pane(agent, pane)?;
-
-    let kind = match hint {
-        recognize::PaneHint::Busy => crate::agent_status::ActivityKind::Working,
-        recognize::PaneHint::IdlePrompt => crate::agent_status::ActivityKind::WaitingInput,
-        recognize::PaneHint::ApprovalPrompt => crate::agent_status::ActivityKind::WaitingApproval,
-    };
-    let (source, confidence, fresh_for) = match (hint, recognition) {
-        (recognize::PaneHint::Busy, recognize::Recognition::Chrome) => (
-            crate::agent_status::ObservationSource::GenericPane,
-            crate::agent_status::Confidence::Low,
-            GENERIC_PANE_FRESH_FOR,
-        ),
-        _ => (
-            crate::agent_status::ObservationSource::StructuredPane,
-            crate::agent_status::Confidence::Medium,
-            STRUCTURED_PANE_FRESH_FOR,
-        ),
-    };
-
-    Some(crate::agent_status::StatusObservation {
-        source,
-        observed_at: now,
-        expires_at: now + fresh_for,
-        confidence,
-        run_id: PRIMARY_RUN_ID.to_string(),
-        parent_run_id: None,
-        kind,
-    })
-}
 pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
     match value.trim() {
         "starting" | "working" => Some(LiveObservation::new(
@@ -584,91 +601,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn pane_projection_maps_anchored_idle_prompt_to_waiting_input() {
-        let now = std::time::SystemTime::now();
-        let pane = "Here is my plan.\n\n❯\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
-
-        let observation = super::project_pane_activity(AgentClient::Claude, pane, now)
-            .expect("anchored idle prompt should project");
-
-        assert_eq!(
-            observation.kind,
-            crate::agent_status::ActivityKind::WaitingInput
-        );
-        assert_eq!(
-            observation.source,
-            crate::agent_status::ObservationSource::StructuredPane
-        );
-        assert_eq!(
-            observation.confidence,
-            crate::agent_status::Confidence::Medium
-        );
-    }
-
-    #[test]
-    fn pane_projection_maps_anchored_permission_menu_to_waiting_approval() {
-        let now = std::time::SystemTime::now();
-        let pane = "Do you want to run this command?\n❯ 1. Yes\n  2. No\nEsc to cancel";
-
-        let observation = super::project_pane_activity(AgentClient::Claude, pane, now)
-            .expect("anchored permission menu should project");
-
-        assert_eq!(
-            observation.kind,
-            crate::agent_status::ActivityKind::WaitingApproval
-        );
-        assert_eq!(
-            observation.source,
-            crate::agent_status::ObservationSource::StructuredPane
-        );
-    }
-
-    /// The core false-positive regression: pane prose about failures,
-    /// conflicts, CI, auth, limits, or completion is never live evidence.
-    /// Those statuses belong to the wrapper exit snapshot, hooks, and
-    /// git/`gh` substrate evidence.
-    #[test]
-    fn pane_projection_never_asserts_failure_stuck_or_completion() {
-        let now = std::time::SystemTime::now();
-        for pane in [
-            "test result: FAILED\nCommand failed with exit code 1",
-            "CONFLICT (content): merge conflict in a.rs",
-            "Automatic merge failed; fix conflicts and then commit the result.",
-            "ci failed on main",
-            "check run failed: cargo test",
-            "please login to continue",
-            "rate limit exceeded; try again later",
-            "context limit reached",
-            "this is blocked, cannot continue",
-            "all done, task complete",
-            "✓ Successfully completed task",
-            "test result: ok. 37 passed",
-        ] {
-            assert_eq!(
-                super::project_pane_activity(AgentClient::Claude, pane, now),
-                None,
-                "pane prose {pane:?} must never project an activity observation"
-            );
-        }
-    }
-
-    #[test]
-    fn pane_projection_treats_unanchored_prose_as_neutral() {
-        let now = std::time::SystemTime::now();
-        for pane in [
-            "The user asked \"did you mean the parser?\" — checking both.",
-            "I am thinking about running the tests next.",
-            "Waiting for input. Press Enter to continue.",
-            "compiling ajax-core v0.51.7\n    Finished dev profile",
-        ] {
-            assert_eq!(
-                super::project_pane_activity(AgentClient::Claude, pane, now),
-                None,
-                "unanchored prose {pane:?} must stay neutral"
-            );
-        }
-    }
     #[test]
     fn agent_status_values_map_to_live_observations() {
         for (value, expected) in [
@@ -803,18 +735,10 @@ mod tests {
                 LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
                 UNIX_EPOCH + Duration::from_secs(100),
             );
-            // First busy sample only stamps the running candidate.
             apply_observation_at(
                 &mut task,
                 LiveObservation::new(status, "activity resumed"),
                 UNIX_EPOCH + Duration::from_secs(110),
-            );
-            assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting, "{status:?}");
-            // Dwell-confirmed busy sample clears waiting.
-            apply_observation_at(
-                &mut task,
-                LiveObservation::new(status, "activity resumed"),
-                UNIX_EPOCH + Duration::from_secs(115),
             );
 
             assert_eq!(task.agent_status, AgentRuntimeStatus::Running, "{status:?}");
@@ -984,27 +908,18 @@ mod tests {
     }
 
     #[test]
-    fn live_projection_functions_do_not_mutate_lifecycle_or_substrate() {
+    fn reduce_live_observation_does_not_mutate_lifecycle_or_substrate() {
         let task = base_task();
         let lifecycle_before = task.lifecycle_status;
         let git_before = task.git_status.clone();
         let tmux_before = task.tmux_status.clone();
         let task_before = task.task_window_status.clone();
 
-        let projected = super::project_pane_activity(
-            AgentClient::Claude,
-            "Do you want to run this command?\n❯ 1. Yes\n  2. No\nEsc to cancel",
-            std::time::SystemTime::now(),
-        );
         let reduced = super::reduce_live_observation(
             task.live_status.as_ref(),
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         );
 
-        assert_eq!(
-            projected.map(|observation| observation.kind),
-            Some(crate::agent_status::ActivityKind::WaitingApproval)
-        );
         assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
         assert_eq!(task.lifecycle_status, lifecycle_before);
         assert_eq!(task.git_status, git_before);
@@ -1032,36 +947,30 @@ mod tests {
     }
 
     #[test]
-    fn codex_working_hook_is_fresh_through_twenty_seconds() {
+    fn codex_working_hook_uses_two_minute_window() {
         let now = hook_now();
-        let decision = decide(
+        let fresh = decide(
             AgentClient::Codex,
             None,
             "working",
-            now - std::time::Duration::from_secs(20),
+            now - std::time::Duration::from_secs(120),
         );
-
-        assert!(decision.applied);
+        assert!(fresh.applied);
         assert_eq!(
-            decision.observation.map(|observation| observation.kind),
+            fresh.observation.map(|observation| observation.kind),
             Some(LiveStatusKind::AgentRunning)
         );
-    }
 
-    #[test]
-    fn codex_working_hook_is_stale_after_twenty_seconds() {
-        let now = hook_now();
         let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
-        let decision = decide(
+        let stale = decide(
             AgentClient::Codex,
             Some(&prior),
             "working",
-            now - std::time::Duration::from_secs(20) - std::time::Duration::from_nanos(1),
+            now - std::time::Duration::from_secs(120) - std::time::Duration::from_nanos(1),
         );
-
-        assert!(!decision.applied);
+        assert!(!stale.applied);
         assert_eq!(
-            decision.observation.map(|observation| observation.kind),
+            stale.observation.map(|observation| observation.kind),
             Some(LiveStatusKind::WaitingForInput)
         );
     }
@@ -1620,60 +1529,6 @@ mod tests {
     }
 
     #[test]
-    fn generic_pane_busy_alone_projects_unknown() {
-        let now = hook_now();
-        let pane_obs = super::project_pane_activity(AgentClient::Codex, "codex is working\n", now)
-            .expect("busy chrome should project");
-        assert_eq!(
-            pane_obs.source,
-            crate::agent_status::ObservationSource::GenericPane
-        );
-        assert_eq!(pane_obs.confidence, crate::agent_status::Confidence::Low);
-
-        let projection =
-            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
-                now,
-                primary_run_id: "primary".to_string(),
-                process_liveness: Some(crate::agent_status::ProcessLiveness {
-                    alive: true,
-                    observed_at: now,
-                }),
-                observations: &[pane_obs],
-            });
-        assert_eq!(projection.phase, crate::agent_status::ParentPhase::Unknown);
-        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
-    }
-
-    #[test]
-    fn structured_cursor_json_pane_can_project_running() {
-        let now = hook_now();
-        let pane_obs =
-            super::project_pane_activity(AgentClient::Codex, r#"{"type":"thinking"}"#, now)
-                .expect("cursor json should project");
-        assert_eq!(
-            pane_obs.source,
-            crate::agent_status::ObservationSource::StructuredPane
-        );
-        assert_eq!(pane_obs.confidence, crate::agent_status::Confidence::Medium);
-
-        let projection =
-            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
-                now,
-                primary_run_id: "primary".to_string(),
-                process_liveness: Some(crate::agent_status::ProcessLiveness {
-                    alive: true,
-                    observed_at: now,
-                }),
-                observations: &[pane_obs],
-            });
-        assert_eq!(
-            projection.phase,
-            crate::agent_status::ParentPhase::ActivelyWorking
-        );
-        assert_eq!(projection.live.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
     fn parent_done_hook_with_active_child_pane_run_is_not_fully_complete() {
         let now = hook_now();
         let candidates = [
@@ -1724,6 +1579,87 @@ mod tests {
                 .observation
                 .as_ref()
                 .map(|observation| &observation.summary)
+        );
+    }
+
+    #[test]
+    fn lifecycle_working_outranks_hook_wait() {
+        use super::AgentEvidenceSource::{Hook, Lifecycle};
+        let candidates = [
+            candidate(Lifecycle, "working", std::time::Duration::ZERO),
+            candidate(Hook, "wait", std::time::Duration::ZERO),
+        ];
+
+        let decision = select(AgentClient::Claude, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn lifecycle_ignores_selected_agent_other() {
+        use super::AgentEvidenceSource::Lifecycle;
+        let candidates = [candidate(Lifecycle, "working", std::time::Duration::ZERO)];
+
+        let decision = select(AgentClient::Other, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn stale_nonterminal_lifecycle_does_not_assert_activity() {
+        use super::AgentEvidenceSource::Lifecycle;
+        let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+        let candidates = [candidate(
+            Lifecycle,
+            "working",
+            std::time::Duration::from_secs(31 * 60),
+        )];
+
+        let decision = select(AgentClient::Codex, Some(&prior), &candidates);
+
+        assert!(!decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn terminal_lifecycle_persists_and_wrapper_exit_outranks() {
+        use super::AgentEvidenceSource::{Lifecycle, RuntimeWrapper};
+        let lifecycle_only = [candidate(
+            Lifecycle,
+            "done",
+            std::time::Duration::from_secs(2 * 3600),
+        )];
+
+        let decision = select(AgentClient::Codex, None, &lifecycle_only);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+
+        let with_wrapper = [
+            candidate(Lifecycle, "done", std::time::Duration::from_secs(2 * 3600)),
+            candidate(RuntimeWrapper, "failed", std::time::Duration::from_secs(1)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &with_wrapper);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::CommandFailed)
         );
     }
 }

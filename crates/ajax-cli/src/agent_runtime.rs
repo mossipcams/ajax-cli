@@ -98,8 +98,15 @@ fn run_agent_runtime_with_interval(
         },
     )?;
 
+    let agent_events_dir = state_root
+        .parent()
+        .unwrap_or(state_root)
+        .join("agent-events");
     let child = Command::new(program)
         .args(args)
+        .env("AJAX_TASK_ID", task_id)
+        .env("AJAX_RUN_ID", "primary")
+        .env("AJAX_AGENT_EVENTS_DIR", &agent_events_dir)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -210,11 +217,11 @@ fn snapshot_path(state_root: &Path, task_id: &str) -> PathBuf {
     state_root.join(format!("{}.json", task_file_stem(task_id)))
 }
 
-fn task_file_stem(task_id: &str) -> String {
+pub(crate) fn task_file_stem(task_id: &str) -> String {
     task_id.replace(['/', '\\'], "__")
 }
 
-fn now_millis() -> Result<u128, CliError> {
+pub(crate) fn now_millis() -> Result<u128, CliError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
@@ -321,6 +328,42 @@ mod tests {
         assert_eq!(
             history.last().unwrap().state,
             AgentRuntimeState::ExitedFailure
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_wrapper_injects_identity_env() {
+        let root = temp_runtime_root("identity-env");
+        let env_file = root.join("child-env.txt");
+
+        let exit_code = run_agent_runtime_with_interval(
+            "web/fix-login",
+            &root,
+            "/bin/sh",
+            &[
+                "-c",
+                &format!(
+                    "printf '%s|%s|%s' \"$AJAX_TASK_ID\" \"$AJAX_RUN_ID\" \"$AJAX_AGENT_EVENTS_DIR\" > {}",
+                    env_file.display()
+                ),
+            ],
+            Duration::from_millis(5),
+        )
+        .unwrap();
+
+        assert_eq!(exit_code, 0);
+        let captured = fs::read_to_string(&env_file).unwrap();
+        let expected_events_dir = root
+            .parent()
+            .unwrap_or(&root)
+            .join("agent-events")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            captured,
+            format!("web/fix-login|primary|{expected_events_dir}")
         );
 
         fs::remove_dir_all(root).unwrap();

@@ -206,7 +206,22 @@ printf 'fake codex'
         self.fake_lifecycle_log()
     }
 
-    fn install_fake_live_status_tools(&self, session: &str, worktree_path: &Path, pane: &str) {
+    fn write_hook_status(&self, session: &str, value: &str) {
+        let hook_dir = self.root.join(".cache/tmux-agent-status");
+        fs::create_dir_all(&hook_dir).unwrap_or_else(|error| {
+            panic!(
+                "failed to create hook status directory {}: {error}",
+                hook_dir.display()
+            )
+        });
+        fs::write(
+            hook_dir.join(format!("{session}.status")),
+            format!("{value}\n"),
+        )
+        .unwrap_or_else(|error| panic!("failed to write hook status for {session}: {error}"));
+    }
+
+    fn install_fake_live_status_tools(&self, session: &str, worktree_path: &Path) {
         let fake_bin = self.fake_bin_dir();
         fs::create_dir_all(&fake_bin).unwrap_or_else(|error| {
             panic!(
@@ -225,11 +240,6 @@ case "$1" in
   list-windows)
     printf 'task\t%s\n' '{worktree_path}'
     ;;
-  capture-pane)
-    cat <<'EOF'
-{pane}
-EOF
-    ;;
   *)
     printf 'unexpected tmux args: %s\n' "$*" >&2
     exit 2
@@ -238,7 +248,6 @@ esac
 "#,
                 session = session,
                 worktree_path = worktree_path.display(),
-                pane = pane
             ),
         );
         self.write_executable(
@@ -374,11 +383,8 @@ fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
         )
     });
     home.seed_risky_reviewable_task("web", &repo_path);
-    home.install_fake_live_status_tools(
-        "ajax-web-fix-login",
-        &worktree_path,
-        "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel",
-    );
+    home.write_hook_status("ajax-web-fix-login", "ask");
+    home.install_fake_live_status_tools("ajax-web-fix-login", &worktree_path);
 
     let output = home.ajax_with_fake_tools(["cockpit", "--json"]);
 
