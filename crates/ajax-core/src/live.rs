@@ -2,6 +2,8 @@ use std::time::{Duration, SystemTime};
 
 #[path = "live_application.rs"]
 mod application;
+#[path = "live_recognize.rs"]
+mod recognize;
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
@@ -416,129 +418,46 @@ fn live_kind_to_activity(kind: LiveStatusKind) -> Option<crate::agent_status::Ac
 const STRUCTURED_PANE_FRESH_FOR: Duration = Duration::from_secs(60);
 const GENERIC_PANE_FRESH_FOR: Duration = Duration::from_secs(15);
 
-/// Project pane text onto a single conservative [`crate::agent_status::StatusObservation`].
+/// Project a visible-pane capture onto a single conservative
+/// [`crate::agent_status::StatusObservation`].
 ///
-/// Structured recognition (Cursor stream-json, agent-specific prompts) is
-/// Medium confidence. Generic busy chrome and heuristic needles are Low
-/// confidence and cannot alone assert running/approval through the reducer.
-/// Returns `None` when the pane is empty or yields no activity kind.
+/// Pane text is weak evidence. The only signals it may emit come from
+/// [`recognize`]: `Busy`, `IdlePrompt`, and `ApprovalPrompt`, all
+/// positionally anchored to the visible screen bottom. Pane text never
+/// asserts completion, failure, or stuck states — those belong to the
+/// runtime wrapper exit snapshot, provider hooks/lifecycle events, and
+/// git/`gh` substrate evidence. Busy chrome maps to a Low-confidence
+/// `GenericPane` observation (which cannot alone assert `AgentRunning`
+/// through the reducer); structured recognition (stream-json, anchored
+/// prompt chrome) maps to Medium-confidence `StructuredPane`.
+///
+/// Returns `None` when the pane yields no hint, so neutral or unparseable
+/// panes preserve prior credible state instead of overwriting it.
 pub fn project_pane_activity(
     agent: AgentClient,
     pane: &str,
     now: SystemTime,
 ) -> Option<crate::agent_status::StatusObservation> {
-    let trimmed = pane.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let lines = meaningful_lines(trimmed);
+    let (hint, recognition) = recognize::recognize_pane(agent, pane)?;
 
-    for line in lines.iter().rev() {
-        if let Some(observation) = classify_cursor_stream_json_line(line) {
-            return pane_status_observation(
-                observation,
-                crate::agent_status::ObservationSource::StructuredPane,
-                crate::agent_status::Confidence::Medium,
-                STRUCTURED_PANE_FRESH_FOR,
-                now,
-            );
-        }
-    }
-
-    if let Some(observation) = classify_agent_prompt(agent, &lines) {
-        return pane_status_observation(
-            observation,
-            crate::agent_status::ObservationSource::StructuredPane,
-            crate::agent_status::Confidence::Medium,
-            STRUCTURED_PANE_FRESH_FOR,
-            now,
-        );
-    }
-
-    if has_recent_busy_indicator(agent, &lines) {
-        return pane_status_observation(
-            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+    let kind = match hint {
+        recognize::PaneHint::Busy => crate::agent_status::ActivityKind::Working,
+        recognize::PaneHint::IdlePrompt => crate::agent_status::ActivityKind::WaitingInput,
+        recognize::PaneHint::ApprovalPrompt => crate::agent_status::ActivityKind::WaitingApproval,
+    };
+    let (source, confidence, fresh_for) = match (hint, recognition) {
+        (recognize::PaneHint::Busy, recognize::Recognition::Chrome) => (
             crate::agent_status::ObservationSource::GenericPane,
             crate::agent_status::Confidence::Low,
             GENERIC_PANE_FRESH_FOR,
-            now,
-        );
-    }
+        ),
+        _ => (
+            crate::agent_status::ObservationSource::StructuredPane,
+            crate::agent_status::Confidence::Medium,
+            STRUCTURED_PANE_FRESH_FOR,
+        ),
+    };
 
-    if let Some(observation) = classify_recent_evidence(&lines) {
-        if observation.kind == LiveStatusKind::Unknown
-            || observation.kind == LiveStatusKind::ShellIdle
-        {
-            return None;
-        }
-        // Current-line approval/input prompts are structured UI recognition.
-        // Historical scrollback of the same wording stays low-confidence generic.
-        let on_current_line = lines.last().is_some_and(|line| {
-            classify_line_evidence(line)
-                .as_ref()
-                .is_some_and(|current| current.kind == observation.kind)
-        });
-        let (source, confidence, fresh_for) = match (observation.kind, on_current_line) {
-            (LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput, true) => (
-                crate::agent_status::ObservationSource::StructuredPane,
-                crate::agent_status::Confidence::Medium,
-                STRUCTURED_PANE_FRESH_FOR,
-            ),
-            _ => (
-                crate::agent_status::ObservationSource::GenericPane,
-                crate::agent_status::Confidence::Low,
-                GENERIC_PANE_FRESH_FOR,
-            ),
-        };
-        return pane_status_observation(observation, source, confidence, fresh_for, now);
-    }
-
-    None
-}
-
-/// Project pane text onto an actionable *stuck* status — a state that blocks
-/// the agent but is not agent activity, so [`project_pane_activity`] cannot
-/// carry it (there is deliberately no [`crate::agent_status::ActivityKind`] for
-/// these).
-///
-/// Membership is derived, never hand-listed: a kind qualifies when
-/// `live_kind_to_activity` (private) cannot express it *and* its
-/// [`crate::models::LiveStatusClass`] is `Waiting` or `Error`. That yields
-/// exactly `AuthRequired`, `RateLimited`, `ContextLimit`, `Blocked`,
-/// `MergeConflict`, and `CiFailed`, and it cannot drift from the activity
-/// mapping the way a duplicated list would.
-///
-/// Returns `None` for activity, completion, missing-substrate, and neutral
-/// panes, so this can never re-assert `AgentRunning` from pane text alone.
-pub fn project_pane_stuck_status(agent: AgentClient, pane: &str) -> Option<LiveObservation> {
-    // Only the pane tail counts as live evidence. A stuck line buried under
-    // fresh output describes a condition the agent has already moved past, and
-    // acting on it fires an actionable notification about nothing. Reuses
-    // `BUSY_WINDOW` so "recent enough to be live" means one thing across every
-    // pane projection here.
-    let lines = meaningful_lines(pane.trim());
-    let tail = lines[lines.len().saturating_sub(BUSY_WINDOW)..].join("\n");
-
-    let observation = classify_agent_pane(agent, &tail);
-    if live_kind_to_activity(observation.kind).is_some() {
-        return None;
-    }
-    match observation.kind.class() {
-        crate::models::LiveStatusClass::Waiting | crate::models::LiveStatusClass::Error => {
-            Some(observation)
-        }
-        _ => None,
-    }
-}
-
-fn pane_status_observation(
-    observation: LiveObservation,
-    source: crate::agent_status::ObservationSource,
-    confidence: crate::agent_status::Confidence,
-    fresh_for: Duration,
-    now: SystemTime,
-) -> Option<crate::agent_status::StatusObservation> {
-    let kind = live_kind_to_activity(observation.kind)?;
     Some(crate::agent_status::StatusObservation {
         source,
         observed_at: now,
@@ -549,671 +468,6 @@ fn pane_status_observation(
         kind,
     })
 }
-
-pub fn classify_pane(pane: &str) -> LiveObservation {
-    let trimmed = pane.trim();
-    if trimmed.is_empty() {
-        return LiveObservation::new(LiveStatusKind::Unknown, "pane is empty");
-    }
-
-    let lines = meaningful_lines(trimmed);
-    if looks_like_idle_codex_prompt(&lines) {
-        return LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
-    }
-
-    classify_recent_evidence(&lines)
-        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
-}
-
-/// Agent-aware pane classification.
-///
-/// Recent busy indicators win over stale prompts, then agent-specific prompts,
-/// then explicit failure/completion evidence, and finally a passive/unknown
-/// fallback so the reducer can preserve prior credible state. `classify_pane`
-/// remains the generic compatibility entry point.
-pub fn classify_agent_pane(agent: AgentClient, pane: &str) -> LiveObservation {
-    let trimmed = pane.trim();
-    if trimmed.is_empty() {
-        return LiveObservation::new(LiveStatusKind::Unknown, "pane is empty");
-    }
-
-    let lines = meaningful_lines(trimmed);
-
-    if has_recent_busy_indicator(agent, &lines) {
-        return LiveObservation::new(LiveStatusKind::AgentRunning, "agent running");
-    }
-
-    if let Some(observation) = classify_agent_prompt(agent, &lines) {
-        return observation;
-    }
-
-    classify_recent_evidence(&lines)
-        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
-}
-
-const BUSY_WINDOW: usize = 8;
-
-fn has_recent_busy_indicator(_agent: AgentClient, lines: &[&str]) -> bool {
-    lines
-        .iter()
-        .rev()
-        .take(BUSY_WINDOW)
-        .any(|line| looks_like_active_agent_status(line) || looks_like_claude_busy(line))
-}
-
-fn looks_like_claude_busy(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    lower.contains("to interrupt") || (line.contains('…') && lower.contains("tokens)"))
-}
-
-fn classify_agent_prompt(agent: AgentClient, lines: &[&str]) -> Option<LiveObservation> {
-    match agent {
-        AgentClient::Claude => classify_claude_prompt(lines),
-        AgentClient::Codex => classify_codex_prompt(lines),
-        AgentClient::Other => None,
-    }
-    .or_else(|| match agent {
-        AgentClient::Claude => classify_codex_prompt(lines),
-        AgentClient::Codex => classify_claude_prompt(lines),
-        AgentClient::Other => {
-            classify_claude_prompt(lines).or_else(|| classify_codex_prompt(lines))
-        }
-    })
-}
-
-fn classify_claude_prompt(lines: &[&str]) -> Option<LiveObservation> {
-    if looks_like_claude_permission(lines) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForApproval,
-            "waiting for approval",
-        ));
-    }
-
-    if looks_like_claude_idle_prompt(lines) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-    }
-
-    None
-}
-
-fn looks_like_claude_idle_prompt(lines: &[&str]) -> bool {
-    if lines
-        .last()
-        .is_some_and(|line| line.trim() == "❯" || line.trim() == ">")
-    {
-        return true;
-    }
-
-    const IDLE_WINDOW: usize = 8;
-    let recent = &lines[lines.len().saturating_sub(IDLE_WINDOW)..];
-    let has_bare_prompt = recent.iter().any(|line| matches!(line.trim(), "❯" | ">"));
-    let has_strong_chrome = recent.iter().any(|line| is_strong_claude_chrome_line(line));
-
-    has_bare_prompt && has_strong_chrome
-}
-
-fn is_strong_claude_chrome_line(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    if lower.contains("bypass permissions") || lower.contains("shift+tab") {
-        return true;
-    }
-
-    let trimmed = line.trim();
-    trimmed.contains('│')
-        && (trimmed.contains('%') || trimmed.contains('█') || trimmed.contains('░'))
-}
-
-fn looks_like_claude_permission(lines: &[&str]) -> bool {
-    let recent: Vec<&str> = lines.iter().rev().take(BUSY_WINDOW).copied().collect();
-    let has_choice_marker = recent.iter().any(|line| {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('❯') {
-            return false;
-        }
-        !trimmed.trim_start_matches('❯').trim().is_empty()
-    });
-    let has_cue = recent.iter().any(|line| {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("shift+tab") || lower.contains("bypass permissions") {
-            return false;
-        }
-        contains_any(
-            &lower,
-            &[
-                "run this command?",
-                "do you want",
-                "allow",
-                "approve",
-                "permission",
-                "proceed?",
-                "esc to cancel",
-            ],
-        )
-    });
-    has_choice_marker && has_cue
-}
-
-fn classify_codex_prompt(lines: &[&str]) -> Option<LiveObservation> {
-    if looks_like_idle_codex_prompt(lines) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-    }
-    None
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PaneEvidence {
-    Completion,
-    ApprovalPrompt,
-    InputPrompt,
-    AuthRequired,
-    RateLimited,
-    ContextLimit,
-    Blocked,
-    MergeConflict,
-    CiFailed,
-    CommandFailed,
-    CommandRunning,
-    AgentRunning,
-    TestsRunning,
-}
-
-impl PaneEvidence {
-    fn observation(self) -> LiveObservation {
-        match self {
-            Self::Completion => LiveObservation::new(LiveStatusKind::Done, "done"),
-            Self::ApprovalPrompt => {
-                LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval")
-            }
-            Self::InputPrompt => {
-                LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input")
-            }
-            Self::AuthRequired => {
-                LiveObservation::new(LiveStatusKind::AuthRequired, "authentication required")
-            }
-            Self::RateLimited => LiveObservation::new(LiveStatusKind::RateLimited, "rate limited"),
-            Self::ContextLimit => {
-                LiveObservation::new(LiveStatusKind::ContextLimit, "context limit reached")
-            }
-            Self::Blocked => LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
-            Self::MergeConflict => LiveObservation::new(
-                LiveStatusKind::MergeConflict,
-                "merge conflict needs attention",
-            ),
-            Self::CiFailed => LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
-            Self::CommandFailed => {
-                LiveObservation::new(LiveStatusKind::CommandFailed, "command failed")
-            }
-            Self::CommandRunning => {
-                LiveObservation::new(LiveStatusKind::CommandRunning, "command running")
-            }
-            Self::AgentRunning => {
-                LiveObservation::new(LiveStatusKind::AgentRunning, "agent running")
-            }
-            Self::TestsRunning => {
-                LiveObservation::new(LiveStatusKind::TestsRunning, "tests running")
-            }
-        }
-    }
-}
-
-fn classify_recent_evidence(lines: &[&str]) -> Option<LiveObservation> {
-    if lines
-        .last()
-        .is_some_and(|line| looks_like_shell_prompt(line))
-    {
-        if let Some(line) = lines.iter().rev().nth(1).copied() {
-            if let Some(observation) = classify_line_evidence(line) {
-                return Some(observation);
-            }
-        }
-
-        return Some(LiveObservation::new(
-            LiveStatusKind::ShellIdle,
-            "shell idle",
-        ));
-    }
-
-    lines.iter().rev().copied().find_map(classify_line_evidence)
-}
-
-fn classify_line_evidence(line: &str) -> Option<LiveObservation> {
-    classify_cursor_stream_json_line(line)
-        .or_else(|| pane_evidence(line).map(PaneEvidence::observation))
-}
-
-fn pane_evidence(line: &str) -> Option<PaneEvidence> {
-    let lower = line.to_ascii_lowercase();
-
-    if is_completion_line(&lower) {
-        return Some(PaneEvidence::Completion);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "do you want to proceed",
-            "approve to proceed",
-            "allow command",
-            "approval request",
-            "y/n",
-            "[y/n]",
-        ],
-    ) {
-        return Some(PaneEvidence::ApprovalPrompt);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "please login",
-            "please log in",
-            "log in to",
-            "login to continue",
-            "auth required",
-        ],
-    ) {
-        return Some(PaneEvidence::AuthRequired);
-    }
-
-    if contains_any(&lower, &["rate limit", "too many requests"]) {
-        return Some(PaneEvidence::RateLimited);
-    }
-
-    if contains_any(&lower, &["context limit", "token limit", "context length"]) {
-        return Some(PaneEvidence::ContextLimit);
-    }
-
-    if contains_any(&lower, &["cannot continue", "manual intervention required"]) {
-        return Some(PaneEvidence::Blocked);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "merge conflict",
-            "conflict (",
-            "automatic merge failed",
-            "fix conflicts",
-        ],
-    ) {
-        return Some(PaneEvidence::MergeConflict);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "ci failed",
-            "github actions failed",
-            "check run failed",
-            "workflow failed",
-            "failing checks",
-        ],
-    ) {
-        return Some(PaneEvidence::CiFailed);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "waiting for input",
-            "what kind of ",
-            "what do you want me to",
-            "what you want me to do",
-            "send me the problem",
-            "did you mean",
-            "specific task",
-            "press enter",
-            "continue?",
-            "enter your choice",
-            "select an option",
-        ],
-    ) {
-        return Some(PaneEvidence::InputPrompt);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "test result: failed",
-            "command failed",
-            "exit code",
-            "nonzeroexit",
-            "failed with",
-        ],
-    ) {
-        return Some(PaneEvidence::CommandFailed);
-    }
-
-    if contains_any(
-        &lower,
-        &["running command", "executing command", "$ cargo", "$ npm"],
-    ) {
-        return Some(PaneEvidence::CommandRunning);
-    }
-
-    if looks_like_active_agent_status(line) {
-        return Some(PaneEvidence::AgentRunning);
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "cargo test",
-            "cargo nextest",
-            "npm test",
-            "pnpm test",
-            "yarn test",
-            "pytest",
-            "rspec",
-            "running test",
-            "running 0 tests",
-            "running ",
-        ],
-    ) {
-        return Some(PaneEvidence::TestsRunning);
-    }
-
-    None
-}
-
-fn meaningful_lines(text: &str) -> Vec<&str> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-fn looks_like_idle_codex_prompt(lines: &[&str]) -> bool {
-    let recent_lines: Vec<_> = lines.iter().rev().take(4).copied().collect();
-
-    recent_lines.iter().any(|line| line.starts_with('›'))
-        && lines
-            .last()
-            .is_some_and(|line| line.starts_with("gpt-") && line.contains("~/"))
-        && !recent_lines
-            .iter()
-            .any(|line| looks_like_active_agent_status(line))
-}
-
-fn looks_like_active_agent_status(line: &str) -> bool {
-    contains_any(
-        &line.to_ascii_lowercase(),
-        &[
-            "codex is working",
-            "claude is working",
-            "cursor agent",
-            "cursor is working",
-            "background terminal running",
-            "thinking",
-            "waiting for background terminal",
-            "working (",
-            "working on your task",
-            "running tool",
-            "using tool",
-        ],
-    )
-}
-
-fn classify_cursor_stream_json_line(line: &str) -> Option<LiveObservation> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with('{') {
-        return None;
-    }
-
-    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
-    let event_type = value.get("type")?.as_str()?.to_ascii_lowercase();
-
-    match event_type.as_str() {
-        "system" if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") => {
-            Some(LiveObservation::new(
-                LiveStatusKind::AgentRunning,
-                "agent running",
-            ))
-        }
-        "thinking" => Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
-        )),
-        "tool_call" => classify_cursor_tool_call_line(&value),
-        "assistant" => cursor_assistant_observation(&value),
-        "result" => classify_cursor_result_line(&value),
-        "request" => classify_cursor_request_line(&value),
-        "status" => classify_cursor_status_line(&value),
-        _ => None,
-    }
-}
-
-fn classify_cursor_tool_call_line(value: &serde_json::Value) -> Option<LiveObservation> {
-    if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
-        return match status {
-            "running" | "in_progress" => Some(cursor_tool_observation(&cursor_tool_name(value))),
-            "error" | "failed" => Some(LiveObservation::new(
-                LiveStatusKind::CommandFailed,
-                "command failed",
-            )),
-            _ => None,
-        };
-    }
-
-    match value.get("subtype").and_then(serde_json::Value::as_str) {
-        Some("started") => value
-            .get("tool_call")
-            .map(|tool_call| cursor_tool_observation(&cursor_nested_tool_name(tool_call))),
-        Some("completed") => None,
-        _ => None,
-    }
-}
-
-fn cursor_tool_observation(label: &str) -> LiveObservation {
-    let fallback = LiveObservation::new(
-        LiveStatusKind::CommandRunning,
-        format!("tool running: {label}"),
-    );
-    let observation = classify_pane(label);
-    if observation.kind == LiveStatusKind::Unknown {
-        fallback
-    } else {
-        observation
-    }
-}
-
-fn classify_cursor_result_line(value: &serde_json::Value) -> Option<LiveObservation> {
-    if value.get("is_error").and_then(serde_json::Value::as_bool) == Some(true)
-        || value.get("subtype").and_then(serde_json::Value::as_str) == Some("error")
-    {
-        return Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
-            "command failed",
-        ));
-    }
-
-    if value.get("subtype").and_then(serde_json::Value::as_str) == Some("success")
-        || value.get("is_error").and_then(serde_json::Value::as_bool) == Some(false)
-    {
-        return Some(LiveObservation::new(LiveStatusKind::Done, "done"));
-    }
-
-    None
-}
-
-fn classify_cursor_request_line(value: &serde_json::Value) -> Option<LiveObservation> {
-    let prompt = value
-        .get("message")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| value.get("prompt").and_then(serde_json::Value::as_str))
-        .or_else(|| value.get("text").and_then(serde_json::Value::as_str))
-        .unwrap_or("waiting for operator input");
-
-    if cursor_mentions_approval(prompt) {
-        Some(LiveObservation::new(
-            LiveStatusKind::WaitingForApproval,
-            "waiting for approval",
-        ))
-    } else {
-        Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ))
-    }
-}
-
-fn classify_cursor_status_line(value: &serde_json::Value) -> Option<LiveObservation> {
-    let status = value
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-
-    match status.as_str() {
-        "RUNNING" | "CREATING" => Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
-        )),
-        "FINISHED" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
-        "ERROR" | "CANCELLED" | "EXPIRED" => Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
-            "command failed",
-        )),
-        _ => None,
-    }
-}
-
-fn cursor_assistant_observation(value: &serde_json::Value) -> Option<LiveObservation> {
-    let text = cursor_assistant_text(value)?;
-    if text.trim_end().ends_with('?') && !cursor_mentions_approval(&text) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-    }
-
-    let observation = classify_pane(&text);
-    if observation.kind == LiveStatusKind::Unknown {
-        Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
-        ))
-    } else {
-        Some(observation)
-    }
-}
-
-fn cursor_assistant_text(value: &serde_json::Value) -> Option<String> {
-    let content = value.get("message")?.get("content")?.as_array()?;
-    let text = content
-        .iter()
-        .filter_map(|block| {
-            if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
-                return None;
-            }
-            block.get("text").and_then(serde_json::Value::as_str)
-        })
-        .collect::<Vec<_>>()
-        .join("");
-
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-fn cursor_tool_name(value: &serde_json::Value) -> String {
-    let name = value
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("tool");
-
-    if let Some(command) = value
-        .get("args")
-        .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
-        .and_then(serde_json::Value::as_str)
-    {
-        return format!("{name}: {command}");
-    }
-
-    if let Some(path) = value
-        .get("args")
-        .and_then(|args| args.get("path"))
-        .and_then(serde_json::Value::as_str)
-    {
-        return format!("{name} {path}");
-    }
-
-    name.to_string()
-}
-
-fn cursor_nested_tool_name(tool_call: &serde_json::Value) -> String {
-    if let Some(read) = tool_call.get("readToolCall") {
-        if let Some(path) = read
-            .get("args")
-            .and_then(|args| args.get("path"))
-            .and_then(serde_json::Value::as_str)
-        {
-            return format!("read {path}");
-        }
-        return "read".to_string();
-    }
-
-    if let Some(shell) = tool_call
-        .get("bashToolCall")
-        .or_else(|| tool_call.get("shellToolCall"))
-    {
-        if let Some(command) = shell
-            .get("args")
-            .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
-            .and_then(serde_json::Value::as_str)
-        {
-            return format!("shell: {command}");
-        }
-        return "shell".to_string();
-    }
-
-    tool_call
-        .as_object()
-        .and_then(|fields| fields.keys().next())
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| "tool".to_string())
-}
-
-fn cursor_mentions_approval(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    contains_any(
-        &lower,
-        &[
-            "approval required",
-            "requires approval",
-            "waiting for approval",
-            "allow command",
-            "proceed?",
-            "do you want to proceed",
-            "approve to proceed",
-            "y/n",
-            "[y/n]",
-        ],
-    )
-}
-
-fn is_completion_line(lower: &str) -> bool {
-    contains_any(
-        lower,
-        &[
-            "test result: ok",
-            "tests passed",
-            "all pre-pr checks passed",
-            "successfully completed",
-            "task complete",
-            "all done",
-        ],
-    ) || lower.trim_matches(|character: char| !character.is_ascii_alphanumeric()) == "done"
-}
-
 pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
     match value.trim() {
         "starting" | "working" => Some(LiveObservation::new(
@@ -1234,31 +488,6 @@ pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
             "agent failed",
         )),
         _ => None,
-    }
-}
-
-pub fn reduce_agent_status_values<'a>(
-    values: impl IntoIterator<Item = &'a str>,
-) -> Option<LiveObservation> {
-    values
-        .into_iter()
-        .filter_map(|value| {
-            classify_agent_status_value(value).map(|observation| {
-                let priority = agent_status_priority(observation.kind);
-                (priority, observation)
-            })
-        })
-        .max_by_key(|(priority, _observation)| *priority)
-        .map(|(_priority, observation)| observation)
-}
-
-fn agent_status_priority(kind: LiveStatusKind) -> u8 {
-    match kind {
-        LiveStatusKind::AgentRunning => 5,
-        LiveStatusKind::WaitingForInput => 4,
-        LiveStatusKind::WaitingForApproval => 3,
-        LiveStatusKind::Done => 2,
-        _ => 0,
     }
 }
 
@@ -1332,30 +561,13 @@ fn is_passive_observation(kind: LiveStatusKind) -> bool {
     matches!(kind, LiveStatusKind::ShellIdle | LiveStatusKind::Unknown)
 }
 
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| haystack.contains(needle))
-}
-
-fn looks_like_shell_prompt(text: &str) -> bool {
-    text.lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .is_some_and(|line| {
-            let line = line.trim_end();
-            line.ends_with('%') || line.ends_with('$') || line.ends_with('#')
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use crate::models::{
         AgentClient, AgentRuntimeStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
     };
 
-    use super::{
-        apply_observation, apply_observation_at, classify_agent_status_value, classify_pane,
-        project_pane_stuck_status, reduce_agent_status_values,
-    };
+    use super::{apply_observation, apply_observation_at, classify_agent_status_value};
 
     fn base_task() -> Task {
         Task::new(
@@ -1372,323 +584,91 @@ mod tests {
         )
     }
 
-    /// Regression: the conservative status redesign routed pane capture through
-    /// `project_pane_activity`, which drops every kind `live_kind_to_activity`
-    /// cannot express. That silently removed six actionable, notification-firing
-    /// stuck states from the tmux polling path.
     #[test]
-    fn pane_stuck_states_survive_the_activity_projection() {
-        for (pane, expected) in [
-            (
-                "starting work\nthis is blocked, cannot continue\n",
-                LiveStatusKind::Blocked,
-            ),
-            (
-                "calling api\nrate limit exceeded\n",
-                LiveStatusKind::RateLimited,
-            ),
-            (
-                "running\nplease login to continue\n",
-                LiveStatusKind::AuthRequired,
-            ),
-            (
-                "working\ncontext limit reached\n",
-                LiveStatusKind::ContextLimit,
-            ),
-            (
-                "git merge\nCONFLICT (content): merge conflict in a.rs\n",
-                LiveStatusKind::MergeConflict,
-            ),
-            ("pushed\nci failed on main\n", LiveStatusKind::CiFailed),
-        ] {
-            let observed = project_pane_stuck_status(AgentClient::Claude, pane);
-            assert_eq!(
-                observed.map(|observation| observation.kind),
-                Some(expected),
-                "pane {pane:?} should project the {expected:?} stuck state"
-            );
-        }
+    fn pane_projection_maps_anchored_idle_prompt_to_waiting_input() {
+        let now = std::time::SystemTime::now();
+        let pane = "Here is my plan.\n\n❯\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+
+        let observation = super::project_pane_activity(AgentClient::Claude, pane, now)
+            .expect("anchored idle prompt should project");
+
+        assert_eq!(
+            observation.kind,
+            crate::agent_status::ActivityKind::WaitingInput
+        );
+        assert_eq!(
+            observation.source,
+            crate::agent_status::ObservationSource::StructuredPane
+        );
+        assert_eq!(
+            observation.confidence,
+            crate::agent_status::Confidence::Medium
+        );
     }
 
-    /// Casual "try again later" phrasing alone is not a rate limit: agents say
-    /// it while planning their next attempt without any upstream rate-limit
-    /// condition. Only real rate-limit phrases (`rate limit`, `too many
-    /// requests`) classify as `RateLimited`; bare reassurance must stay neutral
-    /// so it neither projects a stuck state nor fires an attention webhook.
     #[test]
-    fn try_again_later_alone_is_not_rate_limited() {
-        for pane in [
-            "Looks stuck — I'll try again later.",
-            "I'll try again later",
-            "hmm, let me try again later and see what happens",
-        ] {
-            assert_ne!(
-                classify_agent_pane(AgentClient::Claude, pane).kind,
-                LiveStatusKind::RateLimited,
-                "casual pane {pane:?} must not classify as Rate limited"
-            );
-            assert_eq!(
-                project_pane_stuck_status(AgentClient::Claude, pane),
-                None,
-                "casual pane {pane:?} must not project a Rate limited stuck state"
-            );
-        }
+    fn pane_projection_maps_anchored_permission_menu_to_waiting_approval() {
+        let now = std::time::SystemTime::now();
+        let pane = "Do you want to run this command?\n❯ 1. Yes\n  2. No\nEsc to cancel";
 
-        // Real rate-limit phrasing still classifies as RateLimited and still
-        // projects the stuck state, even when it also says "try again later".
+        let observation = super::project_pane_activity(AgentClient::Claude, pane, now)
+            .expect("anchored permission menu should project");
+
+        assert_eq!(
+            observation.kind,
+            crate::agent_status::ActivityKind::WaitingApproval
+        );
+        assert_eq!(
+            observation.source,
+            crate::agent_status::ObservationSource::StructuredPane
+        );
+    }
+
+    /// The core false-positive regression: pane prose about failures,
+    /// conflicts, CI, auth, limits, or completion is never live evidence.
+    /// Those statuses belong to the wrapper exit snapshot, hooks, and
+    /// git/`gh` substrate evidence.
+    #[test]
+    fn pane_projection_never_asserts_failure_stuck_or_completion() {
+        let now = std::time::SystemTime::now();
         for pane in [
-            "rate limit exceeded",
+            "test result: FAILED\nCommand failed with exit code 1",
+            "CONFLICT (content): merge conflict in a.rs",
+            "Automatic merge failed; fix conflicts and then commit the result.",
+            "ci failed on main",
+            "check run failed: cargo test",
+            "please login to continue",
             "rate limit exceeded; try again later",
-        ] {
-            assert_eq!(
-                classify_agent_pane(AgentClient::Claude, pane).kind,
-                LiveStatusKind::RateLimited,
-                "pane {pane:?} should still classify as Rate limited"
-            );
-            assert_eq!(
-                project_pane_stuck_status(AgentClient::Claude, pane).map(|o| o.kind),
-                Some(LiveStatusKind::RateLimited),
-                "pane {pane:?} should still project the Rate limited stuck state"
-            );
-        }
-    }
-
-    /// The redesign's thesis is that historical pane text is not live evidence.
-    /// A stuck line buried in scrollback, with the agent visibly producing
-    /// output since, must not project a stuck state — otherwise it fires an
-    /// actionable notification about a condition that already resolved.
-    #[test]
-    fn stale_scrollback_stuck_lines_are_not_live_evidence() {
-        let buried = format!(
-            "this is blocked, cannot continue\n{}",
-            "ordinary working output\n".repeat(60)
-        );
-        assert_eq!(
-            project_pane_stuck_status(AgentClient::Claude, &buried),
-            None,
-            "a stuck line buried under fresh output is not live evidence"
-        );
-
-        // Still recent enough to be live: the same line near the pane tail.
-        let recent = "ordinary working output\nthis is blocked, cannot continue\n";
-        assert_eq!(
-            project_pane_stuck_status(AgentClient::Claude, recent).map(|o| o.kind),
-            Some(LiveStatusKind::Blocked),
-            "a stuck line at the pane tail is live evidence"
-        );
-    }
-
-    /// The stuck-state fallback must never reopen the false-positive hole the
-    /// redesign closed: activity and terminal kinds stay the reducer's job.
-    #[test]
-    fn pane_stuck_states_never_project_activity_or_completion() {
-        for pane in [
-            "esc to interrupt",
-            "Running tests…  (1234 tokens)",
-            "some ordinary output\n$ ",
-            "",
-            "Do you want to proceed? [y/n]",
+            "context limit reached",
+            "this is blocked, cannot continue",
             "all done, task complete",
+            "✓ Successfully completed task",
+            "test result: ok. 37 passed",
         ] {
             assert_eq!(
-                project_pane_stuck_status(AgentClient::Claude, pane),
+                super::project_pane_activity(AgentClient::Claude, pane, now),
                 None,
-                "pane {pane:?} must not yield a stuck state"
+                "pane prose {pane:?} must never project an activity observation"
             );
         }
     }
 
-    /// Single-token needles like bare `"blocked"` and `"authenticate"` must not
-    /// match casual agent prose. Real stuck phrases are multi-word and survive
-    /// elsewhere (e.g. `pane_stuck_states_survive_the_activity_projection`,
-    /// `pane_classifier_detects_agent_attention_states`).
     #[test]
-    fn broad_stuck_needles_do_not_match_casual_agent_prose() {
-        assert_eq!(
-            project_pane_stuck_status(
-                AgentClient::Claude,
-                "The deploy path is blocked by the existing lockfile."
-            ),
-            None,
-            "casual 'blocked' prose must not project a stuck state"
-        );
-        assert_eq!(
-            project_pane_stuck_status(
-                AgentClient::Claude,
-                "Next we authenticate the webhook signature before storing it."
-            ),
-            None,
-            "casual 'authenticate' prose must not project a stuck state"
-        );
-    }
-
-    #[test]
-    fn pane_classifier_detects_agent_attention_states() {
-        for (pane, expected) in [
-            (
-                "Do you want to proceed? y/n",
-                LiveStatusKind::WaitingForApproval,
-            ),
-            (
-                "Waiting for input. Press Enter to continue.",
-                LiveStatusKind::WaitingForInput,
-            ),
-            ("Please login to continue", LiveStatusKind::AuthRequired),
-            (
-                "rate limit exceeded; try again later",
-                LiveStatusKind::RateLimited,
-            ),
-            ("context limit reached", LiveStatusKind::ContextLimit),
-            (
-                "CONFLICT (content): merge conflict in src/lib.rs",
-                LiveStatusKind::MergeConflict,
-            ),
-        ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, expected, "{pane}");
-        }
-    }
-
-    #[test]
-    fn pane_classifier_detects_codex_clarification_prompts_as_waiting_for_input() {
+    fn pane_projection_treats_unanchored_prose_as_neutral() {
+        let now = std::time::SystemTime::now();
         for pane in [
-            "\
-› Math
-
-⚠ Heads up, you have less than 25% of your weekly limit left.
-
-• What kind of math do you want to work on? Send me the problem, equation, or
-  topic.
-
-› Use /skills to list available skills",
-            "\
-› trst
-
-⚠ Heads up, you have less than 25% of your weekly limit left.
-
-• I’m not sure what you want me to do with “trst”. Did you mean “test”, or is
-  there a specific task in this repo you want me to handle?
-
-› Use /skills to list available skills",
+            "The user asked \"did you mean the parser?\" — checking both.",
+            "I am thinking about running the tests next.",
+            "Waiting for input. Press Enter to continue.",
+            "compiling ajax-core v0.51.7\n    Finished dev profile",
         ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, LiveStatusKind::WaitingForInput, "{pane}");
+            assert_eq!(
+                super::project_pane_activity(AgentClient::Claude, pane, now),
+                None,
+                "unanchored prose {pane:?} must stay neutral"
+            );
         }
     }
-
-    #[test]
-    fn pane_classifier_detects_conflict_and_ci_failure_evidence() {
-        for (pane, expected) in [
-            (
-                "Automatic merge failed; fix conflicts and then commit the result.",
-                LiveStatusKind::MergeConflict,
-            ),
-            (
-                "CONFLICT (modify/delete): src/lib.rs deleted in HEAD and modified in feature",
-                LiveStatusKind::MergeConflict,
-            ),
-            ("CI failed for this branch", LiveStatusKind::CiFailed),
-            (
-                "GitHub Actions failed: test.yml / build",
-                LiveStatusKind::CiFailed,
-            ),
-            ("check run failed: cargo test", LiveStatusKind::CiFailed),
-            ("workflow failed after 3m", LiveStatusKind::CiFailed),
-            (
-                "There are failing checks on the PR",
-                LiveStatusKind::CiFailed,
-            ),
-        ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, expected, "{pane}");
-        }
-    }
-
-    #[test]
-    fn pane_classifier_detects_cursor_stream_json_and_activity() {
-        for (pane, expected) in [
-            (
-                r#"{"type":"system","subtype":"init","agent":"cursor"}"#,
-                LiveStatusKind::AgentRunning,
-            ),
-            (r#"{"type":"thinking"}"#, LiveStatusKind::AgentRunning),
-            (
-                r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
-                LiveStatusKind::CommandRunning,
-            ),
-            (
-                r#"{"type":"tool_call","subtype":"started","call_id":"1","tool_call":{"readToolCall":{"args":{"path":"src/lib.rs"}}}}"#,
-                LiveStatusKind::CommandRunning,
-            ),
-            (
-                r#"{"type":"status","status":"RUNNING"}"#,
-                LiveStatusKind::AgentRunning,
-            ),
-            (
-                r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
-                LiveStatusKind::Done,
-            ),
-            (
-                r#"{"type":"result","subtype":"error","is_error":true,"result":"auth failed"}"#,
-                LiveStatusKind::CommandFailed,
-            ),
-            (
-                r#"{"type":"request","request_id":"req-1","message":"Allow command?"}"#,
-                LiveStatusKind::WaitingForApproval,
-            ),
-            (
-                r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Which branch should I use?"}]}}"#,
-                LiveStatusKind::WaitingForInput,
-            ),
-            (
-                "cursor agent --print --output-format stream-json fix tests",
-                LiveStatusKind::AgentRunning,
-            ),
-            (
-                concat!(
-                    r#"{"type":"thinking"}"#,
-                    "\n",
-                    r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
-                ),
-                LiveStatusKind::CommandRunning,
-            ),
-        ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, expected, "{pane}");
-        }
-    }
-
-    #[test]
-    fn pane_classifier_detects_runtime_states() {
-        for (pane, expected) in [
-            (
-                "cargo test --all-features\nrunning 37 tests",
-                LiveStatusKind::TestsRunning,
-            ),
-            ("running command: npm test", LiveStatusKind::CommandRunning),
-            ("test result: ok. 37 passed", LiveStatusKind::Done),
-            (
-                "codex is working on your task",
-                LiveStatusKind::AgentRunning,
-            ),
-            (
-                "Command failed with exit code 101",
-                LiveStatusKind::CommandFailed,
-            ),
-            ("✓ Successfully completed task", LiveStatusKind::Done),
-            ("matt@host project % ", LiveStatusKind::ShellIdle),
-            ("", LiveStatusKind::Unknown),
-        ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, expected, "{pane}");
-        }
-    }
-
     #[test]
     fn agent_status_values_map_to_live_observations() {
         for (value, expected) in [
@@ -1708,174 +688,6 @@ mod tests {
                 "{value:?}"
             );
         }
-    }
-
-    #[test]
-    fn agent_status_values_reduce_by_tmux_agent_status_priority() {
-        let observation = reduce_agent_status_values(["done", "wait", "working", "ask", "parked"]);
-
-        assert_eq!(
-            observation.map(|observation| observation.kind),
-            Some(LiveStatusKind::AgentRunning)
-        );
-
-        let observation = reduce_agent_status_values(["parked", "done", "ask"]);
-
-        assert_eq!(
-            observation.map(|observation| observation.kind),
-            Some(LiveStatusKind::WaitingForApproval)
-        );
-    }
-
-    #[test]
-    fn pane_classifier_uses_final_prompt_over_stale_running_history() {
-        let pane = "\
-The targeted checks pass. I’m continuing the cherry-pick now.
-The rebased commit is created. I’m running the full pre-PR parity script now.
-All pre-PR checks passed.
-matt@Matts-MacBook-Pro ajax-tech-debt %";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::Done);
-    }
-
-    #[test]
-    fn pane_classifier_uses_later_success_over_stale_failure_history() {
-        let pane = "\
-Earlier command failed with exit code 101.
-I fixed the issue and reran the full suite.
-All pre-PR checks passed.
-matt@Matts-MacBook-Pro ajax-tech-debt %";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::Done);
-    }
-
-    #[test]
-    fn pane_classifier_uses_final_prompt_over_stale_approval_history() {
-        let pane = "\
-Do you want to proceed? y/n
-Approved and continued.
-No more work is running.
-matt@Matts-MacBook-Pro ajax-tech-debt %";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
-    }
-
-    #[test]
-    fn pane_classifier_treats_plan_approval_prompt_as_waiting_for_approval() {
-        let pane = "\
-Task 1: Badge accessibility + duplication cleanup
-
-- Test to write: add failing Vitest coverage.
-- Code to implement: extract a small internal badge-rendering helper.
-- Verify: run rtk npm test -- badges.test.ts.
-
-Plan ready. Approve to proceed.";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
-    }
-
-    #[test]
-    fn pane_classifier_treats_idle_codex_prompt_as_waiting_for_input() {
-        let pane = "\
-› Improve documentation in @filename
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn pane_classifier_treats_codex_working_prompt_as_agent_running() {
-        let pane = "\
-› Improve documentation in @filename
-
-• codex is working
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn pane_classifier_treats_codex_working_status_prompt_as_agent_running() {
-        let pane = "\
-• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…
-
-› Improve documentation in @filename
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn pane_classifier_treats_codex_background_terminal_status_as_agent_running() {
-        for pane in [
-            "\
-1 background terminal running · /ps to view · /stop to close
-
-› Write tests for @filename
-
-  gpt-5.5 high fast · ~/Desktop/Projects/autodoctor__worktrees/ajax-false-positive",
-            "\
-• Waiting for background terminal (20m 21s • esc to interrupt) · 1 background …
-
-› Improve documentation in @filename
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci",
-        ] {
-            let observation = classify_pane(pane);
-
-            assert_eq!(observation.kind, LiveStatusKind::AgentRunning, "{pane}");
-        }
-    }
-
-    #[test]
-    fn pane_classifier_does_not_treat_negative_done_phrasing_as_complete() {
-        let pane = "The task is not done yet; running cargo test now";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::TestsRunning);
-    }
-
-    #[test]
-    fn pane_classifier_uses_current_failure_over_stale_success_history() {
-        let pane = "\
-All pre-PR checks passed.
-Later validation found a regression.
-Command failed with exit code 101
-matt@Matts-MacBook-Pro ajax-tech-debt %";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::CommandFailed);
-    }
-
-    #[test]
-    fn pane_classifier_does_not_treat_login_task_text_as_auth_required() {
-        let pane = "\
-Task: Fix login form alignment
-Review the button spacing.
-matt@Matts-MacBook-Pro ajax-fix-login %";
-
-        let observation = classify_pane(pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
     }
 
     #[test]
@@ -2179,267 +991,26 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         let tmux_before = task.tmux_status.clone();
         let task_before = task.task_window_status.clone();
 
-        let classified = classify_pane("Do you want to proceed? y/n\n");
+        let projected = super::project_pane_activity(
+            AgentClient::Claude,
+            "Do you want to run this command?\n❯ 1. Yes\n  2. No\nEsc to cancel",
+            std::time::SystemTime::now(),
+        );
         let reduced = super::reduce_live_observation(
             task.live_status.as_ref(),
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         );
 
-        assert_eq!(classified.kind, LiveStatusKind::WaitingForApproval);
+        assert_eq!(
+            projected.map(|observation| observation.kind),
+            Some(crate::agent_status::ActivityKind::WaitingApproval)
+        );
         assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
         assert_eq!(task.lifecycle_status, lifecycle_before);
         assert_eq!(task.git_status, git_before);
         assert_eq!(task.tmux_status, tmux_before);
         assert_eq!(task.task_window_status, task_before);
     }
-
-    use super::classify_agent_pane;
-
-    const CLAUDE_TRAILING_STATUS_BAR: &str = "\
-──────────────────────────────────
-❯
-──────────────────────────────────
-Fable 5 │ ajax-statuses ██░░░░░░░░ 23%
-⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents";
-
-    #[test]
-    fn claude_idle_pane_with_footer_advisories_classifies_waiting_for_input() {
-        let pane = "\
-Earlier we discussed the merge conflict in the PR comments.
-
-The user said they were done reviewing the implementation.
-
-pending, so merge the PR whenever you're ready.
-─────────────────────────────────────────────────────────────────
-❯
-─────────────────────────────────────────────────────────────────
-Fable 5 │ Python Dead Code & Constants (8/18) │ ajax-ux ███░…
-⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
-                         ~265k uncached · /clear to start fresh
-                         new task? /clear to save 266.7k tokens";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-        assert_ne!(observation.kind, LiveStatusKind::MergeConflict);
-        assert_ne!(observation.kind, LiveStatusKind::Done);
-        assert_ne!(observation.kind, LiveStatusKind::WaitingForApproval);
-    }
-
-    #[test]
-    fn bare_prompt_without_claude_chrome_does_not_classify_waiting_for_input() {
-        let pane = "\
-$ cargo test -p ajax-core
-running 1 test
-test live::tests::example ... ok
-
-❯
-total 8
-drwxr-xr-x  3 matt  staff   96 Jul  7 06:00 .";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_ne!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn claude_idle_pane_with_trailing_status_bar_classifies_waiting_for_input() {
-        let pane = format!(
-            "We should resolve the merge conflict before shipping.\n\
-             The user said they were done reviewing the plan.\n\
-             {CLAUDE_TRAILING_STATUS_BAR}"
-        );
-
-        let observation = classify_agent_pane(AgentClient::Claude, &pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn claude_permission_menu_with_trailing_status_bar_classifies_waiting_for_approval() {
-        let pane = format!(
-            "Do you want to proceed?\n\
-             ❯ 1. Yes\n\
-               2. No\n\
-             {CLAUDE_TRAILING_STATUS_BAR}"
-        );
-
-        let observation = classify_agent_pane(AgentClient::Claude, &pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
-    }
-
-    #[test]
-    fn claude_busy_pane_with_trailing_status_bar_classifies_agent_running() {
-        let pane = format!(
-            "✢ Flummoxing… (6m 14s · ↓ 14.3k tokens)\n\
-             {CLAUDE_TRAILING_STATUS_BAR}"
-        );
-
-        let observation = classify_agent_pane(AgentClient::Claude, &pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn claude_busy_indicator_beats_stale_permission_prompt() {
-        let pane = "\
-Run this command?
-❯ Yes
-  No
-ctrl+c to interrupt";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn claude_spinner_beats_stale_idle_prompt() {
-        let pane = "\
-❯
-
-✢ Clauding… (53s · ↓ 749 tokens)";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn claude_permission_dialog_is_waiting_for_approval() {
-        let pane = "\
-Run this command?
-❯ Yes
-  No
-Esc to cancel";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
-    }
-
-    #[test]
-    fn claude_standalone_prompt_is_waiting_for_input() {
-        let pane = "\
-Here is my plan.
-
-❯";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn codex_working_status_beats_visible_composer_prompt() {
-        let pane = "\
-› Fix the tests
-
-• Working (12s · esc to interrupt)
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax";
-
-        let observation = classify_agent_pane(AgentClient::Codex, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn codex_idle_composer_is_waiting_for_input() {
-        let pane = "\
-› Improve documentation in @filename
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
-
-        let observation = classify_agent_pane(AgentClient::Codex, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn agent_specific_prompt_markers_cross_classify_when_registered_agent_differs() {
-        let claude_prompt = "\
-Here is my plan.
-
-❯";
-        let codex_composer = "\
-› Fix the tests
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax";
-
-        let claude_as_codex = classify_agent_pane(AgentClient::Codex, claude_prompt);
-        let codex_as_claude = classify_agent_pane(AgentClient::Claude, codex_composer);
-
-        assert_eq!(claude_as_codex.kind, LiveStatusKind::WaitingForInput);
-        assert_eq!(codex_as_claude.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn codex_selected_task_with_claude_busy_pane_classifies_agent_running() {
-        let pane = "\
-✶ Scurrying… (3m 9s · ↓ 7.8k tokens)";
-
-        let observation = classify_agent_pane(AgentClient::Codex, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
-    }
-
-    #[test]
-    fn codex_selected_task_with_claude_idle_prompt_classifies_waiting_for_input() {
-        let pane = "\
-We should resolve the merge conflict before shipping.
-
-The user said they were done reviewing the plan.
-
-❯";
-
-        let observation = classify_agent_pane(AgentClient::Codex, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn other_agent_pane_uses_claude_and_codex_prompt_shapes() {
-        let claude_busy = "\
-✢ Clauding… (53s · ↓ 749 tokens)";
-        let claude_prompt = "\
-Here is my plan.
-
-❯";
-        let codex_composer = "\
-› Fix the tests
-
-  gpt-5.5 high · ~/Desktop/Projects/ajax";
-
-        assert_eq!(
-            classify_agent_pane(AgentClient::Other, claude_busy).kind,
-            LiveStatusKind::AgentRunning
-        );
-        assert_eq!(
-            classify_agent_pane(AgentClient::Other, claude_prompt).kind,
-            LiveStatusKind::WaitingForInput
-        );
-        assert_eq!(
-            classify_agent_pane(AgentClient::Other, codex_composer).kind,
-            LiveStatusKind::WaitingForInput
-        );
-    }
-
-    #[test]
-    fn ambiguous_redraw_returns_unknown_for_reducer_fallback() {
-        let pane = "\
-┌──────────────┐
-│ Output panel │
-├──────────────┤
-The quick brown fox jumps over the lazy dog.
-Nothing actionable to report here.";
-
-        let observation = classify_agent_pane(AgentClient::Claude, pane);
-
-        assert_eq!(observation.kind, LiveStatusKind::Unknown);
-    }
-
     fn hook_now() -> std::time::SystemTime {
         std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000)
     }

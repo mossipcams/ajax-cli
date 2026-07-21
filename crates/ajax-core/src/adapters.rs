@@ -146,14 +146,7 @@ mod tests {
             adapter.capture_pane("ajax-web-fix-login", "task"),
             CommandSpec::new(
                 "tmux",
-                [
-                    "capture-pane",
-                    "-p",
-                    "-t",
-                    "ajax-web-fix-login:task",
-                    "-S",
-                    "-80"
-                ]
+                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"]
             )
             .with_timeout(std::time::Duration::from_secs(8))
         );
@@ -211,7 +204,7 @@ mod tests {
             );
             prop_assert_eq!(
                 adapter.capture_pane(&session, &window).args,
-                vec!["capture-pane", "-p", "-t", target.as_str(), "-S", "-80"]
+                vec!["capture-pane", "-p", "-t", target.as_str()]
             );
             prop_assert_eq!(
                 adapter.send_agent_command(&session, &window, &command).args,

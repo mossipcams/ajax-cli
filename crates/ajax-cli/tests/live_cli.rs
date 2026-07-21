@@ -377,7 +377,7 @@ fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
     home.install_fake_live_status_tools(
         "ajax-web-fix-login",
         &worktree_path,
-        "Do you want to proceed? y/n",
+        "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel",
     );
 
     let output = home.ajax_with_fake_tools(["cockpit", "--json"]);

@@ -553,6 +553,13 @@ fn structured_busy_pane() -> &'static str {
     "{\"type\":\"thinking\"}\n"
 }
 
+/// Anchored Claude permission menu: structurally recognized as
+/// waiting-for-approval. Bare keyword text ("Do you want to proceed? y/n")
+/// no longer classifies — pane hints require positional prompt anchors.
+fn approval_prompt_pane() -> &'static str {
+    "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel\n"
+}
+
 #[test]
 fn command_flow_fixture_records_partial_success_before_failure() {
     let mut plan = ajax_core::commands::CommandPlan::new("partial failure");
@@ -625,14 +632,7 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
         .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "tmux",
-            [
-                "capture-pane",
-                "-p",
-                "-t",
-                "ajax-web-fix-login:task",
-                "-S",
-                "-80",
-            ],
+            ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
         )
         .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
@@ -1181,7 +1181,7 @@ fn cockpit_json_refreshes_live_status_from_tmux() {
     active.remove_side_flag(SideFlag::NeedsInput);
     context.registry = InMemoryRegistry::default();
     context.registry.create_task(active).unwrap();
-    let mut runner = QueuedRunner::new(tmux_live_outputs("Do you want to proceed? y/n\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
 
     let output =
         run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
@@ -1240,7 +1240,7 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
+    let first_refresh = tmux_live_outputs(approval_prompt_pane());
     let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
     let mut runner = QueuedRunner::new(vec![
         first_refresh[0].clone(),
@@ -1293,7 +1293,7 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
+    let first_refresh = tmux_live_outputs(approval_prompt_pane());
     let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
     let mut runner = QueuedRunner::new(vec![
         first_refresh[0].clone(),
@@ -1378,7 +1378,7 @@ fn status_command_refreshes_live_state_from_tmux() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("Do you want to proceed? y/n\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
 
     let output =
         run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
@@ -1678,7 +1678,7 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
         .unwrap();
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("Do you want to proceed? y/n\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
     let mut state_changed = false;
 
     let snapshot =
@@ -1828,7 +1828,7 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                 "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\najax-web-fix-sidebar\ttask\t/tmp/worktrees/web-fix-sidebar\n",
             ),
             output(0, "codex is working\n"),
-            output(0, "Do you want to proceed? y/n\n"),
+            output(0, approval_prompt_pane()),
         ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -1851,26 +1851,12 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
-                [
-                    "capture-pane",
-                    "-p",
-                    "-t",
-                    "ajax-web-fix-login:task",
-                    "-S",
-                    "-80",
-                ],
+                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task",],
             )
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
-                [
-                    "capture-pane",
-                    "-p",
-                    "-t",
-                    "ajax-web-fix-sidebar:task",
-                    "-S",
-                    "-80",
-                ],
+                ["capture-pane", "-p", "-t", "ajax-web-fix-sidebar:task",],
             )
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
@@ -2211,7 +2197,7 @@ fn live_cockpit_watch_accumulates_state_change_after_unchanged_frame() {
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
     let mut outputs = vec![output(0, "")];
-    outputs.extend(tmux_live_outputs("Do you want to proceed? y/n\n"));
+    outputs.extend(tmux_live_outputs(approval_prompt_pane()));
     let mut runner = QueuedRunner::new(outputs);
     let matches = build_cli()
         .try_get_matches_from([
