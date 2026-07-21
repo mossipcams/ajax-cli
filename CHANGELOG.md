@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.5...ajax-cli-v0.51.6) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** keep open Task details scrollable on mobile WebKit ([#618](https://github.com/mossipcams/ajax-cli/issues/618)) ([18aa873](https://github.com/mossipcams/ajax-cli/commit/18aa87387da70da3d6b750df4960e5332a26a4a8))
+* **web:** roll back fragile shell asset cache busting ([#620](https://github.com/mossipcams/ajax-cli/issues/620)) ([1e52ea8](https://github.com/mossipcams/ajax-cli/commit/1e52ea82c4d3c187cc9126732dce9857fbb810ea))
+
 ## [0.51.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.4...ajax-cli-v0.51.5) (2026-07-20)
 
 
