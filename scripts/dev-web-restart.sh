@@ -129,6 +129,30 @@ sync_main() {
   git --git-dir="$GIT_DIR" --work-tree="$ROOT" clean -fd
 }
 
+# ponytail: git clean removes untracked ajax-model-router script symlinks.
+# Ceiling: local/optional tooling; skip when the router repo is absent.
+# Upgrade: skills call a fixed router path so worktrees need no local links.
+restore_model_router_symlinks() {
+  local router="${AJAX_MODEL_ROUTER:-}"
+  local candidate installer
+  if [[ -z "$router" ]]; then
+    for candidate in \
+      "${HOME}/Desktop/Projects/ajax-model-router" \
+      "/Users/matt/Desktop/Projects/ajax-model-router"; do
+      if [[ -x "${candidate}/scripts/install-symlinks" ]]; then
+        router="$candidate"
+        break
+      fi
+    done
+  fi
+  installer="${router:+$router/scripts/install-symlinks}"
+  if [[ -z "$installer" || ! -x "$installer" ]]; then
+    return 0
+  fi
+  echo "Restoring ajax-model-router symlinks in $ROOT ..."
+  "$installer" --target "$ROOT" --force
+}
+
 SOURCE_ROOT="$ROOT"
 if [[ -n "$WORKTREE" ]]; then
   if [[ ! -d "$WORKTREE" ]]; then
@@ -140,6 +164,7 @@ if [[ -n "$WORKTREE" ]]; then
   echo "Test in Dev: building from worktree $SOURCE_ROOT (no git sync)"
 else
   sync_main
+  restore_model_router_symlinks
 fi
 
 mkdir -p "$RUN_DIR"
