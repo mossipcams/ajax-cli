@@ -48,6 +48,7 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
         .subcommand(agent_runtime_command())
+        .subcommand(agent_event_command())
         .subcommand(web_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
@@ -129,6 +130,23 @@ fn supervise_command() -> Command {
                 .long("cursor-bin")
                 .value_name("PATH")
                 .hide(true),
+        )
+}
+
+fn agent_event_command() -> Command {
+    Command::new("__agent-event")
+        .hide(true)
+        .arg(
+            Arg::new("client")
+                .long("client")
+                .value_name("CLIENT")
+                .required(true),
+        )
+        .arg(
+            Arg::new("event")
+                .long("event")
+                .value_name("EVENT")
+                .required(true),
         )
 }
 
