@@ -216,9 +216,16 @@ fn read_agent_event_entry(
 ) -> Option<(String, AgentStatusCacheEntry)> {
     let snapshot =
         serde_json::from_str::<AgentEventSnapshot>(&fs::read_to_string(path).ok()?).ok()?;
-    let millis = u64::try_from(snapshot.observed_at_unix_millis).ok()?;
+    let jsonl_path = path.with_extension("jsonl");
+    let (value, observed_at_unix_millis) = if jsonl_path.is_file() {
+        crate::agent_event::fold_and_project_jsonl(&jsonl_path)
+            .unwrap_or_else(|| (snapshot.value.clone(), snapshot.observed_at_unix_millis))
+    } else {
+        (snapshot.value.clone(), snapshot.observed_at_unix_millis)
+    };
+    let millis = u64::try_from(observed_at_unix_millis).ok()?;
     let observed_at = SystemTime::UNIX_EPOCH + Duration::from_millis(millis);
-    let terminal = matches!(snapshot.value.trim(), "done" | "parked" | "failed");
+    let terminal = matches!(value.trim(), "done" | "parked" | "failed");
     let fresh = terminal
         || now
             .duration_since(observed_at)
@@ -232,7 +239,7 @@ fn read_agent_event_entry(
     Some((
         snapshot.task_id,
         AgentStatusCacheEntry {
-            value: snapshot.value,
+            value,
             observed_at,
             fresh,
             source: AgentStatusCacheSource::Lifecycle,
@@ -254,6 +261,8 @@ mod tests {
         models::TaskId,
         runtime_refresh::{AgentStatusCache, AgentStatusCacheEntry, AgentStatusCacheSource},
     };
+
+    use crate::agent_event::{run_agent_event, write_agent_event, AgentEventIdentity};
 
     use super::TmuxAgentStatusSnapshot;
 
@@ -624,6 +633,35 @@ mod tests {
         assert_eq!(delegated.source, AgentStatusCacheSource::Lifecycle);
         assert_eq!(delegated.run_id.as_deref(), Some("pane:s:%1"));
         assert_eq!(delegated.parent_run_id.as_deref(), Some("primary"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn jsonl_fold_prefers_ask_over_stale_working_json_snapshot() {
+        let root = temp_cache_root();
+        let events_dir = root.join("agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        let identity = AgentEventIdentity {
+            task_id: "web/fix-login".to_string(),
+            run_id: "primary".to_string(),
+            events_dir: events_dir.clone(),
+        };
+        let permission = serde_json::json!({
+            "message": "Claude needs your permission to run Bash"
+        });
+        run_agent_event(Some(&identity), "claude", "Notification", &permission).unwrap();
+        write_agent_event(&identity, "working", 500).unwrap();
+
+        let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&root);
+        let entries =
+            cache.status_entries_for_task(&TaskId::new("web/fix-login"), "ajax-web-fix-login");
+
+        let lifecycle = entries
+            .iter()
+            .find(|entry| entry.source == AgentStatusCacheSource::Lifecycle)
+            .expect("lifecycle entry from jsonl fold");
+        assert_eq!(lifecycle.value, "ask");
 
         fs::remove_dir_all(root).unwrap();
     }
