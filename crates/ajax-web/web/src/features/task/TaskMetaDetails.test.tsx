@@ -104,6 +104,13 @@ describe("TaskMetaDetails", () => {
     expect(dtBlock![1]).not.toMatch(/text-transform:\s*uppercase/);
   });
 
+  it("uses a shrinkable value column in the detail grid", () => {
+    const gridBlock = stylesSource.match(/\.detail-grid\s*\{([\s\S]*?)\}/);
+    expect(gridBlock).not.toBeNull();
+    expect(gridBlock![1]).toMatch(/grid-template-columns:\s*[^;]*minmax\s*\(\s*0\s*,/);
+    expect(gridBlock![1]).not.toMatch(/grid-template-columns:\s*\d+px\s+1fr/);
+  });
+
   it("flattens task details into one detail grid without group labels", () => {
     render(<TaskMetaDetails detail={detail()} />);
     expect(screen.queryAllByText(/^Branch$/)).toHaveLength(1);
