@@ -21,6 +21,13 @@ pub enum RegistryPersistenceDisposition {
 
 pub fn registry_persistence_disposition(task: &Task) -> RegistryPersistenceDisposition {
     if task.lifecycle_status == LifecycleStatus::Removed {
+        if task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists || status.branch_exists)
+        {
+            return RegistryPersistenceDisposition::Persist;
+        }
         return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Removed);
     }
     if task.has_side_flag(SideFlag::Stale) {
@@ -134,6 +141,48 @@ mod tests {
     fn operational_lifecycles_with_missing_substrate_persist(#[case] status: LifecycleStatus) {
         let mut task = task_with_lifecycle(status);
         task.add_side_flag(SideFlag::TmuxMissing);
+
+        assert_eq!(
+            registry_persistence_disposition(&task),
+            RegistryPersistenceDisposition::Persist
+        );
+        assert!(!is_registry_ghost_task(&task));
+        assert!(is_cockpit_visible_task(&task));
+    }
+
+    fn removed_task_with_git_status(worktree_exists: bool, branch_exists: bool) -> Task {
+        let mut task = task_with_lifecycle(LifecycleStatus::Removed);
+        task.git_status = Some(GitStatus {
+            worktree_exists,
+            branch_exists,
+            current_branch: branch_exists.then(|| "ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task
+    }
+
+    #[test]
+    fn removed_task_with_existing_branch_is_not_a_registry_ghost() {
+        let task = removed_task_with_git_status(false, true);
+
+        assert_eq!(
+            registry_persistence_disposition(&task),
+            RegistryPersistenceDisposition::Persist
+        );
+        assert!(!is_registry_ghost_task(&task));
+        assert!(is_cockpit_visible_task(&task));
+    }
+
+    #[test]
+    fn removed_task_with_existing_worktree_is_not_a_registry_ghost() {
+        let task = removed_task_with_git_status(true, false);
 
         assert_eq!(
             registry_persistence_disposition(&task),

@@ -6,6 +6,7 @@ mod lookup;
 mod merge;
 mod new_task;
 mod open;
+mod orphan_gc;
 mod projection;
 mod task_state;
 mod task_window;
@@ -28,6 +29,10 @@ pub use new_task::{
     NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
+pub use orphan_gc::{
+    append_orphan_gc_to_plan, classify_orphans, collect_orphan_gc_commands, orphan_gc_commands,
+    OrphanGcMode, OrphanGcTarget,
+};
 pub use task_window::{
     mark_task_window_repaired, task_window_repair_plan, task_window_repair_plan_with_open_mode,
 };
@@ -3651,6 +3656,32 @@ mod tests {
             .git_status
             .as_ref()
             .is_some_and(|status| !status.worktree_exists && status.branch_exists));
+    }
+
+    #[test]
+    fn observe_drop_resources_marks_worktree_present_when_path_matches_even_if_branch_differs() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("task-1");
+        let task = context.registry.get_task(&task_id).unwrap().clone();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(
+                0,
+                "worktree /tmp/worktrees/web-fix-login\nHEAD 1111111\nbranch refs/heads/docs/other\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+        ]);
+
+        let observation = observe_drop_resources(&mut context, &task, &mut runner).unwrap();
+
+        assert_eq!(observation.tmux_session, ResourceState::Present);
+        assert_eq!(observation.worktree, ResourceState::Present);
+        assert_eq!(observation.branch, ResourceState::Present);
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists && status.branch_exists));
     }
 
     #[test]

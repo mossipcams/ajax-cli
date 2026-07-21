@@ -12,6 +12,7 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
     context: &mut CommandContext<R>,
     confirmed: bool,
     runner: &mut impl CommandRunner,
+    orphan_mode: Option<commands::OrphanGcMode>,
 ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
     let mut outputs = Vec::new();
     let mut state_changed = false;
@@ -97,6 +98,31 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
             DropTaskCompletion::Removed | DropTaskCompletion::TeardownIncomplete { .. } => {
                 state_changed = true;
             }
+        }
+    }
+
+    if let Some(mode) = orphan_mode {
+        let orphan_commands = commands::collect_orphan_gc_commands(context, runner, mode)
+            .map_err(|error| (error, state_changed))?;
+        if !orphan_commands.is_empty() && !confirmed {
+            return Err((CommandError::ConfirmationRequired, state_changed));
+        }
+        for command in &orphan_commands {
+            let output = runner
+                .run(command)
+                .map_err(|error| (CommandError::CommandRun(error), state_changed))?;
+            if output.status_code != 0 {
+                return Err((
+                    CommandError::CommandRun(CommandRunError::NonZeroExit {
+                        program: command.program.clone(),
+                        status_code: output.status_code,
+                        stderr: output.stderr,
+                        cwd: command.cwd.clone(),
+                    }),
+                    state_changed,
+                ));
+            }
+            outputs.push(output);
         }
     }
 

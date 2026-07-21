@@ -123,25 +123,37 @@ pub(crate) fn render_matches_mut(
             })
         }
         Some(("tidy", subcommand)) => {
+            let orphan_mode = match subcommand.get_one::<String>("orphans").map(String::as_str) {
+                Some("all") => Some(commands::OrphanGcMode::All),
+                Some("ajax") => Some(commands::OrphanGcMode::AjaxShaped),
+                Some(_) => None,
+                None => None,
+            };
             if !subcommand.get_flag("execute") {
+                let mut plan = commands::sweep_cleanup_plan(context);
+                if let Some(mode) = orphan_mode {
+                    commands::append_orphan_gc_to_plan(context, &mut plan, runner, mode)
+                        .map_err(command_error)?;
+                }
                 return Ok(RenderedCommand {
-                    output: render_plan(
-                        commands::sweep_cleanup_plan(context),
-                        subcommand.get_flag("json"),
-                    )?,
+                    output: render_plan(plan, subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
-            let (outputs, state_changed) =
-                execute_sweep_cleanup_operation(context, subcommand.get_flag("yes"), runner)
-                    .map_err(|(error, error_state_changed)| {
-                        let cli_error = command_error(error);
-                        if error_state_changed {
-                            cli_error.after_state_change()
-                        } else {
-                            cli_error
-                        }
-                    })?;
+            let (outputs, state_changed) = execute_sweep_cleanup_operation(
+                context,
+                subcommand.get_flag("yes"),
+                runner,
+                orphan_mode,
+            )
+            .map_err(|(error, error_state_changed)| {
+                let cli_error = command_error(error);
+                if error_state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                }
+            })?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, None),
                 state_changed,

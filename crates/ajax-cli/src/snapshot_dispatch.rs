@@ -1,4 +1,5 @@
 use ajax_core::{
+    adapters::ProcessCommandRunner,
     commands::{self, CommandContext},
     config::{
         RuntimePathField, RuntimePathOverride, RuntimePathSource, RuntimePaths, WorktreePlacement,
@@ -92,7 +93,18 @@ pub(crate) fn render_matches_with_paths(
             render_readonly_plan(plan, subcommand)
         }
         Some(("tidy", subcommand)) => {
-            render_readonly_plan(commands::sweep_cleanup_plan(context), subcommand)
+            let mut plan = commands::sweep_cleanup_plan(context);
+            let orphan_mode = match subcommand.get_one::<String>("orphans").map(String::as_str) {
+                Some("all") => Some(commands::OrphanGcMode::All),
+                Some("ajax") => Some(commands::OrphanGcMode::AjaxShaped),
+                _ => None,
+            };
+            if let Some(mode) = orphan_mode {
+                let mut runner = ProcessCommandRunner;
+                commands::append_orphan_gc_to_plan(context, &mut plan, &mut runner, mode)
+                    .map_err(command_error)?;
+            }
+            render_readonly_plan(plan, subcommand)
         }
         Some(("next", subcommand)) => render_response(
             commands::next(context),
