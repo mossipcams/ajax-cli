@@ -21,6 +21,7 @@ pub struct AttentionTransition {
     pub handle: String,
     pub status: TaskStatus,
     pub explanation: Option<String>,
+    pub client: String,
 }
 
 /// Episode detector for operator attention webhooks. Fires once when a task
@@ -79,6 +80,7 @@ pub fn take_attention_transition_at(
                 handle: task.handle.clone(),
                 status: operator_status.status,
                 explanation: operator_status.explanation,
+                client: format!("{:?}", task.selected_agent).to_ascii_lowercase(),
             })
         }
         TaskStatus::Running | TaskStatus::Idle => {
@@ -107,11 +109,7 @@ pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
 }
 
 fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
-    format!(
-        "{}|{}",
-        status.status.as_str(),
-        status.explanation.as_deref().unwrap_or("")
-    )
+    status.status.as_str().to_string()
 }
 
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
@@ -702,6 +700,7 @@ mod tests {
                 handle: "notify".to_string(),
                 status: TaskStatus::Waiting,
                 explanation: Some("Waiting for input".to_string()),
+                client: "codex".to_string(),
             })
         );
         assert_eq!(super::take_attention_transition(&mut task), None);
@@ -826,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn distinct_error_reason_fires_again() {
+    fn distinct_error_reasons_do_not_refire_within_error_class() {
         let mut task = active_task("err");
         crate::live::apply_observation_at(
             &mut task,
@@ -841,12 +840,7 @@ mod tests {
             at(1_010),
         );
         let second = super::take_attention_transition_at(&mut task, at(1_011));
-        assert_eq!(
-            second
-                .as_ref()
-                .map(|t| (t.status, t.explanation.as_deref())),
-            Some((TaskStatus::Error, Some("Merge conflict")))
-        );
+        assert_eq!(second, None);
     }
 
     #[test]
@@ -863,7 +857,7 @@ mod tests {
             task.metadata
                 .get(super::LAST_NOTIFIED_STATUS_KEY)
                 .map(String::as_str),
-            Some("Error|CI failed")
+            Some("Error")
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_011)),
@@ -896,7 +890,7 @@ mod tests {
             task.metadata
                 .get(super::LAST_NOTIFIED_STATUS_KEY)
                 .map(String::as_str),
-            Some("Waiting|Waiting for input")
+            Some("Waiting")
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_011)),
@@ -1024,12 +1018,8 @@ mod tests {
         assert!(task.metadata.is_empty());
     }
 
-    /// Characterization: notify keys off `status|explanation`. Flipping between
-    /// distinct actionable reasons re-fires immediately — no quiet window and
-    /// no dwell between attention states. CLI/TUI Full refresh (~1s) plus loose
-    /// pane matchers turn this into phone spam.
     #[test]
-    fn distinct_attention_reasons_refire_immediately_without_quiet_window() {
+    fn waiting_explanation_churn_does_not_refire_within_episode() {
         let mut task = active_task("churn");
 
         crate::live::apply_observation_at(
@@ -1043,28 +1033,27 @@ mod tests {
             Some("Waiting for input".to_string())
         );
 
-        // One second later: different actionable reason (e.g. pane matched "blocked").
+        // Same Waiting class, different explanation — no re-fire.
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
             at(1_002),
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_002))
-                .map(|t| (t.status, t.explanation.unwrap_or_default())),
-            Some((TaskStatus::Error, "Agent blocked".to_string()))
+            super::take_attention_transition_at(&mut task, at(1_002)),
+            None
         );
 
-        // Back to the original waiting reason — third ping, still no 30s quiet.
+        // Class change Waiting → Error still fires once.
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
             at(1_003),
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_003))
-                .map(|t| t.explanation.unwrap_or_default()),
-            Some("Waiting for input".to_string())
+                .map(|t| (t.status, t.explanation.unwrap_or_default())),
+            Some((TaskStatus::Error, "Agent blocked".to_string()))
         );
     }
 }

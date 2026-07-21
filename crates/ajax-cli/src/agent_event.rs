@@ -87,8 +87,9 @@ pub(crate) fn translate_agent_event(
             }
         }
         ("codex", "UserPromptSubmit" | "PreToolUse" | "PostToolUse") => Some("working"),
+        ("codex", "PermissionRequest") => Some("ask"),
         ("codex", "Stop") => Some("done"),
-        ("cursor", "beforeSubmitPrompt") => Some("working"),
+        ("cursor", "beforeSubmitPrompt" | "preToolUse" | "postToolUse") => Some("working"),
         ("cursor", "stop") => Some("done"),
         ("pi", "before_agent_start") => Some("working"),
         ("pi", "agent_settled") => Some("done"),
@@ -217,6 +218,18 @@ mod tests {
         assert_eq!(
             translate_agent_event("codex", "Stop", &payload),
             Some("done")
+        );
+        assert_eq!(
+            translate_agent_event("codex", "PermissionRequest", &payload),
+            Some("ask")
+        );
+        assert_eq!(
+            translate_agent_event("cursor", "preToolUse", &payload),
+            Some("working")
+        );
+        assert_eq!(
+            translate_agent_event("cursor", "postToolUse", &payload),
+            Some("working")
         );
         assert_eq!(
             translate_agent_event("pi", "agent_settled", &payload),

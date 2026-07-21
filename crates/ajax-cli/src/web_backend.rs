@@ -825,6 +825,115 @@ mod tests {
     }
 
     #[test]
+    fn web_refresh_cockpit_lifecycle_wait_notifies_once() {
+        use ajax_core::config::NotifyConfig;
+
+        let cache_dir = std::env::temp_dir().join(format!(
+            "ajax-web-lifecycle-wait-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_agent_status_event(&cache_dir, "web/fix-login", "wait");
+
+        let mut context = reviewable_context();
+        context.runtime_paths.cache_dir = cache_dir.clone();
+        context.config.notify = Some(NotifyConfig {
+            webhook_url: "https://ntfy.sh/topic".to_string(),
+            poll_seconds: None,
+        });
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+
+        #[derive(Clone)]
+        struct NotifyRecordingRunner {
+            specs: std::sync::Arc<std::sync::Mutex<Vec<CommandSpec>>>,
+        }
+
+        impl CommandRunner for NotifyRecordingRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                if command.program == "curl" {
+                    self.specs.lock().unwrap().push(command.clone());
+                    return Ok(CommandOutput {
+                        status_code: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    });
+                }
+                let stdout = match command.args.as_slice() {
+                    [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                    [_, repo, subcommand, action, flag]
+                        if repo == "/repo/web"
+                            && subcommand == "worktree"
+                            && action == "list"
+                            && flag == "--porcelain" =>
+                    {
+                        "worktree /repo/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                    }
+                    [_, repo, subcommand, format]
+                        if repo == "/repo/web"
+                            && subcommand == "branch"
+                            && format == "--format=%(refname:short)" =>
+                    {
+                        "main\najax/fix-login\n"
+                    }
+                    [command, ..] if command == "list-windows" => {
+                        "ajax-web-fix-login\ttask\t/repo/web__worktrees/ajax-fix-login\n"
+                    }
+                    [command, ..] if command == "capture-pane" => "{\"type\":\"thinking\"}\n",
+                    _ => "",
+                };
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let mut runner = NotifyRecordingRunner {
+            specs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let specs = runner.specs.clone();
+        let curl_count = || {
+            specs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|spec| spec.program == "curl")
+                .count()
+        };
+        let mut bridge = super::CliRuntimeBridge::for_context(None, &context).unwrap();
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
+            .expect("first refresh with notify");
+        assert_eq!(curl_count(), 1);
+        let curl_body = specs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|spec| spec.program == "curl")
+            .unwrap()
+            .args[4]
+            .clone();
+        assert!(curl_body.contains("Waiting"));
+        assert!(curl_body.contains("(codex)"));
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
+            .expect("second refresh with notify");
+        assert_eq!(curl_count(), 1);
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
     fn web_refresh_cockpit_does_not_reload_sqlite_when_state_unchanged() {
         let root = std::env::temp_dir().join(format!("ajax-web-no-reload-{}", std::process::id()));
         let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
