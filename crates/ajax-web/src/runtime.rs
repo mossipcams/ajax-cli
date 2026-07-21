@@ -43,8 +43,8 @@ pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
     bytes_axum_response, html_response, json_response, json_value_response,
-    operation_response_with_request_id, response_from_web_error, static_bytes_axum_response,
-    text_axum_response, web_error_response,
+    operation_response_with_request_id, response_from_web_error, text_axum_response,
+    web_error_response,
 };
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
@@ -606,16 +606,16 @@ fn cloudflare_access_error_response(error: CloudflareAccessError) -> AxumRespons
     )
 }
 
-async fn axum_app_css(uri: Uri) -> AxumResponse {
-    static_asset_response("/app.css", version_busted(&uri))
+async fn axum_app_css() -> AxumResponse {
+    static_asset_response("/app.css")
 }
 
-async fn axum_app_js(uri: Uri) -> AxumResponse {
-    static_asset_response("/app.js", version_busted(&uri))
+async fn axum_app_js() -> AxumResponse {
+    static_asset_response("/app.js")
 }
 
-async fn axum_terminal_js(uri: Uri) -> AxumResponse {
-    static_asset_response("/terminal.js", version_busted(&uri))
+async fn axum_terminal_js() -> AxumResponse {
+    static_asset_response("/terminal.js")
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1199,29 +1199,11 @@ async fn axum_fallback(uri: Uri) -> AxumResponse {
     text_axum_response(404, "not found")
 }
 
-/// `immutable` is only truthful for a content-addressed URL. The shell busts
-/// these assets with `?v=<app_version()>`; a bare path is not content-addressed,
-/// so promising immutability there pins a stale bundle for a year — and
-/// `immutable` suppresses revalidation even on an explicit reload, which an
-/// installed PWA cannot recover from without clearing site data.
-fn static_asset_response(path: &str, version_busted: bool) -> AxumResponse {
+fn static_asset_response(path: &str) -> AxumResponse {
     match install::static_asset(path) {
-        Some(asset) if version_busted => {
-            static_bytes_axum_response(asset.content_type, asset.body.to_vec())
-        }
         Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
         None => text_axum_response(404, "not found"),
     }
-}
-
-/// True when the request carries a non-empty `?v=` cache-busting query.
-fn version_busted(uri: &Uri) -> bool {
-    uri.query().is_some_and(|query| {
-        query.split('&').any(|pair| {
-            pair.strip_prefix("v=")
-                .is_some_and(|value| !value.is_empty())
-        })
-    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1885,40 +1867,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_shell_assets_are_long_cached_and_gzipped() {
+    async fn static_shell_assets_are_no_store_and_gzipped() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let (_state, cookie, app) =
             app_with(context, TestBridge::default(), "axum-static-cache-gzip");
-        let immutable_cache = "public, max-age=31536000, immutable";
 
         let version = crate::slices::install::app_version();
         for path in ["/app.js", "/app.css", "/terminal.js"] {
-            let response = get_public(&app, &format!("{path}?v={version}")).await;
-            assert_eq!(response.status(), StatusCode::OK, "{path}");
-            assert_eq!(
-                response.headers()["cache-control"],
-                immutable_cache,
-                "version-busted {path} should be long-cached + immutable"
-            );
-
-            // A bare path is not content-addressed. `immutable` there would pin
-            // a stale bundle for a year with no revalidation even on reload,
-            // which an installed PWA cannot recover from.
-            let bare = get_public(&app, path).await;
-            assert_eq!(bare.status(), StatusCode::OK, "{path}");
-            assert_eq!(
-                bare.headers()["cache-control"],
-                "no-store",
-                "bare {path} must not claim immutability"
-            );
-
-            // An empty version is not a fingerprint either.
-            let empty = get_public(&app, &format!("{path}?v=")).await;
-            assert_eq!(
-                empty.headers()["cache-control"],
-                "no-store",
-                "empty ?v= on {path} must not claim immutability"
-            );
+            for request_path in [path, &format!("{path}?v={version}")] {
+                let response = get_public(&app, request_path).await;
+                assert_eq!(response.status(), StatusCode::OK, "{request_path}");
+                let cache_control = response.headers()["cache-control"]
+                    .to_str()
+                    .unwrap_or_default();
+                assert_eq!(cache_control, "no-store", "{request_path} must be no-store");
+                assert!(
+                    !cache_control.contains("immutable"),
+                    "{request_path} must not claim immutability"
+                );
+            }
         }
 
         // HTML shell and API remain no-store (do not get the immutable cache).
@@ -1947,23 +1914,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shell_versions_static_asset_urls() {
+    async fn shell_uses_bare_static_asset_urls() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let (_state, _cookie, app) =
             app_with(context, TestBridge::default(), "axum-static-version-urls");
-        let version = crate::slices::install::app_version();
 
         let shell_body = to_bytes(get_public(&app, "/").await.into_body(), usize::MAX)
             .await
             .unwrap();
         let shell = std::str::from_utf8(&shell_body).unwrap();
         assert!(
-            shell.contains(&format!("src=\"/app.js?v={version}\"")),
-            "shell must cache-bust app.js with the live version"
+            shell.contains("src=\"/app.js\""),
+            "shell must load app.js at a bare URL"
         );
         assert!(
-            shell.contains(&format!("href=\"/app.css?v={version}\"")),
-            "shell must cache-bust app.css with the live version"
+            shell.contains("href=\"/app.css\""),
+            "shell must load app.css at a bare URL"
+        );
+        assert!(
+            !shell.contains("src=\"/app.js?"),
+            "shell must not cache-bust app.js with a query string"
+        );
+        assert!(
+            !shell.contains("href=\"/app.css?"),
+            "shell must not cache-bust app.css with a query string"
         );
 
         let app_js_body = to_bytes(get_public(&app, "/app.js").await.into_body(), usize::MAX)
@@ -1971,9 +1945,19 @@ mod tests {
             .unwrap();
         let app_js = std::str::from_utf8(&app_js_body).unwrap();
         assert!(
-            app_js.contains(&format!("import(\"./terminal.js?v={version}\")")),
-            "app.js must cache-bust the deferred terminal.js import with the live version"
+            app_js.contains("import(\"./terminal.js\")"),
+            "app.js must keep the deferred terminal.js import at a bare URL"
         );
+        for versioned_edge in [
+            "\"./app.js?v=",
+            "\"./terminal.js?v=",
+            "import(\"./terminal.js?v=",
+        ] {
+            assert!(
+                !app_js.contains(versioned_edge),
+                "served app.js must not rewrite module edges with {versioned_edge}"
+            );
+        }
     }
 
     #[tokio::test]

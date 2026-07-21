@@ -1,0 +1,49 @@
+ROUTER_REPORT_BEGIN
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Shell recovery signals (focus, pageshow, online, visibility) now coalesce into one trailing cockpit load via loadCockpit({ trailing: true }).
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/app/App.tsx
+    - crates/ajax-web/web/src/app/App.test.tsx
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run src/app/App.test.tsx -t 'coalesces overlapping shell recovery signals into one trailing cockpit load'
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/app/App.test.tsx > App shell > coalesces overlapping shell recovery signals into one trailing cockpit load
+        Error: Test timed out in 5000ms.
+        (trailing cockpit call never ran after first request rejected)
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run src/app/App.test.tsx -t 'coalesces overlapping shell recovery signals into one trailing cockpit load'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  1 passed | 44 skipped (45)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run src/app/App.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  45 passed (45)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run src/shared/hooks/useCockpitResource.test.tsx src/shared/lib/cockpitPoll.test.ts
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  2 passed (2)
+        Tests  22 passed (22)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        (no errors)
+    - PHASE: VERIFY
+      COMMAND: npm run web:lint
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        (no errors)
+  STOP_CONDITIONS_HIT:
+    - NONE
+  REMAINING_RISKS:
+    - NONE
+ROUTER_REPORT_END

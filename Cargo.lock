@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-cli"
-version = "0.51.4"
+version = "0.51.6"
 dependencies = [
  "ajax-core",
  "ajax-supervisor",

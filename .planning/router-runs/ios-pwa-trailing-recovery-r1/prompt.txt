@@ -1,0 +1,31 @@
+MODE: implement
+
+Implement the bounded TDD packet at
+`.planning/packets/ios-pwa-trailing-recovery.md` in the current worktree. Read
+the entire READY packet before acting and treat it as the source of truth.
+
+Do not commit, push, merge, rebase, change branches, or edit outside the two
+allowed files. Prove the focused RED before production edits, then make the
+smallest implementation and run every packet verification command.
+
+Return exactly one machine-parseable report between ROUTER_REPORT_BEGIN and
+ROUTER_REPORT_END using this schema:
+
+DELEGATE_REPORT:
+  STATUS: COMPLETE | BLOCKED
+  SUMMARY: <one line>
+  FILES_CHANGED:
+    - <path>
+  TEST_FIRST: PROVEN | NOT_PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED | GREEN | VERIFY
+      COMMAND: <exact command>
+      EXIT_CODE: <integer>
+      OUTPUT_EXCERPT: |
+        <brief output>
+  STOP_CONDITIONS_HIT:
+    - <item, or NONE>
+  REMAINING_RISKS:
+    - <item, or NONE>
+
+Do not write anything after ROUTER_REPORT_END.

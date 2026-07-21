@@ -1,0 +1,47 @@
+ROUTER_REPORT_BEGIN
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Hidden PWA startup retries failed cockpit loads on the 1s active cadence until the first projection loads, then restores quiet 60s hidden polling.
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/app/App.tsx
+    - crates/ajax-web/web/src/app/App.test.tsx
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/app/App.test.tsx -t 'retries a failed hidden PWA launch until the first cockpit projection loads'
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        FAIL  src/app/App.test.tsx > App shell > retries a failed hidden PWA launch until the first cockpit projection loads
+        AssertionError: expected 1 to be 2 // Object.is equality
+        - Expected
+        + Received
+        - 2
+        + 1
+        await vi.waitFor(() => expect(cockpitFetchCalls()).toBe(2));
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/app/App.test.tsx -t 'retries a failed hidden PWA launch until the first cockpit projection loads'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  1 passed | 43 skipped (44)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/app/App.test.tsx -t 'loads the cockpit on mount while hidden, but skips the background poll|retries a failed hidden PWA launch until the first cockpit projection loads'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  2 passed | 42 skipped (44)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run crates/ajax-web/web/src/app/App.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  44 passed (44)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        (no output; tsc completed successfully)
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS:
+    - hiddenStartupRetry gates on cockpit.status === "error" (not loading) so successful hidden mounts stay quiet; effect deps use hiddenStartupRetry rather than noCockpitProjection to avoid spurious interval resets that broke focus-resume polling
+ROUTER_REPORT_END

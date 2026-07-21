@@ -1,0 +1,37 @@
+MODE: resume
+
+You are revising the bounded Task 2 implementation in the current worktree. Do not commit, push, merge, rebase, or change branches.
+
+The current patch correctly retries a failed hidden PWA startup, but parent review found one contract mismatch: App.tsx immediately calls loadCockpit when hiddenStartupRetry becomes true. The approved contract is a retry on the existing active 1,000 ms cadence, not an eager retry plus that cadence.
+
+Allowed files only:
+- crates/ajax-web/web/src/app/App.tsx
+- crates/ajax-web/web/src/app/App.test.tsx
+
+Required TDD revision:
+1. In the existing test `retries a failed hidden PWA launch until the first cockpit projection loads`, after the first rejected `/api/cockpit` call has settled, explicitly prove the Cockpit call count is still exactly 1 before advancing fake time. Run the focused test and show that the current eager implementation fails for the expected `2 vs 1` reason.
+2. Remove only the eager `loadCockpit` invocation from the adaptive polling effect. Keep the 1,000 ms interval and hidden callback allowance while the initial projection is absent after an error.
+3. Re-run the focused test, both hidden-mount tests, the full App test file, and `npm run web:check`.
+
+Do not broaden behavior, add dependencies, touch generated assets, or change resume-event handling (that is Task 3).
+
+Return exactly one machine-parseable report between ROUTER_REPORT_BEGIN and ROUTER_REPORT_END using this schema:
+
+DELEGATE_REPORT:
+  STATUS: COMPLETE | BLOCKED
+  SUMMARY: <one line>
+  FILES_CHANGED:
+    - <path>
+  TEST_FIRST: PROVEN | NOT_PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED | GREEN | VERIFY
+      COMMAND: <exact command>
+      EXIT_CODE: <integer>
+      OUTPUT_EXCERPT: |
+        <brief output>
+  STOP_CONDITIONS_HIT:
+    - <item, or NONE>
+  REMAINING_RISKS:
+    - <item, or NONE>
+
+Do not write anything after ROUTER_REPORT_END.
