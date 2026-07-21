@@ -52,10 +52,7 @@ pub fn browser_shell_html() -> String {
     // /api/version stay fresh — phone then shows OpenCode with a new app_version.
     // Fingerprint only HTML entry URLs; leave the module graph bare (no import rewrite).
     html = html
-        .replace(
-            "src=\"/app.js\"",
-            &format!("src=\"/app.js?v={version}\""),
-        )
+        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
         .replace(
             "href=\"/app.css\"",
             &format!("href=\"/app.css?v={version}\""),
