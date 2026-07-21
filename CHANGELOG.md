@@ -2,6 +2,20 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.52.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.8...ajax-cli-v0.52.0) (2026-07-21)
+
+
+### Features
+
+* add per-task bootstrap for Node 22, husky, and router symlinks ([#632](https://github.com/mossipcams/ajax-cli/issues/632)) ([b8e9ae6](https://github.com/mossipcams/ajax-cli/commit/b8e9ae61bb2f7d0a90243c77c605649c54672516))
+* native agent lifecycle events replace pane-text status heuristics ([#629](https://github.com/mossipcams/ajax-cli/issues/629)) ([3199734](https://github.com/mossipcams/ajax-cli/commit/3199734ac0837b56b018b2410b7dc1d6ae0326e9))
+
+
+### Bug Fixes
+
+* **scripts:** restore ajax-model-router symlinks after main sync ([#627](https://github.com/mossipcams/ajax-cli/issues/627)) ([fbc308f](https://github.com/mossipcams/ajax-cli/commit/fbc308ff73190ed23bdc60850d33335e92a60006))
+* **web:** stop shell asset caching and prefer Resume primary ([#631](https://github.com/mossipcams/ajax-cli/issues/631)) ([79a1a7d](https://github.com/mossipcams/ajax-cli/commit/79a1a7ddd6933bb3212963538f9635d00d79ab20))
+
 ## [0.51.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.7...ajax-cli-v0.51.8) (2026-07-21)
 
 
