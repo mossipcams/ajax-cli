@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.52.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.2...ajax-cli-v0.52.3) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** keep task chrome visible and Drop after navigate-back ([#637](https://github.com/mossipcams/ajax-cli/issues/637)) ([a59e3f1](https://github.com/mossipcams/ajax-cli/commit/a59e3f19e4a2c8a2d1709e94d2be94366284922e))
+
 ## [0.52.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.1...ajax-cli-v0.52.2) (2026-07-21)
 
 
