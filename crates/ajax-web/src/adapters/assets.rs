@@ -21,6 +21,18 @@ pub fn browser_shell_html() -> String {
             1,
         );
     }
+    // ponytail: iOS PWA can keep bare /app.js forever despite Cache-Control.
+    // Fingerprint only the HTML entry URLs — leave the module graph bare
+    // (rewriting import("./terminal.js") was the fragile path we rolled back).
+    html = html
+        .replace(
+            "src=\"/app.js\"",
+            &format!("src=\"/app.js?v={version}\""),
+        )
+        .replace(
+            "href=\"/app.css\"",
+            &format!("href=\"/app.css?v={version}\""),
+        );
     html
 }
 
@@ -39,7 +51,15 @@ pub fn shell_version_from_assets(
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
     let mut hash: u64 = FNV_OFFSET;
-    for asset in [index_html, app_js, app_css, terminal_js] {
+    // ponytail: one-shot salt so already-cached ETags flip even when the
+    // embedded bytes match a previous build. Bump when forcing a client bust.
+    for asset in [
+        index_html,
+        app_js,
+        app_css,
+        terminal_js,
+        b"ios-pwa-bust-20260721-pi",
+    ] {
         for &byte in asset {
             hash ^= byte as u64;
             hash = hash.wrapping_mul(FNV_PRIME);
