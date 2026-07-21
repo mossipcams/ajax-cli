@@ -119,13 +119,13 @@ impl TmuxAdapter {
         .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
+    /// Capture the *visible* pane only. Scrollback (`-S`) is never
+    /// classified: historical text is not live evidence, and keyword hits in
+    /// scrollback were the top status false-positive source.
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
         let target = format!("{session}:{window}");
-        CommandSpec::new(
-            &self.program,
-            ["capture-pane", "-p", "-t", &target, "-S", "-80"],
-        )
-        .with_timeout(TMUX_PROBE_TIMEOUT)
+        CommandSpec::new(&self.program, ["capture-pane", "-p", "-t", &target])
+            .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
     pub fn parse_session_status(session: &str, list_sessions_output: &str) -> TmuxStatus {

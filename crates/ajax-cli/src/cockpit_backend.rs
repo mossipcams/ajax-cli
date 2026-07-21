@@ -695,7 +695,9 @@ mod tests {
                 [command, ..] if command == "list-windows" => {
                     "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
-                [command, ..] if command == "capture-pane" => "Do you want to proceed? y/n\n",
+                [command, ..] if command == "capture-pane" => {
+                    "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel\n"
+                }
                 _ => "",
             };
 

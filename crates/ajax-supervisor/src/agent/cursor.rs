@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ajax_core::{events::AgentEvent, live::classify_pane, models::LiveStatusKind};
+use ajax_core::events::AgentEvent;
 use serde_json::Value;
 
 use crate::process_observer::{ProcessProtocol, StdoutParser};
@@ -185,27 +185,11 @@ fn agent_event_from_text(text: &str) -> Option<AgentEvent> {
         });
     }
 
-    match classify_pane(text).kind {
-        LiveStatusKind::WaitingForApproval => Some(AgentEvent::WaitingForApproval {
-            command: extract_shell_command(text),
-        }),
-        LiveStatusKind::WaitingForInput => Some(AgentEvent::WaitingForInput {
-            prompt: text.to_string(),
-        }),
-        LiveStatusKind::CommandFailed
-        | LiveStatusKind::Blocked
-        | LiveStatusKind::AuthRequired
-        | LiveStatusKind::RateLimited
-        | LiveStatusKind::ContextLimit
-        | LiveStatusKind::CiFailed
-        | LiveStatusKind::MergeConflict => Some(AgentEvent::Failed {
-            message: text.to_string(),
-        }),
-        LiveStatusKind::Done => Some(AgentEvent::Completed),
-        _ => Some(AgentEvent::Message {
-            text: text.to_string(),
-        }),
-    }
+    // Assistant prose is never failure/completion evidence: stream-json
+    // result/status events own those outcomes. Anything else is activity.
+    Some(AgentEvent::Message {
+        text: text.to_string(),
+    })
 }
 
 fn completed_tool_call_event(tool_call: &Value) -> Option<AgentEvent> {

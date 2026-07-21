@@ -124,15 +124,23 @@ Reconciliation precedence:
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence for terminal exit (`done`/`failed`) and for process liveness only.
 Hook files and pane text are observational hints with explicit confidence.
-When sources disagree, core's status decision applies this precedence:
+Pane text is the weakest hint: it is captured from the *visible* pane only
+(never scrollback) and may only ever assert three positionally-anchored hints
+— busy, idle prompt, approval prompt. Pane text never asserts completion,
+failure, or stuck states (done, command failed, blocked, merge conflict, CI
+failed, auth/rate-limit/context-limit): agents routinely write those words in
+prose while working, and keyword matching cannot tell prose from terminal
+chrome. Those statuses belong to the wrapper exit snapshot, provider
+hooks/lifecycle events, and git/`gh` substrate evidence. When sources
+disagree, core's status decision applies this precedence:
 
 1. Terminal process exit or fatal runtime error (wrapper `done`/`failed`, 120s)
 2. Structured provider lifecycle event
 3. Provider hook event (agent-specific freshness: Codex `working` 20s; Codex
    `wait`/`ask` and Claude hook states 120s; `AgentClient::Other` ignores hooks)
-4. Structured pane/UI recognition (Cursor stream-json, agent-specific prompts;
-   medium confidence, 60s)
-5. Generic pane heuristic (low confidence, 15s; cannot alone assert
+4. Structured pane/UI recognition (Cursor stream-json, anchored agent prompt
+   chrome; medium confidence, 60s)
+5. Generic pane busy chrome (low confidence, 15s; cannot alone assert
    `AgentRunning` or approval)
 6. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
    becomes `AgentRunning`
@@ -425,11 +433,24 @@ likewise recover to Running immediately. Trusted wrapper completion advances
 lifecycle to `Reviewable` only when the run-graph aggregation reports the
 parent as fully completed (no active non-detached descendants).
 
-Pane classification is agent-aware: structured recognition (Cursor stream-json,
-agent-specific prompts) is preferred over generic busy heuristics. Generic pane
-parsing is a low-confidence fallback and cannot alone assert `AgentRunning`.
-`classify_pane` remains the generic compatibility entry point;
-`project_pane_activity` feeds the conservative reducer.
+Pane recognition lives in `live.rs`'s `recognize` submodule and is the only
+place pane captures are interpreted. Recognition is structural, never keyword
+search: busy hints require a live status line in the footer region (the last
+few visible lines, e.g. `esc to interrupt`); idle/approval hints require the
+agent's actual prompt chrome anchored to the bottom of the visible screen
+(Claude's bare `❯` plus status bar or permission menu, Codex's `›` composer
+plus model line); Cursor stream-json lines are parsed as JSON with the newest
+event winning. Terminal stream-json outcomes (run finished/failed) yield no
+pane hint — the wrapper owns completion and failure. The selected agent's
+recognizer runs first, with the other known agents' recognizers as a
+structural cross-check; there is no generic keyword fallback. Busy chrome
+maps to a low-confidence generic-pane observation that cannot alone assert
+`AgentRunning`; structured recognition maps to medium confidence.
+`project_pane_activity` feeds the conservative reducer, and a pane with no
+hint yields no observation, preserving prior credible state. Monitor event
+text payloads (messages, stdout/stderr lines) are likewise never
+keyword-classified: they keep their structural event meaning, and only a tool
+call's actual test-runner invocation upgrades to `TestsRunning`.
 
 Attention webhooks (`attention::take_attention_transition`) fire on actionable
 Waiting and Error operator status. Parent phases that wait on delegated

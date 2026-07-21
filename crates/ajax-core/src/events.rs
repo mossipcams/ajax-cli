@@ -3,8 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    live::{classify_agent_pane, classify_pane},
-    models::{AgentClient, GitStatus, LiveObservation, LiveStatusKind},
+    models::{GitStatus, LiveObservation, LiveStatusKind},
     registry::{Registry, RegistryError},
 };
 
@@ -48,47 +47,27 @@ pub enum MonitorEvent {
     Process(ProcessEvent),
 }
 
-/// Generic compatibility entry point. Text-bearing events are classified with
-/// the agent-agnostic `classify_pane`.
+/// Map a monitor event onto a live observation.
+///
+/// Event payloads are typed at the source (supervisor/agent parsers, process
+/// exit, git snapshots), so text payloads are never keyword-classified here:
+/// agent prose about failures, conflicts, or questions is not status
+/// evidence. Text-bearing events fall back to their structural meaning — a
+/// message is agent activity, a tool call is a running command, stderr is
+/// process output — and only genuinely terminal events (exit, completion,
+/// failure, hang, git conflict flag) assert actionable states.
 pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservation> {
-    live_observation_from_event_inner(event, &|text, fallback| {
-        classify_text_or_else(text, fallback)
-    })
-}
-
-/// Agent-aware event mapping. Text-bearing events are classified with the
-/// busy-first, agent-specific `classify_agent_pane` so a Claude busy indicator
-/// beats stale prompt text and Codex prompts are detected for Codex only.
-pub fn live_observation_from_event_for_agent(
-    agent: AgentClient,
-    event: &MonitorEvent,
-) -> Option<LiveObservation> {
-    live_observation_from_event_inner(event, &|text, fallback| {
-        classify_agent_text_or_else(agent, text, fallback)
-    })
-}
-
-fn live_observation_from_event_inner(
-    event: &MonitorEvent,
-    classify: &dyn Fn(&str, LiveObservation) -> LiveObservation,
-) -> Option<LiveObservation> {
     match event {
         MonitorEvent::Agent(AgentEvent::Started { .. })
         | MonitorEvent::Agent(AgentEvent::Thinking) => Some(LiveObservation::new(
             LiveStatusKind::AgentRunning,
             "agent running",
         )),
-        MonitorEvent::Agent(AgentEvent::Message { text }) => Some(classify(
-            text,
-            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        MonitorEvent::Agent(AgentEvent::Message { .. }) => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
         )),
-        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(classify(
-            name,
-            LiveObservation::new(
-                LiveStatusKind::CommandRunning,
-                format!("tool running: {name}"),
-            ),
-        )),
+        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(tool_call_observation(name)),
         MonitorEvent::Agent(AgentEvent::WaitingForApproval { .. }) => Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
             "waiting for approval",
@@ -100,24 +79,21 @@ fn live_observation_from_event_inner(
         MonitorEvent::Agent(AgentEvent::Completed) => {
             Some(LiveObservation::new(LiveStatusKind::Done, "done"))
         }
-        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(classify(
-            message,
-            LiveObservation::new(
-                LiveStatusKind::CommandFailed,
-                format!("agent failed: {message}"),
-            ),
+        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            format!("agent failed: {message}"),
         )),
         MonitorEvent::Process(ProcessEvent::Started { .. }) => Some(LiveObservation::new(
             LiveStatusKind::CommandRunning,
             "process running",
         )),
-        MonitorEvent::Process(ProcessEvent::Stdout { line }) => Some(classify(
-            line,
-            LiveObservation::new(LiveStatusKind::CommandRunning, "process running"),
+        MonitorEvent::Process(ProcessEvent::Stdout { .. }) => Some(LiveObservation::new(
+            LiveStatusKind::CommandRunning,
+            "process running",
         )),
-        MonitorEvent::Process(ProcessEvent::Stderr { line }) => Some(classify(
-            line,
-            LiveObservation::new(LiveStatusKind::CommandRunning, format!("stderr: {line}")),
+        MonitorEvent::Process(ProcessEvent::Stderr { line }) => Some(LiveObservation::new(
+            LiveStatusKind::CommandRunning,
+            format!("stderr: {line}"),
         )),
         MonitorEvent::Process(ProcessEvent::Exited { code }) => {
             if code == &Some(0) {
@@ -150,8 +126,7 @@ pub fn apply_monitor_event_to_task(task: &mut crate::models::Task, event: &Monit
         changed = true;
     }
 
-    let Some(observation) = live_observation_from_event_for_agent(task.selected_agent, event)
-    else {
+    let Some(observation) = live_observation_from_event(event) else {
         return changed;
     };
 
@@ -170,11 +145,10 @@ pub fn apply_monitor_event_to_registry<R: Registry>(
         changed = true;
     }
 
-    let agent = registry
-        .get_task(task_id)
-        .map(|task| task.selected_agent)
-        .ok_or_else(|| RegistryError::TaskNotFound(task_id.clone()))?;
-    let Some(observation) = live_observation_from_event_for_agent(agent, event) else {
+    if registry.get_task(task_id).is_none() {
+        return Err(RegistryError::TaskNotFound(task_id.clone()));
+    }
+    let Some(observation) = live_observation_from_event(event) else {
         return Ok(changed);
     };
 
@@ -204,26 +178,37 @@ fn apply_git_snapshot_to_task(task: &mut crate::models::Task, status: GitStatus)
     task.apply_git_status(status);
 }
 
-fn classify_text_or_else(text: &str, fallback: LiveObservation) -> LiveObservation {
-    let observation = classify_pane(text);
-    if observation.kind == LiveStatusKind::Unknown {
-        fallback
+/// A tool call carries the *invocation the agent is executing* (tool name
+/// plus command/path), which is structured evidence — unlike prose. When
+/// that invocation is a test-runner command, the observation is
+/// `TestsRunning`; anything else is a generic running command.
+fn tool_call_observation(name: &str) -> LiveObservation {
+    if invokes_test_runner(name) {
+        LiveObservation::new(
+            LiveStatusKind::TestsRunning,
+            format!("tests running: {name}"),
+        )
     } else {
-        observation
+        LiveObservation::new(
+            LiveStatusKind::CommandRunning,
+            format!("tool running: {name}"),
+        )
     }
 }
 
-fn classify_agent_text_or_else(
-    agent: AgentClient,
-    text: &str,
-    fallback: LiveObservation,
-) -> LiveObservation {
-    let observation = classify_agent_pane(agent, text);
-    if observation.kind == LiveStatusKind::Unknown {
-        fallback
-    } else {
-        observation
-    }
+fn invokes_test_runner(invocation: &str) -> bool {
+    [
+        "cargo test",
+        "cargo nextest",
+        "nextest run",
+        "npm test",
+        "pnpm test",
+        "yarn test",
+        "pytest",
+        "rspec",
+    ]
+    .iter()
+    .any(|runner| invocation.contains(runner))
 }
 
 #[cfg(test)]
@@ -292,8 +277,10 @@ mod tests {
         assert!(!task.has_side_flag(SideFlag::NeedsInput));
     }
 
+    /// Message text is agent prose, never prompt evidence: a Codex composer
+    /// pasted into a message is activity, not a waiting state.
     #[test]
-    fn codex_message_uses_codex_specific_prompt_detection() {
+    fn message_text_is_never_prompt_classified() {
         let mut task = task();
 
         assert!(apply_monitor_event_to_task(
@@ -305,7 +292,7 @@ mod tests {
 
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
+            Some(LiveStatusKind::AgentRunning)
         );
     }
 
@@ -326,7 +313,7 @@ mod tests {
                 MonitorEvent::Agent(AgentEvent::Failed {
                     message: "please login to continue".to_string(),
                 }),
-                LiveStatusKind::AuthRequired,
+                LiveStatusKind::CommandFailed,
             ),
             (
                 MonitorEvent::Process(ProcessEvent::Started { pid: Some(7) }),
@@ -385,45 +372,50 @@ mod tests {
         }
     }
 
+    /// Text payloads are agent prose or process output, never status
+    /// evidence: messages stay activity, process output stays process
+    /// activity, and a failed event is a plain command failure regardless of
+    /// which keywords its message contains. Actionable states come from
+    /// typed events and substrate evidence, not text classification.
     #[test]
-    fn text_bearing_monitor_events_use_live_classifier() {
+    fn text_bearing_monitor_events_never_assert_actionable_states() {
         for (event, expected) in [
             (
                 MonitorEvent::Agent(AgentEvent::Message {
                     text: "Automatic merge failed; fix conflicts and then commit the result."
                         .to_string(),
                 }),
-                LiveStatusKind::MergeConflict,
+                LiveStatusKind::AgentRunning,
             ),
             (
                 MonitorEvent::Process(ProcessEvent::Stdout {
                     line: "GitHub Actions failed: test.yml / build".to_string(),
                 }),
-                LiveStatusKind::CiFailed,
+                LiveStatusKind::CommandRunning,
             ),
             (
                 MonitorEvent::Process(ProcessEvent::Stderr {
                     line: "CONFLICT (content): merge conflict in src/lib.rs".to_string(),
                 }),
-                LiveStatusKind::MergeConflict,
+                LiveStatusKind::CommandRunning,
             ),
             (
                 MonitorEvent::Agent(AgentEvent::Failed {
                     message: "please login to continue".to_string(),
                 }),
-                LiveStatusKind::AuthRequired,
+                LiveStatusKind::CommandFailed,
             ),
             (
                 MonitorEvent::Agent(AgentEvent::Failed {
                     message: "rate limit exceeded; try again later".to_string(),
                 }),
-                LiveStatusKind::RateLimited,
+                LiveStatusKind::CommandFailed,
             ),
             (
                 MonitorEvent::Agent(AgentEvent::Failed {
                     message: "manual intervention required; blocked".to_string(),
                 }),
-                LiveStatusKind::Blocked,
+                LiveStatusKind::CommandFailed,
             ),
         ] {
             let observation = live_observation_from_event(&event)
