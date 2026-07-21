@@ -123,16 +123,33 @@ Reconciliation precedence:
 
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence for terminal exit (`done`/`failed`) and for process liveness only.
-Hook files are observational hints with explicit confidence. Pane text is no
-longer classified for agent activity: uninstrumented sessions project no
-confident activity beyond prior state, process liveness, and wrapper exit
-(`done`/`failed`). Instrumented sessions rely on provider hooks and structured
-lifecycle events. When sources disagree, core's status decision applies this
+
+Native client hooks and the launch wrapper feed a **canonical agent-event
+contract** (facts, not display statuses). Per-client adapters identify what
+happened (`TurnStarted`, `ActivityStarted`/`Finished`, `AttentionRequested`,
+`TurnSettled`, child lifecycle, heartbeat, session open/close). They do not
+choose Running / Waiting / Idle / Error. One helper (`ajax-cli __agent-event`)
+ingests stdin native JSON under wrapper identity env and appends a versioned
+event envelope; Ajax folds the log into an orthogonal per-run snapshot
+(liveness, phase, activity, blocker, outcome, open children/tools/attention)
+and projects operator status. Capability profiles mark which facts each client
+can supply (`native` / `wrapper` / `unavailable` / `unverified`); absence of an
+event must never be treated as absence of a state. Concurrent tools and
+subagents use open sets, not last-event-wins.
+
+Legacy provider hook files remain observational hints with explicit confidence
+during migration. Pane text is not classified for agent activity except where a
+capability is explicitly `unavailable`/`unverified` and a narrow, low-confidence
+structural fallback is authorized. Uninstrumented sessions project no confident
+activity beyond prior state, process liveness, and wrapper exit
+(`done`/`failed`). When sources disagree, core's status decision applies this
 precedence:
 
 1. Terminal process exit or fatal runtime error (wrapper `done`/`failed`, 120s)
-2. Structured provider lifecycle event (non-terminal events expire after 30
-   minutes; terminal events persist until superseded)
+2. Structured provider lifecycle / canonical agent events (attention and open
+   activities persist until cleared or session end; non-terminal hints without
+   open-set backing expire after a generous window; terminal outcomes persist
+   until superseded)
 3. Provider hook event (120s freshness for all accepted agents;
    `AgentClient::Other` ignores hooks)
 4. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
@@ -146,6 +163,9 @@ pane-scoped hook files under `~/.cache/tmux-agent-status/panes/` map to child
 runs (`pane:{session}:{pane_id}` with `parent_run_id = primary`). Equal-timestamp
 conflicts across sources on the same run project `Unknown`; malformed values
 never participate.
+
+See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
+client mapping matrix, and migration phases.
 
 ## Task Operations
 
