@@ -1,0 +1,42 @@
+ROUTER_REPORT_BEGIN
+```yaml
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Added weak-ETag/no-cache revalidation for the three static shell asset routes while keeping the HTML shell and /api/* on no-store with no ETag.
+  FILES_CHANGED:
+    - crates/ajax-web/src/adapters/http.rs
+    - crates/ajax-web/src/runtime.rs
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: cargo test -p ajax-web static_shell_assets_revalidate_with_a_weak_etag
+      EXIT_CODE: 101
+      OUTPUT_EXCERPT: |
+        test runtime::tests::static_shell_assets_revalidate_with_a_weak_etag ... FAILED
+        thread '...' panicked at crates/ajax-web/src/runtime.rs:1928:42:
+        no entry found for key "etag"
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 173 filtered out
+    - PHASE: GREEN
+      COMMAND: cargo test -p ajax-web static_shell_assets_revalidate_with_a_weak_etag
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        test runtime::tests::static_shell_assets_revalidate_with_a_weak_etag ... ok
+        test result: ok. 1 passed; 0 failed; 0 ignored; 173 filtered out
+    - PHASE: VERIFY
+      COMMAND: cargo nextest run -p ajax-web
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Summary [   1.201s] 174 tests run: 174 passed, 0 skipped
+    - PHASE: VERIFY
+      COMMAND: cargo clippy -p ajax-web --all-targets --all-features -- -D warnings
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.71s
+    - PHASE: VERIFY
+      COMMAND: cargo fmt --check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: fmt_exit=0
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS: []
+```
+ROUTER_REPORT_END
