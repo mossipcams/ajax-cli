@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.53.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.53.0...ajax-cli-v0.53.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **core:** fully tear down drops and GC orphan ajax worktrees ([#642](https://github.com/mossipcams/ajax-cli/issues/642)) ([e0a0629](https://github.com/mossipcams/ajax-cli/commit/e0a0629788477a1531d4cb8ba5c8e71add60e583))
+
 ## [0.53.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.3...ajax-cli-v0.53.0) (2026-07-21)
 
 
