@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.54.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.0...ajax-cli-v0.54.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** hug bottom nav to the screen edge and stop scrollback drift ([#646](https://github.com/mossipcams/ajax-cli/issues/646)) ([286584c](https://github.com/mossipcams/ajax-cli/commit/286584ca90ab2b7281e1ac39af0e0974ea14c42a))
+
 ## [0.54.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.53.1...ajax-cli-v0.54.0) (2026-07-21)
 
 
