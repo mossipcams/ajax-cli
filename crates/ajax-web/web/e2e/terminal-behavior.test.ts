@@ -1324,6 +1324,30 @@ test("compact terminal keys are smaller than primary touch targets on phone", as
   }
 });
 
+test("hotbar Paste label stays inside its button on phone", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const pasteFit = await page.evaluate(() => {
+    const paste = document.querySelector(
+      '.terminal-keys .terminal-key[aria-label="Paste"]',
+    ) as HTMLElement | null;
+    if (!paste) return null;
+    const style = getComputedStyle(paste);
+    return {
+      scrollWidth: paste.scrollWidth,
+      clientWidth: paste.clientWidth,
+      overflow: style.overflow,
+      whiteSpace: style.whiteSpace,
+    };
+  });
+
+  expect(pasteFit).not.toBeNull();
+  expect(pasteFit!.overflow).toBe("hidden");
+  expect(pasteFit!.whiteSpace).toBe("nowrap");
+  // Label must not paint past the button chrome (equal-flex crush on "Paste").
+  expect(pasteFit!.scrollWidth).toBeLessThanOrEqual(pasteFit!.clientWidth + 1);
+});
+
 test("terminal controls meet mobile touch target size on phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);

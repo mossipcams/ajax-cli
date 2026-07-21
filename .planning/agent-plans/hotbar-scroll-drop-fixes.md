@@ -78,3 +78,4 @@ User reported all three and asked for fixes — authorized to implement.
 - T3/T1: `scripts/run-delegate` exit 65 (MISSING_STRUCTURED_REPORT) despite successful work; parent gated on git diff + re-validation.
 - T1: deleted e2e Hide-keyboard test rather than rewriting (packet allowed).
 - T1 build also refreshed `dist/terminal.js` (incidental).
+- Follow-up: Paste label hung off equal-flex key — shrink label font/pad/gap + nowrap/overflow clip (`R-LOCAL-TINY`).
