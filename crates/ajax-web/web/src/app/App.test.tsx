@@ -576,6 +576,58 @@ describe("App shell", () => {
     expect(cockpitCalls()).toBe(1);
   });
 
+  it("retries a failed hidden PWA launch until the first cockpit projection loads", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    let cockpitCalls = 0;
+    let releaseIntervalRetry: (() => void) | null = null;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        if (cockpitCalls === 1) {
+          return Promise.reject(new Error("network error"));
+        }
+        return new Promise<Response>((resolve) => {
+          releaseIntervalRetry = () => resolve(jsonResponse(cockpit));
+        });
+      }
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    const cockpitFetchCalls = () =>
+      fetchMock.mock.calls.filter(([path]) => String(path) === "/api/cockpit").length;
+
+    await vi.waitFor(() => expect(cockpitFetchCalls()).toBe(1));
+
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute(
+        "data-state",
+        "backend unreachable",
+      ),
+    );
+    expect(cockpitFetchCalls()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await vi.waitFor(() => expect(cockpitFetchCalls()).toBe(2));
+    releaseIntervalRetry!();
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected"),
+    );
+
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(cockpitFetchCalls()).toBe(2);
+  });
+
   it("timed-out cockpit GET releases polling for recovery", async () => {
     vi.useFakeTimers();
     vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
@@ -893,6 +945,74 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(cockpitCalls()).toBe(beforeFocus + 1));
     await vi.advanceTimersByTimeAsync(0);
     expect(cockpitCalls()).toBe(beforeFocus + 1);
+  });
+
+  it("coalesces overlapping shell recovery signals into one trailing cockpit load", async () => {
+    vi.useFakeTimers();
+    let cockpitCalls = 0;
+    let rejectFirst!: (reason?: unknown) => void;
+    let resolveSecond!: (value: ReturnType<typeof jsonResponse>) => void;
+    const firstPending = new Promise<ReturnType<typeof jsonResponse>>((_, reject) => {
+      rejectFirst = reject;
+    });
+    const secondPending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      resolveSecond = resolve;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          if (cockpitCalls === 1) return firstPending;
+          if (cockpitCalls === 2) return secondPending;
+          return Promise.reject(new Error(`unexpected extra cockpit call: ${cockpitCalls}`));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(cockpitCalls).toBe(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("pageshow"));
+      window.dispatchEvent(new Event("online"));
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(cockpitCalls).toBe(1);
+
+    await act(async () => {
+      rejectFirst(new Error("network error"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(cockpitCalls).toBe(2);
+
+    await act(async () => {
+      resolveSecond(jsonResponse(cockpit));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected"),
+    );
+    expect(cockpitCalls).toBe(2);
   });
 
   // Regression: loadDetail must not depend on cockpit data. It is a dependency

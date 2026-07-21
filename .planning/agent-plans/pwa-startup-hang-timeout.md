@@ -92,7 +92,11 @@ take longer.
   worktree `target/` dirs (ajax-worktree-checkout-state, ajax-status-refactor,
   fix-web-pwa-boot-paint). Note: `cargo install` replaced the globally
   installed ajax-cli 0.51.4 (main worktree) with this branch's 0.51.3 build.
-- Still not committed; no PR opened.
+- Committed as fe2791a (went through husky pre-commit on commit, exit 0),
+  pushed to ajax/connections, PR opened: https://github.com/mossipcams/ajax-cli/pull/616
+  (`fix(web): bound cockpit GETs with a 10s timeout so a hung fetch cannot stall PWA startup`).
+- PR #616: CI 10/10 green; merged and deployed by user (2026-07-20). Live
+  bundle on :8787/:8788 confirmed serving `AbortSignal.timeout`.
 
 ## Validation commands
 

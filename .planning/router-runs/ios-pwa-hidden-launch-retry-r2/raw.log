@@ -1,0 +1,43 @@
+ROUTER_REPORT_BEGIN
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: Removed eager hidden-startup loadCockpit; retry now only on the existing 1,000 ms interval cadence.
+  FILES_CHANGED:
+    - crates/ajax-web/web/src/app/App.tsx
+    - crates/ajax-web/web/src/app/App.test.tsx
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: npm run web:test -- --run -t "retries a failed hidden PWA launch until the first cockpit projection loads"
+      EXIT_CODE: 1
+      OUTPUT_EXCERPT: |
+        AssertionError: expected 2 to be 1 // Object.is equality
+        expect(cockpitFetchCalls()).toBe(1);
+    - PHASE: GREEN
+      COMMAND: npm run web:test -- --run -t "retries a failed hidden PWA launch until the first cockpit projection loads"
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed | 45 skipped (46)
+        Tests  1 passed | 415 skipped (416)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run -t "loads the cockpit on mount while hidden"
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed | 45 skipped (46)
+        Tests  1 passed | 415 skipped (416)
+    - PHASE: VERIFY
+      COMMAND: npm run web:test -- --run src/app/App.test.tsx
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        Test Files  1 passed (1)
+        Tests  44 passed (44)
+    - PHASE: VERIFY
+      COMMAND: npm run web:check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: |
+        (no errors)
+  STOP_CONDITIONS_HIT:
+    - NONE
+  REMAINING_RISKS:
+    - NONE
+ROUTER_REPORT_END

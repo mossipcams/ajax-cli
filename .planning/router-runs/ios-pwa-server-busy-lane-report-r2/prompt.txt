@@ -1,0 +1,36 @@
+You are repairing only the structured report for a completed bounded implementation.
+Current directory is the task worktree.
+Never commit, push, merge, rebase, create branches, or change branches.
+Do not edit any file. Do not run formatting. Inspect the current diff and the preserved evidence in
+`.planning/router-runs/ios-pwa-server-busy-lane-r1/raw.log`.
+
+Immutable task ID: `ios-pwa-server-busy-lane`.
+Allowed implementation files were:
+- `crates/ajax-web/src/runtime.rs`
+- `architecture.md`
+
+The parent review found the source patch in scope and independently verified:
+- focused concurrency tests: 5 passed
+- full `cargo nextest run -p ajax-web`: 174 passed
+- `cargo fmt --check`: exit 0
+- `cargo clippy -p ajax-web --all-targets --all-features -- -D warnings`: exit 0
+
+The prior response failed only because it used a custom lowercase schema inside a Markdown fence.
+Return no Markdown fence and no prose. Return exactly the following schema between the marker lines,
+populated from the preserved raw evidence. `COMMAND_EVIDENCE` must include RED, GREEN, and VERIFY
+entries with exact commands, exit codes, and short excerpts. `TEST_FIRST` must be `PROVEN`.
+
+ROUTER_REPORT_BEGIN
+DELEGATE_REPORT:
+  STATUS: COMPLETE | BLOCKED | FAILED
+  SUMMARY: <one sentence>
+  FILES_CHANGED: [<paths>]
+  TEST_FIRST: PROVEN | NOT_APPLICABLE | NOT_PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED | GREEN | VERIFY | OTHER
+      COMMAND: <exact command>
+      EXIT_CODE: <integer>
+      OUTPUT_EXCERPT: <lines proving the result>
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS: []
+ROUTER_REPORT_END

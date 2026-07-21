@@ -1,0 +1,32 @@
+DELEGATE_REPORT:
+  STATUS: COMPLETE
+  SUMMARY: axum_cockpit now uses try_lock on the control lane and serves browser_cockpit_view from shared state when busy so concurrent GET /api/cockpit completes promptly without starting another refresh.
+  FILES_CHANGED: [crates/ajax-web/src/runtime.rs, architecture.md]
+  TEST_FIRST: PROVEN
+  COMMAND_EVIDENCE:
+    - PHASE: RED
+      COMMAND: cargo nextest run -p ajax-web -E 'test(axum_cockpit_returns_current_projection_while_control_lane_is_busy)'
+      EXIT_CODE: 100
+      OUTPUT_EXCERPT: FAIL runtime::tests::axum_cockpit_returns_current_projection_while_control_lane_is_busy | panicked at crates/ajax-web/src/runtime.rs:3541:14: second cockpit GET should complete promptly while refresh holds the lane: Elapsed(())
+    - PHASE: GREEN
+      COMMAND: cargo nextest run -p ajax-web -E 'test(axum_cockpit_returns_current_projection_while_control_lane_is_busy)'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: PASS runtime::tests::axum_cockpit_returns_current_projection_while_control_lane_is_busy | Summary: 1 passed
+    - PHASE: VERIFY
+      COMMAND: cargo nextest run -p ajax-web -E 'test(/axum_cockpit_serves_cached_projection_within_refresh_ttl|refresh_cockpit_and_cache_refreshes_once_and_caches|axum_operation_waits_for_slow_cockpit_refresh_and_preserves_refresh_state|axum_task_start_waits_for_slow_cockpit_refresh_and_preserves_refresh_state/)'
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: Summary: 4 tests run: 4 passed
+    - PHASE: VERIFY
+      COMMAND: cargo nextest run -p ajax-web
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: Summary: 174 tests run: 174 passed, 0 skipped
+    - PHASE: VERIFY
+      COMMAND: cargo fmt --check
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: no diff after formatting runtime.rs second_cockpit spawn block
+    - PHASE: VERIFY
+      COMMAND: cargo clippy -p ajax-web --all-targets --all-features -- -D warnings
+      EXIT_CODE: 0
+      OUTPUT_EXCERPT: Finished dev profile; no warnings
+  STOP_CONDITIONS_HIT: []
+  REMAINING_RISKS: []

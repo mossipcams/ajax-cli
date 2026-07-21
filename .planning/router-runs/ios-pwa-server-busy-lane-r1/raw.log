@@ -1,0 +1,55 @@
+ROUTER_REPORT_BEGIN
+```yaml
+status: success
+task: axum_cockpit_returns_current_projection_while_control_lane_is_busy
+failure_mode: "Second GET /api/cockpit blocked on control_lane.lock().await while first refresh held the lane; timed out at 150ms."
+implementation: "try_lock in axum_cockpit; serve browser_cockpit_view from shared state when busy; extracted refresh_cockpit_and_cache_locked for lane-available path."
+
+red_test:
+  command: "cargo nextest run -p ajax-web -E 'test(axum_cockpit_returns_current_projection_while_control_lane_is_busy)'"
+  exit_code: 100
+  excerpt: |
+    FAIL runtime::tests::axum_cockpit_returns_current_projection_while_control_lane_is_busy
+    panicked at crates/ajax-web/src/runtime.rs:3541:14:
+    second cockpit GET should complete promptly while refresh holds the lane: Elapsed(())
+
+files_changed:
+  - crates/ajax-web/src/runtime.rs
+  - architecture.md
+
+changes:
+  - "Added axum_cockpit_returns_current_projection_while_control_lane_is_busy multi-thread test"
+  - "axum_cockpit: try_lock control_lane; fallback to browser_cockpit_view without refresh/cache when busy"
+  - "Extracted refresh_cockpit_and_cache_locked; refresh_cockpit_and_cache still awaits lock then delegates"
+  - "architecture.md: documented Cockpit read fallback while control lane is busy"
+
+verification:
+  - command: "cargo nextest run -p ajax-web -E 'test(axum_cockpit_returns_current_projection_while_control_lane_is_busy)'"
+    exit_code: 0
+    excerpt: "PASS runtime::tests::axum_cockpit_returns_current_projection_while_control_lane_is_busy — Summary: 1 passed"
+  - command: "cargo nextest run -p ajax-web -E 'test(/axum_cockpit_serves_cached_projection_within_refresh_ttl|refresh_cockpit_and_cache_refreshes_once_and_caches|axum_operation_waits_for_slow_cockpit_refresh_and_preserves_refresh_state|axum_task_start_waits_for_slow_cockpit_refresh_and_preserves_refresh_state/)'"
+    exit_code: 0
+    excerpt: "Summary: 4 tests run: 4 passed"
+  - command: "cargo nextest run -p ajax-web"
+    exit_code: 0
+    excerpt: "Summary: 174 tests run: 174 passed, 0 skipped"
+  - command: "cargo fmt --check"
+  exit_code_initial: 1
+  exit_code_after_cargo_fmt: 0
+  excerpt: "Initial: Diff in runtime.rs (second_cockpit spawn formatting). After cargo fmt: no diff."
+  - command: "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings"
+    exit_code: 0
+    excerpt: "Finished dev profile; no warnings"
+
+acceptance_criteria:
+  red_before_edit: true
+  second_get_completes_while_lane_busy: true
+  refresh_calls_unchanged_during_fallback: true
+  normal_refresh_after_ttl: true
+  operations_still_wait_for_refresh: true
+  architecture_updated: true
+  only_allowed_files_edited: true
+
+stop_conditions_hit: []
+```
+ROUTER_REPORT_END

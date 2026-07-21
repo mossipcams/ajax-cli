@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { dashboardHash, projectHash, settingsHash, taskHash } from "@/shared/lib/routes";
 import {
   cockpitRefreshIntervalMs,
+  REFRESH_INTERVAL_ACTIVE_MS,
   versionPollIntervalMs,
   type PollingRouteKind,
 } from "@/shared/lib/polling";
@@ -98,13 +99,13 @@ export default function App() {
   });
   const onShellResume = useEffectEvent(() => {
     void checkVersion();
-    void loadCockpit();
+    void loadCockpit({ trailing: true });
   });
   const onShellVisibilityChange = useEffectEvent(() => {
     setDocumentVisibility(document.visibilityState);
     if (document.visibilityState === "visible") {
       void checkVersion();
-      void loadCockpit();
+      void loadCockpit({ trailing: true });
     }
   });
 
@@ -115,11 +116,13 @@ export default function App() {
     const onVisibilityChange = () => onShellVisibilityChange();
     window.addEventListener("focus", onResume);
     window.addEventListener("pageshow", onResume);
+    window.addEventListener("online", onResume);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelIdle(idleHandle);
       window.removeEventListener("focus", onResume);
       window.removeEventListener("pageshow", onResume);
+      window.removeEventListener("online", onResume);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -131,19 +134,23 @@ export default function App() {
     visibilityState: documentVisibility,
     routeKind: route.kind as PollingRouteKind,
   };
-  const cockpitIntervalMs = cockpitRefreshIntervalMs(pollingInput);
+  const noCockpitProjection = cockpit.data === null;
+  const hiddenStartupRetry = noCockpitProjection && cockpit.status === "error";
+  const cockpitIntervalMs = hiddenStartupRetry
+    ? REFRESH_INTERVAL_ACTIVE_MS
+    : cockpitRefreshIntervalMs(pollingInput);
   const versionIntervalMs = versionPollIntervalMs(pollingInput);
 
   useEffect(() => {
     const cockpitTimer = window.setInterval(() => {
-      if (!document.hidden) void loadCockpit();
+      if (!document.hidden || hiddenStartupRetry) void loadCockpit();
     }, cockpitIntervalMs);
     const versionTimer = window.setInterval(checkVersion, versionIntervalMs);
     return () => {
       window.clearInterval(cockpitTimer);
       window.clearInterval(versionTimer);
     };
-  }, [checkVersion, cockpitIntervalMs, loadCockpit, versionIntervalMs]);
+  }, [checkVersion, cockpitIntervalMs, hiddenStartupRetry, loadCockpit, versionIntervalMs]);
 
   useEffect(() => {
     const kind = route.kind;

@@ -842,7 +842,15 @@ where
         return response.into_axum_response();
     }
 
-    refresh_cockpit_and_cache(&state, false).await
+    if let Ok(_refresh_guard) = state.control_lane.try_lock() {
+        return refresh_cockpit_and_cache_locked(&state, false);
+    }
+
+    let guard = state.shared();
+    match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
+        Ok(value) => json_value_response(200, value),
+        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
+    }
 }
 
 /// Refresh the cockpit projection and cache the response, firing attention
@@ -859,6 +867,17 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let _refresh_guard = state.control_lane.lock().await;
+    refresh_cockpit_and_cache_locked(state, deliver_notifications)
+}
+
+fn refresh_cockpit_and_cache_locked<C, B>(
+    state: &WebAppState<C, B>,
+    deliver_notifications: bool,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
     if let Some(response) = state.cached_cockpit_response() {
         return response.into_axum_response();
     }
@@ -3486,6 +3505,79 @@ mod tests {
         );
 
         cleanup.await.expect("terminal cleanup should finish");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn axum_cockpit_returns_current_projection_while_control_lane_is_busy() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge {
+                refresh_entered: Some(Arc::clone(&entered)),
+                refresh_release: Some(Arc::clone(&release)),
+                ..TestBridge::default()
+            },
+            "axum-cockpit-busy-lane",
+        );
+
+        let refresh_app = app.clone();
+        let refresh_cookie = cookie.clone();
+        let first_cockpit =
+            tokio::spawn(async move { get(&refresh_app, &refresh_cookie, "/api/cockpit").await });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("cockpit refresh never entered the bridge");
+
+        let concurrent_app = app.clone();
+        let concurrent_cookie = cookie.clone();
+        let second_cockpit =
+            tokio::spawn(
+                async move { get(&concurrent_app, &concurrent_cookie, "/api/cockpit").await },
+            );
+
+        let second_result = tokio::time::timeout(Duration::from_millis(150), second_cockpit).await;
+
+        release_gate(&release);
+
+        let second = second_result
+            .expect("second cockpit GET should complete promptly while refresh holds the lane")
+            .unwrap();
+
+        assert_eq!(second.status(), StatusCode::OK);
+        let body = json_of(second).await;
+        assert!(
+            body["cards"]
+                .as_array()
+                .expect("cockpit body should include cards")
+                .iter()
+                .any(|card| card["qualified_handle"] == "web/fix-login"),
+            "fallback cockpit read should include the existing web/fix-login card"
+        );
+        assert_eq!(
+            state.shared().bridge.refresh_calls.load(Ordering::SeqCst),
+            1,
+            "busy-lane cockpit read must not start another refresh"
+        );
+
+        let first = tokio::time::timeout(Duration::from_secs(5), first_cockpit)
+            .await
+            .expect("first cockpit refresh response timed out")
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        tokio::time::sleep(super::COCKPIT_REFRESH_CACHE_TTL + Duration::from_millis(50)).await;
+
+        assert_eq!(
+            get(&app, &cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            state.shared().bridge.refresh_count,
+            2,
+            "later polls should still use the normal refresh path after TTL expires"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
