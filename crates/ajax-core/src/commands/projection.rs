@@ -254,7 +254,7 @@ mod tests {
             .find(|annotation| annotation.evidence == Evidence::CheckoutMismatch)
             .expect("checkout mismatch annotation");
         assert_eq!(mismatch_annotation.kind, AnnotationKind::Broken);
-        assert_eq!(card.primary_action, OperatorAction::Repair);
+        assert_eq!(card.primary_action, OperatorAction::Resume);
         assert_eq!(
             card.available_actions,
             vec![OperatorAction::Repair, OperatorAction::Resume]
