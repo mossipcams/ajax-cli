@@ -21,6 +21,42 @@ pub fn browser_shell_html() -> String {
             1,
         );
     }
+    // Drop any leftover service worker from the retired PWA install surface.
+    // A registered SW can keep serving stale /app.js even when Website Data
+    // looks empty and /sw.js itself 404s.
+    if !html.contains("ajax-retire-sw") {
+        html = html.replacen(
+            "<head>",
+            concat!(
+                "<head>\n",
+                "  <script id=\"ajax-retire-sw\">",
+                "try{",
+                "if('serviceWorker' in navigator){",
+                "navigator.serviceWorker.getRegistrations()",
+                ".then(function(rs){rs.forEach(function(r){r.unregister()})});",
+                "}",
+                "if(window.caches){",
+                "caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k)})});",
+                "}",
+                "}catch(e){}",
+                "</script>",
+            ),
+            1,
+        );
+    }
+    html = html.replace(
+        "<title>Ajax Cockpit</title>",
+        &format!("<title>Ajax Cockpit {version}</title>"),
+    );
+    // Cloudflare (ajax.mossyhome.net) can edge-cache bare /app.js while HTML and
+    // /api/version stay fresh — phone then shows OpenCode with a new app_version.
+    // Fingerprint only HTML entry URLs; leave the module graph bare (no import rewrite).
+    html = html
+        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
+        .replace(
+            "href=\"/app.css\"",
+            &format!("href=\"/app.css?v={version}\""),
+        );
     html
 }
 
