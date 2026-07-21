@@ -576,6 +576,59 @@ describe("App shell", () => {
     expect(cockpitCalls()).toBe(1);
   });
 
+  it("timed-out cockpit GET releases polling for recovery", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      const controller = new AbortController();
+      setTimeout(() => {
+        controller.abort(new DOMException("TimeoutError", "TimeoutError"));
+      }, ms);
+      return controller.signal;
+    });
+    let cockpitCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        if (cockpitCalls === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              reject(new Error("expected abort signal"));
+              return;
+            }
+            const onAbort = () => {
+              reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+            };
+            if (signal.aborted) {
+              onAbort();
+              return;
+            }
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+        }
+        return Promise.resolve(jsonResponse(cockpit));
+      }
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_001);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(cockpitCalls).toBe(2));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected"),
+    );
+    expect(screen.queryByText(/backend unreachable|disconnected|stale session/)).toBeNull();
+  });
+
   it("reports reachable cockpit HTTP failures as disconnected", async () => {
     vi.stubGlobal(
       "fetch",

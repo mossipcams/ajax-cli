@@ -9,13 +9,8 @@ pub struct StaticAsset {
 
 pub fn browser_shell_html() -> String {
     let version = app_version();
-    let mut html = include_str!("../../web/dist/index.html")
-        .replace("__AJAX_APP_VERSION__", version)
-        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
-        .replace(
-            "href=\"/app.css\"",
-            &format!("href=\"/app.css?v={version}\""),
-        );
+    let mut html =
+        include_str!("../../web/dist/index.html").replace("__AJAX_APP_VERSION__", version);
     // iOS PWA: launch splash is theme-color #161616, then the bare document
     // paints white until /app.css loads. Keep the first paint dark even when
     // CSS is slow or the radio blips.
@@ -79,53 +74,14 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
         }),
         "/app.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
-            body: versioned_app_js(),
+            body: include_bytes!("../../web/dist/app.js"),
         }),
         "/terminal.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
-            body: versioned_terminal_js(),
+            body: include_bytes!("../../web/dist/terminal.js"),
         }),
         _ => None,
     }
-}
-
-/// Rewrite every reference to a sibling chunk so it carries `?v=`.
-///
-/// Browsers key ES modules by full URL. If one chunk is fetched as
-/// `/app.js?v=X` (from the shell) and another chunk imports it as bare
-/// `./app.js`, the module graph is evaluated **twice** — two React instances,
-/// which surfaces as an invalid-hook-call crash the moment the lazy terminal
-/// chunk loads. Every cross-chunk edge must therefore agree on the query.
-fn version_chunk_refs(raw: &'static [u8], what: &str) -> &'static [u8] {
-    let version = app_version();
-    let mut rewritten = std::str::from_utf8(raw)
-        .unwrap_or_else(|_| panic!("embedded {what} must be utf8"))
-        .to_string();
-    for sibling in ["./app.js", "./terminal.js"] {
-        rewritten = rewritten.replace(
-            &format!("\"{sibling}\""),
-            &format!("\"{sibling}?v={version}\""),
-        );
-    }
-    Box::leak(rewritten.into_bytes().into_boxed_slice())
-}
-
-/// Served `/app.js` body. The fingerprint in `app_version` is still computed
-/// from the raw embedded bytes, so this rewrite does not feed back into the
-/// version string.
-fn versioned_app_js() -> &'static [u8] {
-    static VERSIONED: OnceLock<&'static [u8]> = OnceLock::new();
-    VERSIONED.get_or_init(|| version_chunk_refs(include_bytes!("../../web/dist/app.js"), "app.js"))
-}
-
-/// Served `/terminal.js` body. The lazy chunk imports shared modules back out
-/// of the entry chunk (`from "./app.js"`); that edge needs the same `?v=` the
-/// shell used, or the entry is instantiated a second time.
-fn versioned_terminal_js() -> &'static [u8] {
-    static VERSIONED: OnceLock<&'static [u8]> = OnceLock::new();
-    VERSIONED.get_or_init(|| {
-        version_chunk_refs(include_bytes!("../../web/dist/terminal.js"), "terminal.js")
-    })
 }
 
 #[cfg(test)]
@@ -137,43 +93,47 @@ mod tests {
         assert!(browser_shell_html().contains("<!doctype html>"));
     }
 
-    /// Browsers key ES modules by URL. If the shell loads `/app.js?v=X` but the
-    /// lazy terminal chunk imports bare `./app.js`, the entry is evaluated a
-    /// second time — two React instances, and the task route dies with an
-    /// invalid-hook-call the moment the terminal loads. Every cross-chunk edge
-    /// must carry the same `?v=`.
     #[test]
-    fn served_chunks_never_reference_a_sibling_without_the_version_query() {
-        let version = app_version();
-        for path in ["/app.js", "/terminal.js"] {
-            let asset = static_asset(path).expect("asset must exist");
-            let body = std::str::from_utf8(asset.body).expect("chunk must be utf8");
-            for sibling in ["./app.js", "./terminal.js"] {
+    fn static_assets_are_raw_and_use_one_bare_module_graph() {
+        let raw_app = include_bytes!("../../web/dist/app.js");
+        let raw_terminal = include_bytes!("../../web/dist/terminal.js");
+
+        let app = static_asset("/app.js").expect("app.js must exist");
+        let terminal = static_asset("/terminal.js").expect("terminal.js must exist");
+
+        assert_eq!(app.body, raw_app);
+        assert_eq!(terminal.body, raw_terminal);
+
+        for (path, body) in [("/app.js", app.body), ("/terminal.js", terminal.body)] {
+            let body = std::str::from_utf8(body).expect("chunk must be utf8");
+            for versioned_edge in [
+                "\"./app.js?v=",
+                "\"./terminal.js?v=",
+                "import(\"./terminal.js?v=",
+            ] {
                 assert!(
-                    !body.contains(&format!("\"{sibling}\"")),
-                    "{path} references bare {sibling} — that URL mismatch \
-                     instantiates the module graph twice"
+                    !body.contains(versioned_edge),
+                    "{path} must not rewrite module edges with {versioned_edge}"
                 );
-                let versioned = format!("\"{sibling}?v={version}\"");
+            }
+            for sibling in ["./app.js", "./terminal.js"] {
                 if body.contains(sibling) {
                     assert!(
-                        body.contains(&versioned),
-                        "{path} references {sibling} without the live version query"
+                        body.contains(&format!("\"{sibling}\"")),
+                        "{path} must keep bare sibling import {sibling}"
+                    );
+                    assert!(
+                        !body.contains(&format!("\"{sibling}?v=")),
+                        "{path} must not version sibling import {sibling}"
                     );
                 }
             }
         }
-    }
 
-    /// The lazy chunk's back-import of the entry is the edge that regressed.
-    #[test]
-    fn terminal_chunk_imports_the_entry_with_the_version_query() {
-        let version = app_version();
-        let terminal = static_asset("/terminal.js").expect("terminal chunk");
-        let body = std::str::from_utf8(terminal.body).expect("utf8");
+        let terminal_body = std::str::from_utf8(terminal.body).expect("utf8");
         assert!(
-            body.contains(&format!("\"./app.js?v={version}\"")),
-            "terminal.js must import the entry chunk at the versioned URL"
+            terminal_body.contains("\"./app.js\""),
+            "terminal.js must back-import the entry chunk at the bare URL"
         );
     }
 
