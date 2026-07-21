@@ -421,8 +421,8 @@ const GENERIC_PANE_FRESH_FOR: Duration = Duration::from_secs(15);
 /// Project a visible-pane capture onto a single conservative
 /// [`crate::agent_status::StatusObservation`].
 ///
-/// Pane text is weak evidence. The only signals it may emit come from
-/// [`recognize`]: `Busy`, `IdlePrompt`, and `ApprovalPrompt`, all
+/// Pane text is weak evidence. The only signals it may emit are
+/// `Busy`, `IdlePrompt`, and `ApprovalPrompt`, all
 /// positionally anchored to the visible screen bottom. Pane text never
 /// asserts completion, failure, or stuck states — those belong to the
 /// runtime wrapper exit snapshot, provider hooks/lifecycle events, and
