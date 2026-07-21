@@ -604,6 +604,13 @@ fn apply_github_checks_observation(
                 task.live_status = None;
                 task.live_status_observed_at = None;
             }
+            if !task
+                .live_status
+                .as_ref()
+                .is_some_and(is_local_check_failure)
+            {
+                task.remove_side_flag(crate::models::SideFlag::TestsFailed);
+            }
         }
         CiChecksObservation::Pending => {
             task.metadata.remove(CI_PROBE_ERROR_KEY);
@@ -627,6 +634,10 @@ fn can_apply_github_ci_failure(task: &Task) -> bool {
 
 fn is_github_ci_failure(status: &LiveObservation) -> bool {
     status.kind == LiveStatusKind::CiFailed && status.summary.starts_with(GITHUB_CI_FAILED_PREFIX)
+}
+
+fn is_local_check_failure(status: &LiveObservation) -> bool {
+    status.kind == LiveStatusKind::CiFailed && status.summary == "check failed"
 }
 
 fn unix_seconds(at: SystemTime) -> u64 {
@@ -2365,14 +2376,20 @@ mod tests {
     fn github_healthy_checks_clear_only_github_ci_live_status() {
         let now = SystemTime::now();
         let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
+        github.add_side_flag(SideFlag::TestsFailed);
         let mut local = task_with_live(LiveStatusKind::CiFailed, "check failed");
+        local.add_side_flag(SideFlag::TestsFailed);
         let mut conflict = task_with_live(LiveStatusKind::MergeConflict, "merge failed");
+        let mut running = task_with_live(LiveStatusKind::AgentRunning, "running");
+        running.add_side_flag(SideFlag::TestsFailed);
 
         super::apply_github_checks_observation(&mut github, CiChecksObservation::Healthy, now);
         super::apply_github_checks_observation(&mut local, CiChecksObservation::Healthy, now);
         super::apply_github_checks_observation(&mut conflict, CiChecksObservation::Healthy, now);
+        super::apply_github_checks_observation(&mut running, CiChecksObservation::Healthy, now);
 
         assert!(github.live_status.is_none());
+        assert!(!github.has_side_flag(SideFlag::TestsFailed));
         assert_eq!(
             local
                 .live_status
@@ -2380,6 +2397,7 @@ mod tests {
                 .map(|status| (status.kind, status.summary.as_str())),
             Some((LiveStatusKind::CiFailed, "check failed"))
         );
+        assert!(local.has_side_flag(SideFlag::TestsFailed));
         assert_eq!(
             conflict
                 .live_status
@@ -2387,6 +2405,11 @@ mod tests {
                 .map(|status| (status.kind, status.summary.as_str())),
             Some((LiveStatusKind::MergeConflict, "merge failed"))
         );
+        assert_eq!(
+            running.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(!running.has_side_flag(SideFlag::TestsFailed));
     }
 
     #[test]

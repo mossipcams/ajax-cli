@@ -380,7 +380,8 @@ mutating operation persisted to disk.
 `gh pr checks --json name,state,link`. Failed checks reduce to
 `LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from
 local `check failed` evidence.
-Passing checks clear only GitHub-sourced CI evidence. Probes are rate-limited
+Passing checks clear GitHub-sourced CI evidence and drop `TestsFailed` unless the
+live status is a local check failure (`CiFailed` with summary `check failed`). Probes are rate-limited
 by the per-task `ci_checks_probed_at` metadata timestamp, using a fixed
 300-second interval shared by Live and Full tiers. Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
@@ -438,8 +439,8 @@ place pane captures are interpreted. Recognition is structural, never keyword
 search: busy hints require a live status line in the footer region (the last
 few visible lines, e.g. `esc to interrupt`); idle/approval hints require the
 agent's actual prompt chrome anchored to the bottom of the visible screen
-(Claude's bare `❯` plus status bar or permission menu, Codex's `›` composer
-plus model line); Cursor stream-json lines are parsed as JSON with the newest
+(Claude's `❯` composer line — bare or filled — plus status bar or permission
+menu, Codex's `›` composer plus model line); Cursor stream-json lines are parsed as JSON with the newest
 event winning. Terminal stream-json outcomes (run finished/failed) yield no
 pane hint — the wrapper owns completion and failure. The selected agent's
 recognizer runs first, with the other known agents' recognizers as a

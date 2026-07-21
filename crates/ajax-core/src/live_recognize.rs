@@ -128,7 +128,7 @@ fn recognize_prompt(agent: AgentClient, lines: &[&str]) -> Option<PaneHint> {
     primary(lines).or_else(|| fallback(lines))
 }
 
-/// Claude idle prompt: a bare `❯`/`>` at the bottom, or a bare prompt plus
+/// Claude idle prompt: a bare `❯`/`>` at the bottom, or a composer line plus
 /// strong Claude chrome (status bar) in the bottom region.
 fn recognize_claude_prompt(lines: &[&str]) -> Option<PaneHint> {
     let bottom = bottom_lines(lines, PROMPT_WINDOW);
@@ -144,13 +144,18 @@ fn recognize_claude_prompt(lines: &[&str]) -> Option<PaneHint> {
         return Some(PaneHint::IdlePrompt);
     }
 
-    let has_bare_prompt = bottom.iter().any(|line| matches!(line.trim(), "❯" | ">"));
+    let has_composer_line = bottom.iter().any(|line| is_claude_composer_line(line));
     let has_strong_chrome = bottom.iter().any(|line| is_strong_claude_chrome_line(line));
-    if has_bare_prompt && has_strong_chrome {
+    if has_composer_line && has_strong_chrome {
         return Some(PaneHint::IdlePrompt);
     }
 
     None
+}
+
+fn is_claude_composer_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with('❯') || trimmed.starts_with('>')
 }
 
 fn is_strong_claude_chrome_line(line: &str) -> bool {
@@ -383,6 +388,12 @@ mod tests {
     #[test]
     fn claude_bare_prompt_on_last_line_is_idle() {
         let pane = "some earlier output\nmore output\n❯";
+        assert_eq!(hint(AgentClient::Claude, pane), Some(PaneHint::IdlePrompt));
+    }
+
+    #[test]
+    fn claude_filled_composer_with_chrome_is_idle() {
+        let pane = "done.\n\n────────────────────────────────────────\n❯\u{00a0}watch CI and tell me when it's green\n────────────────────────────────────────\n  Opus 4.8 │ ajax-pwa █░░░░░░░░░ 18%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n";
         assert_eq!(hint(AgentClient::Claude, pane), Some(PaneHint::IdlePrompt));
     }
 
