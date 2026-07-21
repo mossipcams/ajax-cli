@@ -59,10 +59,6 @@ pub enum ObservationSource {
     ProviderLifecycle,
     /// Provider hook event (e.g. tmux agent-status "working" file).
     ProviderHook,
-    /// Structured pane/UI recognition (e.g. Cursor stream-json, strong chrome).
-    StructuredPane,
-    /// Generic pane heuristic with low confidence.
-    GenericPane,
     /// Process liveness — informational, never selects activity.
     ProcessLiveness,
 }
@@ -73,15 +69,12 @@ impl ObservationSource {
             Self::ProcessExit => 0,
             Self::ProviderLifecycle => 1,
             Self::ProviderHook => 2,
-            Self::StructuredPane => 3,
-            Self::GenericPane => 4,
-            Self::ProcessLiveness => 5,
+            Self::ProcessLiveness => 3,
         }
     }
 }
 
-/// Confidence of an observation. Lower-trust pane heuristics cannot by
-/// themselves assert a confident running/approval state.
+/// Confidence of an observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Confidence {
     Low,
@@ -183,7 +176,6 @@ enum RunActivityResult {
         kind: ActivityKind,
         source: ObservationSource,
         observed_at: SystemTime,
-        confidence: Confidence,
     },
 }
 
@@ -259,7 +251,6 @@ fn select_run_activity<'a>(
         kind: chosen.kind,
         source: chosen.source,
         observed_at: chosen.observed_at,
-        confidence: chosen.confidence,
     })
 }
 
@@ -277,19 +268,6 @@ fn state_rank(kind: ActivityKind) -> u8 {
 /// pairs with [`Reverse<SystemTime>`] for newest-observed_at tiebreaks.
 fn reversal(rank: u8) -> u8 {
     u8::MAX - rank
-}
-
-/// Low-confidence generic pane evidence alone cannot assert a confident
-/// running or waiting-for-approval state.
-fn is_untrustworthy_low_pane(obs: &StatusObservation) -> bool {
-    matches!(
-        (obs.source, obs.confidence, obs.kind),
-        (
-            ObservationSource::GenericPane,
-            Confidence::Low,
-            ActivityKind::Working | ActivityKind::WaitingApproval
-        )
-    )
 }
 
 /// True when the run is currently active (still running) per the resolved
@@ -359,84 +337,60 @@ pub fn reduce_agent_status(input: ReduceInput<'_>) -> StatusProjection {
             kind,
             source,
             observed_at,
-            confidence,
-        }) => {
-            // Degrade low-confidence generic pane evidence so a stale-ish pane
-            // "running"/"approval required" bleed does not produce a confident
-            // running or approval state.
-            let obs_ref = input
-                .observations
-                .iter()
-                .find(|o| {
-                    o.source == source
-                        && o.observed_at == observed_at
-                        && o.confidence == confidence
-                        && o.kind == kind
-                        && o.run_id == primary
-                })
-                .expect("selected observation must exist among input");
-            if is_untrustworthy_low_pane(obs_ref) {
-                return unknown();
-            }
-
-            match kind.class() {
-                ActivityClass::Running => StatusProjection {
-                    live: LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
-                    phase: ParentPhase::ActivelyWorking,
+        }) => match kind.class() {
+            ActivityClass::Running => StatusProjection {
+                live: LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+                phase: ParentPhase::ActivelyWorking,
+                process_alive,
+                selected_observed_at: Some(observed_at),
+                selected_source: Some(source),
+            },
+            ActivityClass::Waiting => {
+                let (live_kind, summary) = match kind {
+                    ActivityKind::WaitingApproval => {
+                        (LiveStatusKind::WaitingForApproval, "waiting for approval")
+                    }
+                    _ => (LiveStatusKind::WaitingForInput, "waiting for input"),
+                };
+                StatusProjection {
+                    live: LiveObservation::new(live_kind, summary),
+                    phase: ParentPhase::WaitingForUser,
                     process_alive,
                     selected_observed_at: Some(observed_at),
                     selected_source: Some(source),
-                },
-                ActivityClass::Waiting => {
-                    let (live_kind, summary) = match kind {
-                        ActivityKind::WaitingApproval => {
-                            (LiveStatusKind::WaitingForApproval, "waiting for approval")
-                        }
-                        _ => (LiveStatusKind::WaitingForInput, "waiting for input"),
-                    };
+                }
+            }
+            ActivityClass::Terminal => {
+                if any_child_non_terminal {
                     StatusProjection {
-                        live: LiveObservation::new(live_kind, summary),
-                        phase: ParentPhase::WaitingForUser,
+                        live: LiveObservation::new(
+                            LiveStatusKind::WaitingForInput,
+                            SUMMARY_DELEGATED_STILL_ACTIVE,
+                        ),
+                        phase: ParentPhase::CompletedLocallyChildrenActive,
+                        process_alive,
+                        selected_observed_at: Some(observed_at),
+                        selected_source: Some(source),
+                    }
+                } else if kind == ActivityKind::Failed {
+                    StatusProjection {
+                        live: LiveObservation::new(LiveStatusKind::CommandFailed, "agent failed"),
+                        phase: ParentPhase::FullyCompleted,
+                        process_alive,
+                        selected_observed_at: Some(observed_at),
+                        selected_source: Some(source),
+                    }
+                } else {
+                    StatusProjection {
+                        live: LiveObservation::new(LiveStatusKind::Done, "done"),
+                        phase: ParentPhase::FullyCompleted,
                         process_alive,
                         selected_observed_at: Some(observed_at),
                         selected_source: Some(source),
                     }
                 }
-                ActivityClass::Terminal => {
-                    if any_child_non_terminal {
-                        StatusProjection {
-                            live: LiveObservation::new(
-                                LiveStatusKind::WaitingForInput,
-                                SUMMARY_DELEGATED_STILL_ACTIVE,
-                            ),
-                            phase: ParentPhase::CompletedLocallyChildrenActive,
-                            process_alive,
-                            selected_observed_at: Some(observed_at),
-                            selected_source: Some(source),
-                        }
-                    } else if kind == ActivityKind::Failed {
-                        StatusProjection {
-                            live: LiveObservation::new(
-                                LiveStatusKind::CommandFailed,
-                                "agent failed",
-                            ),
-                            phase: ParentPhase::FullyCompleted,
-                            process_alive,
-                            selected_observed_at: Some(observed_at),
-                            selected_source: Some(source),
-                        }
-                    } else {
-                        StatusProjection {
-                            live: LiveObservation::new(LiveStatusKind::Done, "done"),
-                            phase: ParentPhase::FullyCompleted,
-                            process_alive,
-                            selected_observed_at: Some(observed_at),
-                            selected_source: Some(source),
-                        }
-                    }
-                }
             }
-        }
+        },
     }
 }
 
@@ -552,50 +506,6 @@ mod tests {
 
         assert_eq!(projection.phase, ParentPhase::WaitingForUser);
         assert_eq!(projection.live.kind, LiveStatusKind::WaitingForInput);
-    }
-
-    #[test]
-    fn historical_pane_running_or_approval_text_is_low_confidence() {
-        // Low-confidence generic pane "running" → Unknown.
-        let mut running = obs(ObservationSource::GenericPane, ActivityKind::Working, 1, 60);
-        running.confidence = Confidence::Low;
-        let projection = reduce(true, &[running]);
-
-        assert_eq!(projection.phase, ParentPhase::Unknown);
-        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
-        assert_ne!(projection.live.kind, LiveStatusKind::AgentRunning);
-
-        // Low-confidence generic pane "approval required" → Unknown.
-        let mut approval = obs(
-            ObservationSource::GenericPane,
-            ActivityKind::WaitingApproval,
-            1,
-            60,
-        );
-        approval.confidence = Confidence::Low;
-        let projection = reduce(true, &[approval]);
-
-        assert_eq!(projection.phase, ParentPhase::Unknown);
-        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
-        assert_ne!(projection.live.kind, LiveStatusKind::WaitingForApproval);
-
-        // Expired low-confidence pane evidence is ignored entirely.
-        let expired = {
-            let observed_at = now() - Duration::from_secs(120);
-            StatusObservation {
-                source: ObservationSource::GenericPane,
-                observed_at,
-                expires_at: observed_at + Duration::from_secs(15),
-                confidence: Confidence::Low,
-                run_id: PRIMARY.to_string(),
-                parent_run_id: None,
-                kind: ActivityKind::Working,
-            }
-        };
-        let projection = reduce(true, &[expired]);
-
-        assert_eq!(projection.phase, ParentPhase::Unknown);
-        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
     }
 
     #[test]
@@ -778,22 +688,22 @@ mod tests {
     }
 
     #[test]
-    fn process_exit_beats_stale_active_pane() {
-        // ProcessExit Done + stale (expired) GenericPane Working → Done.
+    fn process_exit_beats_stale_hook() {
+        // ProcessExit Done + expired ProviderHook Working → Done.
         let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 5, 120);
-        let stale_pane = {
-            let observed_at = now() - Duration::from_secs(120);
+        let stale_hook = {
+            let observed_at = now() - Duration::from_secs(200);
             StatusObservation {
-                source: ObservationSource::GenericPane,
+                source: ObservationSource::ProviderHook,
                 observed_at,
-                expires_at: observed_at + Duration::from_secs(15),
-                confidence: Confidence::Low,
+                expires_at: observed_at + Duration::from_secs(120),
+                confidence: Confidence::High,
                 run_id: PRIMARY.to_string(),
                 parent_run_id: None,
                 kind: ActivityKind::Working,
             }
         };
-        let projection = reduce(false, &[exit, stale_pane]);
+        let projection = reduce(false, &[exit, stale_hook]);
 
         assert_eq!(projection.phase, ParentPhase::FullyCompleted);
         assert_eq!(projection.live.kind, LiveStatusKind::Done);

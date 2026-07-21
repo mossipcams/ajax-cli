@@ -105,22 +105,32 @@ native client (claude|codex|cursor|pi) in tmux pane
       settle event, so no flicker mitigation needed
 - [ ] Live smoke per client (deferred to post-merge: needs installed binary)
 
-### 4. Cut the patchwork (only after 1–3 verified against live panes)
+### 4. Cut the patchwork — DONE 2026-07-21
 
-- [ ] Delete `live_recognize.rs` (PaneHint/Recognition) and its tests
-- [ ] Delete `GenericPane` + `StructuredPane` variants from
-      `ObservationSource` and pane candidate assembly in live.rs
-- [ ] Delete pane-flip dwell gate in live_application.rs
-- [ ] Delete per-agent freshness table (`CODEX_WORKING_FRESH_FOR`, per-kind
-      windows in `hook_freshness_window`) → single policy above
-- [ ] Retire `pane:{session}:{pane_id}` inference once adapter events carry
-      run identity (child runs = per-pane adapter events with own AJAX_RUN_ID)
-- [ ] Uninstrumented/hookless agent activity → Unknown + `process_alive`
-      (accepted cost; wrapper exit still yields done/failed)
-- [ ] Update architecture.md Live Status section (precedence list shrinks to
-      ProcessExit > ProviderLifecycle > ProviderHook > liveness)
-- [ ] Update reducer/refresh characterization tests for removed sources
-- [ ] Verify: full status suites + live verification
+- [x] Delete `live_recognize.rs` (598 lines) and its tests
+- [x] Delete `GenericPane` + `StructuredPane` from `ObservationSource`;
+      ranks collapse to ProcessExit > ProviderLifecycle > ProviderHook >
+      ProcessLiveness
+- [x] Delete pane-flip dwell gate + candidate metadata keys in
+      live_application.rs (trusted paths already bypassed it; with pane
+      evidence gone no caller remained)
+- [x] Delete `CODEX_WORKING_FRESH_FOR` special case → uniform 120s hook
+      window; lifecycle: terminal persists, non-terminal 30 min → Unknown
+- [x] KEPT `pane:{session}:{pane_id}` hook-FILE child runs (scope correction:
+      that is ProviderHook file evidence feeding the delegated-run graph, not
+      pane-text classification; retire only when per-pane identity events
+      exist)
+- [x] Uninstrumented/hookless activity → prior + `process_alive` only;
+      wrapper exit still yields done/failed
+- [x] architecture.md rewritten to the four-tier precedence
+- [x] 22 ajax-cli characterization tests aligned: 3 deleted (pinned the
+      deleted pane mechanism), 19 converted to agent-events/hook/wrapper
+      evidence with original assertions kept (full disposition list in
+      packets/cut-pane-classification-cli-tests.md round report)
+- [x] Verify: ajax-core 813 passed; ajax-cli 353 passed (nextest
+      --no-fail-fast); clippy/fmt/rustdoc clean; zero references to any cut
+      symbol remain
+- [ ] Live verification vs real panes (post-merge, needs installed binary)
 
 ## Validation
 
@@ -151,6 +161,15 @@ native client (claude|codex|cursor|pi) in tmux pane
 - Cursor created 8 out-of-scope scripts/ files during task 1; removed at gate.
 - Task 1 TEST_FIRST reported NOT_PROVEN (red = new-module compile failure);
   accepted as red-equivalent for new-module work.
+- Task 4 spillovers: attention.rs dwell test deleted (outside packet allowed
+  files but ajax-core-internal and dwell-only); `tests/live_cli.rs` modified
+  in the REVISE round — explicit deviation from the no-tests-dir rule,
+  authorized in the revise packet for pane-behavior characterization only.
+- One converted web_backend test initially wrote agent-events under a
+  crate-relative `.cache/`; fixed locally (2-line isolation under the test's
+  temp root) at the gate.
+- Codex/Pi event names in task 1 were speculative; corrected in task 3 to
+  verified names (Codex = Claude-schema hooks.json; Pi settle = agent_settled).
 
 ## Validation log
 

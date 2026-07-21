@@ -620,9 +620,39 @@ mod tests {
         assert!(body["cockpit"].is_object());
     }
 
+    fn write_agent_status_event(cache_dir: &std::path::Path, task_id: &str, value: &str) {
+        let events_dir = cache_dir.join("agent-events");
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        std::fs::write(
+            events_dir.join(format!("{}.json", task_id.replace('/', "__"))),
+            serde_json::json!({
+                "task_id": task_id,
+                "run_id": "primary",
+                "value": value,
+                "observed_at_unix_millis": now_millis,
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn cockpit_api_refreshes_live_task_status_before_rendering() {
+        let cache_dir = std::env::temp_dir().join(format!(
+            "ajax-web-api-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_agent_status_event(&cache_dir, "web/fix-login", "working");
         let mut context = reviewable_context();
+        context.runtime_paths.cache_dir = cache_dir.clone();
         let task = context
             .registry
             .get_task_mut(&TaskId::new("web/fix-login"))
@@ -652,13 +682,22 @@ mod tests {
                 "legacy field {legacy}"
             );
         }
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[test]
     fn cockpit_api_reloads_task_state_from_disk_before_rendering() {
         let root = std::env::temp_dir().join(format!("ajax-web-reload-{}", std::process::id()));
-        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
-        let saved_context = reviewable_context();
+        let mut paths =
+            super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        paths.runtime_paths.cache_dir = root.join("cache");
+        write_agent_status_event(&paths.runtime_paths.cache_dir, "web/fix-login", "working");
+        let mut saved_context = reviewable_context();
+        let task = saved_context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
         SqliteRegistryStore::new(&paths.state_file)
             .save(&saved_context.registry)
             .unwrap();

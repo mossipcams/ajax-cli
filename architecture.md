@@ -123,26 +123,19 @@ Reconciliation precedence:
 
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence for terminal exit (`done`/`failed`) and for process liveness only.
-Hook files and pane text are observational hints with explicit confidence.
-Pane text is the weakest hint: it is captured from the *visible* pane only
-(never scrollback) and may only ever assert three positionally-anchored hints
-— busy, idle prompt, approval prompt. Pane text never asserts completion,
-failure, or stuck states (done, command failed, blocked, merge conflict, CI
-failed, auth/rate-limit/context-limit): agents routinely write those words in
-prose while working, and keyword matching cannot tell prose from terminal
-chrome. Those statuses belong to the wrapper exit snapshot, provider
-hooks/lifecycle events, and git/`gh` substrate evidence. When sources
-disagree, core's status decision applies this precedence:
+Hook files are observational hints with explicit confidence. Pane text is no
+longer classified for agent activity: uninstrumented sessions project no
+confident activity beyond prior state, process liveness, and wrapper exit
+(`done`/`failed`). Instrumented sessions rely on provider hooks and structured
+lifecycle events. When sources disagree, core's status decision applies this
+precedence:
 
 1. Terminal process exit or fatal runtime error (wrapper `done`/`failed`, 120s)
-2. Structured provider lifecycle event
-3. Provider hook event (agent-specific freshness: Codex `working` 20s; Codex
-   `wait`/`ask` and Claude hook states 120s; `AgentClient::Other` ignores hooks)
-4. Structured pane/UI recognition (Cursor stream-json, anchored agent prompt
-   chrome; medium confidence, 60s)
-5. Generic pane busy chrome (low confidence, 15s; cannot alone assert
-   `AgentRunning` or approval)
-6. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
+2. Structured provider lifecycle event (non-terminal events expire after 30
+   minutes; terminal events persist until superseded)
+3. Provider hook event (120s freshness for all accepted agents;
+   `AgentClient::Other` ignores hooks)
+4. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
    becomes `AgentRunning`
 
 Missing substrate stays authoritative over activity candidates. Ambiguous or
@@ -402,56 +395,13 @@ side flags, activity timestamps, visible live status, and the live evidence's
 own durable `observed_at` timestamp. The application path
 separates ordinary observations from trusted wrapper/supervisor observations so
 only the trusted path may advance lifecycle on process start or successful
-completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
-text is neutral and does not overwrite the last known agent state or fabricate
-a probe failure. Low-confidence generic pane activity alone projects `Unknown`
-and does not overwrite prior credible state.
+completion. Confirmed stop or missing runtime records `Dead`. Uninstrumented
+sessions without hook or lifecycle evidence preserve prior credible state;
+process liveness alone never fabricates `AgentRunning`.
 
-Ordinary class evidence on a task that already shows the *opposite* class is a
-candidate, not an immediate status change. A waiting-class sample on a busy
-task, or a running-class sample on a waiting task, must persist for a short
-dwell window before the application path accepts it. The dwell is symmetric
-(Waiting↔Running) and uses two metadata stamps in Ajax-owned task metadata:
-`waiting_candidate_since` and `running_candidate_since`. The same
-`WAITING_CONFIRMATION_DWELL` (4s) gates both directions. This keeps one-sample
-pane misreads — busy chrome briefly misread as a prompt, or a stale prompt
-flapping across a busy line — from flipping the operator status, clearing
-`NeedsInput`, or firing attention webhooks. After dwell, the candidate
-confirms and the metadata stamp is removed.
-
-Trusted wrapper/hook evidence and error-class evidence apply immediately
-(bypassing the dwell), and any applied observation clears both candidate
-stamps. The runtime-refresh unchanged-status short-circuit falls through while
-a candidate is pending so the next busy sample can resolve it. The shared
-`LiveStatusKind::class()` classification keeps the gate, the operator-status
-reducer, and annotation mapping on one membership list.
-
-`Done` is a special case on the Waiting side: a busy pane must recover to
-`Running` immediately after a stale completion (agent relaunch) without
-waiting out a `Done → Running` dwell, so the gate does not block a busy pane
-from un-sticking a `Done` task. Error-class and missing-substrate live status
-likewise recover to Running immediately. Trusted wrapper completion advances
-lifecycle to `Reviewable` only when the run-graph aggregation reports the
-parent as fully completed (no active non-detached descendants).
-
-Pane recognition lives in `live.rs`'s `recognize` submodule and is the only
-place pane captures are interpreted. Recognition is structural, never keyword
-search: busy hints require a live status line in the footer region (the last
-few visible lines, e.g. `esc to interrupt`); idle/approval hints require the
-agent's actual prompt chrome anchored to the bottom of the visible screen
-(Claude's `❯` composer line — bare or filled — plus status bar or permission
-menu, Codex's `›` composer plus model line); Cursor stream-json lines are parsed as JSON with the newest
-event winning. Terminal stream-json outcomes (run finished/failed) yield no
-pane hint — the wrapper owns completion and failure. The selected agent's
-recognizer runs first, with the other known agents' recognizers as a
-structural cross-check; there is no generic keyword fallback. Busy chrome
-maps to a low-confidence generic-pane observation that cannot alone assert
-`AgentRunning`; structured recognition maps to medium confidence.
-`project_pane_activity` feeds the conservative reducer, and a pane with no
-hint yields no observation, preserving prior credible state. Monitor event
-text payloads (messages, stdout/stderr lines) are likewise never
-keyword-classified: they keep their structural event meaning, and only a tool
-call's actual test-runner invocation upgrades to `TestsRunning`.
+Trusted wrapper/hook evidence applies immediately. Trusted wrapper completion
+advances lifecycle to `Reviewable` only when the run-graph aggregation reports
+the parent as fully completed (no active non-detached descendants).
 
 Attention webhooks (`attention::take_attention_transition`) fire on actionable
 Waiting and Error operator status. Parent phases that wait on delegated

@@ -832,11 +832,15 @@ mod tests {
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
         let mut runner = LiveRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["ask".to_string()],
+        };
         let mut state_changed = false;
 
-        let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+        state_changed |=
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
                 .unwrap();
+        let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
         assert_eq!(
@@ -886,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn live_refresh_clears_stale_input_when_codex_prompt_is_working() {
+    fn live_refresh_clears_stale_input_when_hook_reports_working() {
         let mut context = context_with_active_task();
         let task = context
             .registry
@@ -900,65 +904,18 @@ mod tests {
             "waiting for input",
         ));
         task.annotations = ajax_core::attention::annotate(task);
-        let mut runner = WorkingPromptRunner;
+        let mut runner = LiveRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
         let mut state_changed = false;
 
-        let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+        state_changed |=
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
                 .unwrap();
+        let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
-        let card = snapshot
-            .cards
-            .iter()
-            .find(|card| card.qualified_handle == "web/fix-login")
-            .expect("task should stay visible in cockpit");
-        assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Waiting);
-        assert_eq!(
-            card.status_explanation.as_deref(),
-            Some("Waiting for input")
-        );
-        assert!(
-            card.annotations
-                .iter()
-                .any(|annotation| { annotation.evidence.label() == "waiting for input" }),
-            "{:?}",
-            card.annotations
-        );
-        assert!(snapshot
-            .inbox
-            .items
-            .iter()
-            .any(|item| item.task_handle == "web/fix-login"));
-
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert!(
-            task.metadata
-                .contains_key(ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY),
-            "running_candidate_since should be recorded while dwell is pending"
-        );
-
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0);
-        let backdated = now_secs.saturating_sub(10);
-        context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap()
-            .metadata
-            .insert(
-                ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY.to_string(),
-                backdated.to_string(),
-            );
-
-        let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
-                .unwrap();
-
         let card = snapshot
             .cards
             .iter()
@@ -980,49 +937,6 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::AgentRunning)
         );
-        assert!(!task
-            .metadata
-            .contains_key(ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY));
-    }
-
-    struct WorkingPromptRunner;
-
-    impl CommandRunner for WorkingPromptRunner {
-        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            let stdout = match command.args.as_slice() {
-                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
-                [_, repo, subcommand, action, flag]
-                    if repo == "/Users/matt/projects/web"
-                        && subcommand == "worktree"
-                        && action == "list"
-                        && flag == "--porcelain" =>
-                {
-                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
-                }
-                [_, repo, subcommand, format]
-                    if repo == "/Users/matt/projects/web"
-                        && subcommand == "branch"
-                        && format == "--format=%(refname:short)" =>
-                {
-                    "main\najax/fix-login\n"
-                }
-                [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
-                }
-                [command, ..] if command == "capture-pane" => {
-                    // Structured Cursor lifecycle evidence (not generic busy chrome):
-                    // conservative status only clears waiting on medium+ activity.
-                    "{\"type\":\"thinking\"}\n• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…\n\n› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci\n"
-                }
-                _ => "",
-            };
-
-            Ok(CommandOutput {
-                status_code: 0,
-                stdout: stdout.to_string(),
-                stderr: String::new(),
-            })
-        }
     }
 
     #[test]
@@ -1102,74 +1016,6 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::TmuxMissing)
         );
-    }
-
-    #[test]
-    fn live_refresh_reprobes_error_task_with_recoverable_conflict_prompt() {
-        let mut context = context_with_active_task();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .expect("fixture task should exist");
-        task.lifecycle_status = LifecycleStatus::Error;
-        task.agent_status = AgentRuntimeStatus::Blocked;
-        task.add_side_flag(SideFlag::Conflicted);
-        task.add_side_flag(SideFlag::NeedsInput);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::MergeConflict,
-            "merge conflict needs attention",
-        ));
-        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.task_window_status = Some(TaskWindowStatus::present(
-            "task",
-            "/tmp/worktrees/web-fix-login",
-        ));
-        let mut runner = SpaghettiRecoveryRunner::default();
-
-        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
-        let task = context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .expect("fixture task should remain registered");
-
-        assert!(changed);
-        assert!(runner.commands.iter().any(
-            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
-        ));
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
-        assert!(!task.has_side_flag(SideFlag::Conflicted));
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-    }
-
-    #[derive(Default)]
-    struct SpaghettiRecoveryRunner {
-        commands: Vec<CommandSpec>,
-    }
-
-    impl CommandRunner for SpaghettiRecoveryRunner {
-        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            self.commands.push(command.clone());
-            let stdout = match command.args.as_slice() {
-                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
-                [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
-                }
-                [command, ..] if command == "capture-pane" => {
-                    "› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti\n"
-                }
-                _ => "",
-            };
-
-            Ok(CommandOutput {
-                status_code: 0,
-                stdout: stdout.to_string(),
-                stderr: String::new(),
-            })
-        }
     }
 
     #[derive(Default)]

@@ -536,28 +536,124 @@ fn sample_context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegis
     context
 }
 
-fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
+fn tmux_live_outputs() -> Vec<CommandOutput> {
     vec![
         output(0, "ajax-web-fix-login\n"),
         output(
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
-        output(0, pane),
     ]
 }
 
-/// Structured Cursor lifecycle evidence that confidently projects AgentRunning.
-/// Generic busy chrome like "codex is working" alone is low-confidence → Unknown.
-fn structured_busy_pane() -> &'static str {
-    "{\"type\":\"thinking\"}\n"
+fn test_agent_cache_directory(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ajax-cli-agent-cache-{}-{}-{label}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
 }
 
-/// Anchored Claude permission menu: structurally recognized as
-/// waiting-for-approval. Bare keyword text ("Do you want to proceed? y/n")
-/// no longer classifies — pane hints require positional prompt anchors.
-fn approval_prompt_pane() -> &'static str {
-    "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel\n"
+fn write_agent_status_event(cache_dir: &Path, task_id: &str, value: &str) {
+    let events_dir = cache_dir.join("agent-events");
+    std::fs::create_dir_all(&events_dir).unwrap();
+    let now_millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    std::fs::write(
+        events_dir.join(format!("{}.json", task_id.replace('/', "__"))),
+        serde_json::json!({
+            "task_id": task_id,
+            "run_id": "primary",
+            "value": value,
+            "observed_at_unix_millis": now_millis,
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn prepare_active_task_agent_status(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_id: &str,
+    value: &str,
+) -> PathBuf {
+    let cache_dir = test_agent_cache_directory(value);
+    context.runtime_paths.cache_dir = cache_dir.clone();
+    write_agent_status_event(&cache_dir, task_id, value);
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new(task_id))
+        .unwrap();
+    task.lifecycle_status = LifecycleStatus::Active;
+    task.remove_side_flag(SideFlag::NeedsInput);
+    cache_dir
+}
+
+fn watch_refresh_outputs() -> Vec<CommandOutput> {
+    let git_worktree = output(
+        0,
+        "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+    );
+    let ci = output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#);
+    let tmux = tmux_live_outputs();
+    vec![
+        tmux[0].clone(),
+        tmux[1].clone(),
+        git_worktree.clone(),
+        ci.clone(),
+        tmux[0].clone(),
+        tmux[1].clone(),
+        git_worktree,
+        ci,
+    ]
+}
+
+struct AgentStatusMutatingRunner {
+    inner: QueuedRunner,
+    cache_dir: PathBuf,
+    task_id: String,
+    values: Vec<&'static str>,
+    value_index: usize,
+}
+
+impl AgentStatusMutatingRunner {
+    fn new(
+        outputs: Vec<CommandOutput>,
+        cache_dir: PathBuf,
+        task_id: &str,
+        values: &[&'static str],
+    ) -> Self {
+        Self {
+            inner: QueuedRunner::new(outputs),
+            cache_dir,
+            task_id: task_id.to_string(),
+            values: values.to_vec(),
+            value_index: 0,
+        }
+    }
+
+    fn update_agent_status(&self, value: &str) {
+        write_agent_status_event(&self.cache_dir, &self.task_id, value);
+    }
+}
+
+impl CommandRunner for AgentStatusMutatingRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        let result = self.inner.run(command)?;
+        if command.program == "gh"
+            && self.value_index + 1 < self.values.len()
+            && command.args.first().is_some_and(|arg| arg == "pr")
+        {
+            self.value_index += 1;
+            self.update_agent_status(self.values[self.value_index]);
+        }
+        Ok(result)
+    }
 }
 
 #[test]
@@ -598,7 +694,7 @@ fn command_flow_fixture_records_partial_success_before_failure() {
 }
 
 fn tmux_probe_commands() -> Vec<CommandSpec> {
-    tmux_live_commands().into_iter().take(3).collect()
+    tmux_live_commands().into_iter().take(2).collect()
 }
 
 fn tmux_probe_and_orphan_scan_commands() -> Vec<CommandSpec> {
@@ -628,11 +724,6 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
                 "-F",
                 "#{session_name}\t#{window_name}\t#{pane_current_path}",
             ],
-        )
-        .with_timeout(std::time::Duration::from_secs(8)),
-        CommandSpec::new(
-            "tmux",
-            ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
         )
         .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
@@ -1171,17 +1262,8 @@ fn cockpit_json_returns_single_startup_snapshot() {
 #[test]
 fn cockpit_json_refreshes_live_status_from_tmux() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task(&TaskId::new("task-1"))
-        .cloned()
-        .unwrap();
-    let mut active = task;
-    active.lifecycle_status = LifecycleStatus::Active;
-    active.remove_side_flag(SideFlag::NeedsInput);
-    context.registry = InMemoryRegistry::default();
-    context.registry.create_task(active).unwrap();
-    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     let output =
         run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
@@ -1200,25 +1282,25 @@ fn cockpit_json_refreshes_live_status_from_tmux() {
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
     let mut context = sample_context();
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
     {
         let task = context
             .registry
             .get_task_mut(&TaskId::new("task-1"))
             .unwrap();
-        task.lifecycle_status = LifecycleStatus::Active;
-        task.remove_side_flag(SideFlag::NeedsInput);
         task.runtime_projection = RuntimeProjection::new(
             RuntimeHealth::Healthy,
             SystemTime::now(),
             RuntimeObservationSource::TmuxProbe,
         );
     }
-    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     let output =
         run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
@@ -1229,29 +1311,19 @@ fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
         parsed["tasks"]["tasks"][0]["live_status"]["summary"],
         "agent running"
     );
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let first_refresh = tmux_live_outputs(approval_prompt_pane());
-    let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
-    let mut runner = QueuedRunner::new(vec![
-        first_refresh[0].clone(),
-        first_refresh[1].clone(),
-        first_refresh[2].clone(),
-        output(0, ""),
-        output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#),
-        second_refresh[0].clone(),
-        second_refresh[1].clone(),
-        second_refresh[2].clone(),
-    ]);
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut runner = AgentStatusMutatingRunner::new(
+        watch_refresh_outputs(),
+        cache_dir.clone(),
+        "task-1",
+        &["ask", "wait"],
+    );
 
     let output = run_with_context_and_runner(
         [
@@ -1281,30 +1353,20 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
         second["tasks"]["tasks"][0]["live_status"]["summary"],
         "waiting for input"
     );
-    assert!(runner.commands.len() >= 5);
+    assert!(runner.inner.commands.len() >= 4);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let first_refresh = tmux_live_outputs(approval_prompt_pane());
-    let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
-    let mut runner = QueuedRunner::new(vec![
-        first_refresh[0].clone(),
-        first_refresh[1].clone(),
-        first_refresh[2].clone(),
-        output(0, ""),
-        output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#),
-        second_refresh[0].clone(),
-        second_refresh[1].clone(),
-        second_refresh[2].clone(),
-    ]);
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut runner = AgentStatusMutatingRunner::new(
+        watch_refresh_outputs(),
+        cache_dir.clone(),
+        "task-1",
+        &["ask", "wait"],
+    );
     let mut writer = FlushingWriter::default();
 
     let state_changed = run_with_context_and_runner_to_writer(
@@ -1338,18 +1400,14 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
         second["tasks"]["tasks"][0]["live_status"]["summary"],
         "waiting for input"
     );
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn cockpit_watch_renders_refreshed_live_status_in_frame() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     let output = run_with_context_and_runner(
         ["ajax", "cockpit", "--watch", "--iterations", "1"],
@@ -1367,18 +1425,14 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn status_command_refreshes_live_state_from_tmux() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     let output =
         run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
@@ -1397,18 +1451,14 @@ fn status_command_refreshes_live_state_from_tmux() {
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
 fn status_command_renders_json_from_refreshed_live_state() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     let output =
         run_with_context_and_runner(["ajax", "status", "--json"], &mut context, &mut runner)
@@ -1423,6 +1473,7 @@ fn status_command_renders_json_from_refreshed_live_state() {
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -1433,13 +1484,12 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
         vec!["ajax", "cockpit", "--json"],
     ] {
         let mut context = sample_context();
+        let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
         {
             let task = context
                 .registry
                 .get_task_mut(&TaskId::new("task-1"))
                 .unwrap();
-            task.lifecycle_status = LifecycleStatus::Active;
-            task.remove_side_flag(SideFlag::NeedsInput);
             task.runtime_projection = RuntimeProjection::new(
                 RuntimeHealth::Healthy,
                 SystemTime::now(),
@@ -1447,7 +1497,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
             );
         }
 
-        let mut outputs = tmux_live_outputs(structured_busy_pane());
+        let mut outputs = tmux_live_outputs();
         outputs.push(output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
@@ -1467,6 +1517,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
         let mut expected = tmux_probe_and_orphan_scan_commands();
         expected.push(expected_ci_probe_command());
         assert_eq!(runner.commands, expected, "{command:?}");
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }
 
@@ -1482,13 +1533,8 @@ fn read_commands_share_live_refresh_contract() {
         vec!["ajax", "cockpit", "--json"],
     ] {
         let mut context = sample_context();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap();
-        task.lifecycle_status = LifecycleStatus::Active;
-        task.remove_side_flag(SideFlag::NeedsInput);
-        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+        let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
+        let mut runner = QueuedRunner::new(tmux_live_outputs());
 
         let output = run_with_context_and_runner(args.clone(), &mut context, &mut runner)
             .unwrap_or_else(|error| panic!("{args:?} failed: {error}"));
@@ -1497,6 +1543,7 @@ fn read_commands_share_live_refresh_contract() {
         let mut expected = tmux_live_commands();
         expected.push(expected_ci_probe_command());
         assert_eq!(runner.commands, expected, "{args:?}");
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }
 
@@ -1672,13 +1719,8 @@ fn read_refresh_updates_stale_git_substrate_evidence() {
 #[test]
 fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(tmux_live_outputs(approval_prompt_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
     let mut state_changed = false;
 
     let snapshot =
@@ -1694,6 +1736,7 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -1731,12 +1774,11 @@ fn live_refresh_clears_stale_tmux_missing_when_session_exists_without_task() {
 #[test]
 fn live_refresh_reports_changed_when_same_status_updates_activity() {
     let mut context = sample_context();
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "working");
     let task = context
         .registry
         .get_task_mut(&TaskId::new("task-1"))
         .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
     task.live_status = Some(LiveObservation::new(
         LiveStatusKind::AgentRunning,
         "agent running",
@@ -1771,7 +1813,7 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
     );
     task.last_activity_at = SystemTime::UNIX_EPOCH;
     let previous_activity = task.last_activity_at;
-    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
     let mut state_changed = false;
 
     let _snapshot =
@@ -1787,6 +1829,7 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
             .map(|status| status.summary.as_str()),
         Some("agent running")
     );
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -1821,15 +1864,17 @@ fn live_refresh_skips_cleanable_tasks_without_tmux_probe() {
 #[test]
 fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
     let mut context = two_active_tasks_context();
+    let cache_dir = test_agent_cache_directory("two-active");
+    context.runtime_paths.cache_dir = cache_dir.clone();
+    write_agent_status_event(&cache_dir, "task-1", "working");
+    write_agent_status_event(&cache_dir, "task-2", "ask");
     let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\najax-web-fix-sidebar\n"),
-            output(
-                0,
-                "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\najax-web-fix-sidebar\ttask\t/tmp/worktrees/web-fix-sidebar\n",
-            ),
-            output(0, "codex is working\n"),
-            output(0, approval_prompt_pane()),
-        ]);
+        output(0, "ajax-web-fix-login\najax-web-fix-sidebar\n"),
+        output(
+            0,
+            "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\najax-web-fix-sidebar\ttask\t/tmp/worktrees/web-fix-sidebar\n",
+        ),
+    ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 
@@ -1847,16 +1892,6 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "-F",
                     "#{session_name}\t#{window_name}\t#{pane_current_path}",
                 ],
-            )
-            .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "tmux",
-                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task",],
-            )
-            .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "tmux",
-                ["capture-pane", "-p", "-t", "ajax-web-fix-sidebar:task",],
             )
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
@@ -1884,6 +1919,7 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
             .with_timeout(std::time::Duration::from_secs(30)),
         ]
     );
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -1921,38 +1957,6 @@ fn live_refresh_nonzero_window_listing_preserves_evidence_and_stops_before_pane_
     assert_eq!(
         task.runtime_projection.observation_error.as_deref(),
         Some("tmux list-windows probe failed: exited with status 1")
-    );
-}
-
-#[test]
-fn live_refresh_nonzero_pane_capture_reports_probe_failure() {
-    let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut runner = QueuedRunner::new(vec![
-        output(0, "ajax-web-fix-login\n"),
-        output(
-            0,
-            "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
-        ),
-        output(1, "codex is working\n"),
-    ]);
-
-    let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
-    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-
-    assert!(changed);
-    let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
-    assert_eq!(runner.commands, expected);
-    assert!(task.live_status.is_none());
-    assert_eq!(
-        task.runtime_projection.observation_error.as_deref(),
-        Some("tmux capture-pane probe failed: exited with status 1")
     );
 }
 
@@ -2083,7 +2087,6 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
-        output(0, ""),
     ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2122,7 +2125,6 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
-        output(1, ""),
     ]);
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2174,7 +2176,6 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
-        output(0, ""),
     ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2190,14 +2191,9 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
 #[test]
 fn live_cockpit_watch_accumulates_state_change_after_unchanged_frame() {
     let mut context = sample_context();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.remove_side_flag(SideFlag::NeedsInput);
-    let mut outputs = vec![output(0, "")];
-    outputs.extend(tmux_live_outputs(approval_prompt_pane()));
+    let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
+    let mut outputs = watch_refresh_outputs();
+    outputs.insert(0, output(0, ""));
     let mut runner = QueuedRunner::new(outputs);
     let matches = build_cli()
         .try_get_matches_from([
@@ -2218,7 +2214,8 @@ fn live_cockpit_watch_accumulates_state_change_after_unchanged_frame() {
 
     assert!(rendered.state_changed);
     assert_eq!(rendered.output.matches("Ajax Cockpit").count(), 2);
-    assert_eq!(runner.commands.len(), 5);
+    assert!(runner.commands.len() >= 4);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -8633,7 +8630,7 @@ fn cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone() {
         .as_millis();
     write_runtime_snapshot(&directory, "running", now_millis);
     let mut context = active_runtime_context(&directory);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 
@@ -8650,36 +8647,6 @@ fn cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone() {
 }
 
 #[test]
-fn cockpit_refresh_marks_agent_running_from_wrapper_plus_structured_pane() {
-    let directory = runtime_snapshot_directory("running-structured");
-    let now_millis = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    write_runtime_snapshot(&directory, "running", now_millis);
-    let mut context = active_runtime_context(&directory);
-    let mut runner = QueuedRunner::new(tmux_live_outputs(structured_busy_pane()));
-
-    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
-
-    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-    assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
-    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
-    assert_eq!(
-        task.live_status.as_ref().map(|status| status.kind),
-        Some(LiveStatusKind::AgentRunning)
-    );
-    assert_eq!(
-        ajax_core::commands::cockpit_view(&context).cards[0]
-            .status_explanation
-            .as_deref(),
-        Some("Agent working")
-    );
-
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
     let directory = runtime_snapshot_directory("failed");
     let now_millis = SystemTime::now()
@@ -8688,7 +8655,7 @@ fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
         .as_millis();
     write_runtime_snapshot(&directory, "exited_failure", now_millis);
     let mut context = active_runtime_context(&directory);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 
@@ -8712,7 +8679,7 @@ fn cockpit_refresh_promotes_wrapper_completion_to_reviewable() {
         .as_millis();
     write_runtime_snapshot(&directory, "exited_success", now_millis);
     let mut context = active_runtime_context(&directory);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 
@@ -8728,7 +8695,7 @@ fn stale_wrapper_running_snapshot_cannot_keep_task_running() {
     let directory = runtime_snapshot_directory("stale");
     write_runtime_snapshot(&directory, "running", 1);
     let mut context = active_runtime_context(&directory);
-    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+    let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 

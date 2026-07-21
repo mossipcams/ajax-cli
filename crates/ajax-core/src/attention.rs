@@ -905,39 +905,6 @@ mod tests {
     }
 
     #[test]
-    fn busy_flap_does_not_fire_notification() {
-        use std::time::{Duration, UNIX_EPOCH};
-        let mut task = task_with_flags("flap", &[]);
-        crate::lifecycle::mark_active(&mut task).unwrap();
-        crate::live::apply_observation_at(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::AgentRunning, "working"),
-            UNIX_EPOCH + Duration::from_secs(100),
-        );
-
-        // One flappy waiting sample while the agent works: no notification.
-        crate::live::apply_observation_at(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
-            UNIX_EPOCH + Duration::from_secs(110),
-        );
-        assert_eq!(super::take_attention_transition(&mut task), None);
-
-        // Dwell-confirmed waiting: fires exactly once.
-        crate::live::apply_observation_at(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForInput, "still waiting"),
-            UNIX_EPOCH + Duration::from_secs(115),
-        );
-        let transition = super::take_attention_transition(&mut task);
-        assert_eq!(
-            transition.map(|transition| transition.status),
-            Some(TaskStatus::Waiting)
-        );
-        assert_eq!(super::take_attention_transition(&mut task), None);
-    }
-
-    #[test]
     fn running_and_idle_never_fire() {
         let mut running = task_with_flags("running", &[SideFlag::AgentRunning]);
         mark_active(&mut running).unwrap();
