@@ -849,6 +849,10 @@ Runtime coordination contract (implemented):
   measurement justifies it.
 - Lightweight health/static/detail reads and PTY work remain outside the
   control lane after short snapshot reads.
+- Cockpit reads may serve the current server-owned projection from shared
+  state when refresh, notify, action, or start work already holds the control
+  lane; they do not cache that fallback response. Later polls use the normal
+  refresh path when the lane is available or the cache TTL expires.
 
 The control lane (`control_lane`) is acquired by the cockpit refresh path and,
 after operation admission, by the action and task-start handlers, pinned by two
