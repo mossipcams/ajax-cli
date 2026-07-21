@@ -126,44 +126,6 @@ pub fn apply_no_store(response: &mut AxumResponse) {
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
-/// Static shell assets revalidate instead of refetching.
-///
-/// `no-cache` means "store it, but check with me every time" — unlike
-/// `no-store`, which forbids storing and so makes revalidation impossible.
-/// The ETag is **weak** because `CompressionLayer` gzips the body after this
-/// runs, so one handler-set validator covers both representations.
-pub fn static_asset_revalidated_response(
-    content_type: &'static str,
-    body: &'static [u8],
-    if_none_match: Option<&str>,
-) -> AxumResponse {
-    let etag = format!("W/\"{}\"", crate::adapters::assets::app_version());
-    match HeaderValue::from_str(&etag) {
-        Ok(etag_value) => {
-            let etag_matches = if_none_match == Some(etag.as_str());
-            let (status, body_vec) = if etag_matches {
-                (StatusCode::NOT_MODIFIED, Vec::new())
-            } else {
-                (StatusCode::OK, body.to_vec())
-            };
-            let mut response = (status, body_vec).into_response();
-            response
-                .headers_mut()
-                .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            response.headers_mut().insert(header::ETAG, etag_value);
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-            apply_security_headers(&mut response);
-            response
-        }
-        // `app_version()` is ASCII, so this is unreachable in practice — but the
-        // builder is fallible, so fall back to a plain no-store response rather
-        // than panicking.
-        Err(_) => bytes_axum_response(200, content_type, body.to_vec()),
-    }
-}
-
 fn apply_security_headers(response: &mut AxumResponse) {
     let headers = response.headers_mut();
     headers.insert(
