@@ -7,6 +7,8 @@ use std::{
 
 use ajax_core::runtime_refresh::{AgentStatusCache, AgentStatusCacheEntry, AgentStatusCacheSource};
 
+use crate::agent_event::AgentEventSnapshot;
+
 use crate::agent_runtime::{AgentRuntimeSnapshot, AgentRuntimeState};
 
 const AGENT_STATUS_FRESH_FOR: Duration = Duration::from_secs(30);
@@ -80,6 +82,7 @@ impl TmuxAgentStatusSnapshot {
     fn from_roots_at(
         tmux_root: impl AsRef<Path>,
         runtime_root: impl AsRef<Path>,
+        agent_events_root: impl AsRef<Path>,
         now: SystemTime,
         fresh_for: Duration,
     ) -> Self {
@@ -97,6 +100,18 @@ impl TmuxAgentStatusSnapshot {
                 snapshot.by_task.entry(task_id).or_default().push(status);
             }
         }
+        if let Ok(entries) = fs::read_dir(agent_events_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                    continue;
+                }
+                let Some((task_id, status)) = read_agent_event_entry(&path, now, fresh_for) else {
+                    continue;
+                };
+                snapshot.by_task.entry(task_id).or_default().push(status);
+            }
+        }
         snapshot
     }
 
@@ -108,6 +123,7 @@ impl TmuxAgentStatusSnapshot {
         Self::from_roots_at(
             tmux_root,
             cache_dir.join("agent-runtime"),
+            cache_dir.join("agent-events"),
             SystemTime::now(),
             AGENT_STATUS_FRESH_FOR,
         )
@@ -189,6 +205,39 @@ fn read_agent_runtime_entry(
             source: AgentStatusCacheSource::RuntimeWrapper,
             run_id: None,
             parent_run_id: None,
+        },
+    ))
+}
+
+fn read_agent_event_entry(
+    path: &Path,
+    now: SystemTime,
+    fresh_for: Duration,
+) -> Option<(String, AgentStatusCacheEntry)> {
+    let snapshot =
+        serde_json::from_str::<AgentEventSnapshot>(&fs::read_to_string(path).ok()?).ok()?;
+    let millis = u64::try_from(snapshot.observed_at_unix_millis).ok()?;
+    let observed_at = SystemTime::UNIX_EPOCH + Duration::from_millis(millis);
+    let terminal = matches!(snapshot.value.trim(), "done" | "parked" | "failed");
+    let fresh = terminal
+        || now
+            .duration_since(observed_at)
+            .map_or(true, |age| age <= fresh_for);
+    let run_id = if snapshot.run_id == "primary" {
+        None
+    } else {
+        Some(snapshot.run_id)
+    };
+
+    Some((
+        snapshot.task_id,
+        AgentStatusCacheEntry {
+            value: snapshot.value,
+            observed_at,
+            fresh,
+            source: AgentStatusCacheSource::Lifecycle,
+            run_id,
+            parent_run_id: snapshot.parent_run_id,
         },
     ))
 }
@@ -409,6 +458,7 @@ mod tests {
         let cache = TmuxAgentStatusSnapshot::from_roots_at(
             &tmux_root,
             &runtime_root,
+            root.join("agent-events"),
             now,
             Duration::from_secs(30),
         );
@@ -452,6 +502,7 @@ mod tests {
         let cache = TmuxAgentStatusSnapshot::from_roots_at(
             &tmux_root,
             &runtime_root,
+            root.join("agent-events"),
             now,
             Duration::from_secs(30),
         );
@@ -514,6 +565,7 @@ mod tests {
         let cache = TmuxAgentStatusSnapshot::from_roots_at(
             &tmux_root,
             &runtime_root,
+            root.join("agent-events"),
             now,
             Duration::from_secs(30),
         );
@@ -528,6 +580,50 @@ mod tests {
                 && entry.fresh
                 && entry.source == AgentStatusCacheSource::RuntimeWrapper
         }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agent_event_files_become_lifecycle_entries() {
+        let root = temp_cache_root();
+        let events_dir = root.join("agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        let observed_millis = 1_000_000;
+        fs::write(
+            events_dir.join("web__fix-login.json"),
+            format!(
+                r#"{{"task_id":"web/fix-login","run_id":"primary","value":"working","observed_at_unix_millis":{observed_millis}}}"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            events_dir.join("web__fix-login-deleg.json"),
+            format!(
+                r#"{{"task_id":"web/fix-login","run_id":"pane:s:%1","parent_run_id":"primary","value":"wait","observed_at_unix_millis":{observed_millis}}}"#
+            ),
+        )
+        .unwrap();
+
+        let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&root);
+        let entries =
+            cache.status_entries_for_task(&TaskId::new("web/fix-login"), "ajax-web-fix-login");
+
+        let primary = entries
+            .iter()
+            .find(|entry| entry.value == "working")
+            .expect("primary lifecycle entry");
+        assert_eq!(primary.source, AgentStatusCacheSource::Lifecycle);
+        assert_eq!(primary.run_id, None);
+        assert_eq!(primary.parent_run_id, None);
+
+        let delegated = entries
+            .iter()
+            .find(|entry| entry.value == "wait")
+            .expect("delegated lifecycle entry");
+        assert_eq!(delegated.source, AgentStatusCacheSource::Lifecycle);
+        assert_eq!(delegated.run_id.as_deref(), Some("pane:s:%1"));
+        assert_eq!(delegated.parent_run_id.as_deref(), Some("primary"));
 
         fs::remove_dir_all(root).unwrap();
     }

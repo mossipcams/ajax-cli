@@ -78,15 +78,18 @@ native client (claude|codex|cursor|pi) in tmux pane
 - [x] Implement: `__agent-event` subcommand (translation + atomic write)
 - [x] Verify: `cargo test -p ajax-cli agent_event agent_runtime` + clippy + check
 
-### 2. Ingestion at ProviderLifecycle tier
+### 2. Ingestion at ProviderLifecycle tier — DONE 2026-07-21
 
-- [ ] Test: event file → `AgentStatusCacheSource::ProviderLifecycle` entry keyed by task
-- [ ] Test: lifecycle working outranks hook file for same run
-- [ ] Test: stale (>30 min) non-terminal lifecycle → Unknown, not Idle
-- [ ] Test: terminal lifecycle done persists past window; wrapper exit still outranks
-- [ ] Implement: cache read in agent_status_cache.rs; map to
-      `ObservationSource::ProviderLifecycle` in live.rs candidate assembly
-- [ ] Verify: `cargo nextest run -p ajax-core live:: runtime_refresh::`
+- [x] Test: event file → `AgentStatusCacheSource::Lifecycle` entry keyed by task
+- [x] Test: lifecycle working outranks hook file for same run
+- [x] Test: stale (>30 min) non-terminal lifecycle → Unknown, not Idle
+- [x] Test: terminal lifecycle done persists past window; wrapper exit still outranks
+- [x] Implement: cache read in agent_status_cache.rs; Lifecycle arm in live.rs
+      at ProviderLifecycle/High + hook-supersession filter (fresh lifecycle on
+      a run drops ProviderHook observations for that run, avoiding
+      equal-timestamp conflict projection during hook/adapter coexistence)
+- [x] Verify: live:: 107, runtime_refresh:: 50, agent_status_cache 12 passed;
+      clippy + fmt clean
 
 ### 3. Hook installers
 

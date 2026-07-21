@@ -33,6 +33,8 @@ pub struct AgentStatusCacheEntry {
 pub enum AgentStatusCacheSource {
     Hook,
     RuntimeWrapper,
+    /// Agent-event lifecycle snapshot written by the `__agent-event` sink.
+    Lifecycle,
 }
 
 pub trait AgentStatusCache {
@@ -349,6 +351,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                         AgentStatusCacheSource::RuntimeWrapper => {
                             live::AgentEvidenceSource::RuntimeWrapper
                         }
+                        AgentStatusCacheSource::Lifecycle => live::AgentEvidenceSource::Lifecycle,
                     },
                     entry.value.clone(),
                     entry.observed_at,
@@ -391,7 +394,8 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
                     task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
                     match decision.source {
-                        Some(live::AgentEvidenceSource::Hook) => {
+                        Some(live::AgentEvidenceSource::Hook)
+                        | Some(live::AgentEvidenceSource::Lifecycle) => {
                             live::apply_authoritative_observation_at(
                                 task,
                                 observation,
