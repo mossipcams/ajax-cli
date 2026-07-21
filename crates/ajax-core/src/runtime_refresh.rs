@@ -418,6 +418,69 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             // non-actionable state without further status application.
             continue;
         }
+
+        let prior_terminal = task_snapshot.live_status.as_ref().is_some_and(|status| {
+            matches!(
+                status.kind,
+                LiveStatusKind::Done | LiveStatusKind::CommandFailed
+            )
+        });
+        if !decision.applied
+            && !prior_terminal
+            && crate::pane_fallback::profile_allows_any_pane_wait_fallback(
+                task_snapshot.selected_agent,
+            )
+        {
+            let pane_command =
+                tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
+            let pane_output = match runner.run(&pane_command) {
+                Ok(output) if output.status_code == 0 => output.stdout,
+                Ok(output) => {
+                    record_runtime_probe_failure(
+                        context,
+                        &task_id,
+                        format!(
+                            "tmux capture-pane probe failed: exited with status {}",
+                            output.status_code
+                        ),
+                        &mut changed,
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    record_runtime_probe_failure(
+                        context,
+                        &task_id,
+                        format!("tmux capture-pane probe failed: {error}"),
+                        &mut changed,
+                    );
+                    continue;
+                }
+            };
+            let pane_now = SystemTime::now();
+            if let Some(observation) =
+                crate::pane_fallback::maybe_pane_wait(task_snapshot.selected_agent, &pane_output)
+            {
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    let live_status_unchanged = task
+                        .live_status
+                        .as_ref()
+                        .is_some_and(|status| status.kind == observation.kind)
+                        && task
+                            .live_status_observed_at
+                            .is_some_and(|current| current >= pane_now);
+                    if live_status_unchanged {
+                        continue;
+                    }
+                    let previous = task.clone();
+                    task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
+                    task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
+                    live::apply_observation_at(task, observation, pane_now);
+                    refresh_cached_annotations(task);
+                    changed |= *task != previous;
+                }
+            }
+        }
     }
 
     if should_run_orphan_discovery
@@ -1464,7 +1527,9 @@ mod tests {
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
 
-        assert_eq!(captured_pane(&runner), 0);
+        // Gated pane wait fallback may capture when lifecycle/hook did not apply;
+        // empty/non-wait chrome must not invent status.
+        assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(task.live_status, None);
     }
@@ -1623,13 +1688,13 @@ mod tests {
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
 
-        assert_eq!(captured_pane(&runner), 0);
+        assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(task.live_status, None);
     }
 
     #[test]
-    fn unsupported_agent_hook_is_ignored_without_pane_capture() {
+    fn unsupported_agent_hook_is_ignored_without_inventing_wait_from_thinking_pane() {
         let mut context = context_with_active_task();
         context
             .registry
@@ -1648,7 +1713,11 @@ mod tests {
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
 
-        assert_eq!(captured_pane(&runner), 0);
+        // Other ignores ProviderHook; capability-gated fallback may capture, but
+        // thinking stream-json is not a wait hint.
+        assert_eq!(captured_pane(&runner), 1);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.live_status, None);
     }
 
     #[test]
@@ -1897,7 +1966,7 @@ mod tests {
         let refreshed = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert!(!changed);
         assert_eq!(refreshed.last_activity_at, previous.last_activity_at);
-        assert!(!runner.commands.iter().any(
+        assert!(runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
         ));
     }
