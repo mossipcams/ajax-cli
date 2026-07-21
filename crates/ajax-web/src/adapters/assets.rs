@@ -48,15 +48,9 @@ pub fn browser_shell_html() -> String {
         "<title>Ajax Cockpit</title>",
         &format!("<title>Ajax Cockpit {version}</title>"),
     );
-    // Cloudflare (ajax.mossyhome.net) can edge-cache bare /app.js while HTML and
-    // /api/version stay fresh — phone then shows OpenCode with a new app_version.
-    // Fingerprint only HTML entry URLs; leave the module graph bare (no import rewrite).
-    html = html
-        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={version}\""))
-        .replace(
-            "href=\"/app.css\"",
-            &format!("href=\"/app.css?v={version}\""),
-        );
+    // Bare module URLs only. Shell assets are Cache-Control: no-store — do not
+    // fingerprint with ?v= (that splits the ES module graph and fights caching
+    // instead of disabling it).
     html
 }
 

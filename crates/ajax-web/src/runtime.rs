@@ -2061,22 +2061,21 @@ mod tests {
             .await
             .unwrap();
         let shell = std::str::from_utf8(&shell_body).unwrap();
-        let version = crate::slices::install::app_version();
         assert!(
-            shell.contains(&format!("src=\"/app.js?v={version}\"")),
-            "shell must cache-bust app.js with the app version"
+            shell.contains("src=\"/app.js\""),
+            "shell must load app.js at a bare URL"
         );
         assert!(
-            shell.contains(&format!("href=\"/app.css?v={version}\"")),
-            "shell must cache-bust app.css with the app version"
+            shell.contains("href=\"/app.css\""),
+            "shell must load app.css at a bare URL"
         );
         assert!(
-            !shell.contains("src=\"/app.js\"></script>"),
-            "shell must not load app.js at a bare URL"
+            !shell.contains("src=\"/app.js?"),
+            "shell must not cache-bust app.js with a query string"
         );
         assert!(
-            !shell.contains("href=\"/app.css\">"),
-            "shell must not load app.css at a bare URL"
+            !shell.contains("href=\"/app.css?"),
+            "shell must not cache-bust app.css with a query string"
         );
 
         let app_js_body = to_bytes(get_public(&app, "/app.js").await.into_body(), usize::MAX)
