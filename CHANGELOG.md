@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.54.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.53.1...ajax-cli-v0.54.0) (2026-07-21)
+
+
+### Features
+
+* **core:** canonical agent-event facts pipeline ([#644](https://github.com/mossipcams/ajax-cli/issues/644)) ([b9175f3](https://github.com/mossipcams/ajax-cli/commit/b9175f337a8daa2e5af8f85076152fc2979b4d15))
+
 ## [0.53.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.53.0...ajax-cli-v0.53.1) (2026-07-21)
 
 
