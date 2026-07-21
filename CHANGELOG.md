@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.53.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.3...ajax-cli-v0.53.0) (2026-07-21)
+
+
+### Features
+
+* rewire attention webhooks onto lifecycle hooks ([#641](https://github.com/mossipcams/ajax-cli/issues/641)) ([ed26c9e](https://github.com/mossipcams/ajax-cli/commit/ed26c9e500d2877cf91c47fca93052fcafd3b03e))
+
+
+### Bug Fixes
+
+* **web:** keep hotbar Paste label inside equal-flex keys ([#639](https://github.com/mossipcams/ajax-cli/issues/639)) ([ab317b8](https://github.com/mossipcams/ajax-cli/commit/ab317b85317ff3722e00c495f3ea01f34f4fdfe0))
+
 ## [0.52.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.2...ajax-cli-v0.52.3) (2026-07-21)
 
 
