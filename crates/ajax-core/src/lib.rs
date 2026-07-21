@@ -1,10 +1,12 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapters;
+pub mod agent_capability;
 pub mod agent_prompt;
 pub mod agent_status;
 pub mod analysis;
 pub mod attention;
+pub mod canonical_agent_event;
 pub mod commands;
 pub mod config;
 pub mod events;
@@ -14,6 +16,7 @@ pub mod live;
 pub mod models;
 pub mod operation;
 pub mod output;
+pub mod pane_fallback;
 pub mod policy;
 pub mod recommended;
 pub mod registry;

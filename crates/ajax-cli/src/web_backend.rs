@@ -179,6 +179,9 @@ pub(crate) fn serve_mobile_web_with_paths(
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
+    let _ = crate::agent_event_notify::start_agent_event_notify_listener(
+        context.runtime_paths.cache_dir.join("agent-events"),
+    );
     let state = runtime::WebAppState::load_or_create(
         context.clone(),
         ProcessCommandRunner,

@@ -1,4 +1,5 @@
 mod agent_event;
+mod agent_event_notify;
 mod agent_hooks;
 mod agent_runtime;
 mod agent_status_cache;

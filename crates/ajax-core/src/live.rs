@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime};
 #[path = "live_application.rs"]
 mod application;
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
+pub use crate::pane_fallback::maybe_pane_wait;
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
     apply_observation, apply_observation_at, apply_trusted_observation,

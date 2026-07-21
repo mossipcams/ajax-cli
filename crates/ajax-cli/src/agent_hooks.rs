@@ -43,6 +43,8 @@ fn install_claude_hooks(home: &Path) -> Result<&'static str, CliError> {
         "PostToolUse",
         "Notification",
         "Stop",
+        "SessionStart",
+        "SessionEnd",
     ];
     let mut changed = false;
     for event in events {
@@ -68,6 +70,8 @@ fn install_codex_hooks(home: &Path) -> Result<&'static str, CliError> {
         "PostToolUse",
         "PermissionRequest",
         "Stop",
+        "SessionStart",
+        "SessionEnd",
     ];
     let mut changed = false;
     for event in events {
@@ -93,7 +97,14 @@ fn install_cursor_hooks(home: &Path) -> Result<&'static str, CliError> {
 
     let mut root = read_json_or_empty(&path)?;
     ensure_cursor_version(&mut root);
-    let events = ["beforeSubmitPrompt", "preToolUse", "postToolUse", "stop"];
+    let events = [
+        "beforeSubmitPrompt",
+        "preToolUse",
+        "postToolUse",
+        "stop",
+        "sessionStart",
+        "sessionEnd",
+    ];
     let mut changed = false;
     for event in events {
         let command = hook_command("cursor", event);
@@ -279,28 +290,39 @@ mod tests {
         ))
     }
 
-    fn claude_events() -> [&'static str; 5] {
+    fn claude_events() -> [&'static str; 7] {
         [
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
             "Notification",
             "Stop",
+            "SessionStart",
+            "SessionEnd",
         ]
     }
 
-    fn codex_events() -> [&'static str; 5] {
+    fn codex_events() -> [&'static str; 7] {
         [
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
             "PermissionRequest",
             "Stop",
+            "SessionStart",
+            "SessionEnd",
         ]
     }
 
-    fn cursor_events() -> [&'static str; 4] {
-        ["beforeSubmitPrompt", "preToolUse", "postToolUse", "stop"]
+    fn cursor_events() -> [&'static str; 6] {
+        [
+            "beforeSubmitPrompt",
+            "preToolUse",
+            "postToolUse",
+            "stop",
+            "sessionStart",
+            "sessionEnd",
+        ]
     }
 
     fn assert_claude_hooks(home: &std::path::Path) {

@@ -742,6 +742,16 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
     ]
 }
 
+/// Capability-gated pane wait fallback captures the visible pane when
+/// lifecycle/hook evidence did not apply (Codex/Other question gaps).
+fn expected_pane_capture_command() -> CommandSpec {
+    CommandSpec::new(
+        "tmux",
+        ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
+    )
+    .with_timeout(std::time::Duration::from_secs(8))
+}
+
 /// Runtime refresh now ends with a GitHub PR check probe for the fixture
 /// task; sequence-asserting tests append this to `tmux_live_commands()`.
 fn expected_ci_probe_command() -> CommandSpec {
@@ -2090,6 +2100,7 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
+        output(0, ""),
     ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2099,6 +2110,7 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
+    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
@@ -2128,6 +2140,7 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
+        output(0, ""),
     ]);
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2144,6 +2157,7 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
         .as_ref()
         .is_some_and(|status| status.points_at_expected_path));
     let mut expected = tmux_live_commands();
+    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
@@ -2179,6 +2193,7 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
+        output(0, ""),
     ]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
@@ -2187,6 +2202,7 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
     assert!(changed);
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
+    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
