@@ -42,8 +42,8 @@ use tower_http::compression::CompressionLayer;
 pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
-    bytes_axum_response, html_response, json_response, json_value_response,
-    operation_response_with_request_id, response_from_web_error, text_axum_response,
+    html_response, json_response, json_value_response, operation_response_with_request_id,
+    response_from_web_error, static_asset_revalidated_response, text_axum_response,
     web_error_response,
 };
 
@@ -606,16 +606,16 @@ fn cloudflare_access_error_response(error: CloudflareAccessError) -> AxumRespons
     )
 }
 
-async fn axum_app_css() -> AxumResponse {
-    static_asset_response("/app.css")
+async fn axum_app_css(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/app.css", &headers)
 }
 
-async fn axum_app_js() -> AxumResponse {
-    static_asset_response("/app.js")
+async fn axum_app_js(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/app.js", &headers)
 }
 
-async fn axum_terminal_js() -> AxumResponse {
-    static_asset_response("/terminal.js")
+async fn axum_terminal_js(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/terminal.js", &headers)
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1199,9 +1199,15 @@ async fn axum_fallback(uri: Uri) -> AxumResponse {
     text_axum_response(404, "not found")
 }
 
-fn static_asset_response(path: &str) -> AxumResponse {
+fn static_asset_response(path: &str, headers: &HeaderMap) -> AxumResponse {
     match install::static_asset(path) {
-        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
+        Some(asset) => static_asset_revalidated_response(
+            asset.content_type,
+            asset.body,
+            headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok()),
+        ),
         None => text_axum_response(404, "not found"),
     }
 }
@@ -1867,7 +1873,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_shell_assets_are_no_store_and_gzipped() {
+    async fn static_shell_assets_revalidate_and_are_gzipped() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let (_state, cookie, app) =
             app_with(context, TestBridge::default(), "axum-static-cache-gzip");
@@ -1880,7 +1886,7 @@ mod tests {
                 let cache_control = response.headers()["cache-control"]
                     .to_str()
                     .unwrap_or_default();
-                assert_eq!(cache_control, "no-store", "{request_path} must be no-store");
+                assert_eq!(cache_control, "no-cache", "{request_path} must revalidate");
                 assert!(
                     !cache_control.contains("immutable"),
                     "{request_path} must not claim immutability"
@@ -1911,6 +1917,138 @@ mod tests {
             .unwrap();
         assert_eq!(app_js_gz.status(), StatusCode::OK);
         assert_eq!(app_js_gz.headers()["content-encoding"], "gzip");
+    }
+
+    #[tokio::test]
+    async fn static_shell_assets_revalidate_with_a_weak_etag() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, _cookie, app) = app_with(context, TestBridge::default(), "axum-static-etag");
+
+        let etag = format!("W/\"{}\"", crate::slices::install::app_version());
+
+        for path in ["/app.js", "/app.css", "/terminal.js"] {
+            // Plain GET: 200 with a weak ETag and revalidation-directed no-cache.
+            let response = get_public(&app, path).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()["etag"], etag, "{path} etag");
+            assert_eq!(
+                response.headers()["cache-control"],
+                "no-cache",
+                "{path} cache-control"
+            );
+
+            // Matching If-None-Match: 304, empty body, same validators.
+            let not_modified = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri(path)
+                        .header("if-none-match", &etag)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED, "{path}");
+            let not_modified_etag = not_modified.headers()["etag"].clone();
+            let not_modified_cache_control = not_modified.headers()["cache-control"].clone();
+            let not_modified_body = to_bytes(not_modified.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(
+                not_modified_body.is_empty(),
+                "{path} 304 body must be empty"
+            );
+            assert_eq!(not_modified_etag, etag, "{path} 304 etag");
+            assert_eq!(
+                not_modified_cache_control, "no-cache",
+                "{path} 304 cache-control"
+            );
+
+            // Stale If-None-Match: 200 with a non-empty body.
+            let stale = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri(path)
+                        .header("if-none-match", "W/\"stale\"")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(stale.status(), StatusCode::OK, "{path} stale");
+            let stale_etag = stale.headers()["etag"].clone();
+            let stale_cache_control = stale.headers()["cache-control"].clone();
+            let stale_body = to_bytes(stale.into_body(), usize::MAX).await.unwrap();
+            assert!(
+                !stale_body.is_empty(),
+                "{path} stale body must not be empty"
+            );
+            assert_eq!(stale_etag, etag, "{path} stale etag");
+            assert_eq!(
+                stale_cache_control, "no-cache",
+                "{path} stale cache-control"
+            );
+        }
+
+        // Real iOS Safari pairs accept-encoding: gzip with If-None-Match; the
+        // CompressionLayer runs after the handler, so the gzip + conditional-GET
+        // combination must still yield 304 with the weak ETag intact.
+        let gz_not_modified = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/app.js")
+                    .header("accept-encoding", "gzip")
+                    .header("if-none-match", &etag)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            gz_not_modified.status(),
+            StatusCode::NOT_MODIFIED,
+            "/app.js gzip+if-none-match"
+        );
+        let gz_not_modified_etag = gz_not_modified.headers()["etag"].clone();
+        let gz_not_modified_body = to_bytes(gz_not_modified.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            gz_not_modified_body.is_empty(),
+            "/app.js gzip+if-none-match 304 body must be empty"
+        );
+        assert_eq!(
+            gz_not_modified_etag, etag,
+            "/app.js gzip+if-none-match 304 etag"
+        );
+
+        // The 200 path with accept-encoding: gzip must keep the same weak ETag;
+        // compression must not rewrite or drop the validator.
+        let gz_ok = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/app.js")
+                    .header("accept-encoding", "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gz_ok.status(), StatusCode::OK, "/app.js gzip 200");
+        assert_eq!(gz_ok.headers()["etag"], etag, "/app.js gzip 200 etag");
+
+        // The HTML shell keeps no-store and gains no ETag.
+        let shell = get_public(&app, "/").await;
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert!(
+            shell.headers().get("etag").is_none(),
+            "shell must not carry an ETag"
+        );
+        assert_eq!(shell.headers()["cache-control"], "no-store");
     }
 
     #[tokio::test]

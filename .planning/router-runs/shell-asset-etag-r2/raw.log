@@ -1,0 +1,33 @@
+All gates pass.
+
+ROUTER_REPORT_BEGIN
+STATUS: COMPLETE
+SUMMARY: Extended `static_shell_assets_revalidate_with_a_weak_etag` to exercise the production iOS Safari request shape: a `/app.js` request carrying both `accept-encoding: gzip` and `if-none-match: <etag>` is asserted to return 304 NOT_MODIFIED with an empty body and the same weak ETag, and the 200 + gzip path is asserted to still carry the same weak ETag (compression must not rewrite/drop the validator). All assertions pass against the existing production code, so no production code change or assertion weakening was needed. Smallest possible edit (~45 new lines under the existing test). cargo fmt was run (it only adjusted line wrapping within the newly added block); no formatting sweeps elsewhere.
+FILES_CHANGED:
+  - crates/ajax-web/src/runtime.rs
+TEST_FIRST: static_shell_assets_revalidate_with_a_weak_etag ... ok
+COMMAND_EVIDENCE:
+  - PHASE: targeted test
+    COMMAND: cargo test -p ajax-web static_shell_assets_revalidate_with_a_weak_etag
+    EXIT_CODE: 0
+    OUTPUT_EXCERPT: |
+      test runtime::tests::static_shell_assets_revalidate_with_a_weak_etag ... ok
+      test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 173 filtered out
+  - PHASE: full suite
+    COMMAND: cargo nextest run -p ajax-web
+    EXIT_CODE: 0
+    OUTPUT_EXCERPT: |
+      Summary [   1.165s] 174 tests run: 174 passed, 0 skipped
+  - PHASE: lint
+    COMMAND: cargo clippy -p ajax-web --all-targets --all-features -- -D warnings
+    EXIT_CODE: 0
+    OUTPUT_EXCERPT: |
+      Checking ajax-web v0.11.0 ...
+      Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.98s
+  - PHASE: format
+    COMMAND: cargo fmt --check
+    EXIT_CODE: 0
+    OUTPUT_EXCERPT: (no diff)
+STOP_CONDITIONS_HIT: []
+REMAINING_RISKS: []
+ROUTER_REPORT_END
