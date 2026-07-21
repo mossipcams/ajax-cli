@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.52.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.1...ajax-cli-v0.52.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** drop shell asset ?v= cache busting ([#635](https://github.com/mossipcams/ajax-cli/issues/635)) ([f92a432](https://github.com/mossipcams/ajax-cli/commit/f92a43266d4ac0cae863d87cb7cce4cb52b8d38f))
+
 ## [0.52.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.52.0...ajax-cli-v0.52.1) (2026-07-21)
 
 
