@@ -28,6 +28,12 @@ export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): Terminal
   const cellHeightPx = () => {
     const term = getTerminal();
     if (!term || !interactionEl || term.rows <= 0) return 18;
+    // Measure a real row: geometry mode rounds `rows` up (ceil), so deriving the
+    // cell height as clientHeight/rows is short by the rounding slack and the
+    // scroll mapping drifts a few percent per screen of scrollback.
+    const row = interactionEl.querySelector(".xterm-rows > *");
+    const measured = row ? row.getBoundingClientRect().height : 0;
+    if (measured > 0) return measured;
     return Math.max(1, interactionEl.clientHeight / term.rows);
   };
 

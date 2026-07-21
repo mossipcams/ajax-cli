@@ -150,7 +150,8 @@ body {
   line-height: 1.5;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  /* Clears .bottom-nav, which no longer pads by the safe-area inset. */
+  padding-bottom: 72px;
 }
 
 button {
@@ -633,7 +634,8 @@ header .bar h1 {
   }
 
   [data-testid="route-scroll"] {
-    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    /* Clears .bottom-nav, which no longer pads by the safe-area inset. */
+    padding-bottom: 72px;
   }
 
   html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="task"]) {
@@ -874,8 +876,10 @@ header .bar h1 {
   gap: 8px;
   width: min(var(--shell), 100%);
   margin: 0 auto;
-  padding: 8px max(16px, env(safe-area-inset-left))
-    calc(8px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right));
+  /* Hugs the bottom edge: no safe-area-inset-bottom pad. In standalone PWA the
+     inset is a constant ~34px, which floated the buttons above a dead band. */
+  padding: 8px max(16px, env(safe-area-inset-left)) 8px
+    max(16px, env(safe-area-inset-right));
   border-top: 1px solid var(--rule);
   background: color-mix(in srgb, var(--paper) 94%, transparent);
   -webkit-backdrop-filter: saturate(140%) blur(12px);
