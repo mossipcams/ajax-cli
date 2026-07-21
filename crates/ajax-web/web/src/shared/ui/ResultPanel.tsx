@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { DROP_UNDO_MS, RESULT_AUTO_DISMISS_MS, RESULT_SUCCESS_DISMISS_MS } from "@/shared/lib/polling";
 import { Button } from "./button";
 
@@ -23,6 +23,12 @@ export default function ResultPanel({
 }: Props) {
   const trimmedOutput = output?.trim() || null;
   const undoArmed = !!onUndo || !!onCommit;
+  const onDismissRef = useRef(onDismiss);
+  const onUndoRef = useRef(onUndo);
+  const onCommitRef = useRef(onCommit);
+  onDismissRef.current = onDismiss;
+  onUndoRef.current = onUndo;
+  onCommitRef.current = onCommit;
 
   useEffect(() => {
     const dismissMs = undoArmed
@@ -31,15 +37,15 @@ export default function ResultPanel({
         ? RESULT_AUTO_DISMISS_MS
         : RESULT_SUCCESS_DISMISS_MS;
     const timer = setTimeout(() => {
-      if (undoArmed) onCommit?.();
-      onDismiss?.();
+      if (undoArmed) onCommitRef.current?.();
+      onDismissRef.current?.();
     }, dismissMs);
     return () => clearTimeout(timer);
-  }, [message, undoArmed, isError, onCommit, onDismiss]);
+  }, [message, undoArmed, isError]);
 
   function dismiss() {
-    if (undoArmed) onUndo?.();
-    onDismiss?.();
+    if (undoArmed) onUndoRef.current?.();
+    onDismissRef.current?.();
   }
 
   return (

@@ -65,6 +65,28 @@ describe("ResultPanel", () => {
     expect(onUndo).toHaveBeenCalledOnce();
   });
 
+  it("keeps the undo commit timer across callback identity changes", () => {
+    const onDismiss = vi.fn();
+    const commitSpy = vi.fn();
+    const { rerender } = render(
+      <ResultPanel
+        message="Dropping web/x…"
+        onCommit={() => commitSpy()}
+        onDismiss={onDismiss}
+      />,
+    );
+    vi.advanceTimersByTime(DROP_UNDO_MS / 2);
+    rerender(
+      <ResultPanel
+        message="Dropping web/x…"
+        onCommit={() => commitSpy()}
+        onDismiss={onDismiss}
+      />,
+    );
+    vi.advanceTimersByTime(DROP_UNDO_MS / 2);
+    expect(commitSpy).toHaveBeenCalledOnce();
+  });
+
   it("auto-dismisses and calls onCommit after the undo window when armed", () => {
     const onCommit = vi.fn();
     const onDismiss = vi.fn();

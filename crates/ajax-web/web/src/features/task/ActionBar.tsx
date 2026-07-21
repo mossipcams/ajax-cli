@@ -56,10 +56,14 @@ export default function ActionBar({
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropResolvedRef = useRef(false);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      if (dropTimerRef.current && !dropResolvedRef.current) return;
       if (dropTimerRef.current) clearTimeout(dropTimerRef.current);
     };
   }, []);
@@ -82,7 +86,7 @@ export default function ActionBar({
   };
 
   const run = async (action: WebAction, confirmed: boolean) => {
-    setRunningAction(action.action);
+    if (mountedRef.current) setRunningAction(action.action);
     try {
       const result = await postOperation({
         task_handle: handle,
@@ -107,7 +111,7 @@ export default function ActionBar({
     } catch {
       onResult?.("Action failed — network error", null, true);
     } finally {
-      setRunningAction(null);
+      if (mountedRef.current) setRunningAction(null);
     }
   };
 
@@ -126,7 +130,7 @@ export default function ActionBar({
       if (dropResolvedRef.current) return;
       dropResolvedRef.current = true;
       clearDropTimer();
-      setRunningAction(null);
+      if (mountedRef.current) setRunningAction(null);
     };
     dropTimerRef.current = setTimeout(commit, DROP_UNDO_MS);
     onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });

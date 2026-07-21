@@ -224,6 +224,41 @@ describe("App shell", () => {
     );
   });
 
+  it("keyboard-open inline task-detail pads safe-area top so the whole header row clears the notch", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+
+    const taskDetailRule =
+      mobileBlock.match(
+        /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    // Cockpit chrome (owner of safe-area top) is hidden while keyboard-open; the
+    // fixed task page must carry that inset so back + title + status stay usable.
+    expect(taskDetailRule).toMatch(/padding-top:\s*env\(safe-area-inset-top\)/);
+  });
+
+  it("mobile task detail-header sticks so the whole chrome row stays on-screen while scrolling", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+
+    const stickyRule =
+      mobileBlock.match(
+        /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s+\.detail-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(stickyRule).toMatch(/position:\s*sticky/);
+    expect(stickyRule).toMatch(/top:\s*0/);
+    expect(stickyRule).toMatch(/z-index:\s*[1-9]\d*/);
+    expect(stickyRule).toMatch(/background:\s*var\(--paper\)/);
+  });
+
   it("keyboard-open still hides bottom nav and cockpit chrome", () => {
     const stylesSource = loadStylesSource();
 

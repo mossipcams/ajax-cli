@@ -37,7 +37,9 @@ export function isKeyboardOpen(): boolean {
 
 /**
  * Clear document/window scroll offsets that Safari leaves behind after
- * keyboard or expand snaps. Safe in jsdom where `scrollTo` is unimplemented.
+ * keyboard or expand snaps, including the App `[data-testid="route-scroll"]`
+ * container that owns task-page vertical scroll. Safe in jsdom where
+ * `scrollTo` is unimplemented.
  */
 export function resetDocumentScroll(): void {
   try {
@@ -49,6 +51,9 @@ export function resetDocumentScroll(): void {
   document.body.scrollTop = 0;
   const scroller = document.scrollingElement;
   if (scroller) scroller.scrollTop = 0;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-testid="route-scroll"]')) {
+    el.scrollTop = 0;
+  }
 }
 
 /**

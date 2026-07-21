@@ -156,7 +156,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?width:\s*0/,
     );
-    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding-bottom:\s*2px/);
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*4px\s+6px\s+2px/);
     expect(mobileBlock).not.toMatch(
       /\n {2}\.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
     );
@@ -166,6 +166,36 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /html\.keyboard-open\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
     );
+  });
+
+  it("tunes mobile hotbar key chrome for iOS WebKit", () => {
+    const mobileBlock = terminalMobileBlock();
+
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*6px/);
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*4px\s+6px/);
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?min-height:\s*36px/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?padding:\s*2px\s+4px/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?font-size:\s*var\(--text-body-sm\)/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?font-family:\s*var\(--sans\)/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?-webkit-text-size-adjust:\s*100%/,
+    );
+  });
+
+  it("omits the hotbar Hide keyboard control", () => {
+    expect(taskTerminalSource).not.toMatch(/aria-label="Hide keyboard"/);
+    expect(taskTerminalSource).not.toMatch(
+      /className="terminal-key"[\s\S]*?⌄/,
+    );
+    expect(taskTerminalSource).toMatch(/aria-label="Expand terminal"/);
   });
 
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {

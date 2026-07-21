@@ -589,6 +589,15 @@ header .bar h1 {
     min-height: 0;
   }
 
+  /* Keep the whole chrome row (back + title + status pill) on-screen when
+     iOS focus/keyboard pans route-scroll; sticky within the scroll owner. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail .detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--paper);
+  }
+
   /* Inline terminal takes the leftover column height so the collapsed
      task-details line lands at the page bottom. */
   [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail > div:has([data-testid="task-terminal-panel"]) {
@@ -655,6 +664,10 @@ header .bar h1 {
     min-height: 0;
     margin: 0;
     box-sizing: border-box;
+    /* Cockpit chrome (safe-area top owner) is display:none while keyboard-open;
+       pad here so the whole detail-header row (back + title + status) clears
+       the notch / status bar instead of sitting under it. */
+    padding-top: env(safe-area-inset-top);
     overflow: hidden;
     background: var(--paper);
   }
@@ -1668,7 +1681,8 @@ header .bar h1 {
     display: flex;
     width: 100%;
     box-sizing: border-box;
-    padding-bottom: 2px;
+    gap: 6px;
+    padding: 4px 6px 2px;
   }
 
   .terminal-panel.is-expanded .terminal-keys {
@@ -1679,6 +1693,11 @@ header .bar h1 {
     flex: 1 1 0;
     min-width: 0;
     width: 0;
+    min-height: 36px;
+    padding: 2px 4px;
+    font-size: var(--text-body-sm);
+    font-family: var(--sans);
+    -webkit-text-size-adjust: 100%;
   }
 
   html.keyboard-open .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
