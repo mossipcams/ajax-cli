@@ -102,6 +102,26 @@ describe("createTerminalScrollSync", () => {
     expect(spacerEl.style.height).toBe(`${scrollback * cellHeight}px`);
   });
 
+  it("syncSpacer measures a real row instead of dividing clientHeight by ceil'd rows", () => {
+    // Geometry mode ceil()s rows, so clientHeight/rows understates the cell
+    // height and the scroll mapping drifts. A rendered row is authoritative.
+    const { term } = createFakeTerminal({ rows: 40, bufferLength: 1040 });
+    const interactionEl = createInteractionEl(382);
+    const rows = document.createElement("div");
+    rows.className = "xterm-rows";
+    const row = document.createElement("div");
+    row.getBoundingClientRect = () => ({ height: 9.777 }) as DOMRect;
+    rows.appendChild(row);
+    interactionEl.appendChild(rows);
+    const spacerEl = document.createElement("div");
+    const { scrollSync } = createScrollSync({ term, interactionEl, spacerEl });
+
+    scrollSync.syncSpacer();
+
+    expect(spacerEl.style.height).toBe(`${1000 * 9.777}px`);
+    expect(spacerEl.style.height).not.toBe(`${1000 * (382 / 40)}px`);
+  });
+
   it("syncSpacer is a no-op when spacerEl is null or the terminal is absent", () => {
     const { term } = createFakeTerminal({ rows: 24, bufferLength: 100 });
     const interactionEl = createInteractionEl(480);
