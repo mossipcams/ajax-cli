@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.51.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.6...ajax-cli-v0.51.7) (2026-07-21)
+
+
+### Bug Fixes
+
+* **web:** keep cockpit reads responsive and recover failed iOS PWA launches ([#621](https://github.com/mossipcams/ajax-cli/issues/621)) ([99f7d78](https://github.com/mossipcams/ajax-cli/commit/99f7d78bb33b0f5b67a5cc9a07ffecef64d614e8))
+
 ## [0.51.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.51.5...ajax-cli-v0.51.6) (2026-07-21)
 
 
