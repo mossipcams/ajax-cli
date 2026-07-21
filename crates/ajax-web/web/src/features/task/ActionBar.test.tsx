@@ -80,6 +80,20 @@ describe("ActionBar", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("commits a pending Drop after unmount when the undo window elapses", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const { unmount } = render(<ActionBar actions={[drop]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Drop"));
+    fireEvent.click(screen.getByText("Tap to confirm"));
+    expect(spy).not.toHaveBeenCalled();
+    unmount();
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ action: "drop", confirmed: true }),
+    );
+  });
+
   it("Undo cancels the pending Drop without calling the API", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
     const onResult = vi.fn();

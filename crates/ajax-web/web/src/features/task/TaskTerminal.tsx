@@ -1187,15 +1187,6 @@ export default function TaskTerminal({ handle }: Props) {
             }}>
             Paste
           </button>
-          <button
-            type="button"
-            className="terminal-key"
-            aria-label="Hide keyboard"
-            onClick={() => {
-              (document.activeElement as HTMLElement | null)?.blur();
-            }}>
-            ⌄
-          </button>
         </div>
       </div>
     </section>

@@ -1131,6 +1131,36 @@ test("inline keyboard-open pins task-detail to the visual viewport band", async 
   expect(chrome.interactPanel).not.toBe("none");
 });
 
+test("inline keyboard-open keeps the whole detail-header row inside the visible band", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page, { top: 47, height: 420 });
+
+  const band = await visibleAppBand(page);
+  const header = page.locator('[data-testid="mobile-chrome-header"]');
+  const back = header.locator(".back");
+  const status = header.locator(".interact-pill");
+
+  await expect(header).toBeVisible();
+  await expect(back).toBeVisible();
+  await expect(status).toBeVisible();
+
+  const headerBox = await header.boundingBox();
+  const backBox = await back.boundingBox();
+  const statusBox = await status.boundingBox();
+  expect(headerBox).not.toBeNull();
+  expect(backBox).not.toBeNull();
+  expect(statusBox).not.toBeNull();
+
+  // Whole chrome row (back + title + status) must sit inside the keyboard band,
+  // not above the visual viewport / under the notch.
+  expect(headerBox!.y).toBeGreaterThanOrEqual(band.top - 1);
+  expect(headerBox!.y + headerBox!.height).toBeLessThanOrEqual(band.bottom + 1);
+  expect(boxesIntersect(backBox!, band)).toBe(true);
+  expect(boxesIntersect(statusBox!, band)).toBe(true);
+});
+
 test("keyboard band CSS uses height pin and forbids 100lvh bottom math", async ({ page }) => {
   await openTaskTerminal(page);
 
@@ -1577,25 +1607,6 @@ test("Paste preserves prior terminal focus when another control owns focus", asy
       }),
     )
     .toBe(false);
-});
-
-test("Hide keyboard focus blur adds no PTY input", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-
-  await gotoTaskRoute(page);
-
-  const surface = terminalSurface(page);
-  await expect(surface).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
-
-  const baseline = await inputFrameCount(page);
-
-  await clickTerminalSurfaceInterior(page);
-  await terminalToolbar(page).getByRole("button", { name: "Hide keyboard" }).click();
-
-  await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
 });
 
 test("typing after manual reconnect sends exactly one input frame", async ({ page }) => {

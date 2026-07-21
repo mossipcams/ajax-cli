@@ -269,6 +269,22 @@ describe("resetDocumentScroll", () => {
     });
     expect(() => resetDocumentScroll()).not.toThrow();
   });
+
+  it("resetDocumentScroll also zeros the App route-scroll container", () => {
+    const routeScroll = document.createElement("div");
+    routeScroll.setAttribute("data-testid", "route-scroll");
+    Object.defineProperty(routeScroll, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 240,
+    });
+    document.body.appendChild(routeScroll);
+
+    resetDocumentScroll();
+
+    expect(routeScroll.scrollTop).toBe(0);
+    routeScroll.remove();
+  });
 });
 
 describe("isKeyboardOpen", () => {
