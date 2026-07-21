@@ -171,22 +171,28 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   it("tunes mobile hotbar key chrome for iOS WebKit", () => {
     const mobileBlock = terminalMobileBlock();
 
-    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*6px/);
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*4px\s+6px/);
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?min-height:\s*36px/,
     );
     expect(mobileBlock).toMatch(
-      /\.terminal-keys\s+\.terminal-key[\s\S]*?padding:\s*2px\s+4px/,
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?padding:\s*2px\s+1px/,
     );
     expect(mobileBlock).toMatch(
-      /\.terminal-keys\s+\.terminal-key[\s\S]*?font-size:\s*var\(--text-body-sm\)/,
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?font-size:\s*var\(--text-label\)/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?font-family:\s*var\(--sans\)/,
     );
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?-webkit-text-size-adjust:\s*100%/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?overflow:\s*hidden/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.terminal-keys\s+\.terminal-key[\s\S]*?white-space:\s*nowrap/,
     );
   });
 

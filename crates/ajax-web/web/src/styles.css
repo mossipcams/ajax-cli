@@ -1681,7 +1681,7 @@ header .bar h1 {
     display: flex;
     width: 100%;
     box-sizing: border-box;
-    gap: 6px;
+    gap: 4px;
     padding: 4px 6px 2px;
   }
 
@@ -1694,10 +1694,14 @@ header .bar h1 {
     min-width: 0;
     width: 0;
     min-height: 36px;
-    padding: 2px 4px;
-    font-size: var(--text-body-sm);
+    padding: 2px 1px;
+    font-size: var(--text-label);
     font-family: var(--sans);
     -webkit-text-size-adjust: 100%;
+    /* Equal-flex columns crush "Paste"/"Ctrl"; keep glyphs inside the chrome. */
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: clip;
   }
 
   html.keyboard-open .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
