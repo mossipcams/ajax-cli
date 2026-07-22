@@ -594,15 +594,16 @@ export default function TaskTerminal({ handle }: Props) {
       if (isKeyboardOpen() && !discreteIntent) {
         return;
       }
-      // term.resize clears selection; skip ambient fits while Copy/selection is live.
-      if (!discreteIntent && (termRef.current?.getSelection() ?? "").length > 0) {
+      // term.resize clears selection; skip all fits while Copy/selection is live
+      // (including discrete open/expand settle — a late rAF must not unmount Copy).
+      if ((termRef.current?.getSelection() ?? "").length > 0) {
         return;
       }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
-        if (!discreteIntent && (termRef.current?.getSelection() ?? "").length > 0) return;
+        if ((termRef.current?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });

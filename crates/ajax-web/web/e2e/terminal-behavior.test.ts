@@ -364,6 +364,22 @@ async function programTerminalSelection(
   return selected;
 }
 
+/** Wait until Copy stays visible across a short settle (survives late open fit). */
+async function waitForStableCopyButton(page: import("@playwright/test").Page) {
+  const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
+  await expect
+    .poll(
+      async () => {
+        if (!(await copy.isVisible().catch(() => false))) return "hidden";
+        await new Promise((r) => setTimeout(r, 120));
+        return (await copy.isVisible().catch(() => false)) ? "stable" : "detached";
+      },
+      { timeout: 5_000 },
+    )
+    .toBe("stable");
+  return copy;
+}
+
 // Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
@@ -2441,6 +2457,9 @@ test("selection Copy stays pinned beside expand after scrolling the interaction 
 
   const copy = terminalPanel(page).getByTestId("terminal-copy-overlay");
   await expect(copy).toBeVisible();
+  await expect
+    .poll(async () => (await copy.boundingBox())?.height ?? 0, { timeout: 5_000 })
+    .toBeGreaterThan(0);
 
   const before = await copy.boundingBox();
   expect(before).not.toBeNull();
@@ -2482,8 +2501,7 @@ test("Copy writes selected text to clipboard and shows Copied notice", async ({ 
   await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
   await programTerminalSelection(page, COPY_SELECTION_TEXT);
 
-  const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
-  await expect(copy).toBeVisible();
+  const copy = await waitForStableCopyButton(page);
   await copy.click();
 
   await expect.poll(() => clipboardWrites(page)).toContain(COPY_SELECTION_TEXT);
@@ -2497,8 +2515,7 @@ test("Copy opens read-only fallback when clipboard write fails", async ({ page }
   await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
   await programTerminalSelection(page, COPY_SELECTION_TEXT);
 
-  const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
-  await expect(copy).toBeVisible();
+  const copy = await waitForStableCopyButton(page);
   await copy.click();
 
   const fallback = page.getByRole("textbox", { name: "Copy text" });
