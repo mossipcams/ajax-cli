@@ -84,15 +84,19 @@ fn bottom_lines<'a>(lines: &'a [&'a str], window: usize) -> &'a [&'a str] {
     &lines[lines.len().saturating_sub(window)..]
 }
 
-type PromptRecognizer = fn(&[&str]) -> Option<RawPromptHint>;
-
 fn recognize_prompt(agent: AgentClient, lines: &[&str]) -> Option<RawPromptHint> {
-    let (primary, fallback): (PromptRecognizer, PromptRecognizer) = match agent {
-        AgentClient::Claude => (recognize_claude_prompt, recognize_codex_prompt),
-        AgentClient::Codex => (recognize_codex_prompt, recognize_claude_prompt),
-        AgentClient::Other => (recognize_claude_prompt, recognize_codex_prompt),
-    };
-    primary(lines).or_else(|| fallback(lines))
+    match agent {
+        AgentClient::Claude => {
+            recognize_claude_prompt(lines).or_else(|| recognize_codex_prompt(lines))
+        }
+        AgentClient::Codex => {
+            recognize_codex_prompt(lines).or_else(|| recognize_claude_prompt(lines))
+        }
+        AgentClient::Cursor | AgentClient::Pi => None,
+        AgentClient::Other => {
+            recognize_claude_prompt(lines).or_else(|| recognize_codex_prompt(lines))
+        }
+    }
 }
 
 fn recognize_claude_prompt(lines: &[&str]) -> Option<RawPromptHint> {
@@ -217,5 +221,21 @@ mod tests {
     fn stream_json_thinking_does_not_produce_wait_hint() {
         let pane = "{\"type\":\"thinking\"}";
         assert_eq!(recognize_wait_hint(AgentClient::Other, pane), None);
+    }
+
+    #[test]
+    fn cursor_and_pi_ignore_claude_codex_idle_chrome() {
+        let pane = "some earlier output\nmore output\n❯";
+        assert_eq!(recognize_wait_hint(AgentClient::Cursor, pane), None);
+        assert_eq!(recognize_wait_hint(AgentClient::Pi, pane), None);
+        assert_eq!(maybe_pane_wait(AgentClient::Cursor, pane), None);
+        assert_eq!(maybe_pane_wait(AgentClient::Pi, pane), None);
+    }
+
+    #[test]
+    fn cursor_and_pi_ignore_permission_chrome() {
+        let pane = "Do you want to run this command?\n\n❯ 1. Yes\n  2. No\n\nEsc to cancel";
+        assert_eq!(recognize_wait_hint(AgentClient::Cursor, pane), None);
+        assert_eq!(recognize_wait_hint(AgentClient::Pi, pane), None);
     }
 }

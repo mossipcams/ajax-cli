@@ -84,6 +84,14 @@ pub(crate) fn run_agent_event(
         return Ok(());
     };
     let observed_at = agent_runtime::now_millis().map_err(|_| ())?;
+    if !agent_runtime::runtime_hooks_accepted(
+        &identity.events_dir,
+        &identity.task_id,
+        &canonical.kind,
+        observed_at,
+    ) {
+        return Ok(());
+    }
     append_agent_event_jsonl(
         identity,
         client,
@@ -447,20 +455,25 @@ mod tests {
 
     use ajax_core::canonical_agent_event::{CanonicalEventDetail, CanonicalEventKind, TurnOutcome};
 
+    use crate::agent_runtime::{self, AgentRuntimeSnapshot, AgentRuntimeState};
+
     use super::{
         run_agent_event, translate_agent_event, translate_native_event, write_agent_event,
         AgentEventIdentity, AgentEventSnapshot,
     };
 
-    fn temp_events_dir(label: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
+    fn temp_events_fixture(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
             "ajax-agent-event-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
+        ));
+        let events_dir = root.join("agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        (root, events_dir)
     }
 
     fn test_identity(dir: &std::path::Path, task_id: &str) -> AgentEventIdentity {
@@ -611,7 +624,8 @@ mod tests {
 
     #[test]
     fn write_appends_jsonl_and_updates_legacy_snapshot() {
-        let dir = temp_events_dir("jsonl-dual-write");
+        let (root, dir) = temp_events_fixture("jsonl-dual-write");
+        write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
         let identity = test_identity(&dir, "web/fix-login");
 
         run_agent_event(
@@ -636,12 +650,34 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&latest_path).unwrap()).unwrap();
         assert_eq!(snapshot.value, "working");
 
-        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn write_test_runtime_snapshot(
+        events_dir: &std::path::Path,
+        task_id: &str,
+        state: AgentRuntimeState,
+        observed_at_unix_millis: u128,
+    ) {
+        let runtime_root = events_dir.parent().unwrap().join("agent-runtime");
+        fs::create_dir_all(&runtime_root).unwrap();
+        let snapshot = AgentRuntimeSnapshot {
+            task_id: task_id.to_string(),
+            state,
+            observed_at_unix_millis,
+            pid: Some(42),
+            exit_code: None,
+            message: None,
+        };
+        let stem = agent_runtime::task_file_stem(task_id);
+        let encoded = serde_json::to_vec(&snapshot).unwrap();
+        fs::write(runtime_root.join(format!("{stem}.json")), encoded).unwrap();
     }
 
     #[test]
     fn activity_finished_appends_jsonl_without_clobbering_ask_snapshot() {
-        let dir = temp_events_dir("jsonl-no-clobber");
+        let (root, dir) = temp_events_fixture("jsonl-no-clobber");
+        write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
         let identity = test_identity(&dir, "web/fix-login");
         let permission = serde_json::json!({
             "message": "Claude needs your permission to run Bash"
@@ -665,12 +701,12 @@ mod tests {
                 .unwrap();
         assert_eq!(snapshot.value, "ask");
 
-        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn write_agent_event_is_atomic_and_task_keyed() {
-        let dir = temp_events_dir("atomic");
+        let (root, dir) = temp_events_fixture("atomic");
         let identity = AgentEventIdentity {
             task_id: "web/fix-login".to_string(),
             run_id: "primary".to_string(),
@@ -694,7 +730,7 @@ mod tests {
             .count();
         assert_eq!(tmp_files, 0);
 
-        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -719,7 +755,7 @@ mod tests {
 
         use super::set_test_notify_socket_override;
 
-        let dir = temp_events_dir("socket-notify");
+        let (root, dir) = temp_events_fixture("socket-notify");
         let socket_path = std::path::PathBuf::from(format!(
             "/tmp/ajax-notify-{}-{}.sock",
             std::process::id(),
@@ -742,6 +778,7 @@ mod tests {
 
         set_test_notify_socket_override(Some(socket_path.clone()));
 
+        write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
         let identity = test_identity(&dir, "web/fix-login");
         run_agent_event(
             Some(&identity),
@@ -763,6 +800,95 @@ mod tests {
         assert_eq!(jsonl.lines().count(), 1);
 
         let _ = fs::remove_file(&socket_path);
-        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_agent_event_appends_when_runtime_snapshot_running() {
+        let (root, dir) = temp_events_fixture("runtime-running");
+        write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
+        let identity = test_identity(&dir, "web/fix-login");
+
+        run_agent_event(
+            Some(&identity),
+            "cursor",
+            "beforeSubmitPrompt",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let stem = "web__fix-login";
+        let jsonl = fs::read_to_string(dir.join(format!("{stem}.jsonl"))).unwrap();
+        assert_eq!(jsonl.lines().count(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_agent_event_rejects_after_stale_exit_for_non_settle_events() {
+        let (root, dir) = temp_events_fixture("runtime-stale-exit");
+        let stale_at = agent_runtime::now_millis().unwrap().saturating_sub(60_000);
+        write_test_runtime_snapshot(
+            &dir,
+            "web/fix-login",
+            AgentRuntimeState::ExitedSuccess,
+            stale_at,
+        );
+        let identity = test_identity(&dir, "web/fix-login");
+
+        run_agent_event(
+            Some(&identity),
+            "cursor",
+            "preToolUse",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let stem = "web__fix-login";
+        assert!(!dir.join(format!("{stem}.jsonl")).exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_agent_event_accepts_fresh_exit_for_turn_settled() {
+        let (root, dir) = temp_events_fixture("runtime-fresh-exit-settle");
+        write_test_runtime_snapshot(
+            &dir,
+            "web/fix-login",
+            AgentRuntimeState::ExitedSuccess,
+            agent_runtime::now_millis().unwrap(),
+        );
+        let identity = test_identity(&dir, "web/fix-login");
+
+        run_agent_event(Some(&identity), "cursor", "stop", &serde_json::json!({})).unwrap();
+
+        let stem = "web__fix-login";
+        let jsonl = fs::read_to_string(dir.join(format!("{stem}.jsonl"))).unwrap();
+        assert_eq!(jsonl.lines().count(), 1);
+        let envelope: serde_json::Value =
+            serde_json::from_str(jsonl.lines().next().unwrap()).unwrap();
+        assert_eq!(envelope["kind"], "turn_settled");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_agent_event_rejects_without_runtime_snapshot() {
+        let (root, dir) = temp_events_fixture("runtime-missing");
+        let identity = test_identity(&dir, "web/fix-login");
+
+        run_agent_event(
+            Some(&identity),
+            "cursor",
+            "beforeSubmitPrompt",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let stem = "web__fix-login";
+        assert!(!dir.join(format!("{stem}.jsonl")).exists());
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

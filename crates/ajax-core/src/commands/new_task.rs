@@ -549,9 +549,11 @@ fn slugify_title(title: &str) -> String {
 }
 
 fn agent_from_name(name: &str) -> AgentClient {
-    match name {
+    match name.to_ascii_lowercase().as_str() {
         "claude" => AgentClient::Claude,
         "codex" => AgentClient::Codex,
+        "cursor" => AgentClient::Cursor,
+        "pi" => AgentClient::Pi,
         _ => AgentClient::Other,
     }
 }
@@ -704,19 +706,43 @@ mod tests {
     #[test]
     fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
         let context = context();
-        let plan = new_task_plan(
-            &context,
-            NewTaskRequest {
-                repo: "web".to_string(),
-                title: "Fix login".to_string(),
-                agent: "cursor".to_string(),
-            },
-        )
-        .unwrap();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+        };
+        let plan = new_task_plan(&context, request.clone()).unwrap();
 
         let launch = agent_send_keys_line(&plan);
         assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
         assert!(launch.ends_with("-- cursor agent"));
+        assert_eq!(
+            task_from_new_request(&context, &request)
+                .unwrap()
+                .selected_agent,
+            crate::models::AgentClient::Cursor
+        );
+    }
+
+    #[test]
+    fn new_task_plan_pi_agent_stores_pi_client() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "pi".to_string(),
+        };
+        let plan = new_task_plan(&context, request.clone()).unwrap();
+
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- pi"));
+        assert_eq!(
+            task_from_new_request(&context, &request)
+                .unwrap()
+                .selected_agent,
+            crate::models::AgentClient::Pi
+        );
     }
 
     #[test]

@@ -519,7 +519,7 @@ fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor:
     use ajax_supervisor::SupervisorAgent;
 
     match task.selected_agent {
-        AgentClient::Other => SupervisorAgent::Cursor,
+        AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => SupervisorAgent::Cursor,
         AgentClient::Codex | AgentClient::Claude => SupervisorAgent::Codex,
     }
 }

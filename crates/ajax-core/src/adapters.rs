@@ -532,7 +532,7 @@ mod tests {
         };
 
         assert_eq!(
-            agent_launch_spec("cursor", AgentClient::Other, &launch),
+            agent_launch_spec("cursor", AgentClient::Cursor, &launch),
             CommandSpec::new("cursor", ["agent", "fix login"])
         );
     }

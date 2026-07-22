@@ -66,6 +66,8 @@ pub fn profile_for_agent_client(client: AgentClient) -> AgentCapabilityProfile {
     match client {
         AgentClient::Claude => claude_profile(),
         AgentClient::Codex => codex_profile(),
+        AgentClient::Cursor => cursor_profile(),
+        AgentClient::Pi => pi_profile(),
         AgentClient::Other => unknown_other_profile(),
     }
 }
@@ -160,5 +162,26 @@ mod tests {
 
         let claude = profile_for_agent_client(AgentClient::Claude);
         assert!(!claude.allows_pane_fallback(CapabilityFact::QuestionWait));
+    }
+
+    #[test]
+    fn cursor_agent_client_profile_matches_hook_client() {
+        let from_client = profile_for_agent_client(AgentClient::Cursor);
+        let from_hook = profile_for_hook_client("cursor");
+        assert_eq!(
+            from_client.permission_wait, from_hook.permission_wait,
+            "Cursor wait capabilities must match hook profile"
+        );
+        assert_eq!(from_client.question_wait, from_hook.question_wait);
+        assert_eq!(from_client.permission_wait, CapabilitySupport::Unavailable);
+    }
+
+    #[test]
+    fn pi_agent_client_profile_matches_hook_client() {
+        let from_client = profile_for_agent_client(AgentClient::Pi);
+        let from_hook = profile_for_hook_client("pi");
+        assert_eq!(from_client.permission_wait, from_hook.permission_wait);
+        assert_eq!(from_client.question_wait, from_hook.question_wait);
+        assert_eq!(from_client.permission_wait, CapabilitySupport::Unavailable);
     }
 }

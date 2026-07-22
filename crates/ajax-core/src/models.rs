@@ -23,6 +23,8 @@ impl TaskId {
 pub enum AgentClient {
     Claude,
     Codex,
+    Cursor,
+    Pi,
     Other,
 }
 
