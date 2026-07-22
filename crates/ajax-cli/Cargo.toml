@@ -1,6 +1,6 @@
 [package]
 name = "ajax-cli"
-version = "0.54.3"
+version = "0.54.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
