@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.55.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.0...ajax-cli-v0.55.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **web:** revert zero-lag overlay and restore scrollback depth ([#662](https://github.com/mossipcams/ajax-cli/issues/662)) ([d714330](https://github.com/mossipcams/ajax-cli/commit/d71433084dbf95b6ab15dd94f1e9eab6ba91c0a6))
+
 ## [0.55.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.4...ajax-cli-v0.55.0) (2026-07-22)
 
 
