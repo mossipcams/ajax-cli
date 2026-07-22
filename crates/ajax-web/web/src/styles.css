@@ -1414,6 +1414,12 @@ header .bar h1 {
   scrollbar-width: none;
 }
 
+/* Hide xterm content while seed parses; keep wrap background as the plate. */
+.terminal-interaction-wrap.is-seed-pending .terminal-host,
+.terminal-interaction-wrap.is-seed-pending .terminal-scroll-spacer {
+  opacity: 0;
+}
+
 .terminal-interaction-wrap::-webkit-scrollbar {
   display: none;
   width: 0;

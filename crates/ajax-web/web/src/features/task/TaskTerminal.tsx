@@ -23,6 +23,8 @@ import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 
+const SEED_REVEAL_GATE_MIN_BYTES = 4096;
+
 interface Props {
   handle: string;
 }
@@ -562,6 +564,23 @@ export default function TaskTerminal({ handle }: Props) {
     let directionalArmed = false;
     let directionalArrow: string | undefined;
     let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
+    let seedPendingRevealTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearSeedPendingRevealTimer = () => {
+      if (seedPendingRevealTimer) {
+        clearTimeout(seedPendingRevealTimer);
+        seedPendingRevealTimer = undefined;
+      }
+    };
+
+    const armSeedPendingFallback = () => {
+      clearSeedPendingRevealTimer();
+      seedPendingRevealTimer = setTimeout(() => {
+        seedPendingRevealTimer = undefined;
+        if (!isActive()) return;
+        interactionEl.classList.remove("is-seed-pending");
+      }, 2000);
+    };
 
     const isKeyboardOpen = () => document.documentElement.classList.contains("keyboard-open");
 
@@ -1043,6 +1062,8 @@ export default function TaskTerminal({ handle }: Props) {
     interactionEl.addEventListener("touchend", onTouchEnd, { passive: true });
     interactionEl.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
+    let seedGateArmed = true;
+
     let connection: TerminalConnection | undefined;
 
     // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
@@ -1051,7 +1072,25 @@ export default function TaskTerminal({ handle }: Props) {
       if (disposed) return;
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
-          termRef.current?.write(text, scrollSync.applyOutput);
+          const gate =
+            seedGateArmed && text.length >= SEED_REVEAL_GATE_MIN_BYTES;
+          if (gate) {
+            interactionEl.classList.add("is-seed-pending");
+            armSeedPendingFallback();
+          }
+          seedGateArmed = false;
+          termRef.current?.write(text, () => {
+            scrollSync.applyOutput();
+            if (interactionEl.classList.contains("is-seed-pending")) {
+              scrollSync.setSyncingScroll(true);
+              termRef.current?.scrollToBottom();
+              scrollSync.scrollInteractionToBottom();
+              scrollSync.setSyncingScroll(false);
+              scrollSync.refreshFollow();
+              interactionEl.classList.remove("is-seed-pending");
+              clearSeedPendingRevealTimer();
+            }
+          });
         },
         onServerError: (message) => {
           setStatusDetail(message);
@@ -1065,16 +1104,24 @@ export default function TaskTerminal({ handle }: Props) {
         onOpen: (isReconnect, seeded) => {
           setStatusDetail("");
           resetDedupe();
-          if (isReconnect && seeded && termRef.current) {
-            scrollSync.setFollowLive(true);
-            setHasUnseenOutput(false);
-            scrollSync.setSyncingScroll(true);
-            termRef.current.reset();
-            scrollSync.syncSpacer();
-            termRef.current.scrollToBottom();
-            scrollSync.scrollInteractionToBottom();
-            scrollSync.setSyncingScroll(false);
-            scrollSync.refreshFollow();
+          if (seeded) {
+            seedGateArmed = true;
+            if (isReconnect && termRef.current) {
+              scrollSync.setFollowLive(true);
+              setHasUnseenOutput(false);
+              scrollSync.setSyncingScroll(true);
+              termRef.current.reset();
+              scrollSync.syncSpacer();
+              termRef.current.scrollToBottom();
+              scrollSync.scrollInteractionToBottom();
+              scrollSync.setSyncingScroll(false);
+              scrollSync.refreshFollow();
+            }
+          }
+          if (!seeded) {
+            seedGateArmed = false;
+            interactionEl.classList.remove("is-seed-pending");
+            clearSeedPendingRevealTimer();
           }
           scheduleImmediate(true);
         },
@@ -1109,6 +1156,7 @@ export default function TaskTerminal({ handle }: Props) {
 
     return () => {
       disposed = true;
+      clearSeedPendingRevealTimer();
       keyboardClassObserver.disconnect();
       cancelExpandSettle();
       cancelLongPress();
