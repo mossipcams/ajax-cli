@@ -4,6 +4,24 @@ export const MIN_FONT_SIZE = 7;
 export const MAX_FONT_SIZE = 20;
 export const FONT_STORAGE_KEY = "ajax.terminal.fontSize";
 
+/** xterm scrollback cap for mobile viewports (matches TaskTerminal mobile layout query). */
+export const MOBILE_SCROLLBACK_LINES = 2000;
+/** xterm scrollback cap for desktop viewports. */
+export const DESKTOP_SCROLLBACK_LINES = 10000;
+
+const MOBILE_MEDIA_QUERY =
+  "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
+
+export function terminalScrollbackLines(): number {
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia?.(MOBILE_MEDIA_QUERY).matches
+  ) {
+    return MOBILE_SCROLLBACK_LINES;
+  }
+  return DESKTOP_SCROLLBACK_LINES;
+}
+
 export function parsePersistedFontSize(raw: string | null): number {
   if (!raw) return DEFAULT_FONT_SIZE;
   const size = Number(raw);

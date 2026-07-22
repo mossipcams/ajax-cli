@@ -17,14 +17,10 @@ import {
   FONT_STORAGE_KEY,
   parsePersistedFontSize,
   computeTerminalGeometry,
+  terminalScrollbackLines,
 } from "@/shared/lib/terminalGeometry";
 import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
-import {
-  createZeroLagEcho,
-  createZeroLagOverlayPainter,
-  measureZeroLagFromXtermHost,
-} from "@/shared/lib/xtermZeroLag";
 
 interface Props {
   handle: string;
@@ -428,12 +424,8 @@ export default function TaskTerminal({ handle }: Props) {
   const onBandSettle = useEffectEvent(() => {
     scheduleBandSettle();
   });
-  // Sticky Ctrl must fold before zero-lag so control codes never paint as printables.
-  const zeroLagNoteRef = useRef<(data: string) => void>(() => {});
-  const onTermData = useEffectEvent((raw: string) => {
-    const data = consumeCtrl(raw);
-    zeroLagNoteRef.current(data);
-    sendKey(data);
+  const onTermData = useEffectEvent((data: string) => {
+    sendKey(consumeCtrl(data));
   });
 
   useEffect(() => {
@@ -899,7 +891,7 @@ export default function TaskTerminal({ handle }: Props) {
       fontSize: initialFontSize,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       cursorBlink: true,
-      scrollback: 2000,
+      scrollback: terminalScrollbackLines(),
       theme: {
         background: "#161616",
         foreground: "#e6e6e6",
@@ -911,41 +903,6 @@ export default function TaskTerminal({ handle }: Props) {
     liveTerm.open(hostEl);
     onHardenTextarea();
 
-    const zeroLagPainter = createZeroLagOverlayPainter(() => hostEl);
-    // Display-only prediction overlay (class/testid: xterm-zerolag-input).
-    const zeroLag = createZeroLagEcho({
-      onChange: (text, style) => zeroLagPainter.paint(text, style),
-      measure: () =>
-        measureZeroLagFromXtermHost({
-          host: hostEl,
-          term: liveTerm,
-          defaultFontSize: DEFAULT_FONT_SIZE,
-        }),
-    });
-
-    const noteZeroLagTerminalData = (data: string) => {
-      if (
-        data === "\r" ||
-        data === "\x7f" ||
-        (data.length === 1 && data.charCodeAt(0) >= 32)
-      ) {
-        zeroLag.onTerminalData(data);
-      }
-    };
-    zeroLagNoteRef.current = noteZeroLagTerminalData;
-
-    const onBeforeInput = (event: InputEvent) => {
-      if (event.inputType === "insertText" && event.data) {
-        zeroLag.noteBeforeInputPrintable(event.data);
-      } else if (event.inputType === "deleteContentBackward") {
-        zeroLag.noteBeforeInputBackspace();
-      } else if (event.inputType === "insertLineBreak") {
-        zeroLag.clear();
-      }
-    };
-    const textarea = termTextarea();
-    textarea?.addEventListener("beforeinput", onBeforeInput);
-
     // xterm leaves plain Space keydown uncancelled (keyCode 32 < 48), so the
     // browser page-scrolls the wrap. Own Space here: one PTY frame, no scroll.
     liveTerm.attachCustomKeyEventHandler((event) => {
@@ -953,7 +910,6 @@ export default function TaskTerminal({ handle }: Props) {
       if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return true;
       if (event.type === "keydown") {
         event.preventDefault();
-        noteZeroLagTerminalData(" ");
         sendKey(" ");
       }
       return false;
@@ -989,10 +945,7 @@ export default function TaskTerminal({ handle }: Props) {
       if (disposed) return;
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
-          termRef.current?.write(text, () => {
-            zeroLag.clearIfEchoedIn(text);
-            scrollSync.applyOutput();
-          });
+          termRef.current?.write(text, scrollSync.applyOutput);
         },
         onServerError: (message) => {
           setStatusDetail(message);
@@ -1004,7 +957,6 @@ export default function TaskTerminal({ handle }: Props) {
           }
         },
         onOpen: (isReconnect, seeded) => {
-          zeroLag.reset();
           setStatusDetail("");
           resetDedupe();
           if (isReconnect && seeded && termRef.current) {
@@ -1057,10 +1009,6 @@ export default function TaskTerminal({ handle }: Props) {
       clearDirectionalGesture();
       cancelScheduledWork();
       refitController?.dispose();
-      textarea?.removeEventListener("beforeinput", onBeforeInput);
-      zeroLagNoteRef.current = () => {};
-      zeroLagPainter.dispose();
-      zeroLag.reset();
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();

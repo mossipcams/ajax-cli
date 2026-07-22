@@ -72,7 +72,7 @@ Supporting facts (do not move target):
 | WebSocket route requires browser-session cookie, `Upgrade: websocket`, and same-origin Origin | Product | `runtime.rs:498-523,678-757`; tests: `axum_task_terminal_requires_browser_session_cookie`, `axum_task_terminal_rejects_non_upgrade_requests`, `axum_task_terminal_rejects_cross_site_websocket_origin`, `websocket_origin_policy_accepts_same_origin_host` |
 | URL is `/api/tasks/{handle}/terminal`; `?seed=0` opts out of history seed | Product | `api.ts:247-254`; `terminal_pty.rs:336-342`; tests: `terminalConnection.test.ts:141-175` |
 | Bridge builds a per-client grouped tmux session `…-m<12hex>` and tears it down on disconnect | Product | `terminal_pty.rs:163-215,634-642`; tests: `isolated_attach_plan_creates_grouped_session_then_attaches`, `isolated_attach_sessions_are_unique_per_call_and_never_the_shared_session`, `isolated_attach_cleanup_kills_ephemeral_session` |
-| First dial seeds history via `capture-pane -p -e -S -2000 -E -1` (no `-J`); after client resizes, bridge waits 150ms quiet (within 500ms overall) and pads with exact settled `client_rows` CRLFs; auto-reconnect / visibility-redial dial `?seed=0`; manual `Reconnect` re-seeds | Product | `terminal_pty.rs:199-210,336-342,505-521`; `terminalConnection.ts:154-180,198-202`; tests: `seed_history_query_parsing`, `isolated_attach_plan_seeds_browser_scrollback_from_task_window`, `resize_settle_deadline_returns_remaining_until_quiet_elapsed`, `history_capture_preserves_display_wrapping`, `terminalConnection.test.ts:141,146,175,207` |
+| First dial seeds history via `capture-pane -p -e -S -10000 -E -1` (no `-J`); after client resizes, bridge waits 150ms quiet (within 500ms overall) and pads with exact settled `client_rows` CRLFs; auto-reconnect / visibility-redial dial `?seed=0`; manual `Reconnect` re-seeds | Product | `terminal_pty.rs:199-210,336-342,505-521`; `terminalConnection.ts:154-180,198-202`; tests: `seed_history_query_parsing`, `isolated_attach_plan_seeds_browser_scrollback_from_task_window`, `resize_settle_deadline_returns_remaining_until_quiet_elapsed`, `history_capture_preserves_display_wrapping`, `terminalConnection.test.ts:141,146,175,207` |
 | Quiet status options (`status-interval 5`, `visual-activity off`, `visual-bell off`) are set on the ephemeral session only | Product | `terminal_pty.rs:194-198,799-857` |
 | PTY output is sent as raw `Message::Binary`; legacy `{"type":"output","data":base64}` and `{"type":"error","error":...}` are decoded for one-release compat | Product | `terminal_pty.rs:327-334,511-561`; `terminalConnection.ts:95-141`; tests: `terminal_output_frame_bytes_returns_raw_bytes_for_binary_send`, `terminalConnection.test.ts:253,276,300,323` |
 | Hostile alternate-screen / mouse / `ED 3J` sequences are stripped on the server to keep `capture-pane` seed clean; filter is byte-split safe | Product | `terminal_pty.rs:25-49,298-325`; tests: `filter_scrollback_hostile_sequences_strips_targets_and_carries_split_sequences`, `filter_strips_hostile_sequences_fed_one_byte_at_a_time_without_prefix_leaks` |
@@ -95,7 +95,7 @@ Supporting facts (do not move target):
 | CSS scales the terminal element to the host width; `logicalCols`, `fitScale`, and `fitFontSize` implement the current fit math | Legacy | `terminalGeometry.ts:14,101-127,209-226`; tests: `logicalCols`, `fitScale`, `fitFontSize returns whole pixels only` |
 | Pinch-adjusted terminal text density persists across reload | Product | `terminalGeometry.ts:53-73`; tests: `pinchFontSize`, `persistedFontSize`/`persistFontSize` paths; `e2e/terminal-behavior.test.ts` |
 | Default cell font 13px, pinch range 7–20px, storage key `localStorage.ajax.terminal.fontSize`, and `persistedFontSize`/`persistFontSize` helpers | Legacy | `terminalGeometry.ts:21-26,46-73`; tests: `fitCapFontSize`, `pinchFontSize` |
-| Mobile scrollback is capped at 2000 lines, desktop at 10000, chosen from the same media query the mobile CSS uses (fixed renderer default, not a user setting) | Legacy | `terminalGeometry.ts:28-44`; test: `terminal scrollback limits` |
+| Mobile scrollback is capped at 2000 lines, desktop at 10000, chosen from the same media query the mobile CSS uses (fixed renderer default, not a user setting) | Legacy | `terminalGeometry.ts:7-24`; test: `terminal scrollback limits` in `terminalGeometry.test.ts` |
 | Open and meaningful viewport/orientation/fullscreen changes eventually settle on a valid positive-integer PTY size; adjacent duplicate dimension pairs are bounded | Product | `terminalConnection.ts` resize JSON frames; `e2e/terminal-behavior.test.ts` (initial size, orientation, burst dedupe, keyboard, fullscreen, reopen) |
 | Vertical scroll over the terminal is native (no synthetic swipe layer); horizontal pan is synthetic via `scrollLeft` and `touch-action: pan-y` | Product | `TerminalRawView.svelte:620-641,1485-1491`; `terminalGestures.ts:129-191`; test: `terminalTouchScroll.test.ts:13` |
 | iOS keyboard never SIGWINCH-storms the shared tmux window: the local fit freezes and the PTY resize is withheld while the keyboard is up, except for pinch-end and expand-enter (discrete intent) which re-fit and resize in one pass | Product | `terminalLayoutPolicy.ts:38-50,69-101,104-134`; `TerminalRawView.svelte:651-658,718-731`; `terminalRefit.ts:73-89`; `e2e/terminal-behavior.test.ts` (keyboard burst + settled resize) |
@@ -127,7 +127,7 @@ Supporting facts (do not move target):
 | Paste button uses `navigator.clipboard.readText()`; on insecure (plain-http LAN) origin or read failure a fallback textarea opens for native iOS long-press Paste | Product | `TerminalRawView.svelte:684-710,1260-1286`; e2e: `smoke.test.ts:88` |
 | Paste goes through `term.paste(...)` so bracketed-paste mode is honored; failures surface a notice (never silently dropped) | Product | `TerminalRawView.svelte:688-691,1289-1299`; test: `terminalClipboard.test.ts:53,84` |
 | Copy: long-press selection → `Copy` overlay → `copyText` (ExecCommand fallback for iOS); failure opens a read-only textarea | Product | `TerminalRawView.svelte:559-568,1231-1258`; `terminalClipboard.ts`; tests: `terminalClipboard.test.ts:61,77,99,110,133` |
-| Typed text appears at the cursor before the PTY echo returns; the prediction is cleared the moment the real echo advances the cursor or after an idle window, so it never persists as a duplicate | Product | `xtermZeroLag.ts` (`xterm-zerolag-input`); tests: `xtermZeroLag.test.ts:151,171,186`; wired in `TaskTerminal.tsx` |
+| Typed text appears at the cursor before the PTY echo returns; the prediction is cleared the moment the real echo advances the cursor or after an idle window, so it never persists as a duplicate | Product | `terminalZeroLag.ts`; tests: `terminalZeroLag.test.ts:151,171,186`; e2e: `e2e/terminal-zero-lag.test.ts:55,65` |
 | Touch horizontal pan is captured in `touchmove` (capture phase) so renderer layers can never swallow it | Product | `terminalGestures.ts:231-247` |
 | Touch focuses the hidden textarea early so iOS can target native Paste before the long-press timer fires | Product | `terminalGestures.ts:124-127` |
 | Hide-keyboard button (`⌄`) blurs the hidden textarea; fullscreen exit also blurs | Product | `TerminalRawView.svelte:672-675,1334-1338`; e2e: `actions.test.ts:205` |
@@ -169,11 +169,11 @@ Supporting facts (do not move target):
 `#1c1714 / #f4eee0 / #52a095` and `cursorBlink: true`
 (`TerminalRawView.svelte:1071-1075`; `XtermTerminalView.svelte:40-46`);
 scrollback 2000/10000 from media-query match
-(`terminalGeometry.ts:39-44`); default font 13
+(`terminalGeometry.ts:7-24`); default font 13
 (`terminalGeometry.ts:25`); pinch bounds 7–20
 (`terminalGeometry.ts:21-22`); `TERM=xterm-256color` for the tmux child
-(`terminal_pty.rs:24,116-117`); capture-pane depth 2000
-(`terminal_pty.rs:205-207`); `status-interval=5`, `visual-activity=off`,
+(`terminal_pty.rs:24,116-117`); capture-pane depth 10000
+(`terminal_pty.rs:209-219`); `status-interval=5`, `visual-activity=off`,
 `visual-bell=off` on the ephemeral session only
 (`terminal_pty.rs:194-198`).
 
