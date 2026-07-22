@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.54.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.2...ajax-cli-v0.54.3) (2026-07-22)
+
+
+### Bug Fixes
+
+* **core:** treat Cursor/Pi as first-class agents for status hooks ([#653](https://github.com/mossipcams/ajax-cli/issues/653)) ([fd000b2](https://github.com/mossipcams/ajax-cli/commit/fd000b26aa0ca4bac46d81743befe09c2d5810fa))
+* **web:** keep Drop confirm pill readable and danger-colored ([#651](https://github.com/mossipcams/ajax-cli/issues/651)) ([236c157](https://github.com/mossipcams/ajax-cli/commit/236c15758d138d97df9cb1fff3d8bb3e91555b99))
+
 ## [0.54.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.1...ajax-cli-v0.54.2) (2026-07-22)
 
 
