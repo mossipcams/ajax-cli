@@ -129,7 +129,10 @@ contract** (facts, not display statuses). Per-client adapters identify what
 happened (`TurnStarted`, `ActivityStarted`/`Finished`, `AttentionRequested`,
 `TurnSettled`, child lifecycle, heartbeat, session open/close). They do not
 choose Running / Waiting / Idle / Error. One helper (`ajax-cli __agent-event`)
-ingests stdin native JSON under wrapper identity env and appends a versioned
+ingests stdin native JSON under wrapper identity env (or, for Cursor, a
+cwd-index entry published by `__agent-runtime` and keyed by
+`CURSOR_PROJECT_DIR` / `workspace_roots`, plus `sessionStart` session `env`
+echo-back) and appends a versioned
 event envelope; Ajax folds the log into an orthogonal per-run snapshot
 (liveness, phase, activity, blocker, outcome, open children/tools/attention)
 and projects operator status. Capability profiles mark which facts each client
