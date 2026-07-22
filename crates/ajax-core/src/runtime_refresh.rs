@@ -69,6 +69,7 @@ impl AgentStatusCache for NoAgentStatusCache {
 }
 
 const CI_CHECKS_PROBE_INTERVAL: Duration = Duration::from_secs(300);
+const CI_CHECKS_FAILED_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const CI_CHECKS_PROBED_AT_KEY: &str = "ci_checks_probed_at";
 const CI_PROBE_ERROR_KEY: &str = "ci_probe_error";
 const GITHUB_CI_FAILED_PREFIX: &str = "ci failed";
@@ -106,6 +107,16 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         .filter(|task| should_probe_live_substrate(task))
         .map(|task| task.id.clone())
         .collect();
+    let github_ci_failure_at_refresh_start = tasks
+        .iter()
+        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+        .map(|task| {
+            (
+                task.id.clone(),
+                task.live_status.as_ref().is_some_and(is_github_ci_failure),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut registered_runtime_tasks = tasks
         .iter()
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
@@ -503,6 +514,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         runner,
         SystemTime::now(),
         &registered_runtime_tasks,
+        &github_ci_failure_at_refresh_start,
         &mut changed,
     );
 
@@ -514,15 +526,20 @@ fn refresh_github_check_evidence<R: Registry>(
     runner: &mut impl CommandRunner,
     now: SystemTime,
     registered_runtime_tasks: &[(TaskId, String, String, PathBuf)],
+    github_ci_failure_at_refresh_start: &BTreeMap<TaskId, bool>,
     changed: &mut bool,
 ) {
     let github = GithubChecksAdapter::new("gh");
 
     for (task_id, _repo, branch, worktree_path) in registered_runtime_tasks {
+        let had_github_ci_failure = github_ci_failure_at_refresh_start
+            .get(task_id)
+            .copied()
+            .unwrap_or(false);
         let should_probe = context
             .registry
             .get_task_mut(task_id)
-            .is_some_and(|task| should_probe_github_checks(task, now));
+            .is_some_and(|task| should_probe_github_checks(task, now, had_github_ci_failure));
         if !should_probe || branch.trim().is_empty() {
             continue;
         }
@@ -540,7 +557,7 @@ fn refresh_github_check_evidence<R: Registry>(
     }
 }
 
-fn should_probe_github_checks(task: &Task, now: SystemTime) -> bool {
+fn should_probe_github_checks(task: &Task, now: SystemTime, had_github_ci_failure: bool) -> bool {
     if matches!(
         task.lifecycle_status,
         LifecycleStatus::Removed | LifecycleStatus::Merged | LifecycleStatus::Cleanable
@@ -558,7 +575,13 @@ fn should_probe_github_checks(task: &Task, now: SystemTime) -> bool {
         return true;
     };
 
-    unix_seconds(now).saturating_sub(probed_at) > CI_CHECKS_PROBE_INTERVAL.as_secs()
+    let interval =
+        if task.live_status.as_ref().is_some_and(is_github_ci_failure) || had_github_ci_failure {
+            CI_CHECKS_FAILED_PROBE_INTERVAL
+        } else {
+            CI_CHECKS_PROBE_INTERVAL
+        };
+    unix_seconds(now).saturating_sub(probed_at) > interval.as_secs()
 }
 
 fn apply_github_checks_observation(
@@ -581,26 +604,27 @@ fn apply_github_checks_observation(
                 );
             }
         }
-        CiChecksObservation::Healthy => {
+        CiChecksObservation::Healthy | CiChecksObservation::Pending => {
             task.metadata.remove(CI_PROBE_ERROR_KEY);
-            if task.live_status.as_ref().is_some_and(is_github_ci_failure) {
-                task.live_status = None;
-                task.live_status_observed_at = None;
-            }
-            if !task
-                .live_status
-                .as_ref()
-                .is_some_and(is_local_check_failure)
-            {
-                task.remove_side_flag(crate::models::SideFlag::TestsFailed);
-            }
-        }
-        CiChecksObservation::Pending => {
-            task.metadata.remove(CI_PROBE_ERROR_KEY);
+            clear_github_ci_evidence(task);
         }
         CiChecksObservation::Unobservable { reason } => {
             task.metadata.insert(CI_PROBE_ERROR_KEY.to_string(), reason);
         }
+    }
+}
+
+fn clear_github_ci_evidence(task: &mut Task) {
+    if task.live_status.as_ref().is_some_and(is_github_ci_failure) {
+        task.live_status = None;
+        task.live_status_observed_at = None;
+    }
+    if !task
+        .live_status
+        .as_ref()
+        .is_some_and(is_local_check_failure)
+    {
+        task.remove_side_flag(crate::models::SideFlag::TestsFailed);
     }
 }
 
@@ -2270,6 +2294,38 @@ mod tests {
     }
 
     #[test]
+    fn github_pending_checks_clear_github_ci_live_status() {
+        let now = SystemTime::now();
+        let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
+        github.add_side_flag(SideFlag::TestsFailed);
+        let mut local = task_with_live(LiveStatusKind::CiFailed, "check failed");
+        local.add_side_flag(SideFlag::TestsFailed);
+        let mut conflict = task_with_live(LiveStatusKind::MergeConflict, "merge failed");
+
+        super::apply_github_checks_observation(&mut github, CiChecksObservation::Pending, now);
+        super::apply_github_checks_observation(&mut local, CiChecksObservation::Pending, now);
+        super::apply_github_checks_observation(&mut conflict, CiChecksObservation::Pending, now);
+
+        assert!(github.live_status.is_none());
+        assert!(!github.has_side_flag(SideFlag::TestsFailed));
+        assert_eq!(
+            local
+                .live_status
+                .as_ref()
+                .map(|status| (status.kind, status.summary.as_str())),
+            Some((LiveStatusKind::CiFailed, "check failed"))
+        );
+        assert!(local.has_side_flag(SideFlag::TestsFailed));
+        assert_eq!(
+            conflict
+                .live_status
+                .as_ref()
+                .map(|status| (status.kind, status.summary.as_str())),
+            Some((LiveStatusKind::MergeConflict, "merge failed"))
+        );
+    }
+
+    #[test]
     fn github_healthy_checks_clear_only_github_ci_live_status() {
         let now = SystemTime::now();
         let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
@@ -2390,6 +2446,52 @@ mod tests {
         .unwrap();
 
         assert_eq!(stale_runner.gh_command_count(), 1);
+    }
+
+    #[test]
+    fn github_ci_failure_reprobes_sooner_than_default_interval() {
+        let now = unix_seconds_for_test(SystemTime::now());
+        let failed_stdout = ci_failed_stdout("ci");
+
+        let mut failed_context = context_with_active_task();
+        {
+            let task = failed_context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            task.live_status = Some(LiveObservation::new(
+                LiveStatusKind::CiFailed,
+                "ci failed: ci",
+            ));
+            task.metadata
+                .insert("ci_checks_probed_at".to_string(), (now - 31).to_string());
+        }
+        let mut failed_runner = CiChecksRunner::with_gh(&failed_stdout, "", 1);
+        refresh_runtime_context_with_tier(
+            &mut failed_context,
+            &mut failed_runner,
+            &NoAgentStatusCache,
+            RefreshTier::Full,
+        )
+        .unwrap();
+        assert_eq!(failed_runner.gh_command_count(), 1);
+
+        let mut healthy_context = context_with_active_task();
+        healthy_context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .metadata
+            .insert("ci_checks_probed_at".to_string(), (now - 31).to_string());
+        let mut healthy_runner = CiChecksRunner::with_gh(&failed_stdout, "", 1);
+        refresh_runtime_context_with_tier(
+            &mut healthy_context,
+            &mut healthy_runner,
+            &NoAgentStatusCache,
+            RefreshTier::Full,
+        )
+        .unwrap();
+        assert_eq!(healthy_runner.gh_command_count(), 0);
     }
 
     #[test]
