@@ -7,12 +7,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ajax_core::canonical_agent_event::CanonicalEventKind;
 use serde::{Deserialize, Serialize};
 
 use crate::CliError;
 use clap::ArgMatches;
 
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+const RUNTIME_HOOK_SETTLE_GRACE_MS: u128 = 15_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -226,6 +228,40 @@ pub(crate) fn now_millis() -> Result<u128, CliError> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .map_err(|error| CliError::CommandFailed(format!("system clock before epoch: {error}")))
+}
+
+pub(crate) fn runtime_hooks_accepted(
+    events_dir: &Path,
+    task_id: &str,
+    event_kind: &CanonicalEventKind,
+    now_millis: u128,
+) -> bool {
+    let is_post_exit_settle = matches!(
+        event_kind,
+        CanonicalEventKind::TurnSettled | CanonicalEventKind::SessionClosed
+    );
+    let runtime_root = match events_dir.parent() {
+        Some(parent) => parent.join("agent-runtime"),
+        None => return false,
+    };
+    let snapshot_path = runtime_root.join(format!("{}.json", task_file_stem(task_id)));
+    let content = match fs::read_to_string(&snapshot_path) {
+        Ok(content) => content,
+        Err(_) => return false,
+    };
+    let snapshot: AgentRuntimeSnapshot = match serde_json::from_str(&content) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return false,
+    };
+
+    match snapshot.state {
+        AgentRuntimeState::Starting | AgentRuntimeState::Running => true,
+        AgentRuntimeState::ExitedSuccess | AgentRuntimeState::ExitedFailure => {
+            is_post_exit_settle
+                && now_millis.saturating_sub(snapshot.observed_at_unix_millis)
+                    <= RUNTIME_HOOK_SETTLE_GRACE_MS
+        }
+    }
 }
 
 #[cfg(test)]

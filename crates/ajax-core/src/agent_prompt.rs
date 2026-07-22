@@ -105,7 +105,7 @@ pub fn answer_keys(prompt: &AgentPrompt, answer: &OperatorAnswer) -> Result<Send
 pub fn parse_prompt(agent: AgentClient, lines: &[String]) -> Option<AgentPrompt> {
     match agent {
         AgentClient::Codex => parse_codex_prompt(lines),
-        AgentClient::Claude | AgentClient::Other => None,
+        AgentClient::Claude | AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => None,
     }
 }
 

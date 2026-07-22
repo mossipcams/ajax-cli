@@ -263,6 +263,7 @@ mod tests {
     };
 
     use crate::agent_event::{run_agent_event, write_agent_event, AgentEventIdentity};
+    use crate::agent_runtime::{AgentRuntimeSnapshot, AgentRuntimeState};
 
     use super::TmuxAgentStatusSnapshot;
 
@@ -642,6 +643,21 @@ mod tests {
         let root = temp_cache_root();
         let events_dir = root.join("agent-events");
         fs::create_dir_all(&events_dir).unwrap();
+        let runtime_root = root.join("agent-runtime");
+        fs::create_dir_all(&runtime_root).unwrap();
+        let snapshot = AgentRuntimeSnapshot {
+            task_id: "web/fix-login".to_string(),
+            state: AgentRuntimeState::Running,
+            observed_at_unix_millis: 1,
+            pid: Some(42),
+            exit_code: None,
+            message: None,
+        };
+        fs::write(
+            runtime_root.join("web__fix-login.json"),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .unwrap();
         let identity = AgentEventIdentity {
             task_id: "web/fix-login".to_string(),
             run_id: "primary".to_string(),

@@ -18,8 +18,9 @@ pub fn agent_launch_spec(
             vec!["--cd".to_string(), launch.worktree_path.clone()]
         }
         AgentClient::Claude => vec!["--dangerously-skip-permissions".to_string()],
+        AgentClient::Cursor if program == "cursor" => vec!["agent".to_string()],
         AgentClient::Other if program == "cursor" => vec!["agent".to_string()],
-        AgentClient::Other => Vec::new(),
+        AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => Vec::new(),
     };
     if !launch.prompt.is_empty() {
         args.push(launch.prompt.clone());

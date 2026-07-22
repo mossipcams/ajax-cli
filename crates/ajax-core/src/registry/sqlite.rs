@@ -1104,7 +1104,7 @@ string_codec!(
     parse_agent_client,
     AgentClient,
     "agent client",
-    [Claude, Codex, Other,]
+    [Claude, Codex, Cursor, Pi, Other,]
 );
 
 string_codec!(
@@ -1291,6 +1291,8 @@ mod tests {
     #[rstest]
     #[case("Claude", AgentClient::Claude)]
     #[case("Codex", AgentClient::Codex)]
+    #[case("Cursor", AgentClient::Cursor)]
+    #[case("Pi", AgentClient::Pi)]
     #[case("Other", AgentClient::Other)]
     fn parses_agent_client_names(#[case] name: &str, #[case] expected: AgentClient) {
         assert_eq!(parse_agent_client(name).unwrap(), expected);

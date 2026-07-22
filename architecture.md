@@ -154,8 +154,8 @@ precedence:
    activities persist until cleared or session end; non-terminal hints without
    open-set backing expire after a generous window; terminal outcomes persist
    until superseded)
-3. Provider hook event (120s freshness for all accepted agents;
-   `AgentClient::Other` ignores hooks)
+3. Provider hook event (120s freshness for accepted agents;
+   `AgentClient::Other` ignores hooks; `Cursor` and `Pi` are first-class clients)
 4. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
    becomes `AgentRunning`
 
