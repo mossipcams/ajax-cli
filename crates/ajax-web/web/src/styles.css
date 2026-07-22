@@ -1158,34 +1158,36 @@ header .bar h1 {
   transform: rotate(90deg);
 }
 
-/* INBOX ENTRY — one bounded card: the row, then a hairline action strip.
-   Actions are real buttons here, so these rows never swipe. */
-.inbox-entry {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: var(--paper-tint);
-  box-shadow: var(--elev-1);
+/* INLINE ROW ACTION — the action rides the row instead of claiming a strip of
+   its own. A needs-you item costs ~64px, so several stay reachable without
+   scrolling; giving each one a card tripled that. Rendered as a sibling of the
+   row button (a button cannot nest inside a button) and overlaid on the right. */
+.task-row-action {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 34px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
 }
 
-.inbox-entry + .inbox-entry {
-  margin-top: 10px;
+.task-row-action .action-row {
+  pointer-events: auto;
 }
 
-.inbox-entry .task-list {
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
+/* Stays at the 44px touch floor: the row is tall enough, so there is no reason
+   to shrink the tap target to buy space. */
+.task-row-action .action {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: var(--text-label);
 }
 
-.inbox-entry .action-row {
-  padding: 8px var(--space-4);
-  border-top: 1px solid var(--rule);
-}
-
-/* The lead decision wears the attention edge; everything else stays hairline. */
-.inbox-entry.is-next {
-  border-color: var(--warn);
+/* Reserve the lane so the title never slides under the action. */
+.task-row.has-action .task-row-main {
+  padding-right: 96px;
 }
 
 .task-list {
@@ -1251,7 +1253,8 @@ header .bar h1 {
   min-width: 0;
 }
 
-/* Title is what the operator recognises; the handle is the address below it. */
+/* Title is what the operator recognises; everything else collapses to one
+   muted meta line so a row stays two lines tall. */
 .task-row-title {
   font-size: var(--text-body);
   font-weight: 500;
@@ -1261,35 +1264,28 @@ header .bar h1 {
   color: var(--ink);
 }
 
-.task-row.is-next .task-row-title {
-  font-size: var(--text-heading);
-  font-weight: 700;
+.task-row-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .task-row-handle {
+  flex: none;
   font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--ink-faint);
 }
 
 .task-row-sub {
-  font-size: var(--text-label);
+  font-size: var(--text-micro);
   color: var(--ink-muted);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.task-row-side {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
 }
 
 .task-row-status {
@@ -1302,11 +1298,18 @@ header .bar h1 {
 }
 
 .task-row-time {
+  flex: none;
+  align-self: center;
   font-size: var(--text-micro);
   font-weight: 500;
   color: var(--ink-faint);
   font-feature-settings: "tnum";
   white-space: nowrap;
+}
+
+/* Time is redundant next to an action pill on a needs-you row. */
+.task-row.has-action .task-row-time {
+  display: none;
 }
 
 .task-row-chevron {

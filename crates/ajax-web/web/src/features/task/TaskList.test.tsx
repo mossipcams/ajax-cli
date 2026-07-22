@@ -232,25 +232,25 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
-  it("leads Needs you with the highest-severity item and its actions inline", () => {
+  it("carries the action on the needs-you row itself, not below it", () => {
     render(<TaskList cockpit={cockpit} />);
     const needsYou = screen.getByRole("region", { name: "Needs you" });
-    const lead = within(needsYou).getByRole("button", { name: /web\/a/ });
-    expect(lead).toHaveClass("is-next");
-    // The action is a real button, reachable without discovering a swipe, and it
-    // appears exactly once (inbox rows never also render a swipe reveal).
+    const row = within(needsYou).getByRole("button", { name: /web\/a/ });
+    expect(row).toHaveClass("has-action");
+    // A real button, reachable without discovering a swipe, rendered exactly
+    // once (inbox rows never also render a swipe reveal).
     const actions = within(needsYou).getAllByRole("button", { name: "Fix CI" });
     expect(actions).toHaveLength(1);
     expect(actions[0]).toHaveAttribute("data-task", "web/a");
   });
 
-  it("renders no lead entry when the inbox is empty", () => {
+  it("renders no Needs you section when the inbox is empty", () => {
     const noInbox: BrowserCockpitView = { ...cockpit, inbox: { items: [] } };
     render(<TaskList cockpit={noInbox} />);
     expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
-    // web/a falls back into the calm list instead of leading the page.
+    // web/a falls back into the calm list, where the action returns to swipe.
     const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByRole("button", { name: /web\/a/ })).not.toHaveClass("is-next");
+    expect(within(tasks).getByRole("button", { name: /web\/a/ })).not.toHaveClass("has-action");
   });
 
   it("splits calm tasks into an active band and an idle disclosure", () => {

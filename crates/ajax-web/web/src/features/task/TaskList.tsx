@@ -24,10 +24,8 @@ interface ActionProps {
 
 interface TaskRowProps extends ActionProps {
   card: BrowserTaskCard;
-  /** Inbox rows expose their actions inline and never swipe. */
+  /** Inbox rows expose their action inline and never swipe. */
   isInbox: boolean;
-  /** The single highest-severity item, rendered as the lead decision. */
-  isNext?: boolean;
   nowSecs: number;
   offset: number;
   onOffset: (handle: string, offset: number) => void;
@@ -37,7 +35,6 @@ interface TaskRowProps extends ActionProps {
 function TaskRow({
   card,
   isInbox,
-  isNext = false,
   nowSecs,
   offset,
   onOffset,
@@ -48,10 +45,14 @@ function TaskRow({
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
   const rowRef = useRef<HTMLButtonElement>(null);
+  const primaryAction = visibleTaskActions(card.actions)[0];
   // Swipe is the calm-row accelerator only. Inbox rows already show the action
   // as a real button, and revealing the same action twice would put duplicate
   // labels in the tree.
-  const revealAction = isInbox ? undefined : visibleTaskActions(card.actions)[0];
+  const revealAction = isInbox ? undefined : primaryAction;
+  // ponytail: only the primary action rides the row — a needs-you list has to
+  // stay glanceable. Secondary actions live on the task detail page.
+  const inlineAction = isInbox ? primaryAction : undefined;
 
   useSwipeReveal(rowRef, revealAction
     ? {
@@ -72,7 +73,7 @@ function TaskRow({
     "task-row",
     `tone-${meta.tone}`,
     isInbox ? "is-inbox" : "",
-    isNext ? "is-next" : "",
+    inlineAction ? "has-action" : "",
     offset > 0 ? "is-revealed" : "",
   ]
     .filter(Boolean)
@@ -102,46 +103,34 @@ function TaskRow({
         <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
         <div className="task-row-main">
           <span className="task-row-title">{card.title || card.qualified_handle}</span>
-          {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
-          {card.status_explanation &&
-          card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
-            <span className="task-row-sub">{card.status_explanation}</span>
-          ) : null}
+          <span className="task-row-meta">
+            {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
+            <span className="task-row-status">{meta.label}</span>
+            {card.status_explanation &&
+            card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
+              <span className="task-row-sub">{card.status_explanation}</span>
+            ) : null}
+          </span>
         </div>
-        <span className="task-row-side">
-          <span className="task-row-status">{meta.label}</span>
-          {card.last_activity_unix_secs ? (
-            <span className="task-row-time">
-              {relativeTime(card.last_activity_unix_secs, nowSecs)}
-            </span>
-          ) : null}
-        </span>
+        {card.last_activity_unix_secs ? (
+          <span className="task-row-time">
+            {relativeTime(card.last_activity_unix_secs, nowSecs)}
+          </span>
+        ) : null}
         <span className="task-row-chevron">›</span>
       </button>
-    </div>
-  );
-}
 
-/** An inbox entry: the row plus its actions as real buttons, no swipe. */
-function InboxEntry({
-  card,
-  isNext,
-  ...rest
-}: Omit<TaskRowProps, "isInbox">) {
-  const actions = visibleTaskActions(card.actions);
-  return (
-    <div className={`inbox-entry${isNext ? " is-next" : ""}`}>
-      <div className="task-list">
-        <TaskRow card={card} isInbox isNext={isNext} {...rest} />
-      </div>
-      {actions.length ? (
-        <ActionBar
-          actions={actions}
-          handle={card.qualified_handle}
-          onCockpit={rest.onCockpit}
-          onResult={rest.onResult}
-          onMutated={rest.onMutated}
-        />
+      {/* Sibling, not a child: a button cannot nest inside the row button. */}
+      {inlineAction ? (
+        <div className="task-row-action">
+          <ActionBar
+            actions={[inlineAction]}
+            handle={card.qualified_handle}
+            onCockpit={onCockpit}
+            onResult={onResult}
+            onMutated={onMutated}
+          />
+        </div>
       ) : null}
     </div>
   );
@@ -302,15 +291,17 @@ export default function TaskList({
             <span className="section-head-title">Needs you</span>
             <span className="section-head-count">{inboxCards.length}</span>
           </div>
-          {inboxCards.map((card, index) => (
-            <InboxEntry
-              key={card.qualified_handle}
-              card={card}
-              isNext={index === 0}
-              offset={offsets[card.qualified_handle] ?? 0}
-              {...rowProps}
-            />
-          ))}
+          <div className="task-list">
+            {inboxCards.map((card) => (
+              <TaskRow
+                key={card.qualified_handle}
+                card={card}
+                isInbox
+                offset={offsets[card.qualified_handle] ?? 0}
+                {...rowProps}
+              />
+            ))}
+          </div>
         </section>
       ) : null}
 
