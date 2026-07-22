@@ -35,10 +35,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
-Default: fetch and force-sync the local main worktree to origin/main, install
-ajax-cli from that worktree (unless --no-install), reinstall client agent
-hooks when agent_hooks.rs changed, stop the previous managed web server for
-the selected profile, and start ajax-cli web in a durable tmux session.
+Default: fetch and force-sync the local main worktree to origin/main (branch
+tip, not a release tag), rebuild the web UI from that tree, install ajax-cli
+(unless --no-install), reinstall client agent hooks when agent_hooks.rs
+changed, stop the previous managed web server for the selected profile, and
+start ajax-cli web in a durable tmux session.
 
 With --worktree PATH: skip git sync, build/install from PATH (uncommitted
 changes included), install into .ajax-dev-web/bin, and restart only the
@@ -122,11 +123,12 @@ SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
 
 sync_main() {
-  echo "Fetching origin/main ..."
+  echo "Fetching origin/main (branch tip, not release tags) ..."
   git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
   echo "Force-syncing local main worktree to origin/main ..."
   git --git-dir="$GIT_DIR" --work-tree="$ROOT" reset --hard origin/main
   git --git-dir="$GIT_DIR" --work-tree="$ROOT" clean -fd
+  echo "main tip: $(git -C "$ROOT" log -1 --oneline)"
 }
 
 # ponytail: git clean removes untracked ajax-model-router script symlinks.
@@ -215,6 +217,9 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
+    # Rebuild UI from main source — don't rely on last release-committed dist alone.
+    echo "Building frontend from main ($ROOT) ..."
+    npm --prefix "$ROOT" run web:build
     echo "Installing ajax-cli from $ROOT ..."
     cargo install --path "$ROOT/crates/ajax-cli" --locked
   fi
