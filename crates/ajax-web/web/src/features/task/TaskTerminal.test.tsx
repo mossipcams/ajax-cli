@@ -135,14 +135,19 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalSource).toMatch(/syncHostToWrap\(\)/);
   });
 
-  it("skips ambient fits while a terminal selection is active", () => {
+  it("skips fits while a terminal selection is active", () => {
     const scheduleFitBody =
       taskTerminalSource.match(
         /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
       )?.[1] ?? "";
 
+    // discreteIntent must not bypass: open-path scheduleImmediate(true) can
+    // land a late rAF after selection and otherwise unmount Copy under the tap.
     expect(scheduleFitBody).toMatch(
-      /!discreteIntent\s*&&\s*\(term(?:Ref\.current)?\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
+      /\(term(?:Ref\.current)?\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
+    );
+    expect(scheduleFitBody).not.toMatch(
+      /!discreteIntent\s*&&\s*\(term(?:Ref\.current)?\?\.getSelection\(\)/,
     );
   });
 
