@@ -339,3 +339,70 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(repeatableBlock).not.toMatch(/Paste/);
   });
 });
+
+describe("TaskTerminal seeded history reveal", () => {
+  it("hides the interaction surface until seeded write snaps to bottom", () => {
+    const seedPendingCss =
+      stylesSource.match(
+        /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(seedPendingCss).toMatch(/opacity:\s*0/);
+    expect(stylesSource).not.toMatch(
+      /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
+    );
+
+    expect(taskTerminalSource).toMatch(/SEED_REVEAL_GATE_MIN_BYTES\s*=\s*4096/);
+
+    const mountBody =
+      taskTerminalSource.match(
+        /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
+      )?.[1] ?? "";
+
+    const preConnectBody = mountBody.split(/connectTaskTerminal\(/)[0] ?? "";
+    expect(preConnectBody).not.toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(preConnectBody).toMatch(/let seedGateArmed = true/);
+
+    const onOpenBody =
+      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+    expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)/);
+    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*true/);
+    expect(onOpenBody).not.toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)/);
+    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*false/);
+    expect(onOpenBody).toMatch(
+      /interactionEl\.classList\.remove\(["']is-seed-pending["']\)/,
+    );
+
+    const onOutputBody =
+      mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+    expect(onOutputBody).toMatch(/seedGateArmed/);
+    expect(onOutputBody).toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
+    expect(onOutputBody).toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(onOutputBody).toMatch(/armSeedPendingFallback\(\)/);
+    expect(onOutputBody).toMatch(/seedGateArmed\s*=\s*false/);
+    expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
+    expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
+    expect(onOutputBody).toMatch(/scrollToBottom\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.refreshFollow\(\)/);
+    expect(onOutputBody).toMatch(/classList\.contains\(["']is-seed-pending["']\)/);
+    const snapIndex = onOutputBody.indexOf("scrollSync.setSyncingScroll(true)");
+    const removeIndex = onOutputBody.indexOf('classList.remove("is-seed-pending")');
+    expect(snapIndex).toBeGreaterThan(-1);
+    expect(removeIndex).toBeGreaterThan(snapIndex);
+    expect(onOutputBody).not.toMatch(
+      /requestAnimationFrame\([\s\S]*?classList\.remove\(["']is-seed-pending["']\)/,
+    );
+
+    expect(mountBody).toMatch(/setTimeout\([\s\S]*?is-seed-pending[\s\S]*?2000/);
+    expect(mountBody).toMatch(/clearTimeout\([\s\S]*?seedPending/);
+  });
+});
