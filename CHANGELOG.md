@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.54.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.1...ajax-cli-v0.54.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **core:** debounce attention webhooks and allowlist wait/ask ([#650](https://github.com/mossipcams/ajax-cli/issues/650)) ([12d7487](https://github.com/mossipcams/ajax-cli/commit/12d74873cced7e842c6cc015c3f62fd11ee45232))
+* **web:** keep seeded terminal history above attach clear ([#648](https://github.com/mossipcams/ajax-cli/issues/648)) ([e5acc71](https://github.com/mossipcams/ajax-cli/commit/e5acc71bb7f774358d52f7087e3812524ae819b6))
+
 ## [0.54.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.0...ajax-cli-v0.54.1) (2026-07-21)
 
 
