@@ -439,11 +439,9 @@ fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 /// Captured-history seed bytes for xterm: bare LF becomes CRLF so each row
-/// starts at column zero, then `rows` blank CRLF lines push the seed into
-/// scrollback before attach redraw. Live PTY output must keep using
-/// `output_frame_bytes`.
-fn captured_history_frame_bytes(bytes: Vec<u8>, rows: u16) -> Option<Vec<u8>> {
-    let mut normalized = Vec::with_capacity(bytes.len() + usize::from(rows) * 2);
+/// starts at column zero. Live PTY output must keep using `output_frame_bytes`.
+fn captured_history_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    let mut normalized = Vec::with_capacity(bytes.len());
     for &byte in &bytes {
         if byte == b'\n' && normalized.last().copied() != Some(b'\r') {
             normalized.push(b'\r');
@@ -452,9 +450,6 @@ fn captured_history_frame_bytes(bytes: Vec<u8>, rows: u16) -> Option<Vec<u8>> {
     }
     if normalized.is_empty() {
         return None;
-    }
-    for _ in 0..rows {
-        normalized.extend_from_slice(b"\r\n");
     }
     Some(normalized)
 }
@@ -571,7 +566,6 @@ pub async fn bridge_task_terminal_socket(
     };
 
     let resize_wait_started = Instant::now();
-    let mut client_rows: u16 = 24;
     let mut resize_applied = false;
     let mut last_resize_at: Option<Instant> = None;
     let mut pre_loop_abort = false;
@@ -614,9 +608,6 @@ pub async fn bridge_task_terminal_socket(
                 match process_client_frame(&Message::Text(text), &mut writer, &on_operator_input) {
                     FrameOutcome::Resize(size) => {
                         let _ = pty_pair.master.resize(size);
-                        if size.rows > 0 {
-                            client_rows = client_rows.max(size.rows);
-                        }
                         resize_applied = true;
                         last_resize_at = Some(Instant::now());
                     }
@@ -632,9 +623,6 @@ pub async fn bridge_task_terminal_socket(
                 {
                     FrameOutcome::Resize(size) => {
                         let _ = pty_pair.master.resize(size);
-                        if size.rows > 0 {
-                            client_rows = client_rows.max(size.rows);
-                        }
                         resize_applied = true;
                         last_resize_at = Some(Instant::now());
                     }
@@ -679,7 +667,7 @@ pub async fn bridge_task_terminal_socket(
     if seed_history {
         if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
             if output.status.success() {
-                if let Some(payload) = captured_history_frame_bytes(output.stdout, client_rows) {
+                if let Some(payload) = captured_history_frame_bytes(output.stdout) {
                     if socket.send(Message::Binary(payload.into())).await.is_err() {
                         cleanup_spawned_child_async(child).await;
                         for command in &isolated.teardown {
@@ -1175,28 +1163,28 @@ mod tests {
     fn captured_history_frame_bytes_converts_lf_to_crlf_without_doubling_crlf() {
         // Mixed ANSI, bare LF, CRLF, consecutive bare LF, and lone CR.
         let input = b"\x1b[31mred\x1b[0m\ncrlf\r\n\n\rkeep".to_vec();
-        let out = captured_history_frame_bytes(input, 0).expect("non-empty history");
+        let out = captured_history_frame_bytes(input).expect("non-empty history");
         assert_eq!(out, b"\x1b[31mred\x1b[0m\r\ncrlf\r\n\r\n\rkeep");
         // Bare LF -> CRLF; existing CRLF stays one CRLF; consecutive lines start at col 0.
         assert_eq!(&out[12..14], b"\r\n");
         assert_eq!(&out[18..20], b"\r\n");
         assert_eq!(&out[20..22], b"\r\n");
         assert_eq!(out[22], b'\r');
-        assert!(captured_history_frame_bytes(Vec::new(), 0).is_none());
+        assert!(captured_history_frame_bytes(Vec::new()).is_none());
     }
 
     #[test]
-    fn captured_history_frame_bytes_appends_rows_crlfs_to_push_seed_into_scrollback() {
+    fn captured_history_frame_bytes_does_not_append_pad_crlfs() {
         assert_eq!(
-            captured_history_frame_bytes(b"a\nb".to_vec(), 3),
-            Some(b"a\r\nb\r\n\r\n\r\n".to_vec())
+            captured_history_frame_bytes(b"a\nb".to_vec()),
+            Some(b"a\r\nb".to_vec())
         );
 
-        let out = captured_history_frame_bytes(b"x\n".to_vec(), 2).expect("non-empty history");
-        assert_eq!(out, b"x\r\n\r\n\r\n");
-        assert!(out.ends_with(b"\r\n\r\n"));
+        let out = captured_history_frame_bytes(b"x\n".to_vec()).expect("non-empty history");
+        assert_eq!(out, b"x\r\n");
+        assert!(!out.ends_with(b"\r\n\r\n"));
 
-        assert!(captured_history_frame_bytes(Vec::new(), 8).is_none());
+        assert!(captured_history_frame_bytes(Vec::new()).is_none());
     }
 
     #[test]

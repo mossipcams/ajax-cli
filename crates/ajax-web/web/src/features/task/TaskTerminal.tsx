@@ -892,6 +892,7 @@ export default function TaskTerminal({ handle }: Props) {
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       cursorBlink: true,
       scrollback: terminalScrollbackLines(),
+      scrollOnEraseInDisplay: true,
       theme: {
         background: "#161616",
         foreground: "#e6e6e6",
