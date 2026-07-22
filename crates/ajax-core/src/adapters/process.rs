@@ -270,6 +270,7 @@ mod tests {
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             .with_writer(writer)
+            .with_ansi(false)
             .with_target(false)
             .finish();
 
