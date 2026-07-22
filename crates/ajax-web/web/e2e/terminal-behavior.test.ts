@@ -2791,3 +2791,30 @@ test("Paste stays available after synthetic scroll gesture and fullscreen transi
   const frames = await terminalInputFrames(page);
   expect(frames.at(-1)?.data).toBe(MULTILINE_UNICODE_CLIPBOARD);
 });
+
+test("seeded open stays hidden until output after the seed settles, then lands at the bottom", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  const surface = terminalInteractionSurface(page);
+  await expect(surface).toHaveClass(/is-seed-pending/);
+
+  // The seed is scrollback only; tmux's attach repaint of the visible pane
+  // arrives in a later frame. Revealing between the two is what made the
+  // terminal visibly scroll a screenful on load.
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await page.waitForTimeout(60);
+  await expect(surface).toHaveClass(/is-seed-pending/);
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
+  await expect(surface).not.toHaveClass(/is-seed-pending/);
+  await expect
+    .poll(async () =>
+      surface.evaluate(
+        (el) =>
+          el.scrollHeight <= el.clientHeight + 1 ||
+          el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+      ),
+    )
+    .toBe(true);
+});

@@ -23,7 +23,14 @@ import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 
-const SEED_REVEAL_GATE_MIN_BYTES = 4096;
+/**
+ * Quiet time after the last seeded-open write before the terminal is revealed.
+ * Floor is the bridge's 16ms output batch (TERMINAL_OUTPUT_FLUSH_MS) plus link
+ * jitter; this is ~7 batches, enough to bridge seed → attach repaint.
+ */
+const SEED_REVEAL_QUIET_MS = 120;
+/** Hard cap so a pane streaming nonstop still reveals. */
+const SEED_REVEAL_MAX_MS = 2000;
 
 interface Props {
   handle: string;
@@ -564,22 +571,49 @@ export default function TaskTerminal({ handle }: Props) {
     let directionalArmed = false;
     let directionalArrow: string | undefined;
     let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
-    let seedPendingRevealTimer: ReturnType<typeof setTimeout> | undefined;
+    let seedQuietTimer: ReturnType<typeof setTimeout> | undefined;
+    let seedCapTimer: ReturnType<typeof setTimeout> | undefined;
 
     const clearSeedPendingRevealTimer = () => {
-      if (seedPendingRevealTimer) {
-        clearTimeout(seedPendingRevealTimer);
-        seedPendingRevealTimer = undefined;
-      }
+      if (seedQuietTimer) clearTimeout(seedQuietTimer);
+      if (seedCapTimer) clearTimeout(seedCapTimer);
+      seedQuietTimer = undefined;
+      seedCapTimer = undefined;
     };
 
-    const armSeedPendingFallback = () => {
+    const isSeedPending = () => interactionEl.classList.contains("is-seed-pending");
+
+    const cancelSeedPending = () => {
       clearSeedPendingRevealTimer();
-      seedPendingRevealTimer = setTimeout(() => {
-        seedPendingRevealTimer = undefined;
-        if (!isActive()) return;
-        interactionEl.classList.remove("is-seed-pending");
-      }, 2000);
+      interactionEl.classList.remove("is-seed-pending");
+    };
+
+    const revealSeed = () => {
+      clearSeedPendingRevealTimer();
+      if (!isActive() || !isSeedPending()) return;
+      scrollSync.setSyncingScroll(true);
+      termRef.current?.scrollToBottom();
+      scrollSync.scrollInteractionToBottom();
+      scrollSync.setSyncingScroll(false);
+      scrollSync.refreshFollow();
+      interactionEl.classList.remove("is-seed-pending");
+    };
+
+    // The seed is scrollback only; the tmux attach repaint of the visible pane
+    // lands in later frames. Revealing after the first write means watching that
+    // repaint scroll a screenful, so hold until output goes quiet.
+    const deferSeedReveal = () => {
+      if (!isSeedPending()) return;
+      if (seedQuietTimer) clearTimeout(seedQuietTimer);
+      seedQuietTimer = setTimeout(revealSeed, SEED_REVEAL_QUIET_MS);
+      seedCapTimer ??= setTimeout(revealSeed, SEED_REVEAL_MAX_MS);
+    };
+
+    // Both timers start at the first write, not at open: a pane that has sent
+    // nothing yet is an empty grid, and hiding an empty grid looks identical.
+    const beginSeedPending = () => {
+      clearSeedPendingRevealTimer();
+      interactionEl.classList.add("is-seed-pending");
     };
 
     const isKeyboardOpen = () => document.documentElement.classList.contains("keyboard-open");
@@ -1062,8 +1096,6 @@ export default function TaskTerminal({ handle }: Props) {
     interactionEl.addEventListener("touchend", onTouchEnd, { passive: true });
     interactionEl.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    let seedGateArmed = true;
-
     let connection: TerminalConnection | undefined;
 
     // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
@@ -1072,24 +1104,9 @@ export default function TaskTerminal({ handle }: Props) {
       if (disposed) return;
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
-          const gate =
-            seedGateArmed && text.length >= SEED_REVEAL_GATE_MIN_BYTES;
-          if (gate) {
-            interactionEl.classList.add("is-seed-pending");
-            armSeedPendingFallback();
-          }
-          seedGateArmed = false;
           termRef.current?.write(text, () => {
             scrollSync.applyOutput();
-            if (interactionEl.classList.contains("is-seed-pending")) {
-              scrollSync.setSyncingScroll(true);
-              termRef.current?.scrollToBottom();
-              scrollSync.scrollInteractionToBottom();
-              scrollSync.setSyncingScroll(false);
-              scrollSync.refreshFollow();
-              interactionEl.classList.remove("is-seed-pending");
-              clearSeedPendingRevealTimer();
-            }
+            deferSeedReveal();
           });
         },
         onServerError: (message) => {
@@ -1105,7 +1122,7 @@ export default function TaskTerminal({ handle }: Props) {
           setStatusDetail("");
           resetDedupe();
           if (seeded) {
-            seedGateArmed = true;
+            beginSeedPending();
             if (isReconnect && termRef.current) {
               scrollSync.setFollowLive(true);
               setHasUnseenOutput(false);
@@ -1119,9 +1136,7 @@ export default function TaskTerminal({ handle }: Props) {
             }
           }
           if (!seeded) {
-            seedGateArmed = false;
-            interactionEl.classList.remove("is-seed-pending");
-            clearSeedPendingRevealTimer();
+            cancelSeedPending();
           }
           scheduleImmediate(true);
         },

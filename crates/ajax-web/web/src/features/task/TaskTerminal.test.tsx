@@ -341,7 +341,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 });
 
 describe("TaskTerminal seeded history reveal", () => {
-  it("hides the interaction surface until seeded write snaps to bottom", () => {
+  it("hides the interaction surface until seeded output goes quiet, then snaps", () => {
     const seedPendingCss =
       stylesSource.match(
         /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
@@ -351,58 +351,53 @@ describe("TaskTerminal seeded history reveal", () => {
       /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
     );
 
-    expect(taskTerminalSource).toMatch(/SEED_REVEAL_GATE_MIN_BYTES\s*=\s*4096/);
+    expect(taskTerminalSource).toMatch(/SEED_REVEAL_QUIET_MS\s*=\s*\d+/);
+    expect(taskTerminalSource).toMatch(/SEED_REVEAL_MAX_MS\s*=\s*2000/);
+    expect(taskTerminalSource).not.toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
 
     const mountBody =
       taskTerminalSource.match(
         /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
       )?.[1] ?? "";
 
-    const preConnectBody = mountBody.split(/connectTaskTerminal\(/)[0] ?? "";
-    expect(preConnectBody).not.toMatch(
-      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
-    );
-    expect(preConnectBody).toMatch(/let seedGateArmed = true/);
-
+    // Hiding starts at the seeded open, not on a byte-size guess about the frame.
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
-    expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)/);
-    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*true/);
-    expect(onOpenBody).not.toMatch(
-      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
-    );
-    expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)/);
-    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*false/);
-    expect(onOpenBody).toMatch(
-      /interactionEl\.classList\.remove\(["']is-seed-pending["']\)/,
-    );
+    expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)\s*\{\s*\n\s*beginSeedPending\(\)/);
+    expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)\s*\{\s*\n\s*cancelSeedPending\(\)/);
 
+    // Every write restarts the quiet window: the seed is scrollback only, and the
+    // tmux attach repaint of the visible pane lands in later frames.
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
-    expect(onOutputBody).toMatch(/seedGateArmed/);
-    expect(onOutputBody).toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
-    expect(onOutputBody).toMatch(
-      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
-    );
-    expect(onOutputBody).toMatch(/armSeedPendingFallback\(\)/);
-    expect(onOutputBody).toMatch(/seedGateArmed\s*=\s*false/);
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
     expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
-    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
-    expect(onOutputBody).toMatch(/scrollToBottom\(\)/);
-    expect(onOutputBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
-    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
-    expect(onOutputBody).toMatch(/scrollSync\.refreshFollow\(\)/);
-    expect(onOutputBody).toMatch(/classList\.contains\(["']is-seed-pending["']\)/);
-    const snapIndex = onOutputBody.indexOf("scrollSync.setSyncingScroll(true)");
-    const removeIndex = onOutputBody.indexOf('classList.remove("is-seed-pending")');
+    expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
+    expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
+
+    const revealBody =
+      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
+    expect(revealBody).toMatch(/scrollToBottom\(\)/);
+    expect(revealBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
+    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
+    expect(revealBody).toMatch(/scrollSync\.refreshFollow\(\)/);
+    const snapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
+    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
     expect(snapIndex).toBeGreaterThan(-1);
     expect(removeIndex).toBeGreaterThan(snapIndex);
-    expect(onOutputBody).not.toMatch(
-      /requestAnimationFrame\([\s\S]*?classList\.remove\(["']is-seed-pending["']\)/,
-    );
 
-    expect(mountBody).toMatch(/setTimeout\([\s\S]*?is-seed-pending[\s\S]*?2000/);
-    expect(mountBody).toMatch(/clearTimeout\([\s\S]*?seedPending/);
+    const deferBody =
+      mountBody.match(/const deferSeedReveal = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(deferBody).toMatch(/clearTimeout\(seedQuietTimer\)/);
+    expect(deferBody).toMatch(/setTimeout\(revealSeed, SEED_REVEAL_QUIET_MS\)/);
+    expect(deferBody).toMatch(/seedCapTimer \?\?= setTimeout\(revealSeed, SEED_REVEAL_MAX_MS\)/);
+
+    // Timers start at the first write, not at open, so a silent socket never
+    // reveals a still-empty grid on a wall-clock deadline.
+    const beginBody =
+      mountBody.match(/const beginSeedPending = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(beginBody).toMatch(/classList\.add\(["']is-seed-pending["']\)/);
+    expect(beginBody).not.toMatch(/setTimeout/);
   });
 });
