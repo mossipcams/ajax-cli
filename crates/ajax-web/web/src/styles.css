@@ -1113,11 +1113,14 @@ header .bar h1 {
   color: var(--paper);
 }
 
-.task-group + .task-group {
-  margin-top: 12px;
+.task-band + .task-band {
+  margin-top: 14px;
 }
 
-.task-group-title {
+.task-band-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 6px;
   padding-left: 2px;
   font-size: var(--text-label);
@@ -1125,6 +1128,64 @@ header .bar h1 {
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--ink-faint);
+}
+
+.task-band-count {
+  color: var(--ink-muted);
+  font-feature-settings: "tnum";
+}
+
+/* Native disclosure for the idle tail — no JS, no custom toggle. */
+.idle-band > summary {
+  cursor: pointer;
+  list-style: none;
+  min-height: 28px;
+}
+
+.idle-band > summary::-webkit-details-marker {
+  display: none;
+}
+
+.idle-band > summary::after {
+  content: "›";
+  font-size: 18px;
+  line-height: 1;
+  color: var(--ink-faint);
+  transition: transform 140ms var(--ease);
+}
+
+.idle-band[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+/* INBOX ENTRY — one bounded card: the row, then a hairline action strip.
+   Actions are real buttons here, so these rows never swipe. */
+.inbox-entry {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--paper-tint);
+  box-shadow: var(--elev-1);
+}
+
+.inbox-entry + .inbox-entry {
+  margin-top: 10px;
+}
+
+.inbox-entry .task-list {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.inbox-entry .action-row {
+  padding: 8px var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+/* The lead decision wears the attention edge; everything else stays hairline. */
+.inbox-entry.is-next {
+  border-color: var(--warn);
 }
 
 .task-list {
@@ -1190,13 +1251,29 @@ header .bar h1 {
   min-width: 0;
 }
 
-.task-row-handle {
+/* Title is what the operator recognises; the handle is the address below it. */
+.task-row-title {
   font-size: var(--text-body);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--ink);
+}
+
+.task-row.is-next .task-row-title {
+  font-size: var(--text-heading);
+  font-weight: 700;
+}
+
+.task-row-handle {
+  font-size: var(--text-micro);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-faint);
 }
 
 .task-row-sub {

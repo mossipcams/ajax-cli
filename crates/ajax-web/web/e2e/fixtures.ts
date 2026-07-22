@@ -30,7 +30,11 @@ export const COCKPIT_FIXTURE = {
       title: "Add auth",
       status: "running",
       status_explanation: null,
-      actions: [],
+      // Calm rows are where swipe-reveal lives: inbox rows render their actions
+      // inline instead, so the gesture needs a non-inbox card to exercise.
+      actions: [
+        { action: "review", label: "Review", destructive: false, confirmation_required: false },
+      ],
     },
   ],
   inbox: { items: [{ task_handle: "web/fix-login", severity: 2 }] },
