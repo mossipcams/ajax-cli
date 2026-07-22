@@ -66,8 +66,13 @@ pub(crate) fn run_agent_event_command(matches: &ArgMatches) -> Result<String, Cl
         .map(String::as_str)
         .unwrap_or("");
     let payload = read_stdin_payload();
-    let identity = read_agent_event_identity();
+    let identity = resolve_agent_event_identity(client, &payload);
     let _ = run_agent_event(identity.as_ref(), client, event, &payload);
+    if client == "cursor" && event == "sessionStart" {
+        if let Some(identity) = identity {
+            return Ok(session_start_env_stdout(&identity));
+        }
+    }
     Ok(String::new())
 }
 
@@ -449,6 +454,121 @@ fn read_agent_event_identity() -> Option<AgentEventIdentity> {
     })
 }
 
+pub(crate) fn resolve_agent_event_identity(
+    client: &str,
+    payload: &serde_json::Value,
+) -> Option<AgentEventIdentity> {
+    if let Some(identity) = read_agent_event_identity() {
+        return Some(identity);
+    }
+
+    let project_dir = cursor_project_dir(payload);
+
+    if let Ok(events_dir) = std::env::var("AJAX_AGENT_EVENTS_DIR") {
+        if !events_dir.is_empty() {
+            if let Some(project_dir) = project_dir.as_deref() {
+                if let Some(entry) = read_cwd_index_entry(Path::new(&events_dir), project_dir) {
+                    return Some(cwd_index_entry_to_identity(entry));
+                }
+            }
+        }
+    }
+
+    if client == "cursor" {
+        if let Some(project_dir) = project_dir {
+            return resolve_cursor_identity(
+                &project_dir,
+                payload,
+                std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+                std::env::var_os("AJAX_HOME").map(PathBuf::from).as_deref(),
+            );
+        }
+    }
+
+    None
+}
+
+fn cursor_project_dir(payload: &serde_json::Value) -> Option<String> {
+    if let Ok(project_dir) = std::env::var("CURSOR_PROJECT_DIR") {
+        if !project_dir.is_empty() {
+            return Some(project_dir);
+        }
+    }
+    payload
+        .get("workspace_roots")
+        .and_then(|value| value.get(0))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn read_cwd_index_entry(
+    events_dir: &Path,
+    project_dir: &str,
+) -> Option<agent_runtime::CwdIndexEntry> {
+    let project = Path::new(project_dir);
+    let project = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let index_path = agent_runtime::cwd_index_path(events_dir, &project);
+    let content = fs::read_to_string(&index_path).ok()?;
+    let entry: agent_runtime::CwdIndexEntry = serde_json::from_str(&content).ok()?;
+    if entry.task_id.is_empty() || entry.events_dir.is_empty() {
+        return None;
+    }
+    Some(entry)
+}
+
+fn cwd_index_entry_to_identity(entry: agent_runtime::CwdIndexEntry) -> AgentEventIdentity {
+    AgentEventIdentity {
+        task_id: entry.task_id,
+        run_id: if entry.run_id.is_empty() {
+            "primary".to_string()
+        } else {
+            entry.run_id
+        },
+        events_dir: PathBuf::from(entry.events_dir),
+    }
+}
+
+pub(crate) fn resolve_cursor_identity(
+    project_dir: &str,
+    _payload: &serde_json::Value,
+    home: Option<&Path>,
+    ajax_home: Option<&Path>,
+) -> Option<AgentEventIdentity> {
+    for events_dir in cursor_identity_discovery_roots(project_dir, home, ajax_home) {
+        if let Some(entry) = read_cwd_index_entry(&events_dir, project_dir) {
+            return Some(cwd_index_entry_to_identity(entry));
+        }
+    }
+    None
+}
+
+fn cursor_identity_discovery_roots(
+    project_dir: &str,
+    home: Option<&Path>,
+    ajax_home: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(project_dir).join(".cache/ajax/agent-events")];
+    if let Some(ajax_home) = ajax_home {
+        roots.push(ajax_home.join("cache/agent-events"));
+    }
+    if let Some(home) = home {
+        roots.push(home.join(".ajax-dev/cache/agent-events"));
+        roots.push(home.join(".ajax/cache/agent-events"));
+    }
+    roots
+}
+
+pub(crate) fn session_start_env_stdout(identity: &AgentEventIdentity) -> String {
+    serde_json::json!({
+        "env": {
+            "AJAX_TASK_ID": identity.task_id,
+            "AJAX_RUN_ID": identity.run_id,
+            "AJAX_AGENT_EVENTS_DIR": identity.events_dir.to_string_lossy(),
+        }
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -458,8 +578,8 @@ mod tests {
     use crate::agent_runtime::{self, AgentRuntimeSnapshot, AgentRuntimeState};
 
     use super::{
-        run_agent_event, translate_agent_event, translate_native_event, write_agent_event,
-        AgentEventIdentity, AgentEventSnapshot,
+        resolve_cursor_identity, run_agent_event, session_start_env_stdout, translate_agent_event,
+        translate_native_event, write_agent_event, AgentEventIdentity, AgentEventSnapshot,
     };
 
     fn temp_events_fixture(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -890,5 +1010,95 @@ mod tests {
         assert!(!dir.join(format!("{stem}.jsonl")).exists());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cursor_event_resolves_identity_from_cwd_index_without_ajax_env() {
+        let ajax_home = std::env::temp_dir().join(format!(
+            "ajax-home-cwd-index-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let events_dir = ajax_home.join("cache/agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        let project_dir = ajax_home.join("worktrees/web-fix-login");
+        fs::create_dir_all(&project_dir).unwrap();
+        agent_runtime::publish_cwd_index(&events_dir, "web/fix-login", "primary", &project_dir)
+            .unwrap();
+
+        let identity = resolve_cursor_identity(
+            &project_dir.to_string_lossy(),
+            &serde_json::json!({}),
+            None,
+            Some(&ajax_home),
+        )
+        .unwrap();
+        assert_eq!(identity.task_id, "web/fix-login");
+        assert_eq!(identity.run_id, "primary");
+        assert_eq!(identity.events_dir, events_dir.canonicalize().unwrap());
+
+        write_test_runtime_snapshot(&events_dir, "web/fix-login", AgentRuntimeState::Running, 1);
+        run_agent_event(
+            Some(&identity),
+            "cursor",
+            "beforeSubmitPrompt",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let stem = "web__fix-login";
+        let jsonl = fs::read_to_string(events_dir.join(format!("{stem}.jsonl"))).unwrap();
+        assert_eq!(jsonl.lines().count(), 1);
+
+        fs::remove_dir_all(ajax_home).unwrap();
+    }
+
+    #[test]
+    fn cursor_session_start_stdout_includes_session_env() {
+        let (_, events_dir) = temp_events_fixture("session-start-env");
+        let identity = test_identity(&events_dir, "web/fix-login");
+        let stdout = session_start_env_stdout(&identity);
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(parsed["env"]["AJAX_TASK_ID"], "web/fix-login");
+        assert_eq!(parsed["env"]["AJAX_RUN_ID"], "primary");
+        assert_eq!(
+            parsed["env"]["AJAX_AGENT_EVENTS_DIR"].as_str().unwrap(),
+            events_dir.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn cursor_without_index_still_noops() {
+        let ajax_home = std::env::temp_dir().join(format!(
+            "ajax-home-missing-index-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let events_dir = ajax_home.join("cache/agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        let project_dir = ajax_home.join("worktrees/web-fix-login");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        assert!(resolve_cursor_identity(
+            &project_dir.to_string_lossy(),
+            &serde_json::json!({}),
+            None,
+            Some(&ajax_home),
+        )
+        .is_none());
+
+        write_test_runtime_snapshot(&events_dir, "web/fix-login", AgentRuntimeState::Running, 1);
+        run_agent_event(None, "cursor", "beforeSubmitPrompt", &serde_json::json!({})).unwrap();
+
+        let stem = "web__fix-login";
+        assert!(!events_dir.join(format!("{stem}.jsonl")).exists());
+
+        fs::remove_dir_all(ajax_home).unwrap();
     }
 }

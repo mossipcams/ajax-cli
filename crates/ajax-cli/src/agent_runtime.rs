@@ -1,5 +1,7 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     fs::{self, OpenOptions},
+    hash::{Hash, Hasher},
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -104,6 +106,14 @@ fn run_agent_runtime_with_interval(
         .parent()
         .unwrap_or(state_root)
         .join("agent-events");
+    fs::create_dir_all(&agent_events_dir).map_err(|error| {
+        CliError::CommandFailed(format!("failed to create agent events directory: {error}"))
+    })?;
+    let agent_events_dir = fs::canonicalize(&agent_events_dir).unwrap_or(agent_events_dir);
+    let cwd = std::env::current_dir().map_err(|error| {
+        CliError::CommandFailed(format!("failed to read current directory: {error}"))
+    })?;
+    publish_cwd_index(&agent_events_dir, task_id, "primary", &cwd)?;
     let child = Command::new(program)
         .args(args)
         .env("AJAX_TASK_ID", task_id)
@@ -116,6 +126,7 @@ fn run_agent_runtime_with_interval(
     let mut child = match child {
         Ok(child) => child,
         Err(error) => {
+            let _ = clear_cwd_index(&agent_events_dir, &cwd);
             write_runtime_snapshot(
                 state_root,
                 &AgentRuntimeSnapshot {
@@ -156,6 +167,10 @@ fn run_agent_runtime_with_interval(
                     message: None,
                 },
             )?;
+            // Keep cwd-index through the post-exit settle grace so Cursor
+            // stop/sessionEnd can still resolve identity without AJAX_* env.
+            // runtime_hooks_accepted rejects non-settle / stale writes.
+            // Next publish for the same cwd overwrites the entry.
             return Ok(exit_code.unwrap_or(1));
         }
 
@@ -223,6 +238,80 @@ pub(crate) fn task_file_stem(task_id: &str) -> String {
     task_id.replace(['/', '\\'], "__")
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct CwdIndexEntry {
+    pub task_id: String,
+    pub run_id: String,
+    pub events_dir: String,
+    pub cwd: String,
+}
+
+const CWD_PATH_STEM_MAX_LEN: usize = 200;
+
+pub(crate) fn cwd_path_stem(path: &str) -> String {
+    if path.len() <= CWD_PATH_STEM_MAX_LEN {
+        path.replace(['/', '\\', ':'], "__")
+    } else {
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+        format!("hash__{:x}", hasher.finish())
+    }
+}
+
+pub(crate) fn cwd_index_path(agent_events_dir: &Path, cwd: &Path) -> PathBuf {
+    let stem = cwd_path_stem(&cwd.to_string_lossy());
+    agent_events_dir
+        .join("cwd-index")
+        .join(format!("{stem}.json"))
+}
+
+pub(crate) fn publish_cwd_index(
+    agent_events_dir: &Path,
+    task_id: &str,
+    run_id: &str,
+    cwd: &Path,
+) -> Result<(), CliError> {
+    let absolute_events_dir =
+        fs::canonicalize(agent_events_dir).unwrap_or_else(|_| agent_events_dir.to_path_buf());
+    fs::create_dir_all(&absolute_events_dir).map_err(|error| {
+        CliError::CommandFailed(format!("failed to create agent events directory: {error}"))
+    })?;
+    let absolute_cwd = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let entry = CwdIndexEntry {
+        task_id: task_id.to_string(),
+        run_id: run_id.to_string(),
+        events_dir: absolute_events_dir.to_string_lossy().into_owned(),
+        cwd: absolute_cwd.to_string_lossy().into_owned(),
+    };
+    let index_dir = absolute_events_dir.join("cwd-index");
+    fs::create_dir_all(&index_dir).map_err(|error| {
+        CliError::CommandFailed(format!("failed to create cwd index directory: {error}"))
+    })?;
+    let stem = cwd_path_stem(&entry.cwd);
+    let index_path = index_dir.join(format!("{stem}.json"));
+    let temporary_path = index_dir.join(format!(".{stem}.tmp-{}", std::process::id()));
+    let encoded = serde_json::to_vec(&entry)
+        .map_err(|error| CliError::JsonSerialization(error.to_string()))?;
+    fs::write(&temporary_path, &encoded).map_err(|error| {
+        CliError::CommandFailed(format!("failed to write cwd index entry: {error}"))
+    })?;
+    fs::rename(&temporary_path, &index_path).map_err(|error| {
+        CliError::CommandFailed(format!("failed to publish cwd index entry: {error}"))
+    })
+}
+
+pub(crate) fn clear_cwd_index(agent_events_dir: &Path, cwd: &Path) -> Result<(), CliError> {
+    let absolute_events_dir =
+        fs::canonicalize(agent_events_dir).unwrap_or_else(|_| agent_events_dir.to_path_buf());
+    let index_path = cwd_index_path(&absolute_events_dir, cwd);
+    if index_path.is_file() {
+        fs::remove_file(&index_path).map_err(|error| {
+            CliError::CommandFailed(format!("failed to clear cwd index entry: {error}"))
+        })?;
+    }
+    Ok(())
+}
+
 pub(crate) fn now_millis() -> Result<u128, CliError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -269,18 +358,26 @@ mod tests {
     use std::{fs, time::Duration};
 
     use super::{
-        run_agent_runtime_with_interval, snapshot_path, AgentRuntimeSnapshot, AgentRuntimeState,
+        clear_cwd_index, cwd_index_path, publish_cwd_index, run_agent_runtime_with_interval,
+        snapshot_path, AgentRuntimeSnapshot, AgentRuntimeState,
     };
 
-    fn temp_runtime_root(label: &str) -> std::path::PathBuf {
+    fn temp_runtime_cache(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "ajax-agent-runtime-{label}-{}-{}",
+            "ajax-agent-runtime-cache-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    fn temp_runtime_root(label: &str) -> std::path::PathBuf {
+        let cache_root = temp_runtime_cache(label);
+        let runtime_root = cache_root.join("agent-runtime");
+        fs::create_dir_all(&runtime_root).unwrap();
+        runtime_root
     }
 
     fn snapshots(root: &std::path::Path) -> Vec<AgentRuntimeSnapshot> {
@@ -321,7 +418,7 @@ mod tests {
         .unwrap();
         assert_eq!(latest.state, AgentRuntimeState::ExitedSuccess);
 
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -342,7 +439,7 @@ mod tests {
         assert_eq!(latest.state, AgentRuntimeState::ExitedFailure);
         assert_eq!(latest.exit_code, Some(7));
 
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -366,7 +463,7 @@ mod tests {
             AgentRuntimeState::ExitedFailure
         );
 
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -391,17 +488,49 @@ mod tests {
 
         assert_eq!(exit_code, 0);
         let captured = fs::read_to_string(&env_file).unwrap();
-        let expected_events_dir = root
-            .parent()
-            .unwrap_or(&root)
-            .join("agent-events")
-            .to_string_lossy()
-            .into_owned();
+        let expected_events_dir = root.parent().unwrap().join("agent-events");
+        let expected_events_dir =
+            fs::canonicalize(&expected_events_dir).unwrap_or(expected_events_dir);
         assert_eq!(
             captured,
-            format!("web/fix-login|primary|{expected_events_dir}")
+            format!("web/fix-login|primary|{}", expected_events_dir.display())
         );
 
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn runtime_publishes_and_clears_cwd_index() {
+        let cache_root = temp_runtime_cache("cwd-index");
+        let events_dir = cache_root.join("agent-events");
+        let root = cache_root.join("agent-runtime");
+        fs::create_dir_all(&root).unwrap();
+        let cwd = std::env::current_dir().unwrap();
+
+        publish_cwd_index(&events_dir, "web/fix-login", "primary", &cwd).unwrap();
+        let index_path = cwd_index_path(&events_dir, &cwd);
+        assert!(index_path.is_file());
+        let entry: super::CwdIndexEntry =
+            serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
+        assert_eq!(entry.task_id, "web/fix-login");
+        assert_eq!(entry.run_id, "primary");
+        assert_eq!(entry.cwd, cwd.to_string_lossy());
+
+        clear_cwd_index(&events_dir, &cwd).unwrap();
+        assert!(!index_path.exists());
+
+        let exit_code = run_agent_runtime_with_interval(
+            "web/fix-login",
+            &root,
+            "/bin/sh",
+            &["-c", "exit 0"],
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        assert_eq!(exit_code, 0);
+        // Index remains after exit so settle hooks can resolve identity.
+        assert!(cwd_index_path(&events_dir, &cwd).is_file());
+
+        fs::remove_dir_all(cache_root).unwrap();
     }
 }
