@@ -200,8 +200,11 @@ USE_SLOT_BIN=0
 
 # ponytail: vite dist must be rebuilt before cargo embed; release-committed dist
 # can lag main. Ceiling: needs local Node/npm (nvm 22 preferred).
+# include_bytes! in assets.rs only re-reads dist when that .rs is rebuilt — touch
+# it after vite so cargo cannot serve a stale embed.
 rebuild_web() {
   local source_root="$1"
+  local embed_rs="$source_root/crates/ajax-web/src/adapters/assets.rs"
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [[ -s "$NVM_DIR/nvm.sh" ]]; then
     # shellcheck source=/dev/null
@@ -214,6 +217,11 @@ rebuild_web() {
   fi
   echo "Building frontend (web:build) in $source_root ..."
   npm --prefix "$source_root" run web:build
+  if [[ ! -f "$embed_rs" ]]; then
+    echo "missing embed source: $embed_rs" >&2
+    exit 1
+  fi
+  touch "$embed_rs"
 }
 
 if [[ "$INSTALL" -eq 1 ]]; then
