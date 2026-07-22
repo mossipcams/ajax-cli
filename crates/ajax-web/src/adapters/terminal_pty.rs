@@ -212,8 +212,8 @@ fn build_isolated_attach_plan_with_token(
             "-t",
             &history_target,
             "-S",
-            // ponytail: matches the mobile Ghostty cap; raise both caps if deeper history matters.
-            "-2000",
+            // ponytail: matches DESKTOP_SCROLLBACK_LINES; raise both caps if deeper history matters.
+            "-10000",
             "-E",
             "-1",
         ]),
@@ -1087,7 +1087,7 @@ mod tests {
                 "-t",
                 "ajax-web-fix-login-m1a2b3c:task",
                 "-S",
-                "-2000",
+                "-10000",
                 "-E",
                 "-1",
             ]
