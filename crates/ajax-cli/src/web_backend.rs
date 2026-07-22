@@ -811,6 +811,19 @@ mod tests {
             .expect("refresh without notify");
         assert_eq!(curl_count(), 0);
 
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/notify"))
+            .unwrap();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        task.metadata.insert(
+            ajax_core::attention::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+            (now_secs.saturating_sub(20)).to_string(),
+        );
+
         bridge
             .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
             .expect("refresh with notify");
@@ -912,6 +925,18 @@ mod tests {
                 .count()
         };
         let mut bridge = super::CliRuntimeBridge::for_context(None, &context).unwrap();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        task.metadata.insert(
+            ajax_core::attention::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+            (now_secs.saturating_sub(20)).to_string(),
+        );
 
         bridge
             .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)

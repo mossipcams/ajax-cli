@@ -9,11 +9,19 @@ pub const LAST_NOTIFIED_AT_KEY: &str = "last_notified_at";
 /// First Running/Idle sighting after a notified episode; stamp clears once this
 /// quiet window reaches the episode-clear dwell (30s).
 pub const NOTIFY_QUIET_SINCE_KEY: &str = "notify_quiet_since";
+/// First actionable sighting after re-arm; delivery waits until this quiet
+/// window reaches the confirmation dwell (15s). One shared clock for every
+/// actionable Waiting/Error — class changes do not restart the dwell.
+pub const NOTIFY_CANDIDATE_SINCE_KEY: &str = "notify_candidate_since";
 
 /// How long Running/Idle must persist after a delivery before the detector
 /// re-arms. Brief turn-boundary Running samples stay inside one episode.
 // ponytail: 30s constant; gate on tmux client activity if still too chatty.
 const EPISODE_CLEAR_DWELL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long any actionable Waiting/Error must persist before the first webhook
+/// in an episode. Shared across status classes so flaps do not reset the clock.
+pub const NOTIFY_CONFIRMATION_DWELL: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionTransition {
@@ -57,6 +65,7 @@ pub fn take_attention_transition_at(
     match operator_status.status {
         TaskStatus::Waiting | TaskStatus::Error => {
             if !is_actionable_attention(&operator_status) {
+                clear_notify_candidate(task);
                 return None;
             }
             // Still in (or back in) attention: cancel any quiet countdown.
@@ -67,6 +76,10 @@ pub fn take_attention_transition_at(
                 .get(LAST_NOTIFIED_STATUS_KEY)
                 .is_some_and(|last| last == &stamp)
             {
+                clear_notify_candidate(task);
+                return None;
+            }
+            if !confirm_notify_candidate(task, now) {
                 return None;
             }
             task.metadata
@@ -84,6 +97,7 @@ pub fn take_attention_transition_at(
             })
         }
         TaskStatus::Running | TaskStatus::Idle => {
+            clear_notify_candidate(task);
             clear_notify_episode_if_quiet(task, now);
             None
         }
@@ -106,6 +120,7 @@ pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
         unix_seconds(now).to_string(),
     );
     task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
+    clear_notify_candidate(task);
 }
 
 fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
@@ -115,13 +130,35 @@ fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
     match status.status {
         TaskStatus::Error => true,
-        TaskStatus::Waiting => {
-            let explanation = status.explanation.as_deref().unwrap_or("");
-            explanation != "Ready for review"
-                && explanation != "Rate limited"
-                && !crate::agent_status::is_delegated_waiting_summary(explanation)
-        }
+        TaskStatus::Waiting => matches!(
+            status.explanation.as_deref(),
+            Some("Waiting for input" | "Waiting for approval")
+        ),
         TaskStatus::Running | TaskStatus::Idle => false,
+    }
+}
+
+fn clear_notify_candidate(task: &mut Task) {
+    task.metadata.remove(NOTIFY_CANDIDATE_SINCE_KEY);
+}
+
+fn confirm_notify_candidate(task: &mut Task, now: std::time::SystemTime) -> bool {
+    let now_secs = unix_seconds(now);
+    let candidate_since = task
+        .metadata
+        .get(NOTIFY_CANDIDATE_SINCE_KEY)
+        .and_then(|value| value.parse::<u64>().ok());
+    match candidate_since {
+        Some(since) if now_secs >= since + NOTIFY_CONFIRMATION_DWELL.as_secs() => {
+            clear_notify_candidate(task);
+            true
+        }
+        Some(_) => false,
+        None => {
+            task.metadata
+                .insert(NOTIFY_CANDIDATE_SINCE_KEY.to_string(), now_secs.to_string());
+            false
+        }
     }
 }
 
@@ -687,14 +724,25 @@ mod tests {
         task
     }
 
+    fn at(seconds: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+    }
+
+    fn confirm_at(task: &mut Task, t: u64) {
+        assert_eq!(super::take_attention_transition_at(task, at(t)), None);
+        assert!(super::take_attention_transition_at(task, at(t + 15)).is_some());
+    }
+
     #[test]
     fn idle_to_waiting_fires_once() {
         let mut task = waiting_task("notify");
 
-        let transition = super::take_attention_transition(&mut task);
-
         assert_eq!(
-            transition,
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_015)),
             Some(super::AttentionTransition {
                 repo: "web".to_string(),
                 handle: "notify".to_string(),
@@ -703,17 +751,36 @@ mod tests {
                 client: "codex".to_string(),
             })
         );
-        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_016)),
+            None
+        );
     }
 
-    fn at(seconds: u64) -> std::time::SystemTime {
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+    #[test]
+    fn class_change_keeps_shared_debounce() {
+        let mut task = waiting_task("class-change");
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+
+        task.add_side_flag(SideFlag::Conflicted);
+        // Waiting→Error mid-dwell keeps the shared 15s clock.
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_010)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_015)).map(|t| t.status),
+            Some(TaskStatus::Error)
+        );
     }
 
     #[test]
     fn waiting_then_idle_past_episode_clear_then_waiting_fires_again() {
         let mut task = waiting_task("notify");
-        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
+        confirm_at(&mut task, 1_000);
 
         task.remove_side_flag(SideFlag::NeedsInput);
         assert_eq!(
@@ -740,13 +807,13 @@ mod tests {
         assert!(!task.metadata.contains_key(super::NOTIFY_QUIET_SINCE_KEY));
 
         task.add_side_flag(SideFlag::NeedsInput);
-        assert!(super::take_attention_transition_at(&mut task, at(1_041)).is_some());
+        confirm_at(&mut task, 1_041);
     }
 
     #[test]
     fn waiting_cycle_within_episode_clear_fires_once() {
         let mut task = waiting_task("notify");
-        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
+        confirm_at(&mut task, 1_000);
 
         // Agent turn boundary: brief Running, then waiting again before clear.
         task.remove_side_flag(SideFlag::NeedsInput);
@@ -771,16 +838,20 @@ mod tests {
             None
         );
         task.add_side_flag(SideFlag::NeedsInput);
-        assert!(super::take_attention_transition_at(&mut task, at(1_061)).is_some());
+        confirm_at(&mut task, 1_061);
     }
 
     #[test]
     fn error_within_episode_still_fires() {
         let mut task = waiting_task("notify");
-        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
+        confirm_at(&mut task, 1_000);
 
         task.add_side_flag(SideFlag::Conflicted);
-        let transition = super::take_attention_transition_at(&mut task, at(1_030));
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_030)),
+            None
+        );
+        let transition = super::take_attention_transition_at(&mut task, at(1_045));
         assert_eq!(
             transition.map(|transition| transition.status),
             Some(TaskStatus::Error)
@@ -790,10 +861,14 @@ mod tests {
     #[test]
     fn waiting_to_error_fires() {
         let mut task = waiting_task("notify");
-        assert!(super::take_attention_transition(&mut task).is_some());
+        confirm_at(&mut task, 1_000);
 
         task.add_side_flag(SideFlag::Conflicted);
-        let transition = super::take_attention_transition(&mut task);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_010)),
+            None
+        );
+        let transition = super::take_attention_transition_at(&mut task, at(1_025));
 
         assert_eq!(
             transition.map(|transition| transition.status),
@@ -810,6 +885,8 @@ mod tests {
             at(1_000),
         );
         let first = super::take_attention_transition_at(&mut task, at(1_001));
+        assert_eq!(first, None);
+        let first = super::take_attention_transition_at(&mut task, at(1_016));
         assert_eq!(
             first.as_ref().map(|t| (t.status, t.explanation.as_deref())),
             Some((TaskStatus::Error, Some("CI failed")))
@@ -832,7 +909,11 @@ mod tests {
             LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
             at(1_000),
         );
-        assert!(super::take_attention_transition_at(&mut task, at(1_001)).is_some());
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_001)),
+            None
+        );
+        assert!(super::take_attention_transition_at(&mut task, at(1_016)).is_some());
 
         crate::live::apply_observation_at(
             &mut task,
@@ -851,8 +932,12 @@ mod tests {
             LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
             at(1_000),
         );
-        assert!(super::take_attention_transition_at(&mut task, at(1_001)).is_some());
-        crate::live::acknowledge_attention(&mut task, at(1_010));
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_001)),
+            None
+        );
+        assert!(super::take_attention_transition_at(&mut task, at(1_016)).is_some());
+        crate::live::acknowledge_attention(&mut task, at(1_020));
         assert_eq!(
             task.metadata
                 .get(super::LAST_NOTIFIED_STATUS_KEY)
@@ -860,7 +945,7 @@ mod tests {
             Some("Error")
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_011)),
+            super::take_attention_transition_at(&mut task, at(1_021)),
             None
         );
     }
@@ -927,9 +1012,11 @@ mod tests {
         let mut task = active_task("teardown");
         task.lifecycle_status = LifecycleStatus::TeardownIncomplete;
 
-        let first = super::take_attention_transition(&mut task);
-        assert_eq!(first.map(|t| t.status), Some(TaskStatus::Error));
-        assert_eq!(super::take_attention_transition(&mut task), None);
+        confirm_at(&mut task, 1_000);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_015)),
+            None
+        );
     }
 
     #[test]
@@ -983,14 +1070,7 @@ mod tests {
         );
 
         assert!(task.has_side_flag(SideFlag::NeedsInput));
-        let transition = super::take_attention_transition(&mut task);
-        assert_eq!(
-            transition.map(|transition| (
-                transition.status,
-                transition.explanation.unwrap_or_default()
-            )),
-            Some((TaskStatus::Waiting, "Waiting for approval".to_string()))
-        );
+        confirm_at(&mut task, 1_000);
     }
 
     /// A rate-limited wait is transient and retryable, not actionable operator
@@ -1018,6 +1098,31 @@ mod tests {
         assert!(task.metadata.is_empty());
     }
 
+    /// Turn-settled Done (Cursor stop, Claude/Codex/Pi settle) shows as
+    /// Waiting/"Response ready" in the UI but must not phone-ping or stamp a
+    /// notify episode — same as "Ready for review" / "Rate limited".
+    #[test]
+    fn response_ready_waiting_does_not_notify() {
+        let mut task = active_task("response-ready");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Done, "done"),
+        );
+
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task).status,
+            TaskStatus::Waiting
+        );
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some("Response ready")
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert!(task.metadata.is_empty());
+    }
+
     #[test]
     fn waiting_explanation_churn_does_not_refire_within_episode() {
         let mut task = active_task("churn");
@@ -1028,7 +1133,11 @@ mod tests {
             at(1_000),
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_001))
+            super::take_attention_transition_at(&mut task, at(1_001)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_016))
                 .map(|t| t.explanation.unwrap_or_default()),
             Some("Waiting for input".to_string())
         );
@@ -1044,16 +1153,106 @@ mod tests {
             None
         );
 
-        // Class change Waiting → Error still fires once.
+        // Class change Waiting → Error still fires once after a fresh shared dwell
+        // (prior delivery cleared the candidate).
         crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
             at(1_003),
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_003))
+            super::take_attention_transition_at(&mut task, at(1_017)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_032))
                 .map(|t| (t.status, t.explanation.unwrap_or_default())),
             Some((TaskStatus::Error, "Agent blocked".to_string()))
         );
+    }
+
+    #[test]
+    fn notify_debounce_holds_then_fires_once() {
+        let mut task = waiting_task("debounce");
+
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+        assert!(task
+            .metadata
+            .contains_key(super::NOTIFY_CANDIDATE_SINCE_KEY));
+
+        let transition = super::take_attention_transition_at(&mut task, at(1_015));
+        assert_eq!(
+            transition.as_ref().and_then(|t| t.explanation.as_deref()),
+            Some("Waiting for input")
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_016)),
+            None
+        );
+    }
+
+    #[test]
+    fn auth_required_waiting_does_not_notify() {
+        let mut task = active_task("auth");
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AuthRequired, "auth required"),
+        );
+
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task).status,
+            TaskStatus::Waiting
+        );
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some("Authentication required")
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_020)),
+            None
+        );
+        assert!(task.metadata.is_empty());
+    }
+
+    #[test]
+    fn debounce_clears_when_returns_to_running() {
+        let mut task = waiting_task("debounce-clear");
+
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+        assert!(task
+            .metadata
+            .contains_key(super::NOTIFY_CANDIDATE_SINCE_KEY));
+
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::AgentRunning);
+        task.agent_status = AgentRuntimeStatus::Running;
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_005)),
+            None
+        );
+        assert!(!task
+            .metadata
+            .contains_key(super::NOTIFY_CANDIDATE_SINCE_KEY));
+
+        task.remove_side_flag(SideFlag::AgentRunning);
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_010)),
+            None
+        );
+        assert!(super::take_attention_transition_at(&mut task, at(1_025)).is_some());
     }
 }

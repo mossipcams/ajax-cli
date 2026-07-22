@@ -434,15 +434,17 @@ advances lifecycle to `Reviewable` only when the run-graph aggregation reports
 the parent as fully completed (no active non-detached descendants).
 
 Attention webhooks (`attention::take_attention_transition`) fire on actionable
-Waiting and Error operator status. Actionable Waiting comes from structured
-wait/ask evidence (Claude `Notification`, Codex `PermissionRequest`, and
-legacy provider hook files that write `wait`/`ask`). Cursor and Pi have no
-native wait/ask hook today — they still notify on Error-class evidence
-(CI/wrapper/substrate). Parent phases that wait on delegated children
-(`Waiting on delegated runs`, `Delegated runs still active`) remain visible as
-Waiting but are not actionable: they do not set `NeedsInput`, do not annotate
-`NeedsMe`, and do not phone-ping. Ordinary user waits and approvals still
-notify.
+Waiting and Error operator status after a shared 15-second confirmation dwell
+(`NOTIFY_CONFIRMATION_DWELL`) that applies to all actionable attention — a
+Waiting→Error flap mid-dwell does not restart the clock. Actionable Waiting is allowlisted to structured
+wait/ask explanations only (`Waiting for input`, `Waiting for approval` from
+Claude `Notification`, Codex `PermissionRequest`, and legacy provider hook files
+that write `wait`/`ask`). Cursor and Pi have no native wait/ask hook today —
+they still notify on Error-class evidence (CI/wrapper/substrate). Auth required,
+context waits, lifecycle review, rate limits, response-ready settle, and parent
+phases that wait on delegated children remain visible as Waiting but do not
+phone-ping. Ordinary user waits and approvals still notify once the dwell
+confirms sustained attention.
 
 Opening a task persists an attention acknowledgment without changing lifecycle
 or deleting evidence. `live::acknowledge_attention` is agent-neutral:
@@ -699,13 +701,16 @@ notify adapter (`[notify]` config) is the supported notification channel; the
 web runtime only hosts its background poll.
 
 The notify adapter fires once per actionable episode and only for statuses
-the operator can act on. Actionable Waiting (`waiting for input` /
-`waiting for approval` from structured hooks/lifecycle events) and
-`Error`-class evidence (CI failed, merge conflict, command failed, blocked,
-runtime probe failure) each fire a single webhook. Transient
-`Rate limited` Waiting is inbox-visible but does **not** phone-ping.
-Lifecycle-only "Ready for review" stays inbox-visible but does **not**
-phone-ping. Episode dedup is status-class only; the webhook body still
+the operator can act on. Actionable Waiting is allowlisted to `Waiting for
+input` / `Waiting for approval` (structured hooks/lifecycle events); all other
+Waiting explanations stay inbox-visible but silent. `Error`-class evidence
+(CI failed, merge conflict, command failed, blocked, runtime probe failure)
+each fire a single webhook after the same shared 15-second confirmation dwell
+(`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient `Rate limited` Waiting,
+lifecycle-only "Ready for review", turn-settled "Response ready" (`Done` from
+Cursor `stop` / Claude·Codex·Pi settle), and auth/context waits do **not**
+phone-ping — Cursor has no native wait/ask, so settle must not look like
+actionable attention. Episode dedup is status-class only; the webhook body still
 includes the agent client and explanation
 (`repo/handle: Waiting (codex) — …`). Delivery stays on CLI/cockpit refresh
 and the web background tick — hooks only write event files and must stay
