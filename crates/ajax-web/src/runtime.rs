@@ -412,6 +412,10 @@ where
         .with_state(state)
 }
 
+pub(crate) fn log_web_listening(host: &str, port: u16) {
+    tracing::info!(target: "ajax_web", host = %host, port, "listening");
+}
+
 pub fn serve_axum_web<C, B>(host: &str, port: u16, state: WebAppState<C, B>) -> Result<(), WebError>
 where
     C: CommandRunner + Clone + Send + Sync + 'static,
@@ -419,7 +423,7 @@ where
 {
     let identity = tls::load_or_create_identity(&state.state_dir)?;
     let address = resolve_bind_address(host, port)?;
-    eprintln!("Ajax mobile web listening on https://{host}:{port}");
+    log_web_listening(host, port);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1100,7 +1104,7 @@ where
         .as_str()
         .to_string();
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
-        return gate_rejection_response(rejection, Some(&request_id), "task start");
+        return gate_rejection_response(rejection, Some(&request_id), &task_key, "task start");
     }
     let _lane = state.control_lane.lock().await;
     let response = state.run_optimistic(
@@ -1128,18 +1132,37 @@ where
 fn gate_rejection_response(
     rejection: GateRejection,
     request_id: Option<&str>,
+    task: &str,
     noun: &str,
 ) -> AxumResponse {
     match rejection {
-        GateRejection::Replay(response) => response.into_axum_response(),
-        GateRejection::Conflict => json_value_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "request_id": request_id,
-                "error": format!("{noun} already in progress"),
-            }),
-        ),
+        GateRejection::Replay(response) => {
+            tracing::warn!(
+                target: "ajax_web",
+                request_id = ?request_id,
+                task = %task,
+                outcome = "replay",
+                "operate gate"
+            );
+            response.into_axum_response()
+        }
+        GateRejection::Conflict => {
+            tracing::warn!(
+                target: "ajax_web",
+                request_id = ?request_id,
+                task = %task,
+                outcome = "conflict",
+                "operate gate"
+            );
+            json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": format!("{noun} already in progress"),
+                }),
+            )
+        }
     }
 }
 
@@ -1165,12 +1188,21 @@ where
     state.mark_browser_cockpit_seen();
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();
+    let action = request.action.clone();
     if let Err(rejection) = state
         .operations()
         .try_begin(request_id.as_deref(), &task_key)
     {
-        return gate_rejection_response(rejection, request_id.as_deref(), "operation");
+        return gate_rejection_response(rejection, request_id.as_deref(), &task_key, "operation");
     }
+
+    tracing::info!(
+        target: "ajax_web",
+        request_id = ?request_id,
+        task = %task_key,
+        action = %action,
+        "operate begin"
+    );
 
     let _lane = state.control_lane.lock().await;
     let response = state.run_optimistic(
@@ -1185,6 +1217,28 @@ where
     state
         .operations()
         .finish(request_id.as_deref(), &task_key, &response);
+
+    if response.status_code >= 400 {
+        tracing::warn!(
+            target: "ajax_web",
+            request_id = ?request_id,
+            task = %task_key,
+            action = %action,
+            status = response.status_code,
+            outcome = "err",
+            "operate end"
+        );
+    } else {
+        tracing::info!(
+            target: "ajax_web",
+            request_id = ?request_id,
+            task = %task_key,
+            action = %action,
+            status = response.status_code,
+            outcome = "ok",
+            "operate end"
+        );
+    }
 
     response.into_axum_response()
 }
@@ -1352,9 +1406,11 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
 #[cfg(test)]
 mod tests {
     use super::{ActionFailure, RefreshTier, RuntimeBridge};
-    use crate::slices::operate::{OperateOutcome, OperateRequest};
+    use crate::slices::operate::{operate, OperateError, OperateOutcome, OperateRequest};
     use ajax_core::{
-        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        adapters::{
+            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+        },
         commands::CommandContext,
         config::Config,
         registry::InMemoryRegistry,
@@ -3915,5 +3971,81 @@ mod tests {
         let guard = state.shared();
         assert_eq!(guard.revision, base_revision);
         assert_eq!(guard.cockpit_cache.is_some(), cache_was);
+    }
+
+    #[test]
+    fn logging_web_listening_writes_to_ajax_log() {
+        let logs_dir = logging_test_logs_dir();
+        super::log_web_listening("127.0.0.1", 9443);
+
+        let contents = read_logging_test_log(logs_dir);
+        assert!(
+            contents.contains("listening"),
+            "expected listening in log: {contents}"
+        );
+        assert!(
+            contents.contains("127.0.0.1"),
+            "expected host in log: {contents}"
+        );
+        assert!(
+            contents.contains("9443"),
+            "expected port in log: {contents}"
+        );
+    }
+
+    #[test]
+    fn logging_operate_unknown_action_includes_action_field() {
+        let logs_dir = logging_test_logs_dir();
+        let mut context = context_with_task();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "not-a-real-action".to_string(),
+                confirmed: false,
+                branch_adoption: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, OperateError::UnknownAction(_)));
+
+        let contents = read_logging_test_log(logs_dir);
+        assert!(
+            contents.contains("action=") && contents.contains("not-a-real-action"),
+            "expected action field in log: {contents}"
+        );
+        assert!(
+            contents.contains("outcome=\"err\"") || contents.contains("outcome=err"),
+            "expected err outcome in log: {contents}"
+        );
+    }
+
+    fn logging_test_logs_dir() -> &'static std::path::Path {
+        use std::{
+            path::PathBuf,
+            sync::{Mutex, OnceLock},
+        };
+
+        static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+        static INIT: Mutex<()> = Mutex::new(());
+
+        let _guard = INIT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        LOGS_DIR.get_or_init(|| {
+            let logs_dir =
+                std::env::temp_dir().join(format!("ajax_web_logging_tests_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&logs_dir);
+            ajax_core::logging::init_to_logs_dir(&logs_dir);
+            logs_dir
+        })
+    }
+
+    fn read_logging_test_log(logs_dir: &std::path::Path) -> String {
+        std::fs::read_to_string(logs_dir.join("ajax.log")).expect("ajax.log should exist")
     }
 }

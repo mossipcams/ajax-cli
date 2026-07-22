@@ -13,6 +13,7 @@ pub mod events;
 pub mod ghost_task;
 pub mod lifecycle;
 pub mod live;
+pub mod logging;
 pub mod models;
 pub mod operation;
 pub mod output;

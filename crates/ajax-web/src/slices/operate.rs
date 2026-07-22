@@ -58,6 +58,43 @@ pub fn operate<R: Registry>(
     runner: &mut impl CommandRunner,
     request: OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
+    let action = request.action.clone();
+    let task = request.task_handle.clone();
+    tracing::info!(
+        target: "ajax_web",
+        action = %action,
+        task = %task,
+        "operate"
+    );
+
+    let result = operate_inner(context, runner, request);
+
+    match &result {
+        Ok(_) => tracing::info!(
+            target: "ajax_web",
+            action = %action,
+            task = %task,
+            outcome = "ok",
+            "operate"
+        ),
+        Err(error) => tracing::warn!(
+            target: "ajax_web",
+            action = %action,
+            task = %task,
+            outcome = "err",
+            error = %format_operate_error(error),
+            "operate"
+        ),
+    }
+
+    result
+}
+
+fn operate_inner<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    request: OperateRequest,
+) -> Result<OperateOutcome, OperateError> {
     if remediation::is_remediation_action(&request.action) {
         return run_remediation(context, runner, &request.task_handle, &request.action);
     }
@@ -93,6 +130,45 @@ pub fn start_task<R: Registry>(
 }
 
 pub fn start_task_with_checkpoint<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    request: StartTaskRequest,
+    checkpoint: impl FnMut(&CommandContext<R>) -> Result<(), ajax_core::commands::CommandError>,
+) -> Result<OperateOutcome, OperateError> {
+    let repo = request.repo.clone();
+    let agent = request.agent.clone();
+    tracing::info!(
+        target: "ajax_web",
+        repo = %repo,
+        agent = %agent,
+        request_id = %request.request_id,
+        "start task"
+    );
+
+    let result = start_task_with_checkpoint_inner(context, runner, request, checkpoint);
+
+    match &result {
+        Ok(_) => tracing::info!(
+            target: "ajax_web",
+            repo = %repo,
+            agent = %agent,
+            outcome = "ok",
+            "start task"
+        ),
+        Err(error) => tracing::warn!(
+            target: "ajax_web",
+            repo = %repo,
+            agent = %agent,
+            outcome = "err",
+            error = %format_operate_error(error),
+            "start task"
+        ),
+    }
+
+    result
+}
+
+fn start_task_with_checkpoint_inner<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
     request: StartTaskRequest,

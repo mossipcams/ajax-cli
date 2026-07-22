@@ -25,9 +25,19 @@ impl CommandRunner for ProcessCommandRunner {
             CommandMode::Capture => run_capture(process, command),
             CommandMode::InheritStdio => run_inherit_stdio(process),
         };
+        let elapsed = started.elapsed();
+        let status = outcome.as_ref().map(|output| output.status_code);
+
+        tracing::debug!(
+            target: "ajax_core",
+            program = %command.program,
+            elapsed_ms = elapsed.as_millis(),
+            status = ?status,
+            "cmd"
+        );
 
         if timing_logging_enabled() {
-            eprintln!("{}", timing_log_line(command, started.elapsed()));
+            eprintln!("{}", timing_log_line(command, elapsed));
         }
 
         outcome
@@ -231,6 +241,53 @@ mod tests {
         assert_eq!(
             line,
             "ajax-timing: git -C /repo/web fetch origin main 1234ms"
+        );
+    }
+
+    #[test]
+    fn run_emits_debug_log_with_program_and_elapsed_ms() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for CapturingWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = {
+            let buffer = Arc::clone(&buffer);
+            move || CapturingWriter(Arc::clone(&buffer))
+        };
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_target(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let mut runner = ProcessCommandRunner;
+            let command = CommandSpec::new("true", []);
+            runner.run(&command).unwrap();
+        });
+
+        let output = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("true") && output.contains("cmd"),
+            "expected debug cmd log with program, got: {output}"
+        );
+        assert!(
+            output.contains("elapsed_ms"),
+            "expected elapsed_ms field in debug log, got: {output}"
         );
     }
 

@@ -160,6 +160,13 @@ selected config, state DB, logs, cache, and worktree placement before starting
 tasks. `AJAX_PROFILE`, `AJAX_HOME`, `AJAX_CONFIG`, `AJAX_STATE`, and
 `AJAX_WORKTREE_ROOT` can override profile-derived paths.
 
+Operator logs append to `{logs_dir}/ajax.log` (see `ajax-cli runtime`). Default
+filter is info for Ajax crates. Override with `AJAX_LOG` (else `RUST_LOG`). Set
+`AJAX_LOG_STDERR=1` to also mirror to stderr. Opt-in deep traces:
+`AJAX_TIMING` (command timing on stderr), `AJAX_TASK_SESSION_TRACE=<path>`
+(attach/PTY session), and `AJAX_SUPERVISE_EVENT_LOG=1` to opt in to supervise’s
+`{logs_dir}/monitor/events.jsonl` JSONL stream (off by default).
+
 Minimal configuration:
 
 ```toml

@@ -36,8 +36,27 @@ pub fn transition_lifecycle(
     status: LifecycleStatus,
     reason: LifecycleTransitionReason,
 ) -> Result<(), LifecycleTransitionError> {
-    validate_lifecycle_transition(task.lifecycle_status, status, reason)?;
+    let from = task.lifecycle_status;
+    if let Err(error) = validate_lifecycle_transition(from, status, reason) {
+        tracing::debug!(
+            target: "ajax_core",
+            from = ?error.from,
+            to = ?error.to,
+            reason = ?error.reason,
+            "lifecycle"
+        );
+        return Err(error);
+    }
     task.lifecycle_status = status;
+    if from != status {
+        tracing::info!(
+            target: "ajax_core",
+            from = ?from,
+            to = ?status,
+            reason = ?reason,
+            "lifecycle"
+        );
+    }
     Ok(())
 }
 
@@ -312,6 +331,109 @@ mod tests {
             "task",
             AgentClient::Codex,
         )
+    }
+
+    fn capture_tracing_output<F: FnOnce()>(level: tracing::Level, f: F) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for CapturingWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = {
+            let buffer = Arc::clone(&buffer);
+            move || CapturingWriter(Arc::clone(&buffer))
+        };
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(level)
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_target(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = buffer.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn transition_lifecycle_logs_successful_transition_at_info() {
+        let output = capture_tracing_output(tracing::Level::INFO, || {
+            let mut task = task();
+            mark_active(&mut task).unwrap();
+            mark_reviewable(&mut task).unwrap();
+        });
+
+        assert!(
+            output.contains("lifecycle")
+                && output.contains("from=")
+                && output.contains("to=")
+                && output.contains("reason="),
+            "expected lifecycle info log with from/to/reason, got: {output}"
+        );
+        assert!(
+            output.contains("Reviewable"),
+            "expected Reviewable in lifecycle log, got: {output}"
+        );
+    }
+
+    #[test]
+    fn rejected_transition_logs_debug_with_from_to_and_reason() {
+        let output = capture_tracing_output(tracing::Level::DEBUG, || {
+            let mut task = task();
+            let _ = transition_lifecycle(
+                &mut task,
+                LifecycleStatus::Merged,
+                LifecycleTransitionReason::Generic,
+            );
+        });
+
+        assert!(
+            output.contains("lifecycle")
+                && output.contains("from=")
+                && output.contains("to=")
+                && output.contains("reason="),
+            "expected lifecycle debug log with from/to/reason, got: {output}"
+        );
+        assert!(
+            output.contains("Merged"),
+            "expected blocked target status in debug log, got: {output}"
+        );
+    }
+
+    #[test]
+    fn noop_same_status_transition_does_not_log_info() {
+        let output = capture_tracing_output(tracing::Level::INFO, || {
+            let mut task = task();
+            mark_active(&mut task).unwrap();
+            transition_lifecycle(
+                &mut task,
+                LifecycleStatus::Active,
+                LifecycleTransitionReason::Generic,
+            )
+            .unwrap();
+        });
+
+        let lifecycle_lines: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("lifecycle"))
+            .collect();
+        assert_eq!(
+            lifecycle_lines.len(),
+            1,
+            "expected one lifecycle info line for Created -> Active only, got: {output}"
+        );
     }
 
     #[test]

@@ -165,7 +165,11 @@ pub(crate) fn render_matches_mut(
                 .as_ref()
                 .and_then(|task_id| context.registry.get_task(task_id))
                 .map(supervisor_agent_for_task);
-            let (output, events) = supervise_command_output_and_events(subcommand, task_agent)?;
+            let (output, events) = supervise_command_output_and_events(
+                subcommand,
+                task_agent,
+                &context.runtime_paths.logs_dir,
+            )?;
             let mut state_changed = false;
             if let Some(task_id) = supervised_task {
                 for event in &events {

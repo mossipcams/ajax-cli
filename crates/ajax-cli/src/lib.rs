@@ -178,7 +178,23 @@ pub fn run_with_args_to_writer(
     }
 
     let paths = context_paths_from_matches(&matches)?;
-    let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;
+    ajax_core::logging::init_to_logs_dir(&paths.runtime_paths.logs_dir);
+    let command = matches.subcommand().map(|(name, _)| name).unwrap_or("none");
+    let profile = paths.runtime_paths.profile.clone();
+
+    let mut tracked = match load_tracked_context_for_matches(&paths, &matches) {
+        Ok(tracked) => tracked,
+        Err(error) => {
+            tracing::warn!(
+                target: "ajax_cli",
+                command = %command,
+                profile = %profile,
+                error = %error,
+                "command failed"
+            );
+            return Err(error);
+        }
+    };
     let mut runner = ProcessCommandRunner;
 
     let mut persist_state = tracked.save_state.clone();
@@ -190,8 +206,28 @@ pub fn run_with_args_to_writer(
         |context| context::save_context_with_state(&paths, context, &mut persist_state),
     ) {
         tracked.save_state = persist_state;
-        result?;
-        return Ok(());
+        match result {
+            Ok(state_changed) => {
+                tracing::info!(
+                    target: "ajax_cli",
+                    command = %command,
+                    profile = %profile,
+                    state_changed = state_changed,
+                    "command done"
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "ajax_cli",
+                    command = %command,
+                    profile = %profile,
+                    error = %error,
+                    "command failed"
+                );
+                return Err(error);
+            }
+        }
     }
 
     let rendered = match render_matches_mut_with_paths(
@@ -205,15 +241,47 @@ pub fn run_with_args_to_writer(
         Err(error) => {
             if error.state_changed() {
                 authorize_empty_registry_save_for_command(&matches, &mut tracked);
-                save_tracked_context(&paths, &mut tracked)?;
+                if let Err(save_error) = save_tracked_context(&paths, &mut tracked) {
+                    tracing::warn!(
+                        target: "ajax_cli",
+                        command = %command,
+                        profile = %profile,
+                        error = %save_error,
+                        "command failed"
+                    );
+                    return Err(save_error);
+                }
             }
+            tracing::warn!(
+                target: "ajax_cli",
+                command = %command,
+                profile = %profile,
+                error = %error,
+                "command failed"
+            );
             return Err(error);
         }
     };
     if rendered.state_changed {
         authorize_empty_registry_save_for_command(&matches, &mut tracked);
-        save_tracked_context(&paths, &mut tracked)?;
+        if let Err(error) = save_tracked_context(&paths, &mut tracked) {
+            tracing::warn!(
+                target: "ajax_cli",
+                command = %command,
+                profile = %profile,
+                error = %error,
+                "command failed"
+            );
+            return Err(error);
+        }
     }
+    tracing::info!(
+        target: "ajax_cli",
+        command = %command,
+        profile = %profile,
+        state_changed = rendered.state_changed,
+        "command done"
+    );
     write_command_output(writer, &rendered.output)
 }
 
