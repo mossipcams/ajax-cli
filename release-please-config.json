@@ -23,6 +23,11 @@
           "type": "toml",
           "path": "crates/ajax-cli/Cargo.toml",
           "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value==\"ajax-cli\")].version"
         }
       ]
     }

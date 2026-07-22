@@ -1,12 +1,20 @@
 name: CI
 
+# No `push: main` trigger. The `CI` ruleset on main requires the aggregate `CI`
+# check with `strict_required_status_checks_policy: true`, so a PR cannot merge
+# unless its head is already up to date with main and that exact tree passed the
+# full suite. Re-running everything on the merge commit tested nothing new.
 "on":
   pull_request:
   merge_group:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+
+# One run per PR head. A superseded push (including a Release Please force-push
+# that regenerates the release branch) cancels its predecessor. Merge queue runs
+# are never cancelled: the queue is already serialising exact merge candidates.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -40,27 +48,72 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "PR title check not applicable for ${{ github.event_name }}."
 
-  release-pr-bypass:
-    name: Release PR Bypass
+  # The generated Release Please PR contains no source changes: every commit it
+  # releases already passed the full suite on its own PR. It gets this one cheap
+  # job instead — the checks that are actually specific to a release candidate.
+  release-candidate:
+    name: Release Candidate
     runs-on: ubuntu-latest
-    outputs:
-      skip-ci: ${{ steps.classify.outputs.skip-ci }}
+    needs: pr-title
+    if: ${{ startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
-      - name: Classify Release Please PR
-        id: classify
+      - name: Checkout release PR head
+        uses: actions/checkout@v4
+        with:
+          # The exact head SHA, not the ephemeral pull/N/merge ref, so the job
+          # verifies the commit that will be merged.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch current main
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      # GitHub's native mergeability already blocks a conflicted PR, but it
+      # reports it as an unexplained "can't merge" banner. This turns the same
+      # state into a failing check with the conflicting paths in the log.
+      - name: Detect merge conflicts with main
         run: |
-          if [[ "${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--branches--main') }}" == "true" ]]; then
-            echo "skip-ci=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip-ci=false" >> "$GITHUB_OUTPUT"
+          set -uo pipefail
+          conflicts=$(git merge-tree --write-tree origin/main HEAD)
+          status=$?
+
+          if [ "$status" -eq 0 ]; then
+            echo "Release PR merges cleanly into origin/main."
+            exit 0
           fi
+
+          if [ "$status" -gt 1 ]; then
+            echo "::error title=merge-tree failed::git merge-tree exited $status"
+            printf '%s\n' "$conflicts"
+            exit "$status"
+          fi
+
+          echo "::error title=Release PR conflicts with main::Re-run the Release Please workflow to regenerate this branch from current main."
+          printf '%s\n' "$conflicts"
+          exit 1
+
+      - name: Check release version consistency
+        run: node scripts/check-release-version.mjs
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+
+      # Proves Cargo.lock records the bumped version: `--locked` fails if the
+      # lockfile would need to change.
+      - name: Cargo check
+        run: cargo check --locked -p ajax-cli
 
   format:
     name: Format
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -82,8 +135,8 @@ jobs:
   web:
     name: Web
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -97,6 +150,11 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      # Same command husky runs at the tail of `npm run verify`: workflow
+      # invariants, release-version consistency, and the script tests.
+      - name: Verify CI and release pipeline invariants
+        run: npm run ci:verify
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -113,8 +171,8 @@ jobs:
   check:
     name: Cargo Check
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -136,8 +194,8 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -159,8 +217,8 @@ jobs:
   test:
     name: Nextest and Doc Tests
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -186,8 +244,8 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -209,8 +267,8 @@ jobs:
   audit:
     name: Cargo Audit
     runs-on: ubuntu-latest
-    needs: [pr-title, release-pr-bypass]
-    if: ${{ needs.release-pr-bypass.outputs.skip-ci != 'true' }}
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
     steps:
       - name: Checkout
@@ -222,12 +280,15 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
+  # The single required status check. Exactly one of the two paths must be
+  # green: the full suite on a normal PR, or release-candidate on a Release
+  # Please PR.
   ci:
     name: CI
     runs-on: ubuntu-latest
     needs:
       - pr-title
-      - release-pr-bypass
+      - release-candidate
       - format
       - check
       - clippy
@@ -240,19 +301,35 @@ jobs:
     steps:
       - name: Verify required checks
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "One or more required CI jobs did not pass."
+          set -euo pipefail
+
+          if [[ "${{ needs.pr-title.result }}" != "success" ]]; then
+            echo "PR title check did not pass (${{ needs.pr-title.result }})."
             exit 1
           fi
 
-          if [[ "${{ needs.release-pr-bypass.outputs.skip-ci == 'true' }}" == "true" ]]; then
-            echo "CI intentionally bypassed for Release Please PR."
+          if [[ "${{ startsWith(github.head_ref, 'release-please--branches--main') }}" == "true" ]]; then
+            if [[ "${{ needs.release-candidate.result }}" != "success" ]]; then
+              echo "Release candidate check did not pass (${{ needs.release-candidate.result }})."
+              exit 1
+            fi
+            echo "Release PR: release-candidate passed. The full suite is not re-run because every released commit already passed it on its own PR."
             exit 0
           fi
 
-          if [[ "${{ contains(needs.*.result, 'skipped') }}" == "true" ]]; then
-            echo "One or more required CI jobs did not pass."
-            exit 1
-          fi
+          for result in \
+            "${{ needs.format.result }}" \
+            "${{ needs.web.result }}" \
+            "${{ needs.check.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.test.result }}" \
+            "${{ needs.docs.result }}" \
+            "${{ needs.audit.result }}"
+          do
+            if [[ "$result" != "success" ]]; then
+              echo "A required CI job did not pass (result: $result)."
+              exit 1
+            fi
+          done
 
           echo "All required CI jobs passed."

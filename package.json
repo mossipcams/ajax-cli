@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "test": "npm run verify",
-    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:lint && npm run web:sg && npm run web:test -- --run",
+    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:lint && npm run web:sg && npm run web:test -- --run && npm run ci:verify",
+    "ci:verify": "node scripts/verify-ci-workflows.mjs && node scripts/check-release-version.mjs && node --test 'scripts/*.test.mjs'",
     "web:check": "node node_modules/typescript-7/bin/tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit",
     "web:lint": "eslint --config crates/ajax-web/web/eslint.config.mjs crates/ajax-web/web/src crates/ajax-web/web/e2e",
     "web:sg": "ast-grep scan crates/ajax-web/web/src",
@@ -41,7 +42,8 @@
     "typescript-7": "npm:typescript@7.0.2",
     "typescript-eslint": "^8.64.0",
     "vite": "^6.0.7",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "yaml": "^2.9.0"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.19",
