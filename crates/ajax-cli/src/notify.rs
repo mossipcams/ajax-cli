@@ -166,6 +166,18 @@ mod tests {
         };
         let mut context = context_with_waiting_task(config);
         let mut runner = RecordingRunner { specs: Vec::new() };
+        let task = context
+            .registry
+            .get_task_mut(&ajax_core::models::TaskId::new("task-notify"))
+            .unwrap();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        task.metadata.insert(
+            ajax_core::attention::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+            (now_secs.saturating_sub(20)).to_string(),
+        );
 
         assert!(notify_attention_transitions(&mut context, &mut runner));
         assert_eq!(runner.specs.len(), 1);

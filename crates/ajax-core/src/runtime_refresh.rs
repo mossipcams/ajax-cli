@@ -2257,6 +2257,11 @@ mod tests {
         assert!(unix_seconds_for_test(SystemTime::now()).saturating_sub(probed_at) <= 5);
 
         let mut task_for_attention = task.clone();
+        let now_secs = unix_seconds_for_test(SystemTime::now());
+        task_for_attention.metadata.insert(
+            crate::attention::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+            (now_secs.saturating_sub(20)).to_string(),
+        );
         let transition = crate::attention::take_attention_transition(&mut task_for_attention);
         assert_eq!(
             transition.map(|transition| transition.status),
