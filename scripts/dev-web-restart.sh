@@ -36,9 +36,9 @@ usage() {
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
 Default: fetch and force-sync the local main worktree to origin/main, install
-ajax-cli from that worktree (unless --no-install), stop the previous managed
-web server for the selected profile, and start ajax-cli web in a durable tmux
-session.
+ajax-cli from that worktree (unless --no-install), reinstall client agent
+hooks when agent_hooks.rs changed, stop the previous managed web server for
+the selected profile, and start ajax-cli web in a durable tmux session.
 
 With --worktree PATH: skip git sync, build/install from PATH (uncommitted
 changes included), install into .ajax-dev-web/bin, and restart only the
@@ -153,6 +153,22 @@ restore_model_router_symlinks() {
   "$installer" --target "$ROOT" --force
 }
 
+# ponytail: only rewrite ~/.claude|codex|cursor|pi hooks when definitions moved.
+# Ceiling: path-based diff vs prior HEAD / origin/main; misses renames outside
+# agent_hooks.rs. Upgrade: compare `ajax-cli agent-hooks install` dry-run output.
+HOOKS_PATH="crates/ajax-cli/src/agent_hooks.rs"
+HOOKS_CHANGED=0
+
+agent_hooks_differs() {
+  local work_tree="$1"
+  shift
+  # `git diff --quiet` exits 1 when different; keep set -e safe via `if !`.
+  if ! git -C "$work_tree" diff --quiet "$@" -- "$HOOKS_PATH"; then
+    return 0
+  fi
+  return 1
+}
+
 SOURCE_ROOT="$ROOT"
 if [[ -n "$WORKTREE" ]]; then
   if [[ ! -d "$WORKTREE" ]]; then
@@ -162,8 +178,16 @@ if [[ -n "$WORKTREE" ]]; then
   SOURCE_ROOT="$(cd "$WORKTREE" && pwd)"
   echo "AJAX_DEV_DEPLOY_PHASE=building"
   echo "Test in Dev: building from worktree $SOURCE_ROOT (no git sync)"
+  if agent_hooks_differs "$SOURCE_ROOT" origin/main \
+    || agent_hooks_differs "$SOURCE_ROOT" HEAD; then
+    HOOKS_CHANGED=1
+  fi
 else
+  PREV_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
   sync_main
+  if agent_hooks_differs "$ROOT" "$PREV_HEAD" HEAD; then
+    HOOKS_CHANGED=1
+  fi
   restore_model_router_symlinks
 fi
 
@@ -197,6 +221,19 @@ if [[ "$INSTALL" -eq 1 ]]; then
 elif [[ -n "$WORKTREE" && -x "$SLOT_BIN" ]]; then
   BIN_CMD=("$SLOT_BIN")
   USE_SLOT_BIN=1
+fi
+
+if [[ "$HOOKS_CHANGED" -eq 1 ]]; then
+  if [[ "$INSTALL" -eq 1 ]]; then
+    echo "Agent hook definitions changed; reinstalling client hooks ..."
+    if [[ "$USE_SLOT_BIN" -eq 1 ]]; then
+      "$SLOT_BIN" agent-hooks install
+    else
+      ajax-cli agent-hooks install
+    fi
+  else
+    echo "warning: agent hook definitions changed but --no-install; skipping hook reinstall" >&2
+  fi
 fi
 
 stop_listener() {
