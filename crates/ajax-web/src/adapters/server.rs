@@ -9,6 +9,9 @@ const RESTART_DELAY: Duration = Duration::from_millis(400);
 const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
 const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";
 const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
+pub const AJAX_PROFILE_ENV: &str = "AJAX_PROFILE";
+pub const STABLE_PROFILE: &str = "stable";
+pub const DEFAULT_STABLE_PORT: &str = "8787";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartLaunch {
@@ -96,6 +99,80 @@ fn respawn_current_process() -> Result<(), String> {
     Ok(())
 }
 
+pub fn web_profile_from_env<'a>(
+    restart_profile: Option<&'a str>,
+    ajax_profile: Option<&'a str>,
+) -> Option<&'a str> {
+    restart_profile
+        .filter(|value| !value.is_empty())
+        .or_else(|| ajax_profile.filter(|value| !value.is_empty()))
+}
+
+pub fn test_in_stable_enabled(profile: Option<&str>, script: Option<&str>) -> bool {
+    profile == Some(STABLE_PROFILE) && script.is_some_and(|value| !value.is_empty())
+}
+
+pub fn test_in_stable_script_args(port: &str) -> Vec<String> {
+    vec![
+        "--profile".to_string(),
+        STABLE_PROFILE.to_string(),
+        "--port".to_string(),
+        port.to_string(),
+    ]
+}
+
+fn restart_script_path_exists(script: &str) -> bool {
+    #[cfg(test)]
+    {
+        !script.is_empty()
+    }
+    #[cfg(not(test))]
+    {
+        std::path::Path::new(script).is_file()
+    }
+}
+
+pub fn test_in_stable_enabled_from_env() -> bool {
+    let script = std::env::var(RESTART_SCRIPT_ENV)
+        .ok()
+        .filter(|value| !value.is_empty());
+    let restart_profile = std::env::var(RESTART_PROFILE_ENV).ok();
+    let ajax_profile = std::env::var(AJAX_PROFILE_ENV).ok();
+    let profile = web_profile_from_env(restart_profile.as_deref(), ajax_profile.as_deref());
+    match script {
+        Some(path) if restart_script_path_exists(&path) => {
+            test_in_stable_enabled(profile, Some(path.as_str()))
+        }
+        _ => false,
+    }
+}
+
+/// Spawn the restart script with stable profile args, then exit.
+///
+/// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
+pub fn schedule_test_in_stable() {
+    #[cfg(not(test))]
+    {
+        thread::spawn(|| {
+            thread::sleep(RESTART_DELAY);
+            if let Some(script) = std::env::var(RESTART_SCRIPT_ENV)
+                .ok()
+                .filter(|value| !value.is_empty())
+            {
+                let port = std::env::var(RESTART_PORT_ENV)
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string());
+                let args = test_in_stable_script_args(&port);
+                if let Err(error) = spawn_restart_script(&script, &args) {
+                    eprintln!("Ajax web test-in-stable failed: {error}");
+                }
+            }
+            std::process::exit(0);
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{restart_launch_from_env, schedule_process_restart, RestartLaunch};
@@ -142,5 +219,58 @@ mod tests {
         assert_eq!(super::RESTART_SCRIPT_ENV, "AJAX_WEB_RESTART_SCRIPT");
         assert_eq!(super::RESTART_PROFILE_ENV, "AJAX_WEB_RESTART_PROFILE");
         assert_eq!(super::RESTART_PORT_ENV, "AJAX_WEB_RESTART_PORT");
+    }
+
+    #[test]
+    fn web_profile_from_env_prefers_restart_profile_over_ajax_profile() {
+        assert_eq!(
+            super::web_profile_from_env(Some("stable"), Some("dev")),
+            Some("stable")
+        );
+        assert_eq!(super::web_profile_from_env(None, Some("dev")), Some("dev"));
+        assert_eq!(
+            super::web_profile_from_env(Some(""), Some("dev")),
+            Some("dev")
+        );
+        assert_eq!(super::web_profile_from_env(None, None), None);
+    }
+
+    #[test]
+    fn test_in_stable_enabled_requires_stable_profile_and_script() {
+        assert!(super::test_in_stable_enabled(
+            Some(super::STABLE_PROFILE),
+            Some("/x")
+        ));
+        assert!(!super::test_in_stable_enabled(Some("dev"), Some("/x")));
+        assert!(!super::test_in_stable_enabled(
+            Some(super::STABLE_PROFILE),
+            Some("")
+        ));
+        assert!(!super::test_in_stable_enabled(
+            Some(super::STABLE_PROFILE),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_in_stable_launch_args() {
+        assert_eq!(
+            super::test_in_stable_script_args("8788"),
+            vec![
+                "--profile".to_string(),
+                "stable".to_string(),
+                "--port".to_string(),
+                "8788".to_string(),
+            ]
+        );
+        assert_eq!(
+            super::test_in_stable_script_args(super::DEFAULT_STABLE_PORT),
+            vec![
+                "--profile".to_string(),
+                "stable".to_string(),
+                "--port".to_string(),
+                "8787".to_string(),
+            ]
+        );
     }
 }

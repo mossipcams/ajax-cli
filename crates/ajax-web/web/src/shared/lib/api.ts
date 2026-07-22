@@ -8,7 +8,7 @@ import {
   assertDetail,
   assertOperationResponse,
 } from "./contracts";
-import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS } from "./polling";
+import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, TEST_IN_STABLE_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
   BrowserTaskDetail,
@@ -253,6 +253,17 @@ export async function restartServer(): Promise<OperationResponse> {
   }
   return payload;
 }
+
+export async function startTestInStable(): Promise<OperationResponse> {
+  const { response, payload: rawPayload } = await postJson("/api/server/test-in-stable", {});
+  const payload = assertOperationResponse(rawPayload);
+  if (!response.ok) {
+    throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
+  }
+  return payload;
+}
+
+export { TEST_IN_STABLE_TIMEOUT_MS };
 
 export async function fetchDevDeploy(): Promise<DevDeployResponse> {
   const value = await getJson("/api/dev-deploy");

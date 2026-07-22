@@ -4,6 +4,7 @@ import SettingsView from "./SettingsView";
 import * as api from "@/shared/lib/api";
 import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
+import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
 afterEach(() => {
   localStorage.clear();
@@ -12,36 +13,77 @@ afterEach(() => {
 });
 
 describe("SettingsView", () => {
-  it("requires confirmation before restarting", () => {
-    const spy = vi.spyOn(api, "restartServer").mockResolvedValue({});
+  it("hides Test in Stable when fetchVersion returns test_in_stable false", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    await vi.waitFor(() => expect(api.fetchVersion).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Test in Stable" })).not.toBeInTheDocument();
+  });
+
+  it("requires confirmation before Test in Stable", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: true,
+    });
+    const spy = vi.spyOn(api, "startTestInStable").mockResolvedValue({
+      ok: true,
+      restarting: true,
+    });
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
     render(<SettingsView />);
-    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Test in Stable" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
     expect(spy).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Tap to confirm" })).toBeInTheDocument();
   });
 
-  it("restarts and reports success on the second tap", async () => {
-    const spy = vi.spyOn(api, "restartServer").mockResolvedValue({});
-    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
-    const onResult = vi.fn();
-    const onRestarted = vi.fn();
-    render(<SettingsView onResult={onResult} onRestarted={onRestarted} />);
-    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
-    await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
+  it("starts Test in Stable and reloads the page on success", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: true,
+    });
+    const startSpy = vi.spyOn(api, "startTestInStable").mockResolvedValue({
+      ok: true,
+      restarting: true,
+    });
+    const waitSpy = vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+
+    render(<SettingsView />);
     await vi.waitFor(() =>
-      expect(onResult).toHaveBeenCalledWith("Server restarted", null, false),
+      expect(screen.getByRole("button", { name: "Test in Stable" })).toBeInTheDocument(),
     );
-    expect(onRestarted).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalledOnce());
+    expect(waitSpy).toHaveBeenCalledWith(TEST_IN_STABLE_TIMEOUT_MS);
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+
+    vi.unstubAllGlobals();
   });
 
-  it("reports a timeout when the server does not return", async () => {
-    vi.spyOn(api, "restartServer").mockResolvedValue({});
+  it("reports a timeout when the server does not return after Test in Stable", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: true,
+    });
+    vi.spyOn(api, "startTestInStable").mockResolvedValue({
+      ok: true,
+      restarting: true,
+    });
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);
     const onResult = vi.fn();
     render(<SettingsView onResult={onResult} />);
-    fireEvent.click(screen.getByRole("button", { name: "Restart server" }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Test in Stable" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
@@ -49,6 +91,10 @@ describe("SettingsView", () => {
   });
 
   it("renders the diagnostics report", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
     vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({
       browser_mode: "Safari/browser",
     });
@@ -62,6 +108,10 @@ describe("SettingsView", () => {
   });
 
   it("copies diagnostics with a clipboard fallback message", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
     vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({ ok: true });
     vi.spyOn(clipboard, "copyText").mockResolvedValue(false);
     const onResult = vi.fn();
@@ -72,13 +122,21 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders Diagnostics debug info", () => {
+  it("renders Diagnostics debug info", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
     render(<SettingsView />);
     expect(screen.getByTestId("dev-settings")).toBeInTheDocument();
     expect(screen.getByText("Diagnostics")).toBeInTheDocument();
   });
 
-  it("shows live debug info with origin and app version", () => {
+  it("shows live debug info with origin and app version", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
     const meta = document.createElement("meta");
     meta.name = "ajax-app-version";
     meta.content = "0.42.0-test";
@@ -90,36 +148,5 @@ describe("SettingsView", () => {
     expect(debug).toHaveTextContent("0.42.0-test");
 
     meta.remove();
-  });
-
-  it("reload app restarts the server then reloads the page", async () => {
-    const restartSpy = vi.spyOn(api, "restartServer").mockResolvedValue({});
-    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
-    const reload = vi.fn();
-    vi.stubGlobal("location", { ...window.location, reload });
-
-    render(<SettingsView />);
-    fireEvent.click(screen.getByRole("button", { name: "Reload app" }));
-    await vi.waitFor(() => expect(restartSpy).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
-
-    vi.unstubAllGlobals();
-  });
-
-  it("reload app reports timeout when the server does not return", async () => {
-    vi.spyOn(api, "restartServer").mockResolvedValue({});
-    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);
-    const reload = vi.fn();
-    vi.stubGlobal("location", { ...window.location, reload });
-    const onResult = vi.fn();
-
-    render(<SettingsView onResult={onResult} />);
-    fireEvent.click(screen.getByRole("button", { name: "Reload app" }));
-    await vi.waitFor(() =>
-      expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
-    );
-    expect(reload).not.toHaveBeenCalled();
-
-    vi.unstubAllGlobals();
   });
 });

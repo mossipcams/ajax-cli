@@ -1,5 +1,10 @@
-import { useRef, useState } from "react";
-import { restartServer, waitForServerOnline } from "@/shared/lib/api";
+import { useEffect, useRef, useState } from "react";
+import {
+  fetchVersion,
+  startTestInStable,
+  TEST_IN_STABLE_TIMEOUT_MS,
+  waitForServerOnline,
+} from "@/shared/lib/api";
 import { buildDiagnosticsReport } from "./diagnostics";
 import { copyText } from "@/shared/lib/clipboard";
 import { CONFIRM_TIMEOUT_MS } from "@/shared/lib/polling";
@@ -15,40 +20,60 @@ interface Props {
 export default function SettingsView({
   detailHandle = null,
   onResult,
-  onRestarted,
   onBack,
 }: Props) {
-  const [confirmingRestart, setConfirmingRestart] = useState(false);
-  const [restartStatus, setRestartStatus] = useState<string | null>(null);
-  const [restarting, setRestarting] = useState(false);
+  const [testInStableAvailable, setTestInStableAvailable] = useState(false);
+  const [confirmingTestInStable, setConfirmingTestInStable] = useState(false);
+  const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
+  const [testingInStable, setTestingInStable] = useState(false);
   const [diagnosticsOutput, setDiagnosticsOutput] = useState<string | null>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function restart() {
-    if (!confirmingRestart) {
-      setConfirmingRestart(true);
-      confirmTimer.current = setTimeout(() => setConfirmingRestart(false), CONFIRM_TIMEOUT_MS);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchVersion()
+      .then((version) => {
+        if (!cancelled) {
+          setTestInStableAvailable(version.test_in_stable === true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTestInStableAvailable(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function testInStable() {
+    if (!confirmingTestInStable) {
+      setConfirmingTestInStable(true);
+      confirmTimer.current = setTimeout(
+        () => setConfirmingTestInStable(false),
+        CONFIRM_TIMEOUT_MS,
+      );
       return;
     }
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
-    setConfirmingRestart(false);
-    setRestarting(true);
-    setRestartStatus("Restarting…");
+    setConfirmingTestInStable(false);
+    setTestingInStable(true);
+    setTestInStableStatus("Pulling main and rebuilding…");
     try {
-      await restartServer();
+      await startTestInStable();
     } catch {
       // A connection drop during restart is expected.
     }
-    const online = await waitForServerOnline();
-    setRestarting(false);
+    const online = await waitForServerOnline(TEST_IN_STABLE_TIMEOUT_MS);
+    setTestingInStable(false);
     if (online) {
-      setRestartStatus(null);
-      onResult?.("Server restarted", null, false);
-      onRestarted?.();
-    } else {
-      setRestartStatus(null);
-      onResult?.("Server did not come back in time", null, true);
+      setTestInStableStatus(null);
+      window.location.reload();
+      return;
     }
+    setTestInStableStatus(null);
+    onResult?.("Server did not come back in time", null, true);
   }
 
   async function runDiagnostics() {
@@ -63,23 +88,6 @@ export default function SettingsView({
     setDiagnosticsOutput(text);
     const copied = await copyText(text);
     onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
-  }
-
-  async function reloadApp() {
-    setRestartStatus("Restarting…");
-    try {
-      await restartServer();
-    } catch {
-      // A connection drop during restart is expected.
-    }
-    const online = await waitForServerOnline();
-    if (online) {
-      setRestartStatus(null);
-      window.location.reload();
-      return;
-    }
-    setRestartStatus(null);
-    onResult?.("Server did not come back in time", null, true);
   }
 
   const appVersion =
@@ -124,20 +132,28 @@ export default function SettingsView({
         </dl>
 
         <h4 className="settings-subheading">Actions</h4>
-        <Button type="button" variant="secondary" onClick={reloadApp}>
-          Reload app
-        </Button>
         <Button type="button" variant="secondary" onClick={runDiagnostics}>
           Run diagnostics
         </Button>
         <Button type="button" variant="secondary" onClick={copyDiagnostics}>
           Copy Diagnostics
         </Button>
-        <p className="settings-note">Restarts this Cockpit process.</p>
-        <Button type="button" variant="secondary" disabled={restarting} onClick={restart}>
-          {confirmingRestart ? "Tap to confirm" : "Restart server"}
-        </Button>
-        {restartStatus ? <p className="settings-status">{restartStatus}</p> : null}
+        {testInStableAvailable ? (
+          <>
+            <p className="settings-note">
+              Pulls origin/main, rebuilds, and restarts this stable Cockpit.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={testingInStable}
+              onClick={testInStable}
+            >
+              {confirmingTestInStable ? "Tap to confirm" : "Test in Stable"}
+            </Button>
+          </>
+        ) : null}
+        {testInStableStatus ? <p className="settings-status">{testInStableStatus}</p> : null}
         {diagnosticsOutput ? <pre className="settings-status">{diagnosticsOutput}</pre> : null}
       </div>
     </section>

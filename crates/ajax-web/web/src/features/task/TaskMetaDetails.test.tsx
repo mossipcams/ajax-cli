@@ -85,6 +85,26 @@ describe("TaskMetaDetails", () => {
     expect(attempts.textContent).toContain("running");
   });
 
+  it("separates attempt outcome from relative time with a space", () => {
+    const now = Math.floor(Date.now() / 1000);
+    render(
+      <TaskMetaDetails
+        detail={detail({
+          agent_attempts: [
+            {
+              started_unix_secs: now - 2 * 3600,
+              completed_unix_secs: null,
+              outcome: "Running",
+            },
+          ],
+        })}
+      />,
+    );
+    const attempts = screen.getByTestId("agent-attempts");
+    expect(attempts.textContent).toMatch(/Running\s+2h ago/);
+    expect(attempts.textContent).not.toContain("Running2h");
+  });
+
   it("lists annotations when the task carries notes", () => {
     render(
       <TaskMetaDetails detail={detail({ annotations: ["needs rebase", "check CI"] })} />,

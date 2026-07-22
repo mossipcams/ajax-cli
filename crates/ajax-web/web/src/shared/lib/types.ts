@@ -145,6 +145,7 @@ export interface OperationResponse {
 
 export interface VersionResponse {
   version: string;
+  test_in_stable?: boolean;
 }
 
 export type DevDeployPhase =
