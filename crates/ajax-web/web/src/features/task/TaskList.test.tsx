@@ -225,6 +225,46 @@ describe("TaskList", () => {
     expect(inboxRule).not.toMatch(/padding-left:\s*calc/);
   });
 
+  it("renders the human-readable title as the row's primary line", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const rowB = screen.getByRole("button", { name: /web\/b/ });
+    expect(within(rowB).getByText("B")).toHaveClass("task-row-title");
+    expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
+  });
+
+  it("leads Needs you with the highest-severity item and its actions inline", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const needsYou = screen.getByRole("region", { name: "Needs you" });
+    const lead = within(needsYou).getByRole("button", { name: /web\/a/ });
+    expect(lead).toHaveClass("is-next");
+    // The action is a real button, reachable without discovering a swipe, and it
+    // appears exactly once (inbox rows never also render a swipe reveal).
+    const actions = within(needsYou).getAllByRole("button", { name: "Fix CI" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toHaveAttribute("data-task", "web/a");
+  });
+
+  it("renders no lead entry when the inbox is empty", () => {
+    const noInbox: BrowserCockpitView = { ...cockpit, inbox: { items: [] } };
+    render(<TaskList cockpit={noInbox} />);
+    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+    // web/a falls back into the calm list instead of leading the page.
+    const tasks = screen.getByRole("region", { name: "Tasks" });
+    expect(within(tasks).getByRole("button", { name: /web\/a/ })).not.toHaveClass("is-next");
+  });
+
+  it("splits calm tasks into an active band and an idle disclosure", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const tasks = screen.getByRole("region", { name: "Tasks" });
+    expect(within(tasks).getByText("Active")).toHaveClass("task-band-label");
+
+    // web/b is running -> active band; api/c is idle -> the lone disclosure.
+    const idle = within(tasks).getByRole("group");
+    expect(idle).toHaveAttribute("open");
+    expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
+    expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
+  });
+
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";

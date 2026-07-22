@@ -16,21 +16,28 @@ interface Props {
   onMutated?: () => void;
 }
 
-interface TaskRowProps {
-  card: BrowserTaskCard;
-  isInbox: boolean;
-  nowSecs: number;
-  offset: number;
-  onOffset: (handle: string, offset: number) => void;
-  onOpenTask?: (handle: string) => void;
+interface ActionProps {
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
 }
 
+interface TaskRowProps extends ActionProps {
+  card: BrowserTaskCard;
+  /** Inbox rows expose their actions inline and never swipe. */
+  isInbox: boolean;
+  /** The single highest-severity item, rendered as the lead decision. */
+  isNext?: boolean;
+  nowSecs: number;
+  offset: number;
+  onOffset: (handle: string, offset: number) => void;
+  onOpenTask?: (handle: string) => void;
+}
+
 function TaskRow({
   card,
   isInbox,
+  isNext = false,
   nowSecs,
   offset,
   onOffset,
@@ -40,8 +47,11 @@ function TaskRow({
   onMutated,
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
-  const revealAction = visibleTaskActions(card.actions)[0];
   const rowRef = useRef<HTMLButtonElement>(null);
+  // Swipe is the calm-row accelerator only. Inbox rows already show the action
+  // as a real button, and revealing the same action twice would put duplicate
+  // labels in the tree.
+  const revealAction = isInbox ? undefined : visibleTaskActions(card.actions)[0];
 
   useSwipeReveal(rowRef, revealAction
     ? {
@@ -57,6 +67,16 @@ function TaskRow({
     }
     onOpenTask?.(card.qualified_handle);
   };
+
+  const className = [
+    "task-row",
+    `tone-${meta.tone}`,
+    isInbox ? "is-inbox" : "",
+    isNext ? "is-next" : "",
+    offset > 0 ? "is-revealed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className="task-row-wrap" data-handle={card.qualified_handle}>
@@ -74,14 +94,15 @@ function TaskRow({
       <button
         ref={rowRef}
         type="button"
-        className={`task-row tone-${meta.tone}${isInbox ? " is-inbox" : ""}${offset > 0 ? " is-revealed" : ""}`}
+        className={className}
         data-handle={card.qualified_handle}
         style={{ transform: `translateX(-${offset}px)` }}
         onClick={handleTap}
       >
         <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
         <div className="task-row-main">
-          <span className="task-row-handle">{card.qualified_handle}</span>
+          <span className="task-row-title">{card.title || card.qualified_handle}</span>
+          {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
           {card.status_explanation &&
           card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
             <span className="task-row-sub">{card.status_explanation}</span>
@@ -97,6 +118,31 @@ function TaskRow({
         </span>
         <span className="task-row-chevron">›</span>
       </button>
+    </div>
+  );
+}
+
+/** An inbox entry: the row plus its actions as real buttons, no swipe. */
+function InboxEntry({
+  card,
+  isNext,
+  ...rest
+}: Omit<TaskRowProps, "isInbox">) {
+  const actions = visibleTaskActions(card.actions);
+  return (
+    <div className={`inbox-entry${isNext ? " is-next" : ""}`}>
+      <div className="task-list">
+        <TaskRow card={card} isInbox isNext={isNext} {...rest} />
+      </div>
+      {actions.length ? (
+        <ActionBar
+          actions={actions}
+          handle={card.qualified_handle}
+          onCockpit={rest.onCockpit}
+          onResult={rest.onResult}
+          onMutated={rest.onMutated}
+        />
+      ) : null}
     </div>
   );
 }
@@ -147,53 +193,49 @@ export default function TaskList({
     [cockpit.repos?.repos],
   );
 
-  const inboxItems = useMemo(
+  // Rust ranks the inbox by severity; the browser only selects from that order.
+  const inboxCards = useMemo(
     () =>
       (cockpit.inbox?.items ?? [])
         .slice()
         .sort((a, b) => (a.severity ?? 999) - (b.severity ?? 999))
-        .map((item) => ({ item, card: cardsByHandle.get(item.task_handle) }))
+        .map((item) => cardsByHandle.get(item.task_handle))
         .filter(
-          (entry): entry is { item: typeof entry.item; card: NonNullable<typeof entry.card> } =>
-            entry.card != null && (!selectedProject || entry.card.repo === selectedProject),
+          (card): card is BrowserTaskCard =>
+            card != null && (!selectedProject || card.repo === selectedProject),
         ),
     [cockpit.inbox?.items, cardsByHandle, selectedProject],
   );
 
   const inboxHandles = useMemo(
-    () => new Set(inboxItems.map((entry) => entry.card.qualified_handle)),
-    [inboxItems],
+    () => new Set(inboxCards.map((card) => card.qualified_handle)),
+    [inboxCards],
   );
 
-  const groups = useMemo(() => {
-    const visible = filterByProject(cockpit.cards, selectedProject).filter(
-      (card) => !inboxHandles.has(card.qualified_handle),
-    );
-    const byRepo = new Map<string, typeof visible>();
-    for (const card of visible) {
-      if (!byRepo.has(card.repo)) byRepo.set(card.repo, []);
-      byRepo.get(card.repo)!.push(card);
-    }
-    return [...byRepo.keys()]
-      .sort()
-      .map((repo) => ({ repo, cards: sortCards(byRepo.get(repo)!, stableOrder) }));
-  }, [cockpit.cards, selectedProject, inboxHandles, stableOrder]);
+  const calm = useMemo(
+    () =>
+      sortCards(
+        filterByProject(cockpit.cards, selectedProject).filter(
+          (card) => !inboxHandles.has(card.qualified_handle),
+        ),
+        stableOrder,
+      ),
+    [cockpit.cards, selectedProject, inboxHandles, stableOrder],
+  );
 
   useEffect(() => {
-    const next = groups.flatMap((group) => group.cards.map((card) => card.qualified_handle));
+    const next = calm.map((card) => card.qualified_handle);
     setStableOrder((prev) => {
       if (next.length === prev.length && next.every((handle, i) => handle === prev[i])) {
         return prev;
       }
       return next;
     });
-  }, [groups]);
+  }, [calm]);
 
-  const calmCount = useMemo(
-    () => groups.reduce((sum, group) => sum + group.cards.length, 0),
-    [groups],
-  );
-  const showRepoTitles = !selectedProject && groups.length > 1;
+  const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
+  const idle = useMemo(() => calm.filter((card) => card.status === "idle"), [calm]);
+
   const visibleCount = filterByProject(cockpit.cards, selectedProject).length;
 
   const rowProps = {
@@ -204,6 +246,20 @@ export default function TaskList({
     onResult,
     onMutated,
   };
+
+  const band = (cards: BrowserTaskCard[]) => (
+    <div className="task-list">
+      {cards.map((card) => (
+        <TaskRow
+          key={card.qualified_handle}
+          card={card}
+          isInbox={false}
+          offset={offsets[card.qualified_handle] ?? 0}
+          {...rowProps}
+        />
+      ))}
+    </div>
+  );
 
   return (
     <>
@@ -240,48 +296,51 @@ export default function TaskList({
         </nav>
       ) : null}
 
-      {inboxItems.length > 0 ? (
+      {inboxCards.length > 0 ? (
         <section className="group inbox" aria-label="Needs you" aria-live="polite">
           <div className="section-head attention">
             <span className="section-head-title">Needs you</span>
-            <span className="section-head-count">{inboxItems.length}</span>
+            <span className="section-head-count">{inboxCards.length}</span>
           </div>
-          <div className="task-list">
-            {inboxItems.map((entry) => (
-              <TaskRow
-                key={entry.card.qualified_handle}
-                card={entry.card}
-                isInbox
-                offset={offsets[entry.card.qualified_handle] ?? 0}
-                {...rowProps}
-              />
-            ))}
-          </div>
+          {inboxCards.map((card, index) => (
+            <InboxEntry
+              key={card.qualified_handle}
+              card={card}
+              isNext={index === 0}
+              offset={offsets[card.qualified_handle] ?? 0}
+              {...rowProps}
+            />
+          ))}
         </section>
       ) : null}
 
-      {calmCount > 0 ? (
+      {calm.length > 0 ? (
         <section className="group tasks" aria-label="Tasks" aria-live="polite">
           <div className="section-head">
             <span className="section-head-title">{selectedProject ?? "Tasks"}</span>
-            <span className="section-head-count">{calmCount}</span>
+            <span className="section-head-count">{calm.length}</span>
           </div>
-          {groups.map((group) => (
-            <section key={group.repo} className="task-group">
-              {showRepoTitles ? <div className="task-group-title">{group.repo}</div> : null}
-              <div className="task-list">
-                {group.cards.map((card) => (
-                  <TaskRow
-                    key={card.qualified_handle}
-                    card={card}
-                    isInbox={false}
-                    offset={offsets[card.qualified_handle] ?? 0}
-                    {...rowProps}
-                  />
-                ))}
+          {active.length > 0 ? (
+            <section className="task-band">
+              <div className="task-band-title">
+                <span className="task-band-label">Active</span>
+                <span className="task-band-count">{active.length}</span>
               </div>
+              {band(active)}
             </section>
-          ))}
+          ) : null}
+          {idle.length > 0 ? (
+            // ponytail: ships open — a closed <details> drops its rows out of the
+            // accessibility tree. Flip to collapsed-by-default only together with
+            // the row queries in TaskList.test.tsx.
+            <details className="task-band idle-band" open>
+              <summary className="task-band-title">
+                <span className="task-band-label">Idle</span>
+                <span className="task-band-count">{idle.length}</span>
+              </summary>
+              {band(idle)}
+            </details>
+          ) : null}
         </section>
       ) : null}
 

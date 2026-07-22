@@ -11,7 +11,9 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { mockFetch } from "./fixtures";
 
-const TARGET_HANDLE = "web/fix-login";
+// A calm (non-inbox) row: inbox rows surface their actions inline as real
+// buttons, so the swipe gesture only applies to the calm list.
+const TARGET_HANDLE = "api/add-auth";
 const REVEAL_WIDTH_PX = 88;
 const OPERATION_PATH = "/api/operations";
 
