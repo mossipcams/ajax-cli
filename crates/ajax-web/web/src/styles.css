@@ -781,6 +781,14 @@ header .bar h1 {
 .action[data-destructive="true"] {
   color: var(--danger);
   border-color: var(--danger-deep);
+  background: transparent;
+}
+
+/* If primary is ever combined with destructive, danger wins over accent fill. */
+.action.primary[data-destructive="true"] {
+  background: transparent;
+  border-color: var(--danger-deep);
+  color: var(--danger);
 }
 
 .action[data-destructive="true"]:hover,
@@ -2097,8 +2105,8 @@ header .bar h1 {
     gap: 6px;
     margin-top: 4px;
     min-height: 0;
-    padding: 2px 8px 2px calc(8px + env(safe-area-inset-left));
-    padding-right: calc(8px + env(safe-area-inset-right));
+    padding: 4px 12px 4px calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
     border-radius: var(--radius-sm);
     box-shadow: none;
   }
@@ -2130,6 +2138,10 @@ header .bar h1 {
     gap: 4px;
     overflow-x: auto;
     scrollbar-width: none;
+    /* Inset the scrollport so stadium caps and confirming nudge (±2px) are not
+       clipped flush against the overflow edge. */
+    padding: 2px 3px;
+    margin: -2px -3px;
   }
 
   .interact-panel .action-row::-webkit-scrollbar {
@@ -2139,7 +2151,10 @@ header .bar h1 {
   .interact-panel .action {
     min-height: 28px;
     min-width: 0;
-    padding: 2px 8px;
+    /* Horizontal pad ≥ half min-height so labels clear the stadium curve ends
+       (8px left "Tap to confirm" sitting inside the rounded caps). */
+    padding: 2px 14px;
+    white-space: nowrap;
   }
 
   .detail-header { margin-bottom: 8px; }

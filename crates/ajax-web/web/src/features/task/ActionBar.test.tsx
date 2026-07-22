@@ -38,7 +38,15 @@ describe("ActionBar", () => {
   it("renders only returned actions, first as primary", () => {
     render(<ActionBar actions={[review, drop]} handle="web/x" />);
     expect(screen.getByText("Review").classList.contains("primary")).toBe(true);
+    expect(screen.getByText("Drop").classList.contains("primary")).toBe(false);
     expect(screen.getAllByRole("button")).toHaveLength(2);
+  });
+
+  it("does not mark a sole Drop action as primary", () => {
+    render(<ActionBar actions={[drop]} handle="web/x" />);
+    const btn = screen.getByText("Drop");
+    expect(btn.classList.contains("primary")).toBe(false);
+    expect(btn.getAttribute("data-destructive")).toBe("true");
   });
 
   it("requires two taps for a destructive action then commits after the undo window", async () => {
