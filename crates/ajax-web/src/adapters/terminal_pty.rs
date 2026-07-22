@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 
 const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const RESIZE_WAIT_TIMEOUT: Duration = Duration::from_millis(500);
+const RESIZE_SETTLE_QUIET: Duration = Duration::from_millis(150);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
@@ -477,6 +478,17 @@ fn remaining_resize_wait(started: Instant, now: Instant) -> Option<Duration> {
     }
 }
 
+/// Remaining quiet time after the last client resize before seeding. Returns
+/// `None` once the settle window has elapsed.
+fn resize_settle_deadline(last_resize_at: Instant, now: Instant) -> Option<Duration> {
+    let elapsed = now.saturating_duration_since(last_resize_at);
+    if elapsed >= RESIZE_SETTLE_QUIET {
+        None
+    } else {
+        Some(RESIZE_SETTLE_QUIET - elapsed)
+    }
+}
+
 /// Report a bridge setup failure to the browser and close the socket.
 async fn send_error_and_close(socket: &mut WebSocket, error: String) {
     let _ = socket
@@ -561,10 +573,31 @@ pub async fn bridge_task_terminal_socket(
     let resize_wait_started = Instant::now();
     let mut client_rows: u16 = 24;
     let mut resize_applied = false;
+    let mut last_resize_at: Option<Instant> = None;
     let mut pre_loop_abort = false;
-    while let Some(remaining) = remaining_resize_wait(resize_wait_started, Instant::now()) {
-        match tokio::time::timeout(remaining, socket.recv()).await {
-            Err(_) => break,
+    while let Some(overall_remaining) = remaining_resize_wait(resize_wait_started, Instant::now()) {
+        let now = Instant::now();
+        if let Some(last) = last_resize_at {
+            if resize_settle_deadline(last, now).is_none() {
+                break;
+            }
+        }
+        let wait = match last_resize_at {
+            Some(last) => overall_remaining
+                .min(resize_settle_deadline(last, now).expect("settle still armed")),
+            None => overall_remaining,
+        };
+        match tokio::time::timeout(wait, socket.recv()).await {
+            Err(_) => {
+                let now = Instant::now();
+                if let Some(last) = last_resize_at {
+                    if resize_settle_deadline(last, now).is_none() {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
             Ok(None) => {
                 pre_loop_abort = true;
                 break;
@@ -582,10 +615,10 @@ pub async fn bridge_task_terminal_socket(
                     FrameOutcome::Resize(size) => {
                         let _ = pty_pair.master.resize(size);
                         if size.rows > 0 {
-                            client_rows = size.rows;
+                            client_rows = client_rows.max(size.rows);
                         }
                         resize_applied = true;
-                        break;
+                        last_resize_at = Some(Instant::now());
                     }
                     FrameOutcome::Abort => {
                         pre_loop_abort = true;
@@ -600,10 +633,10 @@ pub async fn bridge_task_terminal_socket(
                     FrameOutcome::Resize(size) => {
                         let _ = pty_pair.master.resize(size);
                         if size.rows > 0 {
-                            client_rows = size.rows;
+                            client_rows = client_rows.max(size.rows);
                         }
                         resize_applied = true;
-                        break;
+                        last_resize_at = Some(Instant::now());
                     }
                     FrameOutcome::Abort => {
                         pre_loop_abort = true;
@@ -994,6 +1027,27 @@ mod tests {
         assert!(!seed_history_from_query(Some("a=b&seed=0")));
         assert!(seed_history_from_query(Some("seed=1")));
         assert!(seed_history_from_query(Some("seed=00")));
+    }
+
+    #[test]
+    fn resize_settle_deadline_returns_remaining_until_quiet_elapsed() {
+        let t0 = Instant::now();
+        assert_eq!(
+            resize_settle_deadline(t0, t0),
+            Some(Duration::from_millis(150))
+        );
+        assert_eq!(
+            resize_settle_deadline(t0, t0 + Duration::from_millis(149)),
+            Some(Duration::from_millis(1))
+        );
+        assert_eq!(
+            resize_settle_deadline(t0, t0 + Duration::from_millis(150)),
+            None
+        );
+        assert_eq!(
+            resize_settle_deadline(t0, t0 + Duration::from_millis(200)),
+            None
+        );
     }
 
     #[test]

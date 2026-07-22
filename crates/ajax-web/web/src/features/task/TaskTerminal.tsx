@@ -967,7 +967,7 @@ export default function TaskTerminal({ handle }: Props) {
             scrollSync.setSyncingScroll(false);
             scrollSync.refreshFollow();
           }
-          scheduleImmediate();
+          scheduleImmediate(true);
         },
       });
       connectionRef.current = connection;
