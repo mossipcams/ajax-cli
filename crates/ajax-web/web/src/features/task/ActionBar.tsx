@@ -36,7 +36,8 @@ function actionClassName(
   runningAction: string | null,
 ): string {
   const classes = ["action"];
-  if (index === 0) classes.push("primary");
+  // Destructive must never wear the accent primary fill (blue + red label).
+  if (index === 0 && !action.destructive) classes.push("primary");
   if (pendingAction?.action === action.action) classes.push("confirming");
   if (runningAction === action.action) classes.push("is-running");
   if (REMEDIATION.has(action.action)) classes.push("remediation-action");

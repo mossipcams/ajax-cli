@@ -213,7 +213,12 @@ describe("TaskDetail projection surface", () => {
     expect(mobileBlock).toMatch(
       /\.interact-panel\s+\.action[\s\S]*?min-height:\s*(?:2[0-9]|3[0-2])px/,
     );
-    expect(mobileBlock).toMatch(/\.interact-panel\s+\.action[\s\S]*?padding:\s*[0-4]px/);
+    // Horizontal pad must clear half the stadium min-height (~14px) or
+    // "Tap to confirm" clips inside the rounded caps.
+    expect(mobileBlock).toMatch(
+      /\.interact-panel\s+\.action[\s\S]*?padding:\s*[0-4]px\s+(?:1[4-9]|[2-9]\d)px/,
+    );
+    expect(mobileBlock).toMatch(/\.interact-panel\s+\.action[\s\S]*?white-space:\s*nowrap/);
   });
 
   it("releases the mobile fill pin and caps the terminal when meta details are open", () => {
