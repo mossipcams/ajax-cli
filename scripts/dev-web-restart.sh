@@ -36,7 +36,7 @@ usage() {
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
 Default: fetch and force-sync the local main worktree to origin/main (branch
-tip, not a release tag), rebuild the web UI from that tree, install ajax-cli
+tip, not a release tag), run npm web:build from that tree, install ajax-cli
 (unless --no-install), reinstall client agent hooks when agent_hooks.rs
 changed, stop the previous managed web server for the selected profile, and
 start ajax-cli web in a durable tmux session.
@@ -198,10 +198,27 @@ mkdir -p "$RUN_DIR"
 BIN_CMD=(ajax-cli)
 USE_SLOT_BIN=0
 
+# ponytail: vite dist must be rebuilt before cargo embed; release-committed dist
+# can lag main. Ceiling: needs local Node/npm (nvm 22 preferred).
+rebuild_web() {
+  local source_root="$1"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+    nvm use 22 >/dev/null
+  fi
+  if [[ ! -d "$source_root/node_modules" ]]; then
+    echo "Installing npm deps in $source_root ..."
+    npm --prefix "$source_root" ci
+  fi
+  echo "Building frontend (web:build) in $source_root ..."
+  npm --prefix "$source_root" run web:build
+}
+
 if [[ "$INSTALL" -eq 1 ]]; then
   if [[ -n "$WORKTREE" ]]; then
-    echo "Building frontend in $SOURCE_ROOT ..."
-    npm --prefix "$SOURCE_ROOT" run web:build
+    rebuild_web "$SOURCE_ROOT"
 
     mkdir -p "$SLOT_BIN_DIR"
     if [[ -x "$SLOT_BIN" ]]; then
@@ -217,9 +234,7 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
-    # Rebuild UI from main source — don't rely on last release-committed dist alone.
-    echo "Building frontend from main ($ROOT) ..."
-    npm --prefix "$ROOT" run web:build
+    rebuild_web "$ROOT"
     echo "Installing ajax-cli from $ROOT ..."
     cargo install --path "$ROOT/crates/ajax-cli" --locked
   fi
