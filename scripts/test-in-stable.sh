@@ -9,6 +9,19 @@
 # path kills, and never write to the inherited stdout.
 set -euo pipefail
 
+# Leave the caller's session before doing anything else. Dropping the inherited
+# stdio is not enough: the server that spawns us lives in a tmux pane, and when
+# it exits tmux tears the pane down. The pty hangup then kills everything still
+# in that session -- including this script, in the window between being spawned
+# and handing the restart off to its own tmux session. That left stable down
+# with a 0-byte log. macOS has no setsid(1), so re-exec through perl's
+# POSIX::setsid; it is a no-op failure when we are already a session leader
+# (running this by hand from an interactive shell).
+if [[ -z "${AJAX_TIS_DETACHED:-}" ]]; then
+  export AJAX_TIS_DETACHED=1
+  exec perl -e 'use POSIX (); POSIX::setsid(); exec @ARGV or die "exec failed: $!"' -- "$0" "$@"
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESTART="$ROOT/scripts/dev-web-restart.sh"
 LOG="$ROOT/.ajax-dev-web/test-in-stable.log"

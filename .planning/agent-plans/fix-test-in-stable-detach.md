@@ -70,6 +70,29 @@ first deploy of this change must be done from a terminal:
 
 After that the button uses the new path.
 
+## Follow-up: the first fix was incomplete (#669 -> this change)
+
+Pressing the button on the deployed fix still left stable down, with a 0-byte
+`test-in-stable.log`: the wrapper ran, created its log, and died before it could
+create its tmux session.
+
+Dropping the inherited stdio only closed the SIGPIPE path. The wrapper was still
+a member of the web server's tmux pane session, so when the server exited and
+tmux tore the pane down, the pty hangup killed the wrapper in the window between
+being spawned and calling `tmux new-session`.
+
+Fix: re-exec through `perl -e 'POSIX::setsid()'` as the first act of the script.
+macOS has no `setsid(1)`. Failure is a no-op when already a session leader, so
+running the script by hand from an interactive shell still works.
+
+Reproduced and verified with a harness that mimics the real pane
+(`bash simserver.sh 2>&1 | tee pane.log` inside tmux, where `simserver.sh`
+spawns the wrapper and exits immediately):
+
+- before: marker absent, wrapper log 0 bytes, no work session — matches prod
+- after: marker present, work session created, stub restart ran to completion
+- direct invocation from an interactive shell: still works
+
 ## Validation results
 
 - `cargo fmt --check` — pass
