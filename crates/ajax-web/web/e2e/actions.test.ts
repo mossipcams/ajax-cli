@@ -110,6 +110,7 @@ test("settings Test in Stable confirms then pulls main and reloads", async ({ pa
     "/api/version": { version: "0.20.5", test_in_stable: true },
   });
   await page.goto("/app.html#/settings");
+  await page.evaluate(() => sessionStorage.removeItem("ajax-e2e-test-in-stable-posted"));
   const testInStable = page.getByRole("button", { name: /Test in Stable/i });
   await expect(testInStable).toBeVisible({ timeout: 10_000 });
 
@@ -117,13 +118,13 @@ test("settings Test in Stable confirms then pulls main and reloads", async ({ pa
   await expect(page.getByRole("button", { name: /Tap to confirm/i })).toBeVisible();
   await page.getByRole("button", { name: /Tap to confirm/i }).click();
 
+  // Settings reloads on success; sessionStorage survives so the POST is still observable.
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as unknown as { __testInStablePosted?: boolean }).__testInStablePosted,
-      ),
+    .poll(
+      () => page.evaluate(() => sessionStorage.getItem("ajax-e2e-test-in-stable-posted")),
+      { timeout: 15_000 },
     )
-    .toBe(true);
+    .toBe("1");
 });
 
 test("settings Run diagnostics renders a diagnostics report", async ({ page }) => {

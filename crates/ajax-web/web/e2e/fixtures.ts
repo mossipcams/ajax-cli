@@ -90,9 +90,19 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
         : input instanceof URL ? input.href
         : (input as Request).url;
       const path = new URL(url, "http://localhost").pathname;
-      const method = init?.method ?? "GET";
+      const method = (
+        init?.method ??
+        (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
+      ).toUpperCase();
 
+      // Persist across location.reload() so e2e can observe the POST after
+      // Settings succeeds and reloads the page.
       if (path === "/api/server/test-in-stable" && method === "POST") {
+        try {
+          sessionStorage.setItem("ajax-e2e-test-in-stable-posted", "1");
+        } catch {
+          // ignore quota / private-mode failures in odd runners
+        }
         (globalThis as unknown as { __testInStablePosted?: boolean }).__testInStablePosted =
           true;
       }
