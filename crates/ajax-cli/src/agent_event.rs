@@ -552,6 +552,8 @@ fn cursor_identity_discovery_roots(
         roots.push(ajax_home.join("cache/agent-events"));
     }
     if let Some(home) = home {
+        // Stable/XDG cache (RuntimePaths default), then profile homes.
+        roots.push(home.join(".cache/ajax/agent-events"));
         roots.push(home.join(".ajax-dev/cache/agent-events"));
         roots.push(home.join(".ajax/cache/agent-events"));
     }
@@ -1054,6 +1056,36 @@ mod tests {
         assert_eq!(jsonl.lines().count(), 1);
 
         fs::remove_dir_all(ajax_home).unwrap();
+    }
+
+    #[test]
+    fn cursor_resolves_identity_from_xdg_cache_ajax_without_ajax_home() {
+        let home = std::env::temp_dir().join(format!(
+            "ajax-xdg-home-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let events_dir = home.join(".cache/ajax/agent-events");
+        fs::create_dir_all(&events_dir).unwrap();
+        let project_dir = home.join("worktrees/web-fix-login");
+        fs::create_dir_all(&project_dir).unwrap();
+        agent_runtime::publish_cwd_index(&events_dir, "web/fix-login", "primary", &project_dir)
+            .unwrap();
+
+        let identity = resolve_cursor_identity(
+            &project_dir.to_string_lossy(),
+            &serde_json::json!({}),
+            Some(&home),
+            None,
+        )
+        .expect("stable XDG ~/.cache/ajax must resolve without AJAX_HOME");
+        assert_eq!(identity.task_id, "web/fix-login");
+        assert_eq!(identity.events_dir, events_dir.canonicalize().unwrap());
+
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
