@@ -12,6 +12,7 @@ const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
 pub const AJAX_PROFILE_ENV: &str = "AJAX_PROFILE";
 pub const STABLE_PROFILE: &str = "stable";
 pub const DEFAULT_STABLE_PORT: &str = "8787";
+const TEST_IN_STABLE_SCRIPT: &str = "test-in-stable.sh";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartLaunch {
@@ -112,6 +113,17 @@ pub fn test_in_stable_enabled(profile: Option<&str>, script: Option<&str>) -> bo
     profile == Some(STABLE_PROFILE) && script.is_some_and(|value| !value.is_empty())
 }
 
+/// Test in Stable runs through a sibling of the restart script, not the restart
+/// script itself: `dev-web-restart.sh` kills the tmux session it was spawned
+/// from, so a direct child of the web server dies on SIGPIPE mid-restart. The
+/// wrapper re-launches the restart in its own detached tmux session.
+pub fn test_in_stable_script(restart_script: &str) -> String {
+    std::path::Path::new(restart_script)
+        .with_file_name(TEST_IN_STABLE_SCRIPT)
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub fn test_in_stable_script_args(port: &str) -> Vec<String> {
     vec![
         "--profile".to_string(),
@@ -140,14 +152,19 @@ pub fn test_in_stable_enabled_from_env() -> bool {
     let ajax_profile = std::env::var(AJAX_PROFILE_ENV).ok();
     let profile = web_profile_from_env(restart_profile.as_deref(), ajax_profile.as_deref());
     match script {
-        Some(path) if restart_script_path_exists(&path) => {
+        // Hide the button when the detached wrapper is missing: spawning a
+        // script that is not there would exit the server without restarting it.
+        Some(path)
+            if restart_script_path_exists(&path)
+                && restart_script_path_exists(&test_in_stable_script(&path)) =>
+        {
             test_in_stable_enabled(profile, Some(path.as_str()))
         }
         _ => false,
     }
 }
 
-/// Spawn the restart script with stable profile args, then exit.
+/// Spawn the detached Test in Stable wrapper with stable profile args, then exit.
 ///
 /// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_test_in_stable() {
@@ -164,7 +181,7 @@ pub fn schedule_test_in_stable() {
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string());
                 let args = test_in_stable_script_args(&port);
-                if let Err(error) = spawn_restart_script(&script, &args) {
+                if let Err(error) = spawn_restart_script(&test_in_stable_script(&script), &args) {
                     eprintln!("Ajax web test-in-stable failed: {error}");
                 }
             }
@@ -250,6 +267,14 @@ mod tests {
             Some(super::STABLE_PROFILE),
             None
         ));
+    }
+
+    #[test]
+    fn test_in_stable_uses_detached_wrapper_beside_the_restart_script() {
+        assert_eq!(
+            super::test_in_stable_script("/repo/scripts/dev-web-restart.sh"),
+            "/repo/scripts/test-in-stable.sh"
+        );
     }
 
     #[test]
