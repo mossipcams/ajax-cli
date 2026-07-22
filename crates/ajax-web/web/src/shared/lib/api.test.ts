@@ -3,6 +3,7 @@ import {
   checkHealth,
   postOperation,
   restartServer,
+  startTestInStable,
   startTask,
   fetchCockpit,
   fetchDetail,
@@ -464,12 +465,16 @@ describe("POST transport options", () => {
       if (path === "/api/server/restart") {
         return Promise.resolve(json({ ok: true, restarting: true }));
       }
+      if (path === "/api/server/test-in-stable") {
+        return Promise.resolve(json({ ok: true, restarting: true }));
+      }
       return Promise.reject(new Error(`unexpected fetch: ${path}`));
     });
 
     await postOperation(operationRequest);
     await startTask(startRequest);
     await restartServer();
+    await startTestInStable();
 
     expect(fetch).toHaveBeenCalledWith("/api/operations", {
       method: "POST",
@@ -486,6 +491,36 @@ describe("POST transport options", () => {
       body: JSON.stringify(startRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/restart", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
+      body: JSON.stringify({}),
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
+      body: JSON.stringify({}),
+    });
+  });
+});
+
+describe("startTestInStable", () => {
+  it("posts to /api/server/test-in-stable", async () => {
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/server/test-in-stable") {
+        return Promise.resolve(json({ ok: true, restarting: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const response = await startTestInStable();
+
+    expect(response.ok).toBe(true);
+    expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
       method: "POST",
       headers: { "content-type": "application/json" },
       cache: "no-store",

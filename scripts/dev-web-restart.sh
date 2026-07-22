@@ -35,10 +35,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
-Default: fetch and force-sync the local main worktree to origin/main, install
-ajax-cli from that worktree (unless --no-install), stop the previous managed
-web server for the selected profile, and start ajax-cli web in a durable tmux
-session.
+Default: fetch and force-sync the local main worktree to origin/main (branch
+tip, not a release tag), run npm web:build from that tree, install ajax-cli
+(unless --no-install), reinstall client agent hooks when agent_hooks.rs
+changed, stop the previous managed web server for the selected profile, and
+start ajax-cli web in a durable tmux session.
 
 With --worktree PATH: skip git sync, build/install from PATH (uncommitted
 changes included), install into .ajax-dev-web/bin, and restart only the
@@ -122,11 +123,12 @@ SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
 
 sync_main() {
-  echo "Fetching origin/main ..."
+  echo "Fetching origin/main (branch tip, not release tags) ..."
   git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
   echo "Force-syncing local main worktree to origin/main ..."
   git --git-dir="$GIT_DIR" --work-tree="$ROOT" reset --hard origin/main
   git --git-dir="$GIT_DIR" --work-tree="$ROOT" clean -fd
+  echo "main tip: $(git -C "$ROOT" log -1 --oneline)"
 }
 
 # ponytail: git clean removes untracked ajax-model-router script symlinks.
@@ -153,6 +155,22 @@ restore_model_router_symlinks() {
   "$installer" --target "$ROOT" --force
 }
 
+# ponytail: only rewrite ~/.claude|codex|cursor|pi hooks when definitions moved.
+# Ceiling: path-based diff vs prior HEAD / origin/main; misses renames outside
+# agent_hooks.rs. Upgrade: compare `ajax-cli agent-hooks install` dry-run output.
+HOOKS_PATH="crates/ajax-cli/src/agent_hooks.rs"
+HOOKS_CHANGED=0
+
+agent_hooks_differs() {
+  local work_tree="$1"
+  shift
+  # `git diff --quiet` exits 1 when different; keep set -e safe via `if !`.
+  if ! git -C "$work_tree" diff --quiet "$@" -- "$HOOKS_PATH"; then
+    return 0
+  fi
+  return 1
+}
+
 SOURCE_ROOT="$ROOT"
 if [[ -n "$WORKTREE" ]]; then
   if [[ ! -d "$WORKTREE" ]]; then
@@ -162,8 +180,16 @@ if [[ -n "$WORKTREE" ]]; then
   SOURCE_ROOT="$(cd "$WORKTREE" && pwd)"
   echo "AJAX_DEV_DEPLOY_PHASE=building"
   echo "Test in Dev: building from worktree $SOURCE_ROOT (no git sync)"
+  if agent_hooks_differs "$SOURCE_ROOT" origin/main \
+    || agent_hooks_differs "$SOURCE_ROOT" HEAD; then
+    HOOKS_CHANGED=1
+  fi
 else
+  PREV_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
   sync_main
+  if agent_hooks_differs "$ROOT" "$PREV_HEAD" HEAD; then
+    HOOKS_CHANGED=1
+  fi
   restore_model_router_symlinks
 fi
 
@@ -172,10 +198,35 @@ mkdir -p "$RUN_DIR"
 BIN_CMD=(ajax-cli)
 USE_SLOT_BIN=0
 
+# ponytail: vite dist must be rebuilt before cargo embed; release-committed dist
+# can lag main. Ceiling: needs local Node/npm (nvm 22 preferred).
+# include_bytes! in assets.rs only re-reads dist when that .rs is rebuilt — touch
+# it after vite so cargo cannot serve a stale embed.
+rebuild_web() {
+  local source_root="$1"
+  local embed_rs="$source_root/crates/ajax-web/src/adapters/assets.rs"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+    nvm use 22 >/dev/null
+  fi
+  if [[ ! -d "$source_root/node_modules" ]]; then
+    echo "Installing npm deps in $source_root ..."
+    npm --prefix "$source_root" ci
+  fi
+  echo "Building frontend (web:build) in $source_root ..."
+  npm --prefix "$source_root" run web:build
+  if [[ ! -f "$embed_rs" ]]; then
+    echo "missing embed source: $embed_rs" >&2
+    exit 1
+  fi
+  touch "$embed_rs"
+}
+
 if [[ "$INSTALL" -eq 1 ]]; then
   if [[ -n "$WORKTREE" ]]; then
-    echo "Building frontend in $SOURCE_ROOT ..."
-    npm --prefix "$SOURCE_ROOT" run web:build
+    rebuild_web "$SOURCE_ROOT"
 
     mkdir -p "$SLOT_BIN_DIR"
     if [[ -x "$SLOT_BIN" ]]; then
@@ -191,12 +242,26 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
+    rebuild_web "$ROOT"
     echo "Installing ajax-cli from $ROOT ..."
     cargo install --path "$ROOT/crates/ajax-cli" --locked
   fi
 elif [[ -n "$WORKTREE" && -x "$SLOT_BIN" ]]; then
   BIN_CMD=("$SLOT_BIN")
   USE_SLOT_BIN=1
+fi
+
+if [[ "$HOOKS_CHANGED" -eq 1 ]]; then
+  if [[ "$INSTALL" -eq 1 ]]; then
+    echo "Agent hook definitions changed; reinstalling client hooks ..."
+    if [[ "$USE_SLOT_BIN" -eq 1 ]]; then
+      "$SLOT_BIN" agent-hooks install
+    else
+      ajax-cli agent-hooks install
+    fi
+  else
+    echo "warning: agent hook definitions changed but --no-install; skipping hook reinstall" >&2
+  fi
 fi
 
 stop_listener() {

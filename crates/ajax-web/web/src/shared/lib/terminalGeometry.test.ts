@@ -1,12 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   MIN_TERMINAL_COLS,
   DEFAULT_FONT_SIZE,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
   FONT_STORAGE_KEY,
+  MOBILE_SCROLLBACK_LINES,
+  DESKTOP_SCROLLBACK_LINES,
   parsePersistedFontSize,
   computeTerminalGeometry,
+  terminalScrollbackLines,
 } from "./terminalGeometry";
 
 describe("terminalGeometry constants", () => {
@@ -16,6 +19,31 @@ describe("terminalGeometry constants", () => {
     expect(MIN_FONT_SIZE).toBe(7);
     expect(MAX_FONT_SIZE).toBe(20);
     expect(FONT_STORAGE_KEY).toBe("ajax.terminal.fontSize");
+  });
+});
+
+describe("terminal scrollback limits", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("pins mobile and desktop scrollback caps", () => {
+    expect(MOBILE_SCROLLBACK_LINES).toBe(2000);
+    expect(DESKTOP_SCROLLBACK_LINES).toBe(10000);
+  });
+
+  it("returns mobile scrollback when the mobile media query matches", () => {
+    vi.stubGlobal("window", {
+      matchMedia: vi.fn().mockReturnValue({ matches: true }),
+    });
+    expect(terminalScrollbackLines()).toBe(MOBILE_SCROLLBACK_LINES);
+  });
+
+  it("returns desktop scrollback when the mobile media query does not match", () => {
+    vi.stubGlobal("window", {
+      matchMedia: vi.fn().mockReturnValue({ matches: false }),
+    });
+    expect(terminalScrollbackLines()).toBe(DESKTOP_SCROLLBACK_LINES);
   });
 });
 

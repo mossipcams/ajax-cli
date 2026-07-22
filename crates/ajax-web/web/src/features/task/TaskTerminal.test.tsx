@@ -304,11 +304,105 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(overlayCss).toMatch(/min-height:\s*44px/);
   });
 
+  it("enables scroll-on-erase so attach ED2 pushes seeded viewport into scrollback", () => {
+    expect(taskTerminalSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
+  });
+
   it("names terminal control keys for assistive tech", () => {
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Control C"/);
     expect(taskTerminalSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
     expect(taskTerminalSource).toMatch(/aria-label="Control modifier"/);
     expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
+  });
+
+  it("includes Backspace in CONTROL_KEYS with DEL payload", () => {
+    const controlKeysBlock =
+      taskTerminalSource.match(/const CONTROL_KEYS\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+    expect(controlKeysBlock).toMatch(/ariaLabel:\s*"Backspace"/);
+    expect(controlKeysBlock).toMatch(/data:\s*"\\x7f"/);
+  });
+
+  it("marks Backspace and arrows as repeatable hotbar keys only", () => {
+    expect(taskTerminalSource).toMatch(/REPEATABLE_KEY_DATA|isRepeatableKey/);
+    const repeatableBlock =
+      taskTerminalSource.match(
+        /(?:REPEATABLE_KEY_DATA|repeatableKeyData)\s*=\s*(?:new Set\(\[|Set\(\[)([\s\S]*?)\]\)/,
+      )?.[1] ?? "";
+    expect(repeatableBlock).toMatch(/\\x7f/);
+    expect(repeatableBlock).toMatch(/\\x1b\[D/);
+    expect(repeatableBlock).toMatch(/\\x1b\[A/);
+    expect(repeatableBlock).toMatch(/\\x1b\[B/);
+    expect(repeatableBlock).toMatch(/\\x1b\[C/);
+    expect(repeatableBlock).not.toMatch(/\\x1b"/);
+    expect(repeatableBlock).not.toMatch(/\\t/);
+    expect(repeatableBlock).not.toMatch(/Paste/);
+  });
+});
+
+describe("TaskTerminal seeded history reveal", () => {
+  it("hides the interaction surface until seeded write snaps to bottom", () => {
+    const seedPendingCss =
+      stylesSource.match(
+        /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(seedPendingCss).toMatch(/opacity:\s*0/);
+    expect(stylesSource).not.toMatch(
+      /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
+    );
+
+    expect(taskTerminalSource).toMatch(/SEED_REVEAL_GATE_MIN_BYTES\s*=\s*4096/);
+
+    const mountBody =
+      taskTerminalSource.match(
+        /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
+      )?.[1] ?? "";
+
+    const preConnectBody = mountBody.split(/connectTaskTerminal\(/)[0] ?? "";
+    expect(preConnectBody).not.toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(preConnectBody).toMatch(/let seedGateArmed = true/);
+
+    const onOpenBody =
+      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+    expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)/);
+    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*true/);
+    expect(onOpenBody).not.toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)/);
+    expect(onOpenBody).toMatch(/seedGateArmed\s*=\s*false/);
+    expect(onOpenBody).toMatch(
+      /interactionEl\.classList\.remove\(["']is-seed-pending["']\)/,
+    );
+
+    const onOutputBody =
+      mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+    expect(onOutputBody).toMatch(/seedGateArmed/);
+    expect(onOutputBody).toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
+    expect(onOutputBody).toMatch(
+      /interactionEl\.classList\.add\(["']is-seed-pending["']\)/,
+    );
+    expect(onOutputBody).toMatch(/armSeedPendingFallback\(\)/);
+    expect(onOutputBody).toMatch(/seedGateArmed\s*=\s*false/);
+    expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
+    expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
+    expect(onOutputBody).toMatch(/scrollToBottom\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
+    expect(onOutputBody).toMatch(/scrollSync\.refreshFollow\(\)/);
+    expect(onOutputBody).toMatch(/classList\.contains\(["']is-seed-pending["']\)/);
+    const snapIndex = onOutputBody.indexOf("scrollSync.setSyncingScroll(true)");
+    const removeIndex = onOutputBody.indexOf('classList.remove("is-seed-pending")');
+    expect(snapIndex).toBeGreaterThan(-1);
+    expect(removeIndex).toBeGreaterThan(snapIndex);
+    expect(onOutputBody).not.toMatch(
+      /requestAnimationFrame\([\s\S]*?classList\.remove\(["']is-seed-pending["']\)/,
+    );
+
+    expect(mountBody).toMatch(/setTimeout\([\s\S]*?is-seed-pending[\s\S]*?2000/);
+    expect(mountBody).toMatch(/clearTimeout\([\s\S]*?seedPending/);
   });
 });

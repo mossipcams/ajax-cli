@@ -406,10 +406,11 @@ mutating operation persisted to disk.
 `gh pr checks --json name,state,link`. Failed checks reduce to
 `LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from
 local `check failed` evidence.
-Passing checks clear GitHub-sourced CI evidence and drop `TestsFailed` unless the
-live status is a local check failure (`CiFailed` with summary `check failed`). Probes are rate-limited
-by the per-task `ci_checks_probed_at` metadata timestamp, using a fixed
-300-second interval shared by Live and Full tiers. Unobservable probes
+Passing or pending checks clear GitHub-sourced CI evidence and drop `TestsFailed`
+unless the live status is a local check failure (`CiFailed` with summary
+`check failed`). Probes are rate-limited by the per-task `ci_checks_probed_at`
+metadata timestamp: 30 seconds while the live status is a GitHub-sourced CI
+failure (`ci failed: …`), otherwise 300 seconds, shared by Live and Full tiers. Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
 never project the task to Error. Notification dedup keys on operator status
 class only (`Waiting` / `Error`), so explanation churn inside one class stays

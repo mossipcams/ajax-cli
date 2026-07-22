@@ -17,9 +17,13 @@ import {
   FONT_STORAGE_KEY,
   parsePersistedFontSize,
   computeTerminalGeometry,
+  terminalScrollbackLines,
 } from "@/shared/lib/terminalGeometry";
 import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
+import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
+
+const SEED_REVEAL_GATE_MIN_BYTES = 4096;
 
 interface Props {
   handle: string;
@@ -44,6 +48,9 @@ export default function TaskTerminal({ handle }: Props) {
   const expandSettleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pasteFallbackOwnedFocusRef = useRef(false);
   const toolbarPointerOwnedFocusRef = useRef(false);
+  const heldKeyRepeaterRef = useRef<ReturnType<typeof createHeldKeyRepeater> | null>(null);
+  const toolbarRepeatHandledRef = useRef(false);
+  const toolbarRepeatOwnedFocusRef = useRef(false);
   const ctrlArmedRef = useRef(false);
 
   const [status, setStatus] = useState<TerminalConnectionStatus>("connecting");
@@ -118,11 +125,22 @@ export default function TaskTerminal({ handle }: Props) {
     { label: "Esc", ariaLabel: "Escape", data: "\x1b" },
     { label: "Tab", ariaLabel: "Tab", data: "\t" },
     { label: "⌃C", ariaLabel: "Control C", data: "\x03" },
+    { label: "⌫", ariaLabel: "Backspace", data: "\x7f" },
     { label: "←", ariaLabel: "Left arrow", data: "\x1b[D" },
     { label: "↑", ariaLabel: "Up arrow", data: "\x1b[A" },
     { label: "↓", ariaLabel: "Down arrow", data: "\x1b[B" },
     { label: "→", ariaLabel: "Right arrow", data: "\x1b[C" },
   ];
+
+  const REPEATABLE_KEY_DATA = new Set([
+    "\x7f",
+    "\x1b[D",
+    "\x1b[A",
+    "\x1b[B",
+    "\x1b[C",
+  ]);
+
+  const isRepeatableKey = (data: string) => REPEATABLE_KEY_DATA.has(data);
 
   const CTRL_ARM_TIMEOUT_MS = 4000;
 
@@ -224,6 +242,11 @@ export default function TaskTerminal({ handle }: Props) {
     connectionRef.current.sendInput(data);
   };
 
+  const stopHeldKeyRepeat = () => {
+    heldKeyRepeaterRef.current?.stop();
+    heldKeyRepeaterRef.current = null;
+  };
+
   const PASTE_DISCONNECTED_NOTICE = "Terminal disconnected — paste kept below.";
 
   const pasteToPty = (text: string): boolean => {
@@ -289,6 +312,70 @@ export default function TaskTerminal({ handle }: Props) {
     const owned = toolbarPointerOwnedFocusRef.current && event.detail !== 0;
     toolbarPointerOwnedFocusRef.current = false;
     return owned;
+  };
+
+  const endRepeatableKeyPress = () => {
+    stopHeldKeyRepeat();
+    refocusTermIfOwned(toolbarRepeatOwnedFocusRef.current);
+    toolbarRepeatOwnedFocusRef.current = false;
+  };
+
+  const onRepeatableKeyPointerDown = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    data: string,
+  ) => {
+    onToolbarPointerDown(event);
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    toolbarRepeatOwnedFocusRef.current = toolbarPointerOwnedFocusRef.current;
+    toolbarRepeatHandledRef.current = true;
+    const payload = consumeCtrl(data);
+    stopHeldKeyRepeat();
+    const repeater = createHeldKeyRepeater({
+      emit: () => {
+        if (!connectionRef.current?.isOpen()) {
+          stopHeldKeyRepeat();
+          return;
+        }
+        sendKey(payload);
+      },
+      isActive: () => connectionRef.current?.isOpen() ?? false,
+      setTimeout: window.setTimeout.bind(window),
+      clearTimeout: window.clearTimeout.bind(window),
+    });
+    heldKeyRepeaterRef.current = repeater;
+    repeater.start();
+  };
+
+  const onRepeatableKeyPointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!toolbarRepeatHandledRef.current) return;
+    endRepeatableKeyPress();
+    // pointercancel has no trailing click; drop the suppress flag immediately.
+    // pointerup/lostpointercapture keep it for one click, then expire so a later
+    // keyboard activation cannot be swallowed.
+    if (event.type === "pointercancel") {
+      toolbarRepeatHandledRef.current = false;
+      return;
+    }
+    window.setTimeout(() => {
+      toolbarRepeatHandledRef.current = false;
+    }, 0);
+  };
+
+  const onControlKeyClick = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    data: string,
+    repeatable: boolean,
+  ) => {
+    const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+    if (repeatable && toolbarRepeatHandledRef.current) {
+      toolbarRepeatHandledRef.current = false;
+      refocusTermIfOwned(ownedFocus);
+      return;
+    }
+    sendKey(consumeCtrl(data));
+    refocusTermIfOwned(ownedFocus);
   };
 
   const openPasteFallback = (ownedFocus: boolean, notice: string, text = "") => {
@@ -428,6 +515,27 @@ export default function TaskTerminal({ handle }: Props) {
   });
 
   useEffect(() => {
+    const onBlur = () => {
+      stopHeldKeyRepeat();
+      toolbarRepeatHandledRef.current = false;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopHeldKeyRepeat();
+        toolbarRepeatHandledRef.current = false;
+      }
+    };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopHeldKeyRepeat();
+      toolbarRepeatHandledRef.current = false;
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
     const hostEl = hostElRef.current;
     const interactionEl = interactionElRef.current;
     const spacerEl = spacerElRef.current;
@@ -456,6 +564,23 @@ export default function TaskTerminal({ handle }: Props) {
     let directionalArmed = false;
     let directionalArrow: string | undefined;
     let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
+    let seedPendingRevealTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearSeedPendingRevealTimer = () => {
+      if (seedPendingRevealTimer) {
+        clearTimeout(seedPendingRevealTimer);
+        seedPendingRevealTimer = undefined;
+      }
+    };
+
+    const armSeedPendingFallback = () => {
+      clearSeedPendingRevealTimer();
+      seedPendingRevealTimer = setTimeout(() => {
+        seedPendingRevealTimer = undefined;
+        if (!isActive()) return;
+        interactionEl.classList.remove("is-seed-pending");
+      }, 2000);
+    };
 
     const isKeyboardOpen = () => document.documentElement.classList.contains("keyboard-open");
 
@@ -890,13 +1015,19 @@ export default function TaskTerminal({ handle }: Props) {
       fontSize: initialFontSize,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       cursorBlink: true,
-      scrollback: 2000,
+      scrollback: terminalScrollbackLines(),
+      scrollOnEraseInDisplay: true,
       theme: {
         background: "#161616",
         foreground: "#e6e6e6",
         cursor: "#87afd7",
       },
     });
+    fitAddon = new FitAddon();
+    liveTerm.loadAddon(fitAddon);
+    liveTerm.open(hostEl);
+    onHardenTextarea();
+
     // xterm leaves plain Space keydown uncancelled (keyCode 32 < 48), so the
     // browser page-scrolls the wrap. Own Space here: one PTY frame, no scroll.
     liveTerm.attachCustomKeyEventHandler((event) => {
@@ -908,10 +1039,6 @@ export default function TaskTerminal({ handle }: Props) {
       }
       return false;
     });
-    fitAddon = new FitAddon();
-    liveTerm.loadAddon(fitAddon);
-    liveTerm.open(hostEl);
-    onHardenTextarea();
     syncHostToWrap();
     const viteDev =
       (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
@@ -935,6 +1062,8 @@ export default function TaskTerminal({ handle }: Props) {
     interactionEl.addEventListener("touchend", onTouchEnd, { passive: true });
     interactionEl.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
+    let seedGateArmed = true;
+
     let connection: TerminalConnection | undefined;
 
     // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
@@ -943,7 +1072,25 @@ export default function TaskTerminal({ handle }: Props) {
       if (disposed) return;
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
-          termRef.current?.write(text, scrollSync.applyOutput);
+          const gate =
+            seedGateArmed && text.length >= SEED_REVEAL_GATE_MIN_BYTES;
+          if (gate) {
+            interactionEl.classList.add("is-seed-pending");
+            armSeedPendingFallback();
+          }
+          seedGateArmed = false;
+          termRef.current?.write(text, () => {
+            scrollSync.applyOutput();
+            if (interactionEl.classList.contains("is-seed-pending")) {
+              scrollSync.setSyncingScroll(true);
+              termRef.current?.scrollToBottom();
+              scrollSync.scrollInteractionToBottom();
+              scrollSync.setSyncingScroll(false);
+              scrollSync.refreshFollow();
+              interactionEl.classList.remove("is-seed-pending");
+              clearSeedPendingRevealTimer();
+            }
+          });
         },
         onServerError: (message) => {
           setStatusDetail(message);
@@ -957,16 +1104,24 @@ export default function TaskTerminal({ handle }: Props) {
         onOpen: (isReconnect, seeded) => {
           setStatusDetail("");
           resetDedupe();
-          if (isReconnect && seeded && termRef.current) {
-            scrollSync.setFollowLive(true);
-            setHasUnseenOutput(false);
-            scrollSync.setSyncingScroll(true);
-            termRef.current.reset();
-            scrollSync.syncSpacer();
-            termRef.current.scrollToBottom();
-            scrollSync.scrollInteractionToBottom();
-            scrollSync.setSyncingScroll(false);
-            scrollSync.refreshFollow();
+          if (seeded) {
+            seedGateArmed = true;
+            if (isReconnect && termRef.current) {
+              scrollSync.setFollowLive(true);
+              setHasUnseenOutput(false);
+              scrollSync.setSyncingScroll(true);
+              termRef.current.reset();
+              scrollSync.syncSpacer();
+              termRef.current.scrollToBottom();
+              scrollSync.scrollInteractionToBottom();
+              scrollSync.setSyncingScroll(false);
+              scrollSync.refreshFollow();
+            }
+          }
+          if (!seeded) {
+            seedGateArmed = false;
+            interactionEl.classList.remove("is-seed-pending");
+            clearSeedPendingRevealTimer();
           }
           scheduleImmediate(true);
         },
@@ -1001,6 +1156,7 @@ export default function TaskTerminal({ handle }: Props) {
 
     return () => {
       disposed = true;
+      clearSeedPendingRevealTimer();
       keyboardClassObserver.disconnect();
       cancelExpandSettle();
       cancelLongPress();
@@ -1146,21 +1302,29 @@ export default function TaskTerminal({ handle }: Props) {
       ) : null}
       <div data-testid="terminal-bottom-controls">
         <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
-          {CONTROL_KEYS.map((key) => (
-            <button
-              key={key.label}
-              type="button"
-              className="terminal-key"
-              aria-label={key.ariaLabel}
-              onPointerDown={onToolbarPointerDown}
-              onClick={(event) => {
-                const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-                sendKey(consumeCtrl(key.data));
-                refocusTermIfOwned(ownedFocus);
-              }}>
-              {key.label}
-            </button>
-          ))}
+          {CONTROL_KEYS.map((key) => {
+            const repeatable = isRepeatableKey(key.data);
+            return (
+              <button
+                key={key.label}
+                type="button"
+                className="terminal-key"
+                aria-label={key.ariaLabel}
+                onPointerDown={(event) => {
+                  if (repeatable) {
+                    onRepeatableKeyPointerDown(event, key.data);
+                    return;
+                  }
+                  onToolbarPointerDown(event);
+                }}
+                onPointerUp={repeatable ? onRepeatableKeyPointerEnd : undefined}
+                onPointerCancel={repeatable ? onRepeatableKeyPointerEnd : undefined}
+                onLostPointerCapture={repeatable ? onRepeatableKeyPointerEnd : undefined}
+                onClick={(event) => onControlKeyClick(event, key.data, repeatable)}>
+                {key.label}
+              </button>
+            );
+          })}
           <button
             type="button"
             className={`terminal-key${ctrlArmed ? " is-armed" : ""}`}
