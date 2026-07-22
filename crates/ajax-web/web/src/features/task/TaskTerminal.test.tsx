@@ -312,3 +312,28 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
   });
 });
+
+describe("TaskTerminal zero-lag typed echo", () => {
+  it("imports xtermZeroLag and wires beforeinput, onTerminalData, and clearIfEchoedIn", () => {
+    expect(taskTerminalSource).toMatch(
+      /import\s*\{[^}]*createZeroLagEcho[^}]*\}\s*from\s*["']@\/shared\/lib\/xtermZeroLag["']/,
+    );
+    expect(taskTerminalSource).toMatch(/xterm-zerolag-input/);
+    expect(taskTerminalSource).toMatch(/beforeinput/);
+    expect(taskTerminalSource).toMatch(/clearIfEchoedIn/);
+    expect(taskTerminalSource).toMatch(/noteBeforeInputPrintable/);
+    expect(taskTerminalSource).toMatch(/onTerminalData/);
+    // Sticky Ctrl folds before zero-lag so control codes never paint as printables.
+    expect(taskTerminalSource).toMatch(
+      /const data = consumeCtrl\(raw\);\s*zeroLagNoteRef\.current\(data\);/,
+    );
+  });
+
+  it("styles the zero-lag overlay as a non-interactive absolute layer", () => {
+    const overlayCss =
+      stylesSource.match(/\.terminal-host\s+\.xterm-zerolag-input\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(overlayCss).toMatch(/position:\s*absolute/);
+    expect(overlayCss).toMatch(/pointer-events:\s*none/);
+  });
+});
