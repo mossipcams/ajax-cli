@@ -2,6 +2,21 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.55.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.4...ajax-cli-v0.55.0) (2026-07-22)
+
+
+### Features
+
+* **core:** add structured operator logging to logs_dir ([#658](https://github.com/mossipcams/ajax-cli/issues/658)) ([c1aa66a](https://github.com/mossipcams/ajax-cli/commit/c1aa66a0c952894f869afdaf91c3a54d70af710f))
+* **web:** add xterm zero-lag typed-echo overlay ([#661](https://github.com/mossipcams/ajax-cli/issues/661)) ([4d2cdc1](https://github.com/mossipcams/ajax-cli/commit/4d2cdc143a07c07d58da3a4a723ca8e4ded4b351))
+
+
+### Bug Fixes
+
+* **cli:** discover Cursor identity under XDG ~/.cache/ajax ([#656](https://github.com/mossipcams/ajax-cli/issues/656)) ([5dbcaa0](https://github.com/mossipcams/ajax-cli/commit/5dbcaa0d9d240dc47825907a4e27cfc66d9fed89))
+* **core:** clear sticky CI failed on pending checks ([#660](https://github.com/mossipcams/ajax-cli/issues/660)) ([1262caf](https://github.com/mossipcams/ajax-cli/commit/1262cafb288e79071b8b5d76ad1017a9c278dd5e))
+* **web:** settle terminal resize before history seed pad ([#657](https://github.com/mossipcams/ajax-cli/issues/657)) ([7023815](https://github.com/mossipcams/ajax-cli/commit/7023815be116d0fb12e8df26ca7230337065faba))
+
 ## [0.54.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.3...ajax-cli-v0.54.4) (2026-07-22)
 
 
