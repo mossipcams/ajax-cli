@@ -8,6 +8,7 @@ import {
   VERSION_POLL_TERMINAL_MS,
   VERSION_POLL_HIDDEN_MS,
   RESTART_POLL_MS,
+  TEST_IN_STABLE_TIMEOUT_MS,
   cockpitRefreshIntervalMs,
   versionPollIntervalMs,
 } from "./polling";
@@ -79,5 +80,9 @@ describe("versionPollIntervalMs", () => {
 describe("restart poll", () => {
   it("restart poll constant stays at 500ms", () => {
     expect(RESTART_POLL_MS).toBe(500);
+  });
+
+  it("test in stable timeout allows a full cargo install", () => {
+    expect(TEST_IN_STABLE_TIMEOUT_MS).toBe(900_000);
   });
 });

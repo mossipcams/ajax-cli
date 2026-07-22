@@ -105,18 +105,25 @@ test("settings Back returns to the dashboard", async ({ page }) => {
   await expect(dashboard(page)).toBeVisible();
 });
 
-test("settings Restart confirms then restarts the server", async ({ page }) => {
-  await mockFetch(page);
+test("settings Test in Stable confirms then pulls main and reloads", async ({ page }) => {
+  await mockFetch(page, {
+    "/api/version": { version: "0.20.5", test_in_stable: true },
+  });
   await page.goto("/app.html#/settings");
-  const restart = page.getByRole("button", { name: /Restart server/i });
-  await expect(restart).toBeVisible({ timeout: 10_000 });
+  const testInStable = page.getByRole("button", { name: /Test in Stable/i });
+  await expect(testInStable).toBeVisible({ timeout: 10_000 });
 
-  // First tap arms the confirm; second tap executes.
-  await restart.click();
+  await testInStable.click();
   await expect(page.getByRole("button", { name: /Tap to confirm/i })).toBeVisible();
   await page.getByRole("button", { name: /Tap to confirm/i }).click();
 
-  await expect(resultPanel(page)).toContainText("Server restarted", { timeout: 10_000 });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as unknown as { __testInStablePosted?: boolean }).__testInStablePosted,
+      ),
+    )
+    .toBe(true);
 });
 
 test("settings Run diagnostics renders a diagnostics report", async ({ page }) => {

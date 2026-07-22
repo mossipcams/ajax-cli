@@ -392,6 +392,10 @@ where
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route(
+            "/api/server/test-in-stable",
+            post(axum_server_test_in_stable),
+        )
+        .route(
             "/api/dev-deploy",
             get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>),
         )
@@ -629,7 +633,10 @@ async fn axum_health() -> AxumResponse {
 async fn axum_version() -> AxumResponse {
     json_value_response(
         200,
-        serde_json::json!({ "version": install::app_version() }),
+        serde_json::json!({
+            "version": install::app_version(),
+            "test_in_stable": server::test_in_stable_enabled_from_env(),
+        }),
     )
 }
 
@@ -637,8 +644,28 @@ async fn axum_server_restart() -> AxumResponse {
     handle_server_restart().into_axum_response()
 }
 
+async fn axum_server_test_in_stable() -> AxumResponse {
+    handle_server_test_in_stable().into_axum_response()
+}
+
 fn handle_server_restart() -> Response {
     server::schedule_process_restart();
+    Response {
+        status_code: 200,
+        content_type: "application/json; charset=utf-8",
+        body: br#"{"ok":true,"restarting":true}"#.to_vec(),
+    }
+}
+
+fn handle_server_test_in_stable() -> Response {
+    if !server::test_in_stable_enabled_from_env() {
+        return Response {
+            status_code: 404,
+            content_type: "application/json; charset=utf-8",
+            body: br#"{"ok":false,"error":"test in stable is not available"}"#.to_vec(),
+        };
+    }
+    server::schedule_test_in_stable();
     Response {
         status_code: 200,
         content_type: "application/json; charset=utf-8",
@@ -1832,6 +1859,7 @@ mod tests {
             ("GET", "/api/cockpit"),
             ("GET", "/api/version"),
             ("POST", "/api/server/restart"),
+            ("POST", "/api/server/test-in-stable"),
             ("GET", "/api/dev-deploy"),
             ("POST", "/api/dev-deploy"),
             ("POST", "/api/operations"),
@@ -2641,6 +2669,7 @@ mod tests {
         let version = value["version"].as_str().expect("version string");
         assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
         assert_eq!(version, crate::slices::install::app_version());
+        assert_eq!(value["test_in_stable"], false);
     }
 
     #[tokio::test]
@@ -3276,6 +3305,60 @@ mod tests {
         let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart");
 
         let response = post_json(&app, &cookie, "/api/server/restart", "").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_of(response).await;
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["restarting"], true);
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: ajax-web runtime tests are not run in parallel with other
+            // env-mutating tests in this module.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_in_stable_endpoint_returns_not_found_when_disabled() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) =
+            app_with(context, TestBridge::default(), "test-in-stable-disabled");
+
+        let response = post_json(&app, &cookie, "/api/server/test-in-stable", "").await;
+
+        assert_json_not_found(response, "test in stable is not available").await;
+    }
+
+    #[tokio::test]
+    async fn test_in_stable_endpoint_returns_restarting_when_enabled() {
+        let _script = EnvVarGuard::set(
+            "AJAX_WEB_RESTART_SCRIPT",
+            "/repo/scripts/dev-web-restart.sh",
+        );
+        let _profile = EnvVarGuard::set("AJAX_WEB_RESTART_PROFILE", "stable");
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) =
+            app_with(context, TestBridge::default(), "test-in-stable-enabled");
+
+        let response = post_json(&app, &cookie, "/api/server/test-in-stable", "").await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_of(response).await;

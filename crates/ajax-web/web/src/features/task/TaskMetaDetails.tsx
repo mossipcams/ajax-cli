@@ -71,6 +71,7 @@ export default function TaskMetaDetails({ detail, onResult }: Props) {
               {detail.agent_attempts.map((attempt) => (
                 <li key={attempt.started_unix_secs}>
                   <span className="attempt-outcome">{attempt.outcome}</span>
+                  {" "}
                   <span className="attempt-when">
                     {relativeTime(attempt.started_unix_secs, nowSecs())}
                     {" · "}

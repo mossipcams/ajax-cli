@@ -19,6 +19,7 @@ export const RESULT_AUTO_DISMISS_MS = 12000;
 export const RESULT_SUCCESS_DISMISS_MS = 4000;
 export const RESTART_POLL_MS = 500;
 export const RESTART_TIMEOUT_MS = 30000;
+export const TEST_IN_STABLE_TIMEOUT_MS = 900_000;
 // Bounds stalled LAN/TLS GETs; recovery comes from the existing poll interval.
 export const GET_REQUEST_TIMEOUT_MS = 10000;
 

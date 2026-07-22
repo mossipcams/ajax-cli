@@ -186,7 +186,7 @@ mod tests {
         for endpoint in [
             "/api/cockpit",
             "/api/operations",
-            "/api/server/restart",
+            "/api/server/test-in-stable",
             "#/settings",
             "request_id",
             "no-store",
