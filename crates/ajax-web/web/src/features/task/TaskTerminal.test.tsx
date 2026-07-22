@@ -304,6 +304,10 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(overlayCss).toMatch(/min-height:\s*44px/);
   });
 
+  it("enables scroll-on-erase so attach ED2 pushes seeded viewport into scrollback", () => {
+    expect(taskTerminalSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
+  });
+
   it("names terminal control keys for assistive tech", () => {
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Control C"/);
