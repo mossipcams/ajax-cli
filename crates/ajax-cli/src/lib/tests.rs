@@ -1082,6 +1082,71 @@ fn writer_entrypoint_uses_selected_runtime_paths() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn writer_entrypoint_initializes_logs_dir_and_records_command() {
+    let directory =
+        std::env::temp_dir().join(format!("ajax-cli-writer-logging-{}", std::process::id()));
+    let home = directory.join("home");
+    let paths = CliContextPaths::from_runtime_paths(
+        RuntimePathRequest::new(&home)
+            .with_cli_home(&home)
+            .with_cli_profile("dev")
+            .resolve(),
+    );
+    let config = r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#;
+    std::fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(paths.state_file.parent().unwrap()).unwrap();
+    std::fs::write(&paths.config_file, config).unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&InMemoryRegistry::default())
+        .unwrap();
+
+    let mut output = Vec::new();
+    super::run_with_args_to_writer(
+        [
+            "ajax-cli",
+            "--home",
+            home.to_str().unwrap(),
+            "--profile",
+            "dev",
+            "--config",
+            paths.config_file.to_str().unwrap(),
+            "--state",
+            paths.state_file.to_str().unwrap(),
+            "tasks",
+            "--json",
+        ],
+        &mut output,
+    )
+    .unwrap();
+    let output = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(parsed["tasks"].as_array().is_some());
+
+    let log_path = paths.runtime_paths.logs_dir.join("ajax.log");
+    assert!(
+        log_path.is_file(),
+        "expected {} to exist",
+        log_path.display()
+    );
+    let log_contents = std::fs::read_to_string(&log_path).unwrap();
+    assert!(
+        log_contents.contains("command="),
+        "log should contain command= field: {log_contents}"
+    );
+    assert!(
+        log_contents.contains("tasks"),
+        "log should contain subcommand name: {log_contents}"
+    );
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 fn registry_with_task(handle: &str) -> InMemoryRegistry {
     let mut registry = InMemoryRegistry::default();
     let mut task = Task::new(
@@ -2260,9 +2325,10 @@ fn supervise_command_runs_codex_json_adapter_and_renders_events() {
         ])
         .unwrap();
     let (_, subcommand) = matches.subcommand().unwrap();
+    let logs_dir = std::env::temp_dir().join(format!("ajax-supervise-logs-{}", std::process::id()));
 
     let (output, _) =
-        crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
+        crate::supervise::supervise_command_output_and_events(subcommand, None, &logs_dir).unwrap();
 
     let events: Vec<&str> = output
         .lines()
@@ -2312,9 +2378,10 @@ fn supervise_command_runs_cursor_stream_json_adapter_and_renders_events() {
         ])
         .unwrap();
     let (_, subcommand) = matches.subcommand().unwrap();
+    let logs_dir = std::env::temp_dir().join(format!("ajax-supervise-logs-{}", std::process::id()));
 
     let (output, _) =
-        crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
+        crate::supervise::supervise_command_output_and_events(subcommand, None, &logs_dir).unwrap();
 
     let events: Vec<&str> = output
         .lines()
@@ -2364,9 +2431,11 @@ fn supervise_command_reports_nonzero_agent_exit() {
         ])
         .unwrap();
     let (_, subcommand) = matches.subcommand().unwrap();
+    let logs_dir =
+        std::env::temp_dir().join(format!("ajax-supervise-logs-err-{}", std::process::id()));
 
-    let error =
-        crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap_err();
+    let error = crate::supervise::supervise_command_output_and_events(subcommand, None, &logs_dir)
+        .unwrap_err();
 
     let _ = std::fs::remove_file(fake_codex);
     assert!(matches!(error, CliError::CommandFailed(message)
@@ -2396,9 +2465,11 @@ fn supervise_command_keeps_stderr_context_on_agent_exit() {
         ])
         .unwrap();
     let (_, subcommand) = matches.subcommand().unwrap();
+    let logs_dir =
+        std::env::temp_dir().join(format!("ajax-supervise-logs-err-{}", std::process::id()));
 
-    let error =
-        crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap_err();
+    let error = crate::supervise::supervise_command_output_and_events(subcommand, None, &logs_dir)
+        .unwrap_err();
 
     let _ = std::fs::remove_file(fake_codex);
     assert_eq!(

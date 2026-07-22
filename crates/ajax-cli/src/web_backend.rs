@@ -182,6 +182,7 @@ pub(crate) fn serve_mobile_web_with_paths(
     let _ = crate::agent_event_notify::start_agent_event_notify_listener(
         context.runtime_paths.cache_dir.join("agent-events"),
     );
+    ajax_core::logging::init_to_logs_dir(&context.runtime_paths.logs_dir);
     let state = runtime::WebAppState::load_or_create(
         context.clone(),
         ProcessCommandRunner,

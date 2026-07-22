@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent, ProcessEvent, SupervisorAgent};
 use clap::{parser::ValueSource, ArgMatches};
 
@@ -5,9 +7,25 @@ use crate::CliError;
 
 const MAX_RETAINED_SUPERVISOR_EVENTS: usize = 256;
 
+pub(crate) fn supervise_event_log_path(logs_dir: &Path) -> Option<PathBuf> {
+    if supervise_event_log_enabled() {
+        Some(logs_dir.join("monitor/events.jsonl"))
+    } else {
+        None
+    }
+}
+
+fn supervise_event_log_enabled() -> bool {
+    matches!(
+        std::env::var_os("AJAX_SUPERVISE_EVENT_LOG").as_deref(),
+        Some(value) if value == "1" || value == "true" || value == "on" || value == "yes"
+    )
+}
+
 pub(crate) fn supervise_command_output_and_events(
     matches: &ArgMatches,
     task_agent: Option<SupervisorAgent>,
+    logs_dir: &Path,
 ) -> Result<(String, Vec<MonitorEvent>), CliError> {
     let prompt = matches
         .get_one::<String>("prompt")
@@ -38,6 +56,7 @@ pub(crate) fn supervise_command_output_and_events(
                 .or_else(|| std::env::var("AJAX_CODEX_BIN").ok())
                 .unwrap_or_else(|| "codex".to_string()),
         };
+        config.event_log_path = supervise_event_log_path(logs_dir);
         let (handle, mut rx) =
             spawn_monitor(config).map_err(|error| CliError::CommandFailed(error.to_string()))?;
         let mut events = Vec::new();
@@ -126,7 +145,26 @@ fn supervisor_failure_message(message: String, events: &[ajax_supervisor::Monito
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use ajax_supervisor::{MonitorEvent, ProcessEvent};
+
+    #[test]
+    fn supervise_event_log_path_respects_logs_dir_and_opt_in_env() {
+        std::env::remove_var("AJAX_SUPERVISE_EVENT_LOG");
+        let logs_dir = Path::new("/tmp/ajax-logs");
+        assert_eq!(super::supervise_event_log_path(logs_dir), None);
+
+        std::env::set_var("AJAX_SUPERVISE_EVENT_LOG", "1");
+        assert_eq!(
+            super::supervise_event_log_path(logs_dir),
+            Some(logs_dir.join("monitor/events.jsonl"))
+        );
+
+        std::env::set_var("AJAX_SUPERVISE_EVENT_LOG", "0");
+        assert_eq!(super::supervise_event_log_path(logs_dir), None);
+        std::env::remove_var("AJAX_SUPERVISE_EVENT_LOG");
+    }
 
     #[test]
     fn retained_supervisor_events_are_bounded_for_noisy_process_output() {

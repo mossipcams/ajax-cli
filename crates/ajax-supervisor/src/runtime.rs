@@ -203,7 +203,9 @@ async fn forward_monitor_events(
                     break;
                 };
                 if let Some(event_log) = &event_log {
-                    event_log.append(&event)?;
+                    if let Err(error) = event_log.append(&event) {
+                        eprintln!("ajax supervisor: failed to append event log: {error}");
+                    }
                 }
                 if events.send(event).await.is_err() {
                     break;
@@ -456,6 +458,43 @@ mod tests {
             .expect("forwarder should join")
             .expect("forwarder should not fail");
         drop(raw_events);
+    }
+
+    #[tokio::test]
+    async fn runtime_continues_when_event_log_append_fails() {
+        let root =
+            std::env::temp_dir().join(format!("ajax-runtime-bad-log-{}", std::process::id()));
+        let script = root.join("fake-codex");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&script, "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let bad_log_parent = root.join("monitor");
+        fs::write(&bad_log_parent, b"not-a-directory").unwrap();
+        let bad_log_path = bad_log_parent.join("events.jsonl");
+
+        let mut config = MonitorConfig::codex_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        config.event_log_path = Some(bad_log_path);
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let exit = handle
+            .wait()
+            .await
+            .expect("monitor should complete even when event log append fails");
+        assert_eq!(exit.status_code, Some(0));
+
+        let mut streamed = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            streamed.push(event);
+        }
+        assert!(streamed.contains(&MonitorEvent::Agent(AgentEvent::Started {
+            agent: "codex".to_string()
+        })));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
