@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.54.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.3...ajax-cli-v0.54.4) (2026-07-22)
+
+
+### Bug Fixes
+
+* **cli:** resolve Cursor hook identity via cwd-index ([#654](https://github.com/mossipcams/ajax-cli/issues/654)) ([b193e9e](https://github.com/mossipcams/ajax-cli/commit/b193e9e51c2e530c56d4414617f5855a720d4054))
+
 ## [0.54.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.54.2...ajax-cli-v0.54.3) (2026-07-22)
 
 
