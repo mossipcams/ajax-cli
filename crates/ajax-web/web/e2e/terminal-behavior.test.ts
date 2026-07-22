@@ -594,6 +594,31 @@ test("printable, control, and navigation keys produce ordered PTY input", async 
 });
 
 const BACK_LEFT = "\x1b[D";
+const BACKSPACE = "\x7f";
+const KEY_REPEAT_HOLD_MS = 650;
+
+async function holdToolbarButton(
+  page: import("@playwright/test").Page,
+  name: string,
+  holdMs: number,
+) {
+  const button = terminalToolbar(page).getByRole("button", { name });
+  const box = await button.boundingBox();
+  if (!box) throw new Error(`toolbar button ${name} box missing`);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await new Promise((resolve) => setTimeout(resolve, holdMs));
+  await page.mouse.up();
+}
+
+async function tapToolbarButton(page: import("@playwright/test").Page, name: string) {
+  const button = terminalToolbar(page).getByRole("button", { name });
+  const box = await button.boundingBox();
+  if (!box) throw new Error(`toolbar button ${name} box missing`);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
 
 async function settleNoNewFrames(
   page: import("@playwright/test").Page,
@@ -603,20 +628,44 @@ async function settleNoNewFrames(
   await expect.poll(async () => inputFrameCount(page)).toBe(expectedCount);
 }
 
-test("held terminal back sends one left-arrow frame per activation", async ({ page }) => {
+test("held terminal back repeats left-arrow frames then stops on release", async ({ page }) => {
   await openTaskTerminal(page);
   const back = terminalToolbar(page).getByRole("button", { name: "Left arrow" });
   const baseline = await inputFrameCount(page);
 
-  await back.click({ delay: 550 });
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
-  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
-  await settleNoNewFrames(page, baseline + 1);
+  await holdToolbarButton(page, "Left arrow", KEY_REPEAT_HOLD_MS);
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBeGreaterThanOrEqual(2);
+  const frames = (await terminalInputFrames(page)).slice(baseline);
+  expect(frames.every((frame) => frame.data === BACK_LEFT)).toBe(true);
+  const afterHold = await inputFrameCount(page);
+  await settleNoNewFrames(page, afterHold);
 
   await back.focus();
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(2);
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(afterHold - baseline + 1);
   expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
+});
+
+test("Backspace tap sends one DEL frame", async ({ page }) => {
+  await openTaskTerminal(page);
+  const baseline = await inputFrameCount(page);
+
+  await tapToolbarButton(page, "Backspace");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACKSPACE);
+  await settleNoNewFrames(page, baseline + 1);
+});
+
+test("held Backspace repeats DEL frames then stops on release", async ({ page }) => {
+  await openTaskTerminal(page);
+  const baseline = await inputFrameCount(page);
+
+  await holdToolbarButton(page, "Backspace", KEY_REPEAT_HOLD_MS);
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBeGreaterThanOrEqual(2);
+  const frames = (await terminalInputFrames(page)).slice(baseline);
+  expect(frames.every((frame) => frame.data === BACKSPACE)).toBe(true);
+  const afterHold = await inputFrameCount(page);
+  await settleNoNewFrames(page, afterHold);
 });
 
 test("repeated printable browser events produce exact cardinality", async ({ page }) => {

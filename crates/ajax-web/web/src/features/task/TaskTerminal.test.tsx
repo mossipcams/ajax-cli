@@ -315,4 +315,27 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalSource).toMatch(/aria-label="Control modifier"/);
     expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
   });
+
+  it("includes Backspace in CONTROL_KEYS with DEL payload", () => {
+    const controlKeysBlock =
+      taskTerminalSource.match(/const CONTROL_KEYS\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+    expect(controlKeysBlock).toMatch(/ariaLabel:\s*"Backspace"/);
+    expect(controlKeysBlock).toMatch(/data:\s*"\\x7f"/);
+  });
+
+  it("marks Backspace and arrows as repeatable hotbar keys only", () => {
+    expect(taskTerminalSource).toMatch(/REPEATABLE_KEY_DATA|isRepeatableKey/);
+    const repeatableBlock =
+      taskTerminalSource.match(
+        /(?:REPEATABLE_KEY_DATA|repeatableKeyData)\s*=\s*(?:new Set\(\[|Set\(\[)([\s\S]*?)\]\)/,
+      )?.[1] ?? "";
+    expect(repeatableBlock).toMatch(/\\x7f/);
+    expect(repeatableBlock).toMatch(/\\x1b\[D/);
+    expect(repeatableBlock).toMatch(/\\x1b\[A/);
+    expect(repeatableBlock).toMatch(/\\x1b\[B/);
+    expect(repeatableBlock).toMatch(/\\x1b\[C/);
+    expect(repeatableBlock).not.toMatch(/\\x1b"/);
+    expect(repeatableBlock).not.toMatch(/\\t/);
+    expect(repeatableBlock).not.toMatch(/Paste/);
+  });
 });
