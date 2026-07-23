@@ -646,11 +646,17 @@ export default function TaskTerminal({ handle }: Props) {
     const revealSeed = () => {
       clearSeedPendingRevealTimer();
       if (!isActive() || !isSeedPending()) return;
-      scrollSync.setSyncingScroll(true);
-      termRef.current?.scrollToBottom();
-      scrollSync.scrollInteractionToBottom();
-      scrollSync.setSyncingScroll(false);
-      scrollSync.refreshFollow();
+      // Only snap to the CLI input if the user has not scrolled up during the
+      // pending window. If they scrolled away to read scrollback, reveal in
+      // place — forcing them back to the bottom would fight that intent and
+      // detach the "New output" affordance.
+      if (scrollSync.isFollowingLive()) {
+        scrollSync.setSyncingScroll(true);
+        termRef.current?.scrollToBottom();
+        scrollSync.scrollInteractionToBottom();
+        scrollSync.setSyncingScroll(false);
+        scrollSync.refreshFollow();
+      }
       interactionEl.classList.remove("is-seed-pending");
     };
 

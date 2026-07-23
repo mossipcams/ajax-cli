@@ -16,6 +16,7 @@ export type TerminalScrollSync = {
   onTermScroll: () => void;
   setFollowLive: (v: boolean) => void;
   setSyncingScroll: (v: boolean) => void;
+  isFollowingLive: () => boolean;
 };
 
 export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): TerminalScrollSync {
@@ -146,5 +147,6 @@ export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): Terminal
     setSyncingScroll(v: boolean) {
       syncingScroll = v;
     },
+    isFollowingLive: () => followLive,
   };
 }
