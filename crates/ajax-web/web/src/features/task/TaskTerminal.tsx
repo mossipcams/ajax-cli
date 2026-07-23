@@ -29,6 +29,24 @@ interface Props {
   handle: string;
 }
 
+// iOS only starts its hold-to-delete repeat loop when the focused field has
+// deletable content, so the xterm helper textarea always carries a sentinel.
+const BACKSPACE_SENTINEL = "\u200B";
+
+const seedBackspaceSentinel = (input: HTMLTextAreaElement | null) => {
+  if (input && !input.value.includes(BACKSPACE_SENTINEL)) {
+    input.value = BACKSPACE_SENTINEL;
+  }
+};
+
+// Module scope on purpose: registered from hardenMobileTextarea and removed in
+// the effect cleanup, which see different render closures. One stable identity
+// is the only way both sides name the same function.
+const seedSentinelFromFocus = (event: Event) => {
+  const input = event.currentTarget;
+  seedBackspaceSentinel(input instanceof HTMLTextAreaElement ? input : null);
+};
+
 export default function TaskTerminal({ handle }: Props) {
   const hostElRef = useRef<HTMLDivElement | null>(null);
   const interactionElRef = useRef<HTMLDivElement | null>(null);
@@ -263,6 +281,10 @@ export default function TaskTerminal({ handle }: Props) {
     return el instanceof HTMLTextAreaElement ? el : null;
   };
 
+  const seedTermSentinel = () => {
+    seedBackspaceSentinel(termTextarea());
+  };
+
   const hardenMobileTextarea = () => {
     const input = termTextarea();
     if (!input) return;
@@ -282,6 +304,35 @@ export default function TaskTerminal({ handle }: Props) {
     input.style.color = "transparent";
     input.style.setProperty("-webkit-text-fill-color", "transparent");
     input.style.caretColor = "transparent";
+    seedBackspaceSentinel(input);
+    input.addEventListener("focus", seedSentinelFromFocus);
+  };
+
+  // Measured on an iOS 26 Simulator: a held Delete repeats deleteContentBackward
+  // at ~100ms, then escalates to deleteWordBackward after ~800ms. Ignoring the
+  // escalation strands the rest of the hold.
+  const deleteInputPayload = (inputType: string): string | null => {
+    if (inputType === "deleteWordBackward") return "\x17";
+    if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
+      return "\x7f";
+    }
+    return null;
+  };
+
+  const onTextareaBeforeInput = (event: InputEvent) => {
+    const payload = deleteInputPayload(event.inputType);
+    if (!payload) return;
+    // No preventDefault: cancelling here also cancels the iOS repeat loop.
+    sendKey(consumeCtrl(payload));
+  };
+
+  // Reseed here, never from a beforeinput microtask: the microtask checkpoint
+  // runs *before* the browser applies the deletion, so it always sees the
+  // sentinel still present, does nothing, and leaves the textarea empty for the
+  // next repeat tick.
+  const onTextareaInput = (event: Event) => {
+    const inputType = (event as InputEvent).inputType ?? "";
+    if (inputType.startsWith("delete")) seedTermSentinel();
   };
 
   const termOwnedFocus = (): boolean => {
@@ -348,19 +399,10 @@ export default function TaskTerminal({ handle }: Props) {
     repeater.start();
   };
 
-  const onRepeatableKeyPointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const onRepeatableKeyPointerEnd = () => {
     if (!toolbarRepeatHandledRef.current) return;
     endRepeatableKeyPress();
-    // pointercancel has no trailing click; drop the suppress flag immediately.
-    // pointerup/lostpointercapture keep it for one click, then expire so a later
-    // keyboard activation cannot be swallowed.
-    if (event.type === "pointercancel") {
-      toolbarRepeatHandledRef.current = false;
-      return;
-    }
-    window.setTimeout(() => {
-      toolbarRepeatHandledRef.current = false;
-    }, 0);
+    toolbarRepeatHandledRef.current = false;
   };
 
   const onControlKeyClick = (
@@ -369,8 +411,12 @@ export default function TaskTerminal({ handle }: Props) {
     repeatable: boolean,
   ) => {
     const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-    if (repeatable && toolbarRepeatHandledRef.current) {
-      toolbarRepeatHandledRef.current = false;
+    // Repeatable keys already emit once from onRepeatableKeyPointerDown, so the
+    // trailing pointer/touch click must never send again. iOS can deliver that
+    // synthetic click after a timing flag would have expired (that race sent the
+    // arrow twice and skipped a line), so key off event.detail — 0 means a
+    // keyboard activation, which had no pointerdown emit and must send once.
+    if (repeatable && event.detail !== 0) {
       refocusTermIfOwned(ownedFocus);
       return;
     }
@@ -512,6 +558,15 @@ export default function TaskTerminal({ handle }: Props) {
   });
   const onTermData = useEffectEvent((data: string) => {
     sendKey(consumeCtrl(data));
+  });
+  const onBeforeInput = useEffectEvent((event: InputEvent) => {
+    onTextareaBeforeInput(event);
+  });
+  const onInputEvent = useEffectEvent((event: Event) => {
+    onTextareaInput(event);
+  });
+  const onSeedTermSentinel = useEffectEvent(() => {
+    seedTermSentinel();
   });
 
   useEffect(() => {
@@ -1026,11 +1081,18 @@ export default function TaskTerminal({ handle }: Props) {
     fitAddon = new FitAddon();
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
+    termRef.current = liveTerm;
     onHardenTextarea();
 
     // xterm leaves plain Space keydown uncancelled (keyCode 32 < 48), so the
     // browser page-scrolls the wrap. Own Space here: one PTY frame, no scroll.
     liveTerm.attachCustomKeyEventHandler((event) => {
+      if (event.key === "Backspace" || event.key === "Delete") {
+        // Skipping xterm's handling avoids its preventDefault, which is what lets
+        // iOS start its hold-to-delete repeat loop. beforeinput sends the DEL.
+        if (event.type === "keydown" && !event.isComposing) onSeedTermSentinel();
+        return false;
+      }
       if (event.key !== " " && event.code !== "Space") return true;
       if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return true;
       if (event.type === "keydown") {
@@ -1045,7 +1107,6 @@ export default function TaskTerminal({ handle }: Props) {
     if (viteDev) {
       (hostEl as unknown as { __xterm?: Terminal }).__xterm = liveTerm;
     }
-    termRef.current = liveTerm;
     const selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
     fitLocal();
     scrollSync.syncSpacer();
@@ -1056,6 +1117,8 @@ export default function TaskTerminal({ handle }: Props) {
     interactionEl.addEventListener("click", onInteractionClick);
 
     const dataDisposable = liveTerm.onData(onTermData);
+    termTextarea()?.addEventListener("beforeinput", onBeforeInput);
+    termTextarea()?.addEventListener("input", onInputEvent);
 
     interactionEl.addEventListener("touchstart", onTouchStart, { passive: false });
     interactionEl.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -1164,6 +1227,9 @@ export default function TaskTerminal({ handle }: Props) {
       cancelScheduledWork();
       refitController?.dispose();
       dataDisposable?.dispose();
+      termTextarea()?.removeEventListener("beforeinput", onBeforeInput);
+      termTextarea()?.removeEventListener("input", onInputEvent);
+      termTextarea()?.removeEventListener("focus", seedSentinelFromFocus);
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();
       if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
