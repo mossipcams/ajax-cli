@@ -58,12 +58,9 @@ export default function App() {
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
 
-  // Attention first: the header should answer "does anything want me?" before it
-  // reports inventory size.
+  // Report what's live first, then the inventory size.
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
-    const needsYou = cockpit.data.inbox?.items?.length ?? 0;
-    if (needsYou) return `${needsYou} need${needsYou === 1 ? "s" : ""} you`;
     const running = cockpit.data.cards.filter((card) => card.status === "running").length;
     if (running) return `${running} running`;
     const total = cockpit.data.cards.length;
