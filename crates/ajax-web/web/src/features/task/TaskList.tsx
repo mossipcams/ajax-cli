@@ -24,10 +24,6 @@ interface ActionProps {
 
 interface TaskRowProps extends ActionProps {
   card: BrowserTaskCard;
-  /** Inbox rows expose their actions inline and never swipe. */
-  isInbox: boolean;
-  /** The single highest-severity item, rendered as the lead decision. */
-  isNext?: boolean;
   nowSecs: number;
   offset: number;
   onOffset: (handle: string, offset: number) => void;
@@ -36,8 +32,6 @@ interface TaskRowProps extends ActionProps {
 
 function TaskRow({
   card,
-  isInbox,
-  isNext = false,
   nowSecs,
   offset,
   onOffset,
@@ -48,10 +42,9 @@ function TaskRow({
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
   const rowRef = useRef<HTMLButtonElement>(null);
-  // Swipe is the calm-row accelerator only. Inbox rows already show the action
-  // as a real button, and revealing the same action twice would put duplicate
-  // labels in the tree.
-  const revealAction = isInbox ? undefined : visibleTaskActions(card.actions)[0];
+  // The primary action rides behind the row as a swipe reveal; tapping the row
+  // opens the task detail where every action lives. One gesture, one surface.
+  const revealAction = visibleTaskActions(card.actions)[0];
 
   useSwipeReveal(rowRef, revealAction
     ? {
@@ -68,13 +61,7 @@ function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  const className = [
-    "task-row",
-    `tone-${meta.tone}`,
-    isInbox ? "is-inbox" : "",
-    isNext ? "is-next" : "",
-    offset > 0 ? "is-revealed" : "",
-  ]
+  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : ""]
     .filter(Boolean)
     .join(" ");
 
@@ -122,31 +109,6 @@ function TaskRow({
   );
 }
 
-/** An inbox entry: the row plus its actions as real buttons, no swipe. */
-function InboxEntry({
-  card,
-  isNext,
-  ...rest
-}: Omit<TaskRowProps, "isInbox">) {
-  const actions = visibleTaskActions(card.actions);
-  return (
-    <div className={`inbox-entry${isNext ? " is-next" : ""}`}>
-      <div className="task-list">
-        <TaskRow card={card} isInbox isNext={isNext} {...rest} />
-      </div>
-      {actions.length ? (
-        <ActionBar
-          actions={actions}
-          handle={card.qualified_handle}
-          onCockpit={rest.onCockpit}
-          onResult={rest.onResult}
-          onMutated={rest.onMutated}
-        />
-      ) : null}
-    </div>
-  );
-}
-
 export default function TaskList({
   cockpit,
   selectedProject = null,
@@ -169,11 +131,6 @@ export default function TaskList({
     setOffsets((prev) => ({ ...prev, [handle]: offset }));
   }, []);
 
-  const cardsByHandle = useMemo(
-    () => new Map(cockpit.cards.map((card) => [card.qualified_handle, card])),
-    [cockpit.cards],
-  );
-
   const projects = useMemo(
     () =>
       [
@@ -193,34 +150,11 @@ export default function TaskList({
     [cockpit.repos?.repos],
   );
 
-  // Rust ranks the inbox by severity; the browser only selects from that order.
-  const inboxCards = useMemo(
-    () =>
-      (cockpit.inbox?.items ?? [])
-        .slice()
-        .sort((a, b) => (a.severity ?? 999) - (b.severity ?? 999))
-        .map((item) => cardsByHandle.get(item.task_handle))
-        .filter(
-          (card): card is BrowserTaskCard =>
-            card != null && (!selectedProject || card.repo === selectedProject),
-        ),
-    [cockpit.inbox?.items, cardsByHandle, selectedProject],
-  );
-
-  const inboxHandles = useMemo(
-    () => new Set(inboxCards.map((card) => card.qualified_handle)),
-    [inboxCards],
-  );
-
+  // Rust ranks the cards; the browser only keeps that order stable across polls
+  // so rows don't reshuffle under the operator's thumb.
   const calm = useMemo(
-    () =>
-      sortCards(
-        filterByProject(cockpit.cards, selectedProject).filter(
-          (card) => !inboxHandles.has(card.qualified_handle),
-        ),
-        stableOrder,
-      ),
-    [cockpit.cards, selectedProject, inboxHandles, stableOrder],
+    () => sortCards(filterByProject(cockpit.cards, selectedProject), stableOrder),
+    [cockpit.cards, selectedProject, stableOrder],
   );
 
   useEffect(() => {
@@ -235,8 +169,6 @@ export default function TaskList({
 
   const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
   const idle = useMemo(() => calm.filter((card) => card.status === "idle"), [calm]);
-
-  const visibleCount = filterByProject(cockpit.cards, selectedProject).length;
 
   const rowProps = {
     nowSecs,
@@ -253,7 +185,6 @@ export default function TaskList({
         <TaskRow
           key={card.qualified_handle}
           card={card}
-          isInbox={false}
           offset={offsets[card.qualified_handle] ?? 0}
           {...rowProps}
         />
@@ -296,30 +227,8 @@ export default function TaskList({
         </nav>
       ) : null}
 
-      {inboxCards.length > 0 ? (
-        <section className="group inbox" aria-label="Needs you" aria-live="polite">
-          <div className="section-head attention">
-            <span className="section-head-title">Needs you</span>
-            <span className="section-head-count">{inboxCards.length}</span>
-          </div>
-          {inboxCards.map((card, index) => (
-            <InboxEntry
-              key={card.qualified_handle}
-              card={card}
-              isNext={index === 0}
-              offset={offsets[card.qualified_handle] ?? 0}
-              {...rowProps}
-            />
-          ))}
-        </section>
-      ) : null}
-
       {calm.length > 0 ? (
-        <section className="group tasks" aria-label="Tasks" aria-live="polite">
-          <div className="section-head">
-            <span className="section-head-title">{selectedProject ?? "Tasks"}</span>
-            <span className="section-head-count">{calm.length}</span>
-          </div>
+        <section className="tasks" aria-label="Tasks" aria-live="polite">
           {active.length > 0 ? (
             <section className="task-band">
               <div className="task-band-title">
@@ -344,7 +253,7 @@ export default function TaskList({
         </section>
       ) : null}
 
-      {visibleCount === 0 ? (
+      {calm.length === 0 ? (
         <p className="empty">
           {selectedProject
             ? `No tasks in ${selectedProject} yet — start one below.`

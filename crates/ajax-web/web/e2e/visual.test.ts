@@ -46,10 +46,9 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const activePill = page.locator(".project-pill.is-active").first();
   expect(await bg(activePill)).toBe(ACCENT);
 
-  // Inbox row: same compact task-row shape as the calm list — opaque bg, no
-  // left stripe; status label carries the tone color instead.
-  const inboxRow = page.locator(".task-row.is-inbox").first();
-  const rowStyle = await inboxRow.evaluate((el) => {
+  // Calm task row: opaque bg, no left stripe — tone lives on the status label.
+  const taskRow = page.locator('.task-row[data-handle="web/fix-login"]').first();
+  const rowStyle = await taskRow.evaluate((el) => {
     const s = getComputedStyle(el);
     return {
       bg: s.backgroundColor,
@@ -60,7 +59,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   expect(rowStyle.leftWidth).not.toBe("3px");
 
   // Status label paints with the tone color (waiting -> warn), not default ink.
-  const status = page.locator(".task-row-status").first();
+  const status = taskRow.locator(".task-row-status");
   expect(await status.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
 
   // Task rows have the compact list padding (would be 0 if unstyled).

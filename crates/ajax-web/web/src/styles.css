@@ -1063,54 +1063,8 @@ header .bar h1 {
   margin-left: 6px;
 }
 
-.section-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 16px 0 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.group:first-of-type .section-head {
+.tasks {
   margin-top: 6px;
-}
-
-.section-head::after {
-  content: "";
-  flex: 1 1 auto;
-}
-
-.section-head-title {
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
-
-.section-head.attention .section-head-title {
-  color: var(--warn);
-}
-
-.section-head-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--paper-high);
-  color: var(--ink-soft);
-  font-size: var(--text-label);
-  font-weight: 600;
-  font-feature-settings: "tnum";
-}
-
-.section-head.attention .section-head-count {
-  background: var(--warn);
-  color: var(--paper);
 }
 
 .task-band + .task-band {
@@ -1158,36 +1112,6 @@ header .bar h1 {
   transform: rotate(90deg);
 }
 
-/* INBOX ENTRY — one bounded card: the row, then a hairline action strip.
-   Actions are real buttons here, so these rows never swipe. */
-.inbox-entry {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: var(--paper-tint);
-  box-shadow: var(--elev-1);
-}
-
-.inbox-entry + .inbox-entry {
-  margin-top: 10px;
-}
-
-.inbox-entry .task-list {
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.inbox-entry .action-row {
-  padding: 8px var(--space-4);
-  border-top: 1px solid var(--rule);
-}
-
-/* The lead decision wears the attention edge; everything else stays hairline. */
-.inbox-entry.is-next {
-  border-color: var(--warn);
-}
-
 .task-list {
   display: grid;
   border: 1px solid var(--rule);
@@ -1229,7 +1153,7 @@ header .bar h1 {
   border: none;
   color: var(--ink);
   text-align: left;
-  transition: background 120ms var(--ease), transform 220ms var(--ease-spring);
+  transition: background 120ms var(--ease), transform 220ms var(--ease);
   touch-action: pan-y;
 }
 
@@ -1259,11 +1183,6 @@ header .bar h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--ink);
-}
-
-.task-row.is-next .task-row-title {
-  font-size: var(--text-heading);
-  font-weight: 700;
 }
 
 .task-row-handle {

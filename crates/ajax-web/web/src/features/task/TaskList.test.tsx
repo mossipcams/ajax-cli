@@ -58,7 +58,6 @@ const cockpit: BrowserCockpitView = {
       actions: [],
     },
   ],
-  inbox: { items: [{ task_handle: "web/a", severity: 1 }] },
 };
 
 describe("TaskList", () => {
@@ -70,38 +69,36 @@ describe("TaskList", () => {
     expect(rowC).not.toHaveTextContent("ago");
   });
 
-  it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
+  it("renders every card as a calm row — no inbox section, no inline action", () => {
     render(<TaskList cockpit={cockpit} />);
+    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
     const webARow = screen.getByRole("button", { name: /web\/a/ });
     expect(webARow).toHaveClass("task-row");
-    expect(webARow).toHaveClass("is-inbox");
+    expect(webARow).not.toHaveClass("is-inbox");
+    expect(webARow).not.toHaveClass("is-next");
     expect(webARow).toHaveAttribute("data-handle", "web/a");
     expect(screen.getByText("CI failed")).toBeInTheDocument();
+  });
+
+  it("reveals the first non-resume action behind a row via swipe", () => {
+    render(<TaskList cockpit={cockpit} />);
+    // web/a: resume is filtered, so Fix CI is the reveal; Drop stays on detail.
     expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
-    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("renders calm task rows excluding inbox tasks", () => {
+  it("places running/error tasks in Active and idle tasks in the disclosure", () => {
     render(<TaskList cockpit={cockpit} />);
-    expect(screen.getByRole("button", { name: /web\/b/ })).toHaveAttribute("data-handle", "web/b");
-    expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
-    const webARow = screen.getByRole("button", { name: /web\/a/ });
-    expect(webARow).toHaveClass("is-inbox");
-    expect(webARow).toHaveAttribute("data-handle", "web/a");
-  });
-
-  it("groups attention tasks under Needs you and keeps them out of Tasks", () => {
-    render(<TaskList cockpit={cockpit} />);
-    const needsYou = screen.getByRole("region", { name: "Needs you" });
     const tasks = screen.getByRole("region", { name: "Tasks" });
-    // web/a is an inbox item: it belongs to Needs you and must not be duplicated
-    // into the calm Tasks group.
-    expect(within(needsYou).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
-    expect(within(tasks).queryByRole("button", { name: /web\/a/ })).toBeNull();
-    // Calm rows live only under Tasks.
-    expect(within(tasks).getByRole("button", { name: /web\/b/ })).toBeInTheDocument();
-    expect(within(needsYou).queryByRole("button", { name: /web\/b/ })).toBeNull();
+    expect(within(tasks).getByText("Active")).toHaveClass("task-band-label");
+
+    const idle = within(tasks).getByRole("group");
+    expect(idle).toHaveAttribute("open");
+    // web/a (error) and web/b (running) are active; only api/c is idle.
+    expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
+    expect(within(idle).queryByRole("button", { name: /web\/a/ })).toBeNull();
+    expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
   it("shows per-repo attention counts on project pills", () => {
@@ -144,11 +141,7 @@ describe("TaskList", () => {
     render(<TaskList cockpit={docsCockpit} selectedProject="docs" />);
     expect(screen.getByText("No tasks in docs yet — start one below.")).toBeInTheDocument();
 
-    const emptyCockpit: BrowserCockpitView = {
-      ...cockpit,
-      cards: [],
-      inbox: { items: [] },
-    };
+    const emptyCockpit: BrowserCockpitView = { ...cockpit, cards: [] };
     render(<TaskList cockpit={emptyCockpit} />);
     expect(screen.getByText("All quiet — start a new task below.")).toBeInTheDocument();
   });
@@ -160,19 +153,12 @@ describe("TaskList", () => {
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
 
-  it("opens an inbox task when the row is tapped", () => {
-    const onOpenTask = vi.fn();
-    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
-    fireEvent.click(screen.getByRole("button", { name: /web\/a/ }));
-    expect(onOpenTask).toHaveBeenCalledWith("web/a");
-  });
-
-  it("does not reveal resume as a calm-row action", () => {
+  it("does not reveal resume as a row action", () => {
     render(<TaskList cockpit={cockpit} />);
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("reveals a swipe action behind a calm row that has actions", () => {
+  it("reveals a swipe action behind a row that has actions", () => {
     const withAction: BrowserCockpitView = {
       ...cockpit,
       cards: [
@@ -188,7 +174,6 @@ describe("TaskList", () => {
           ],
         },
       ],
-      inbox: { items: [] },
     };
     render(<TaskList cockpit={withAction} />);
     const webBRow = screen.getByRole("button", { name: /web\/b/ });
@@ -196,7 +181,7 @@ describe("TaskList", () => {
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
-  it("renders no reveal for a calm row without non-resume actions", () => {
+  it("renders no reveal for a row without non-resume actions", () => {
     const onlyIdle: BrowserCockpitView = {
       ...cockpit,
       cards: [
@@ -210,19 +195,11 @@ describe("TaskList", () => {
           actions: [],
         },
       ],
-      inbox: { items: [] },
     };
     render(<TaskList cockpit={onlyIdle} />);
     expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Fix CI" })).not.toBeInTheDocument();
-  });
-
-  it("keeps is-inbox semantics without a left border stripe", () => {
-    const inboxRule =
-      stylesSource.match(/\.task-row\.is-inbox\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(inboxRule).not.toMatch(/border-left/);
-    expect(inboxRule).not.toMatch(/padding-left:\s*calc/);
   });
 
   it("renders the human-readable title as the row's primary line", () => {
@@ -232,54 +209,13 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
-  it("leads Needs you with the highest-severity item and its actions inline", () => {
-    render(<TaskList cockpit={cockpit} />);
-    const needsYou = screen.getByRole("region", { name: "Needs you" });
-    const lead = within(needsYou).getByRole("button", { name: /web\/a/ });
-    expect(lead).toHaveClass("is-next");
-    // The action is a real button, reachable without discovering a swipe, and it
-    // appears exactly once (inbox rows never also render a swipe reveal).
-    const actions = within(needsYou).getAllByRole("button", { name: "Fix CI" });
-    expect(actions).toHaveLength(1);
-    expect(actions[0]).toHaveAttribute("data-task", "web/a");
-  });
-
-  it("renders no lead entry when the inbox is empty", () => {
-    const noInbox: BrowserCockpitView = { ...cockpit, inbox: { items: [] } };
-    render(<TaskList cockpit={noInbox} />);
-    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
-    // web/a falls back into the calm list instead of leading the page.
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByRole("button", { name: /web\/a/ })).not.toHaveClass("is-next");
-  });
-
-  it("splits calm tasks into an active band and an idle disclosure", () => {
-    render(<TaskList cockpit={cockpit} />);
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByText("Active")).toHaveClass("task-band-label");
-
-    // web/b is running -> active band; api/c is idle -> the lone disclosure.
-    const idle = within(tasks).getByRole("group");
-    expect(idle).toHaveAttribute("open");
-    expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
-    expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
-  });
-
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
     const pillBadgeRule = stylesSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
-    const attentionTitleRule =
-      stylesSource.match(/\.section-head\.attention \.section-head-title\s*\{([^}]*)\}/)?.[1] ??
-      "";
-    const attentionCountRule =
-      stylesSource.match(/\.section-head\.attention \.section-head-count\s*\{([^}]*)\}/)?.[1] ??
-      "";
 
     expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
     expect(activePillRule).not.toMatch(/var\(--warn/);
     expect(pillBadgeRule).toMatch(/var\(--warn/);
-    expect(attentionTitleRule).toMatch(/var\(--warn/);
-    expect(attentionCountRule).toMatch(/var\(--warn/);
   });
 });
