@@ -399,19 +399,10 @@ export default function TaskTerminal({ handle }: Props) {
     repeater.start();
   };
 
-  const onRepeatableKeyPointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const onRepeatableKeyPointerEnd = () => {
     if (!toolbarRepeatHandledRef.current) return;
     endRepeatableKeyPress();
-    // pointercancel has no trailing click; drop the suppress flag immediately.
-    // pointerup/lostpointercapture keep it for one click, then expire so a later
-    // keyboard activation cannot be swallowed.
-    if (event.type === "pointercancel") {
-      toolbarRepeatHandledRef.current = false;
-      return;
-    }
-    window.setTimeout(() => {
-      toolbarRepeatHandledRef.current = false;
-    }, 0);
+    toolbarRepeatHandledRef.current = false;
   };
 
   const onControlKeyClick = (
@@ -420,8 +411,12 @@ export default function TaskTerminal({ handle }: Props) {
     repeatable: boolean,
   ) => {
     const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-    if (repeatable && toolbarRepeatHandledRef.current) {
-      toolbarRepeatHandledRef.current = false;
+    // Repeatable keys already emit once from onRepeatableKeyPointerDown, so the
+    // trailing pointer/touch click must never send again. iOS can deliver that
+    // synthetic click after a timing flag would have expired (that race sent the
+    // arrow twice and skipped a line), so key off event.detail — 0 means a
+    // keyboard activation, which had no pointerdown emit and must send once.
+    if (repeatable && event.detail !== 0) {
       refocusTermIfOwned(ownedFocus);
       return;
     }

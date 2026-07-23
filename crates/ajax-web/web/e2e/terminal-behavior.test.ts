@@ -656,6 +656,27 @@ test("Backspace tap sends one DEL frame", async ({ page }) => {
   await settleNoNewFrames(page, baseline + 1);
 });
 
+test("repeatable hotbar key ignores a late trailing pointer click without double-sending", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  const baseline = await inputFrameCount(page);
+
+  // A tap already emits once on pointerdown. iOS can then deliver the synthetic
+  // compat click a frame late — after the old setTimeout(0) suppress flag had
+  // expired — which re-sent the arrow and skipped a line. A pointer-generated
+  // click carries detail > 0; a keyboard activation carries detail 0.
+  await tapToolbarButton(page, "Left arrow");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+
+  await terminalToolbar(page)
+    .getByRole("button", { name: "Left arrow" })
+    .dispatchEvent("click", { detail: 1 });
+
+  await settleNoNewFrames(page, baseline + 1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
+});
+
 test("held Backspace repeats DEL frames then stops on release", async ({ page }) => {
   await openTaskTerminal(page);
   const baseline = await inputFrameCount(page);
