@@ -338,6 +338,111 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(repeatableBlock).not.toMatch(/\\t/);
     expect(repeatableBlock).not.toMatch(/Paste/);
   });
+
+  it("skips xterm Backspace keydown so iOS can key-repeat", () => {
+    const backspaceBranch = extractBlock(
+      taskTerminalSource,
+      /liveTerm\.attachCustomKeyEventHandler\(\(event\) => \{/,
+      /\n {6}if \(event\.key !== " "/,
+    );
+
+    expect(backspaceBranch).toMatch(
+      /event\.key === "Backspace" \|\| event\.key === "Delete"[\s\S]*?return false/,
+    );
+    expect(backspaceBranch).not.toMatch(/\.preventDefault\s*\(/);
+  });
+
+  it("seeds a zero-width space so iOS has deletable content", () => {
+    expect(taskTerminalSource).toMatch(/const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/);
+
+    const hardenTextarea = extractBlock(
+      taskTerminalSource,
+      /const hardenMobileTextarea\s*=\s*\(\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(hardenTextarea).toMatch(/seedBackspaceSentinel\(input\)/);
+    expect(hardenTextarea).toMatch(/addEventListener\("focus",\s*\w+\)/);
+  });
+
+  it("sends DEL from beforeinput deleteContentBackward", () => {
+    const beforeInput = extractBlock(
+      taskTerminalSource,
+      /const onTextareaBeforeInput\s*=\s*\(event:\s*InputEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+
+    expect(beforeInput).toMatch(/deleteInputPayload\(event\.inputType\)/);
+    expect(beforeInput).toMatch(/sendKey\(consumeCtrl\(payload\)\)/);
+    expect(beforeInput).not.toMatch(/\.preventDefault\s*\(/);
+
+    // Measured on iOS 26: a held Delete repeats deleteContentBackward at ~100ms
+    // and then escalates to deleteWordBackward. Dropping the escalation strands
+    // the rest of the hold, which is what "hold backspace does nothing" looked
+    // like in the app.
+    const payloads = extractBlock(
+      taskTerminalSource,
+      /const deleteInputPayload\s*=\s*\(inputType:\s*string\)/,
+      /\n {2}\};/,
+    );
+    expect(payloads).toMatch(/deleteContentBackward[\s\S]*?"\\x7f"/);
+    expect(payloads).toMatch(/deleteWordBackward[\s\S]*?"\\x17"/);
+  });
+
+  it("reseeds the sentinel from input, never a beforeinput microtask", () => {
+    const onInput = extractBlock(
+      taskTerminalSource,
+      /const onTextareaInput\s*=\s*\(event:\s*Event\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(onInput).toMatch(/startsWith\("delete"\)/);
+    expect(onInput).toMatch(/seedTermSentinel\(\)/);
+
+    // The microtask checkpoint runs before the browser applies the deletion, so
+    // a beforeinput-scheduled reseed always sees the sentinel still there, does
+    // nothing, and leaves the field empty for the next repeat tick.
+    expect(taskTerminalSource).not.toMatch(/queueMicrotask\(\s*\w*[Ss]entinel\s*\)/);
+    expect(taskTerminalSource).toMatch(/addEventListener\("input",\s*\w+\)/);
+  });
+
+  it("removes the beforeinput and focus listeners with the identities it registered", () => {
+    const cleanup = extractBlock(
+      taskTerminalSource,
+      /return \(\) => \{\n {6}disposed = true/,
+      /\n {4}\};\n {2}\}, \[handle\]\);/,
+    );
+
+    // Matching names are not enough. hardenMobileTextarea runs through an
+    // effect event (latest render's closure) while cleanup runs with the
+    // effect's own closure, so a plain component-scope arrow resolves to two
+    // different functions and the listener is never removed. Each handler must
+    // be stable: declared at module scope, or via useEffectEvent.
+    const registeredFocus =
+      taskTerminalSource.match(/addEventListener\("focus",\s*(\w+)\)/)?.[1] ?? "add-missing";
+    const registeredBeforeInput =
+      taskTerminalSource.match(/addEventListener\("beforeinput",\s*(\w+)\)/)?.[1] ??
+      "add-missing";
+    const registeredInput =
+      taskTerminalSource.match(/addEventListener\("input",\s*(\w+)\)/)?.[1] ?? "add-missing";
+
+    expect(cleanup).toMatch(
+      new RegExp(`removeEventListener\\("beforeinput",\\s*${registeredBeforeInput}\\)`),
+    );
+    expect(cleanup).toMatch(
+      new RegExp(`removeEventListener\\("focus",\\s*${registeredFocus}\\)`),
+    );
+
+    expect(cleanup).toMatch(
+      new RegExp(`removeEventListener\\("input",\\s*${registeredInput}\\)`),
+    );
+
+    for (const handler of [registeredFocus, registeredBeforeInput, registeredInput]) {
+      const moduleScope = new RegExp(`^const ${handler}\\s*=`, "m");
+      const effectEvent = new RegExp(`const ${handler}\\s*=\\s*useEffectEvent\\(`);
+      expect(
+        moduleScope.test(taskTerminalSource) || effectEvent.test(taskTerminalSource),
+      ).toBe(true);
+    }
+  });
 });
 
 describe("TaskTerminal seeded history reveal", () => {

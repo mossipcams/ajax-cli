@@ -691,6 +691,34 @@ test("repeated printable browser events produce exact cardinality", async ({ pag
   expect(frames.slice(baseline).map((frame) => frame.data)).toEqual(["x", "x", "x"]);
 });
 
+test("native Backspace presses produce exact DEL cardinality", async ({ page }) => {
+  await openTaskTerminal(page);
+  const baseline = await inputFrameCount(page);
+
+  await clickTerminalSurfaceInterior(page);
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(3);
+  const frames = await terminalInputFrames(page);
+  expect(frames.slice(baseline).map((frame) => frame.data)).toEqual([BACKSPACE, BACKSPACE, BACKSPACE]);
+});
+
+test("native Backspace after Enter still sends DEL", async ({ page }) => {
+  await openTaskTerminal(page);
+  const baseline = await inputFrameCount(page);
+
+  await clickTerminalSurfaceInterior(page);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(2);
+  const frames = await terminalInputFrames(page);
+  expect(frames.slice(baseline).map((frame) => frame.data)).toEqual(["\r", BACKSPACE]);
+});
+
 test("multiline Unicode paste preserves content in one input frame", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);

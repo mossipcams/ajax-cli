@@ -1,9 +1,12 @@
+// ponytail: these five constants are the whole feel knob — tune here, not in
+// callers. Ceiling: one fixed curve for every repeatable key; split per-key
+// curves only if Backspace and arrows need different cadences.
 export const KEY_REPEAT_INITIAL_DELAY_MS = 500;
-export const KEY_REPEAT_INITIAL_INTERVAL_MS = 100;
-export const KEY_REPEAT_MIN_INTERVAL_MS = 30;
-export const KEY_REPEAT_STAGE_INTERVALS_MS = [100, 70, 50, 30] as const;
+export const KEY_REPEAT_INITIAL_INTERVAL_MS = 130;
+export const KEY_REPEAT_MIN_INTERVAL_MS = 60;
+export const KEY_REPEAT_STAGE_INTERVALS_MS = [130, 100, 80, 60] as const;
 
-const EMITS_PER_STAGE = 4;
+const EMITS_PER_STAGE = 6;
 
 export function nextRepeatInterval(stage: number): number {
   const index = Math.min(
