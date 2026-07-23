@@ -3,6 +3,10 @@ import {
   STATUS_ORDER,
   statusRank,
   filterByProject,
+  fleetSegments,
+  isQuiet,
+  QUIET_THRESHOLD_SECS,
+  reposWithFault,
   sortCards,
   isConfirmExpired,
   statusMeta,
@@ -93,6 +97,66 @@ describe("filterByProject", () => {
     expect(filterByProject(cards, "web").map((c) => c.qualified_handle)).toEqual([
       "web/a",
     ]);
+  });
+});
+
+describe("isQuiet", () => {
+  const now = 1_700_000_000;
+
+  it("flags a running task past the quiet threshold", () => {
+    const stuck = { ...card("web/a", "running"), last_activity_unix_secs: now - QUIET_THRESHOLD_SECS };
+    expect(isQuiet(stuck, now)).toBe(true);
+  });
+
+  it("leaves a freshly-active running task alone", () => {
+    const busy = { ...card("web/a", "running"), last_activity_unix_secs: now - 30 };
+    expect(isQuiet(busy, now)).toBe(false);
+  });
+
+  it("never flags non-running statuses or unset activity", () => {
+    const idle = { ...card("web/a", "idle"), last_activity_unix_secs: now - 9999 };
+    const unset = { ...card("web/b", "running"), last_activity_unix_secs: 0 };
+    expect(isQuiet(idle, now)).toBe(false);
+    expect(isQuiet(unset, now)).toBe(false);
+  });
+});
+
+describe("fleetSegments", () => {
+  it("orders faults, waiting, running and excludes idle", () => {
+    const cards = [
+      card("web/a", "running"),
+      card("web/b", "idle"),
+      card("web/c", "error"),
+      card("web/d", "waiting"),
+      card("web/e", "running"),
+    ];
+    expect(fleetSegments(cards)).toEqual([
+      { status: "error", count: 1 },
+      { status: "waiting", count: 1 },
+      { status: "running", count: 2 },
+    ]);
+  });
+
+  it("omits states with no tasks so an accent never shows for an empty state", () => {
+    const cards = [card("web/a", "running"), card("web/b", "idle")];
+    expect(fleetSegments(cards)).toEqual([{ status: "running", count: 1 }]);
+  });
+
+  it("returns nothing when only idle tasks exist", () => {
+    expect(fleetSegments([card("web/a", "idle")])).toEqual([]);
+  });
+});
+
+describe("reposWithFault", () => {
+  it("collects only repos with a faulted task", () => {
+    const cards = [
+      card("web/a", "error"),
+      card("web/b", "running"),
+      card("api/c", "idle"),
+    ];
+    const faulted = reposWithFault(cards);
+    expect(faulted.has("web")).toBe(true);
+    expect(faulted.has("api")).toBe(false);
   });
 });
 

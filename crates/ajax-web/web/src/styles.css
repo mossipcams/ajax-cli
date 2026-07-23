@@ -1047,20 +1047,93 @@ header .bar h1 {
   font-weight: 600;
 }
 
-.pill-badge {
-  background: var(--warn);
-  color: var(--paper);
-  border-radius: 999px;
-  min-width: 16px;
-  height: 16px;
+/* A faulted repo shows a fault dot, not a count — health, not a metric. The pill
+   is not a flex row, so the dot needs inline-block to keep its box. */
+.pill-fault-dot {
+  display: inline-block;
+  vertical-align: middle;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  margin-left: 6px;
+}
+
+/* MUSTER BAR — the active fleet as one proportional, tone-segmented gauge. Not a
+   metric strip: no cards, no hero numbers, and empty states have no segment. */
+.muster-bar {
+  display: flex;
+  gap: 3px;
+  margin: 2px 0 14px;
+  padding: 3px;
+  background: var(--paper-tint);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.muster-seg {
+  flex: 1 1 0;
+  min-width: 56px;
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--tone-bg);
+  color: var(--ink);
+  text-align: left;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.muster-seg:hover,
+.muster-seg:focus-visible {
+  border-color: var(--tone);
+  outline: none;
+}
+
+.muster-seg[aria-pressed="true"] {
+  border-color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 22%, var(--paper-tint));
+}
+
+.muster-seg-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.muster-seg.tone-running[aria-pressed="false"] .muster-seg-dot {
+  animation: pulse 2.2s ease-in-out infinite;
+}
+
+.muster-seg-count {
+  font-size: var(--text-body);
+  font-weight: 700;
+  font-feature-settings: "tnum";
+  color: var(--tone);
+}
+
+.muster-seg-label {
   font-size: var(--text-micro);
   font-weight: 600;
-  font-feature-settings: "tnum";
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  margin-left: 6px;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* A segment too narrow for its word drops to dot + count — never a truncated
+   "W…". The dominant state keeps its label; the tier below names the rest. */
+@container (max-width: 92px) {
+  .muster-seg-label {
+    display: none;
+  }
 }
 
 .tasks {
@@ -1201,6 +1274,21 @@ header .bar h1 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* "Running but wedged": amber note, and the running dot stops pulsing so a
+   stalled agent doesn't read as live. */
+.task-row-quiet {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-row.is-quiet .status-dot.tone-running {
+  animation: none;
 }
 
 .task-row-side {

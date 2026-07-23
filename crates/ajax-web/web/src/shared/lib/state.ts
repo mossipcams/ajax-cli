@@ -80,6 +80,45 @@ export function isConfirmExpired(entry: { expiresAt: number }, now: number): boo
   return now > entry.expiresAt;
 }
 
+/** A running task with no activity for this long reads as quiet/stuck. */
+export const QUIET_THRESHOLD_SECS = 240; // 4 minutes
+
+/** True when a running task has gone silent past the quiet threshold — the
+ * "running but wedged" signal a plain status count hides. Unset activity (0)
+ * never counts as quiet. */
+export function isQuiet(card: BrowserTaskCard, nowSecs: number): boolean {
+  return (
+    card.status === "running" &&
+    card.last_activity_unix_secs > 0 &&
+    nowSecs - card.last_activity_unix_secs >= QUIET_THRESHOLD_SECS
+  );
+}
+
+export type ActiveStatus = Exclude<TaskStatus, "idle">;
+
+export interface FleetSegment {
+  status: ActiveStatus;
+  count: number;
+}
+
+/** Muster Bar order: faults first, then what's blocked on you, then the healthy
+ * body. Idle is inventory, not fleet health, so it never gets a segment. */
+const ACTIVE_ORDER: ActiveStatus[] = ["error", "waiting", "running"];
+
+/** Active-fleet composition for the Muster Bar. Only nonzero states appear, so
+ * an accent never shows for an empty state (Accent Rarity holds by construction). */
+export function fleetSegments(cards: BrowserTaskCard[]): FleetSegment[] {
+  return ACTIVE_ORDER.map((status) => ({
+    status,
+    count: cards.filter((c) => c.status === status).length,
+  })).filter((segment) => segment.count > 0);
+}
+
+/** Repos with at least one faulted task — drives the project-pill fault dot. */
+export function reposWithFault(cards: BrowserTaskCard[]): Set<string> {
+  return new Set(cards.filter((c) => c.status === "error").map((c) => c.repo));
+}
+
 /** Compact relative timestamp for glanceable metadata: "now", "5m ago",
  * "2d ago". Unset (zero) timestamps render as "—"; clock skew clamps to "now". */
 export function relativeTime(unixSecs: number, nowSecs: number): string {

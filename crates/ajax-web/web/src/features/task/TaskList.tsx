@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
-import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
+import type { ActiveStatus } from "@/shared/lib/state";
+import {
+  filterByProject,
+  fleetSegments,
+  formatDuration,
+  isQuiet,
+  relativeTime,
+  reposWithFault,
+  sortCards,
+  statusMeta,
+} from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
+import MusterBar from "./MusterBar";
 import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
 import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
 
@@ -41,6 +52,7 @@ function TaskRow({
   onMutated,
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
+  const quiet = isQuiet(card, nowSecs);
   const rowRef = useRef<HTMLButtonElement>(null);
   // The primary action rides behind the row as a swipe reveal; tapping the row
   // opens the task detail where every action lives. One gesture, one surface.
@@ -61,7 +73,12 @@ function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : ""]
+  const className = [
+    "task-row",
+    `tone-${meta.tone}`,
+    offset > 0 ? "is-revealed" : "",
+    quiet ? "is-quiet" : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -90,8 +107,12 @@ function TaskRow({
         <div className="task-row-main">
           <span className="task-row-title">{card.title || card.qualified_handle}</span>
           {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
-          {card.status_explanation &&
-          card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
+          {quiet ? (
+            <span className="task-row-quiet">
+              Quiet {formatDuration(nowSecs - card.last_activity_unix_secs)} — no output
+            </span>
+          ) : card.status_explanation &&
+            card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
             <span className="task-row-sub">{card.status_explanation}</span>
           ) : null}
         </div>
@@ -121,9 +142,12 @@ export default function TaskList({
   const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
   const [stableOrder, setStableOrder] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<ActiveStatus | null>(null);
 
+  // Quiet detection turns on a 4-minute boundary, so the clock must tick faster
+  // than the 60s row-time refresh to flip a running row to "quiet" on time.
   useEffect(() => {
-    const timer = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 60_000);
+    const timer = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 30_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -142,13 +166,10 @@ export default function TaskList({
     [cockpit.cards, cockpit.repos?.repos],
   );
 
-  const attentionByRepo = useMemo(
-    () =>
-      new Map(
-        (cockpit.repos?.repos ?? []).map((repo) => [repo.name, repo.attention_items ?? 0]),
-      ),
-    [cockpit.repos?.repos],
-  );
+  // A faulted repo reads on its pill as a dot, not a count — the filter row
+  // carries health, not a metric. Faults are counted across the whole fleet, not
+  // the project-filtered slice, so the dot is honest whatever pill is active.
+  const faultRepos = useMemo(() => reposWithFault(cockpit.cards), [cockpit.cards]);
 
   // Rust ranks the cards; the browser only keeps that order stable across polls
   // so rows don't reshuffle under the operator's thumb.
@@ -167,8 +188,26 @@ export default function TaskList({
     });
   }, [calm]);
 
-  const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
+  // Health tiers: exceptions that define fleet health first (faults, then what's
+  // blocked on you), then the running body, then idle as a collapsed tail. This
+  // is grouping by tone, not a linear urgency ranking.
+  const faults = useMemo(() => calm.filter((card) => card.status === "error"), [calm]);
+  const waiting = useMemo(() => calm.filter((card) => card.status === "waiting"), [calm]);
+  const running = useMemo(() => calm.filter((card) => card.status === "running"), [calm]);
   const idle = useMemo(() => calm.filter((card) => card.status === "idle"), [calm]);
+  const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
+
+  const segments = useMemo(() => fleetSegments(active), [active]);
+
+  const byStatus: Record<ActiveStatus, BrowserTaskCard[]> = {
+    error: faults,
+    waiting,
+    running,
+  };
+  // A filter that no longer matches any task (its last card resolved) falls back
+  // to showing everything, so the list never strands the operator on an empty view.
+  const effectiveFilter = statusFilter && byStatus[statusFilter].length ? statusFilter : null;
+  const showTier = (status: ActiveStatus) => !effectiveFilter || effectiveFilter === status;
 
   const rowProps = {
     nowSecs,
@@ -192,8 +231,21 @@ export default function TaskList({
     </div>
   );
 
+  const tier = (status: ActiveStatus, label: string, cards: BrowserTaskCard[]) =>
+    cards.length > 0 && showTier(status) ? (
+      <section className="task-band" data-tier={status}>
+        <div className="task-band-title">
+          <span className="task-band-label">{label}</span>
+          <span className="task-band-count">{cards.length}</span>
+        </div>
+        {band(cards)}
+      </section>
+    ) : null;
+
   return (
     <>
+      <MusterBar segments={segments} selected={effectiveFilter} onSelect={setStatusFilter} />
+
       {projects.length > 0 ? (
         <nav className="project-nav" aria-label="Projects">
           <span className="project-nav-label">Projects</span>
@@ -205,22 +257,18 @@ export default function TaskList({
             All
           </button>
           {projects.map((project) => {
-            const count = attentionByRepo.get(project) ?? 0;
+            const faulted = faultRepos.has(project);
             return (
               <button
                 key={project}
                 type="button"
                 className={`project-pill${selectedProject === project ? " is-active" : ""}`}
-                aria-label={count ? `${project} — ${count} need attention` : project}
+                aria-label={faulted ? `${project} — has a fault` : project}
                 aria-current={selectedProject === project ? "true" : undefined}
                 onClick={() => onSelectProject?.(project)}
               >
                 {project}
-                {count ? (
-                  <span className="pill-badge" aria-hidden="true">
-                    {count}
-                  </span>
-                ) : null}
+                {faulted ? <span className="pill-fault-dot" aria-hidden="true" /> : null}
               </button>
             );
           })}
@@ -229,16 +277,10 @@ export default function TaskList({
 
       {calm.length > 0 ? (
         <section className="tasks" aria-label="Tasks" aria-live="polite">
-          {active.length > 0 ? (
-            <section className="task-band">
-              <div className="task-band-title">
-                <span className="task-band-label">Active</span>
-                <span className="task-band-count">{active.length}</span>
-              </div>
-              {band(active)}
-            </section>
-          ) : null}
-          {idle.length > 0 ? (
+          {tier("error", "Faults", faults)}
+          {tier("waiting", "Waiting", waiting)}
+          {tier("running", "Running", running)}
+          {idle.length > 0 && !effectiveFilter ? (
             // ponytail: ships open — a closed <details> drops its rows out of the
             // accessibility tree. Flip to collapsed-by-default only together with
             // the row queries in TaskList.test.tsx.
