@@ -2,6 +2,28 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.56.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.1...ajax-cli-v0.56.0) (2026-07-23)
+
+
+### Features
+
+* **web:** add iOS-like hotbar hold-to-repeat ([#667](https://github.com/mossipcams/ajax-cli/issues/667)) ([7c765e3](https://github.com/mossipcams/ajax-cli/commit/7c765e3470bce84964d9ea06a6fd6223dbad6e1b))
+* **web:** add Test in Stable and fix Attempts run-on text ([#665](https://github.com/mossipcams/ajax-cli/issues/665)) ([9d00845](https://github.com/mossipcams/ajax-cli/commit/9d008452bc72523e8df93310d2a7e14f824082a2))
+* **web:** drop the Needs-you inbox for one calm task list ([#676](https://github.com/mossipcams/ajax-cli/issues/676)) ([ca0b3f3](https://github.com/mossipcams/ajax-cli/commit/ca0b3f363376902beac3131f2a731b3ea6e725a3))
+* **web:** lead the dashboard with a fleet-health muster bar ([#677](https://github.com/mossipcams/ajax-cli/issues/677)) ([2cda5fe](https://github.com/mossipcams/ajax-cli/commit/2cda5fe59d66395566d91dd7f2205012cd85dd32))
+* **web:** redesign dashboard as an urgency-ordered decision queue ([#671](https://github.com/mossipcams/ajax-cli/issues/671)) ([6729eed](https://github.com/mossipcams/ajax-cli/commit/6729eed923c1dfe326d851e9294192ee0e8ffba5))
+
+
+### Bug Fixes
+
+* **scripts:** detach Test in Stable from the pane that spawns it ([#673](https://github.com/mossipcams/ajax-cli/issues/673)) ([1de1e27](https://github.com/mossipcams/ajax-cli/commit/1de1e2746f07121d1f9cc6e65f4aab2863957799))
+* **scripts:** reinstall agent hooks when definitions change ([#664](https://github.com/mossipcams/ajax-cli/issues/664)) ([ae2cd63](https://github.com/mossipcams/ajax-cli/commit/ae2cd634134174afc7f5de1ce3a891a37045ec66))
+* **web:** mobile hotbar repeat cadence and iOS keyboard textarea handling ([#675](https://github.com/mossipcams/ajax-cli/issues/675)) ([b16ebd2](https://github.com/mossipcams/ajax-cli/commit/b16ebd28cb28b0e70af71085862207e782252aee))
+* **web:** open task terminal at CLI input without scroll animation ([#670](https://github.com/mossipcams/ajax-cli/issues/670)) ([b0d6c08](https://github.com/mossipcams/ajax-cli/commit/b0d6c08179766d2979250300564024609fc76c51))
+* **web:** open task terminal at the CLI input without a load scroll ([#672](https://github.com/mossipcams/ajax-cli/issues/672)) ([fb5b1f7](https://github.com/mossipcams/ajax-cli/commit/fb5b1f78bd95c7fae2b1cc9a26e7d2665ac97b78))
+* **web:** preserve seeded scrollback across attach clear ([#666](https://github.com/mossipcams/ajax-cli/issues/666)) ([7543044](https://github.com/mossipcams/ajax-cli/commit/7543044d447d2a300b13fa5a81f19dd8da84f2ef))
+* **web:** run Test in Stable detached from the server's log pipe ([#669](https://github.com/mossipcams/ajax-cli/issues/669)) ([cfe6439](https://github.com/mossipcams/ajax-cli/commit/cfe6439e7802c461ff99c856a6c604b82a08137c))
+
 ## [0.55.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.0...ajax-cli-v0.55.1) (2026-07-22)
 
 
