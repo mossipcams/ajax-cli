@@ -5,10 +5,20 @@
 // ever regresses to browser defaults. Colors are token values from styles.css.
 //
 // OS-independent on purpose: we assert computed colors/box metrics, not pixel
-// screenshots, so there are no platform-specific baselines to maintain.
+// screenshots, so there are no platform-specific baselines to maintain. (CI runs
+// WebKit on ubuntu-latest while development happens on macOS, and the design's
+// font stack — Avenir Next / Helvetica Neue — does not exist on Linux, so pixel
+// baselines could never agree across the two.)
+//
+// The per-element assertions above catch "the stylesheet stopped applying". They
+// cannot catch a *relational* break: correctly-styled controls that render
+// detached from the thing they belong to. The decision-queue redesign shipped
+// exactly that — Approve/Deny pills floating on the page background because their
+// container painted no surface — with every test in this file green. The
+// surface-containment test below closes that class.
 
 import { test, expect, type Locator } from "@playwright/test";
-import { mockFetch } from "./fixtures";
+import { mockFetch, COCKPIT_FIXTURE } from "./fixtures";
 
 // ---- design tokens (must match styles.css :root) -------------------------
 
@@ -60,6 +70,94 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   // Single new-task entry: bottom-nav only (no in-list dashed CTA).
   await expect(page.locator(".new-task-row")).toHaveCount(0);
   await expect(newButton).toBeVisible();
+});
+
+// A control group must read as part of the thing it acts on. We assert it by
+// walking up to the nearest ancestor that actually paints (background or border).
+// For a correctly-parented group that surface is its card, a few levels up and
+// inside the route outlet. For an orphaned group the walk escapes the outlet
+// entirely and only stops at the app root's page paper — which is precisely the
+// "floating on the background" look, and the exact shape of the shipped bug.
+
+// Two inbox entries on purpose: the lead entry and the ones behind it are styled
+// by different rules, and the shipped regression only affected the latter.
+const TWO_ATTENTION_ITEMS = {
+  ...COCKPIT_FIXTURE,
+  cards: [
+    ...COCKPIT_FIXTURE.cards,
+    {
+      id: "api/migrate-db",
+      qualified_handle: "api/migrate-db",
+      repo: "api",
+      title: "Migrate database schema",
+      status: "error",
+      status_explanation: "Worktree is missing",
+      actions: [
+        { action: "repair", label: "Repair", destructive: false, confirmation_required: false },
+      ],
+    },
+  ],
+  inbox: {
+    items: [
+      { task_handle: "api/migrate-db", severity: 1 },
+      { task_handle: "web/fix-login", severity: 2 },
+    ],
+  },
+};
+
+test("dashboard action groups sit on a card, not on the page background", async ({
+  page,
+}) => {
+  await mockFetch(page, { "/api/cockpit": TWO_ATTENTION_ITEMS });
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  const groups = page.locator('[data-testid="outlet-dashboard"] .action-row');
+  expect(await groups.count()).toBeGreaterThan(0);
+
+  const findings = await groups.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const transparent = "rgba(0, 0, 0, 0)";
+      const outlet = document.querySelector('[data-testid="outlet-dashboard"]');
+      let surface = node.parentElement;
+      while (surface) {
+        const style = getComputedStyle(surface);
+        const paints =
+          style.backgroundColor !== transparent ||
+          parseFloat(style.borderTopWidth) > 0 ||
+          parseFloat(style.borderBottomWidth) > 0;
+        if (paints) break;
+        surface = surface.parentElement;
+      }
+      const box = node.getBoundingClientRect();
+      const surfaceBox = surface?.getBoundingClientRect();
+      return {
+        action: node.querySelector("button")?.textContent ?? "?",
+        surface: surface ? `${surface.tagName}.${surface.className}` : "NONE",
+        // A card lives inside the route outlet. Page paper does not.
+        onCard: surface != null && outlet != null && outlet.contains(surface),
+        // Does that surface actually wrap the controls, or just sit behind them?
+        contained:
+          surfaceBox != null &&
+          box.left >= surfaceBox.left - 1 &&
+          box.right <= surfaceBox.right + 1 &&
+          box.top >= surfaceBox.top - 1 &&
+          box.bottom <= surfaceBox.bottom + 1,
+      };
+    }),
+  );
+
+  for (const finding of findings) {
+    expect(
+      finding.onCard,
+      `action group "${finding.action}" paints no card of its own — the nearest surface is ` +
+        `${finding.surface}, outside the route outlet, so the controls float on the page`,
+    ).toBe(true);
+    expect(
+      finding.contained,
+      `action group "${finding.action}" overflows its surface (${finding.surface})`,
+    ).toBe(true);
+  }
 });
 
 test("task detail panels and action buttons are styled", async ({ page }, testInfo) => {

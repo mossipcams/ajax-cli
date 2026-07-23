@@ -459,6 +459,44 @@ Hard rules:
 - Prefer a scope when it helps (`web`, `cli`, `core`, `test`).
 - Before `gh pr create` or retitling, confirm the type is in the table above.
 
+### CI trigger matrix
+
+Guarded by `scripts/verify-ci-workflows.mjs` (runs in `npm run verify`). Change
+the workflows and that script together.
+
+| Event | Runs |
+| --- | --- |
+| Normal PR opened/updated | full CI suite, once per head; superseded runs cancelled. CodeQL. |
+| Normal PR merged to main | Release Please only. **No CI run** — see below. |
+| Release Please updates its PR | `Release Candidate` job only; superseded runs cancelled. CodeQL. |
+| Release Please PR merged | tag + GitHub release. No test run. |
+
+There is no `push: main` CI run. Its absence is only safe because the `CI`
+repository ruleset sets `strict_required_status_checks_policy: true`: a PR
+cannot merge unless its head is already up to date with main, so the tree that
+passed `CI` is the tree that lands. **If that rule is ever relaxed, restore the
+`push: main` trigger in the same change.**
+
+The generated Release Please PR skips the expensive jobs because every commit it
+releases already passed the full suite on its own PR. It is not unchecked — the
+`Release Candidate` job checks out the exact head SHA and verifies it merges
+cleanly into current main (`git merge-tree --write-tree`), that
+`.release-please-manifest.json`, `version.txt`, `crates/ajax-cli/Cargo.toml` and
+the `ajax-cli` entry in `Cargo.lock` all carry one version, and that
+`cargo check --locked -p ajax-cli` passes.
+
+`release-please-config.json` bumps `Cargo.lock` in place via an `extra-files`
+entry, so the release PR reaches its final SHA in one update. The jsonpath is
+`$.package[?(@.name.value=="ajax-cli")].version` — `.value` is required because
+release-please's TOML reader wraps each scalar in a `{start, end, value}` span.
+`release-type` stays `simple`: this workspace runs ajax-cli, its sibling crates
+and `workspace.package` on deliberately different versions, and the `rust`
+strategy would unify them.
+
+CodeQL uses GitHub's **default setup**, which cannot exclude a branch, so it also
+scans the release PR. That is a known, accepted duplicate; excluding it would
+mean hand-maintaining an advanced-setup workflow.
+
 ### Local verify gate (blocking)
 
 Do not create a pull request until local tests have passed in this worktree.

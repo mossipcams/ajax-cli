@@ -58,9 +58,17 @@ export default function App() {
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
 
-  const statusText = cockpit.data
-    ? `${cockpit.data.cards.length} ${cockpit.data.cards.length === 1 ? "task" : "tasks"}`
-    : "— loading";
+  // Attention first: the header should answer "does anything want me?" before it
+  // reports inventory size.
+  const statusText = (() => {
+    if (!cockpit.data) return "— loading";
+    const needsYou = cockpit.data.inbox?.items?.length ?? 0;
+    if (needsYou) return `${needsYou} need${needsYou === 1 ? "s" : ""} you`;
+    const running = cockpit.data.cards.filter((card) => card.status === "running").length;
+    if (running) return `${running} running`;
+    const total = cockpit.data.cards.length;
+    return `${total} ${total === 1 ? "task" : "tasks"}`;
+  })();
 
   function showResult(
     message: string,
