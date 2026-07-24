@@ -10,6 +10,7 @@ pub enum TaskStatus {
     Waiting,
     Idle,
     Error,
+    Unknown,
 }
 
 impl TaskStatus {
@@ -19,6 +20,7 @@ impl TaskStatus {
             Self::Waiting => "Waiting",
             Self::Idle => "Idle",
             Self::Error => "Error",
+            Self::Unknown => "Unknown",
         }
     }
 }
@@ -38,18 +40,39 @@ pub fn derive_operator_status(task: &Task) -> OperatorStatus {
 }
 
 fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
+    // 0. TeardownIncomplete is always an error (requirement 11).
     if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
         return canonical(TaskStatus::Error, "Teardown incomplete");
     }
-    if task.runtime_projection.observation_error.is_some() {
-        return canonical(TaskStatus::Error, "Status unavailable");
+
+    // 1. Terminal/cleanup lifecycle decides whether runtime substrate is still
+    //    expected. Once merged or being cleaned up, a missing tmux session,
+    //    task window, worktree, or branch is normal — not an error (req 7, 10).
+    let resources_expected = !matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Merged
+            | LifecycleStatus::Cleanable
+            | LifecycleStatus::Removing
+            | LifecycleStatus::Removed
+    );
+
+    // 2-4. Missing required substrate, an unobservable probe, or a checkout
+    //      mismatch are errors only while the lifecycle still expects those
+    //      resources (requirements 8-10).
+    if resources_expected {
+        if let Some(explanation) = canonical_missing_substrate_explanation(task) {
+            return canonical(TaskStatus::Error, explanation);
+        }
+        if task.runtime_projection.observation_error.is_some() {
+            return canonical(TaskStatus::Error, "Status unavailable");
+        }
+        if let Some(explanation) = canonical_checkout_mismatch_explanation(task) {
+            return canonical(TaskStatus::Error, explanation);
+        }
     }
-    if let Some(explanation) = canonical_missing_substrate_explanation(task) {
-        return canonical(TaskStatus::Error, explanation);
-    }
-    if let Some(explanation) = canonical_checkout_mismatch_explanation(task) {
-        return canonical(TaskStatus::Error, explanation);
-    }
+
+    // 5. Relevant GitHub failure/conflict (and other error-class live status)
+    //    overrides the native agent phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
         if let Some(explanation) = canonical_error_explanation(live.kind) {
             return canonical(TaskStatus::Error, explanation);
@@ -68,6 +91,9 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
         return canonical(TaskStatus::Error, "Task failed");
     }
 
+    // 6/9. Running: GitHub pending (CiPending, "CI running") or a native running
+    //      phase. Passing CI is not represented here — it clears the override
+    //      and reveals the native phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
         if let Some(explanation) = canonical_running_explanation(live.kind) {
             return canonical(TaskStatus::Running, explanation);
@@ -79,13 +105,9 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
         return canonical(TaskStatus::Running, "Agent working");
     }
 
-    if matches!(
-        task.lifecycle_status,
-        LifecycleStatus::Merged
-            | LifecycleStatus::Cleanable
-            | LifecycleStatus::Removing
-            | LifecycleStatus::Removed
-    ) {
+    // 14. Terminal/cleanup lifecycles are idle unless running/error overrode
+    //     them above (requirement 10).
+    if !resources_expected {
         return (TaskStatus::Idle, None);
     }
 
@@ -123,7 +145,28 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
         return canonical(TaskStatus::Waiting, "Response ready");
     }
 
+    // 16. An operational task with no status evidence at all cannot be proven
+    //     Running, Waiting, Done, or Error — report Unknown rather than pretend
+    //     it is at rest (precedence step 6). Every other resting state (terminal
+    //     lifecycle, acknowledged waiting, any live status) is Idle above/here.
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Active | LifecycleStatus::Waiting
+    ) && has_no_status_evidence(task)
+    {
+        return (TaskStatus::Unknown, None);
+    }
+
     (TaskStatus::Idle, None)
+}
+
+/// True when a task carries no agent-status evidence of any kind: no live
+/// status, an unstarted agent, and no running/waiting side flags.
+fn has_no_status_evidence(task: &Task) -> bool {
+    task.live_status.is_none()
+        && task.agent_status == AgentRuntimeStatus::NotStarted
+        && !task.has_side_flag(SideFlag::AgentRunning)
+        && !task.has_side_flag(SideFlag::NeedsInput)
 }
 
 fn canonical(status: TaskStatus, explanation: impl Into<String>) -> (TaskStatus, Option<String>) {
@@ -153,6 +196,7 @@ fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {
         LiveStatusKind::AgentRunning => Some("Agent working"),
         LiveStatusKind::CommandRunning => Some("Running command"),
         LiveStatusKind::TestsRunning => Some("Running tests"),
+        LiveStatusKind::CiPending => Some("CI running"),
         _ => None,
     }
 }
@@ -600,9 +644,30 @@ mod tests {
     }
 
     #[test]
-    fn active_lifecycle_without_signals_is_idle() {
+    fn active_lifecycle_without_signals_is_unknown() {
+        // An active task with no live status, an unstarted agent, and no flags
+        // has no source that can prove Running/Waiting/Done/Error — it projects
+        // Unknown rather than a fabricated Idle (precedence step 6).
         let mut task = base_task();
         mark_active(&mut task).unwrap();
+
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
+    }
+
+    #[test]
+    fn active_lifecycle_with_acknowledged_waiting_is_idle_not_unknown() {
+        // Positive evidence of rest (an acknowledged waiting live status) keeps
+        // the task Idle; only the true no-evidence case becomes Unknown.
+        let mut task = claude_active_task();
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
+        );
 
         assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
     }

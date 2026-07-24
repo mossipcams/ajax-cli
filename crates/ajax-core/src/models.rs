@@ -201,6 +201,7 @@ pub enum LiveStatusKind {
     AuthRequired,
     MergeConflict,
     CiFailed,
+    CiPending,
     ContextLimit,
     CommandFailed,
     Done,
@@ -222,7 +223,7 @@ pub enum LiveStatusClass {
 impl LiveStatusKind {
     pub const fn class(self) -> LiveStatusClass {
         match self {
-            Self::AgentRunning | Self::CommandRunning | Self::TestsRunning => {
+            Self::AgentRunning | Self::CommandRunning | Self::TestsRunning | Self::CiPending => {
                 LiveStatusClass::Running
             }
             Self::WaitingForApproval
@@ -990,6 +991,7 @@ impl Evidence {
                 LiveStatusKind::TestsRunning => "tests running",
                 LiveStatusKind::AgentRunning => "agent running",
                 LiveStatusKind::CiFailed => "ci failed",
+                LiveStatusKind::CiPending => "ci running",
                 LiveStatusKind::Unknown => "live status",
             },
             Evidence::AgentStatus(status) => match status {

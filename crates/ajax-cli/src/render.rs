@@ -118,6 +118,7 @@ fn render_task_summary(task: &TaskSummary) -> String {
         ajax_core::ui_state::TaskStatus::Waiting => "Waiting",
         ajax_core::ui_state::TaskStatus::Idle => "Idle",
         ajax_core::ui_state::TaskStatus::Error => "Error",
+        ajax_core::ui_state::TaskStatus::Unknown => "Unknown",
     };
     let status = task
         .status_explanation

@@ -96,7 +96,7 @@ pub fn take_attention_transition_at(
                 client: format!("{:?}", task.selected_agent).to_ascii_lowercase(),
             })
         }
-        TaskStatus::Running | TaskStatus::Idle => {
+        TaskStatus::Running | TaskStatus::Idle | TaskStatus::Unknown => {
             clear_notify_candidate(task);
             clear_notify_episode_if_quiet(task, now);
             None
@@ -134,7 +134,7 @@ fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
             status.explanation.as_deref(),
             Some("Waiting for input" | "Waiting for approval")
         ),
-        TaskStatus::Running | TaskStatus::Idle => false,
+        TaskStatus::Running | TaskStatus::Idle | TaskStatus::Unknown => false,
     }
 }
 

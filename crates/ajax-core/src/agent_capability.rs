@@ -11,7 +11,6 @@ use crate::models::AgentClient;
 pub enum CapabilitySupport {
     Native,
     Wrapper,
-    PaneFallback,
     Unavailable,
     Unverified,
 }
@@ -52,13 +51,6 @@ impl AgentCapabilityProfile {
 
     pub fn supports_native(self, fact: CapabilityFact) -> bool {
         matches!(self.support_for(fact), CapabilitySupport::Native)
-    }
-
-    pub fn allows_pane_fallback(self, fact: CapabilityFact) -> bool {
-        matches!(
-            self.support_for(fact),
-            CapabilitySupport::Unavailable | CapabilitySupport::Unverified
-        )
     }
 }
 
@@ -153,15 +145,6 @@ mod tests {
         let profile = profile_for_agent_client(AgentClient::Claude);
         assert!(profile.supports_native(CapabilityFact::PermissionWait));
         assert!(profile.supports_native(CapabilityFact::QuestionWait));
-    }
-
-    #[test]
-    fn pane_fallback_allowed_only_when_unavailable_or_unverified() {
-        let cursor = profile_for_hook_client("cursor");
-        assert!(cursor.allows_pane_fallback(CapabilityFact::QuestionWait));
-
-        let claude = profile_for_agent_client(AgentClient::Claude);
-        assert!(!claude.allows_pane_fallback(CapabilityFact::QuestionWait));
     }
 
     #[test]
