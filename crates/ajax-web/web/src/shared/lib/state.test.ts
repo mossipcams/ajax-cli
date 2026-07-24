@@ -29,11 +29,12 @@ function card(handle: string, status: BrowserTaskCard["status"]): BrowserTaskCar
 }
 
 describe("status ordering (presentation only)", () => {
-  it("ranks running, waiting, error, idle", () => {
-    expect(STATUS_ORDER).toEqual(["running", "waiting", "error", "idle"]);
+  it("ranks running, waiting, error, idle, unknown", () => {
+    expect(STATUS_ORDER).toEqual(["running", "waiting", "error", "idle", "unknown"]);
     expect(statusRank("running")).toBeLessThan(statusRank("waiting"));
     expect(statusRank("waiting")).toBeLessThan(statusRank("error"));
     expect(statusRank("error")).toBeLessThan(statusRank("idle"));
+    expect(statusRank("idle")).toBeLessThan(statusRank("unknown"));
   });
 
   it("sorts by status rank then handle", () => {
@@ -173,8 +174,12 @@ describe("statusMeta", () => {
     expect(statusMeta("error")).toEqual({ tone: "error", label: "Error" });
   });
 
-  it("defaults to idle for unknown values", () => {
-    expect(statusMeta("unknown")).toEqual({ tone: "idle", label: "Idle" });
+  it("maps the unknown status to its own calm tone", () => {
+    expect(statusMeta("unknown")).toEqual({ tone: "unknown", label: "Unknown" });
+  });
+
+  it("defaults to idle for unrecognized values", () => {
+    expect(statusMeta("wat")).toEqual({ tone: "idle", label: "Idle" });
   });
 });
 
