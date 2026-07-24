@@ -123,6 +123,12 @@ fn apply_reduced_observation(
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
+        LiveStatusKind::CiPending => {
+            // Remote CI is running; this is a GitHub override, not an assertion
+            // about the local agent process.
+            task.remove_side_flag(SideFlag::TestsFailed);
+            task.remove_side_flag(SideFlag::NeedsInput);
+        }
         LiveStatusKind::MergeConflict => {
             task.agent_status = AgentRuntimeStatus::Blocked;
             task.add_side_flag(SideFlag::Conflicted);

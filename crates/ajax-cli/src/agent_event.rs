@@ -6,25 +6,15 @@ use std::{
 };
 
 use ajax_core::canonical_agent_event::{
-    fold_envelopes, project_snapshot, ActivityKind, AttentionReason, CanonicalEventDetail,
-    CanonicalEventKind, ParsedEnvelope, TurnOutcome,
+    ActivityKind, AttentionReason, CanonicalEventDetail, CanonicalEventKind, ParsedEnvelope,
+    TurnOutcome,
 };
 use clap::ArgMatches;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{agent_runtime, CliError};
 
 static EVENT_SEQ: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct AgentEventSnapshot {
-    pub task_id: String,
-    pub run_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_run_id: Option<String>,
-    pub value: String,
-    pub observed_at_unix_millis: u128,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalAgentEvent {
@@ -106,22 +96,7 @@ pub(crate) fn run_agent_event(
         observed_at,
     )
     .map_err(|_| ())?;
-    if should_update_legacy_snapshot(&canonical.kind) {
-        if let Some(value) = project_legacy_value(&canonical) {
-            write_agent_event(identity, value, observed_at).map_err(|_| ())?;
-        }
-    }
     Ok(())
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn translate_agent_event(
-    client: &str,
-    event: &str,
-    payload: &serde_json::Value,
-) -> Option<&'static str> {
-    translate_native_event(client, event, payload)
-        .and_then(|canonical| project_legacy_value(&canonical))
 }
 
 pub(crate) fn translate_native_event(
@@ -154,41 +129,6 @@ pub(crate) fn translate_native_event(
         ("pi", "agent_settled") => Some(turn_settled(TurnOutcome::Completed)),
         _ => None,
     }
-}
-
-pub(crate) fn project_legacy_value(canonical: &CanonicalAgentEvent) -> Option<&'static str> {
-    match (&canonical.kind, canonical.detail.as_ref()) {
-        (CanonicalEventKind::TurnStarted | CanonicalEventKind::ActivityStarted, _) => {
-            Some("working")
-        }
-        (
-            CanonicalEventKind::AttentionRequested,
-            Some(CanonicalEventDetail::Attention {
-                attention: AttentionReason::Permission,
-            }),
-        ) => Some("ask"),
-        (CanonicalEventKind::AttentionRequested, _) => Some("wait"),
-        (CanonicalEventKind::AttentionCleared, _) => Some("working"),
-        (
-            CanonicalEventKind::TurnSettled,
-            Some(CanonicalEventDetail::Outcome {
-                outcome: TurnOutcome::Failed,
-            }),
-        ) => Some("failed"),
-        (CanonicalEventKind::TurnSettled, _) => Some("done"),
-        (CanonicalEventKind::SessionOpened | CanonicalEventKind::ChildStarted, _) => {
-            Some("working")
-        }
-        (CanonicalEventKind::SessionClosed | CanonicalEventKind::ChildSettled, _) => Some("done"),
-        (CanonicalEventKind::ActivityFinished | CanonicalEventKind::Heartbeat, _) => None,
-    }
-}
-
-fn should_update_legacy_snapshot(kind: &CanonicalEventKind) -> bool {
-    !matches!(
-        kind,
-        CanonicalEventKind::ActivityFinished | CanonicalEventKind::Heartbeat
-    )
 }
 
 fn turn_started() -> CanonicalAgentEvent {
@@ -377,34 +317,6 @@ fn try_notify_socket(path: &Path, line: &[u8]) {
 #[cfg(not(unix))]
 fn try_notify_socket(_path: &Path, _line: &[u8]) {}
 
-pub(crate) fn write_agent_event(
-    identity: &AgentEventIdentity,
-    value: &str,
-    observed_at_unix_millis: u128,
-) -> io::Result<()> {
-    fs::create_dir_all(&identity.events_dir)?;
-    let parent_run_id = if identity.run_id == "primary" {
-        None
-    } else {
-        Some("primary".to_string())
-    };
-    let snapshot = AgentEventSnapshot {
-        task_id: identity.task_id.clone(),
-        run_id: identity.run_id.clone(),
-        parent_run_id,
-        value: value.to_string(),
-        observed_at_unix_millis,
-    };
-    let encoded = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
-    let stem = agent_runtime::task_file_stem(&identity.task_id);
-    let latest_path = identity.events_dir.join(format!("{stem}.json"));
-    let temporary_path = identity
-        .events_dir
-        .join(format!(".{stem}.tmp-{}", std::process::id()));
-    fs::write(&temporary_path, &encoded)?;
-    fs::rename(&temporary_path, &latest_path)
-}
-
 fn read_stdin_payload() -> serde_json::Value {
     let mut input = String::new();
     if io::stdin().read_to_string(&mut input).is_err() || input.trim().is_empty() {
@@ -421,20 +333,6 @@ pub(crate) fn parse_envelopes_from_jsonl(path: &Path) -> Vec<ParsedEnvelope> {
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
-}
-
-pub(crate) fn fold_and_project_jsonl(path: &Path) -> Option<(String, u128)> {
-    let envelopes = parse_envelopes_from_jsonl(path);
-    if envelopes.is_empty() {
-        return None;
-    }
-    let max_received_at = envelopes
-        .iter()
-        .map(|event| event.received_at_unix_millis)
-        .max()?;
-    let snapshot = fold_envelopes(&envelopes);
-    let value = project_snapshot(&snapshot)?;
-    Some((value.to_string(), max_received_at))
 }
 
 fn read_agent_event_identity() -> Option<AgentEventIdentity> {
@@ -575,14 +473,20 @@ pub(crate) fn session_start_env_stdout(identity: &AgentEventIdentity) -> String 
 mod tests {
     use std::fs;
 
-    use ajax_core::canonical_agent_event::{CanonicalEventDetail, CanonicalEventKind, TurnOutcome};
+    use ajax_core::canonical_agent_event::{
+        AttentionReason, CanonicalEventDetail, CanonicalEventKind, TurnOutcome,
+    };
 
     use crate::agent_runtime::{self, AgentRuntimeSnapshot, AgentRuntimeState};
 
     use super::{
-        resolve_cursor_identity, run_agent_event, session_start_env_stdout, translate_agent_event,
-        translate_native_event, write_agent_event, AgentEventIdentity, AgentEventSnapshot,
+        resolve_cursor_identity, run_agent_event, session_start_env_stdout, translate_native_event,
+        AgentEventIdentity,
     };
+
+    fn kind(client: &str, event: &str, payload: &serde_json::Value) -> Option<CanonicalEventKind> {
+        translate_native_event(client, event, payload).map(|canonical| canonical.kind)
+    }
 
     fn temp_events_fixture(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!(
@@ -607,45 +511,26 @@ mod tests {
     }
 
     #[test]
-    fn translate_claude_stop_with_background_tasks_stays_working() {
+    fn claude_stop_with_background_tasks_stays_a_turn_start() {
         let with_tasks = serde_json::json!({"background_tasks":[{"id":1}]});
         assert_eq!(
-            translate_agent_event("claude", "Stop", &with_tasks),
-            Some("working")
+            kind("claude", "Stop", &with_tasks),
+            Some(CanonicalEventKind::TurnStarted)
         );
-
         let empty_tasks = serde_json::json!({"background_tasks":[]});
         assert_eq!(
-            translate_agent_event("claude", "Stop", &empty_tasks),
-            Some("done")
+            kind("claude", "Stop", &empty_tasks),
+            Some(CanonicalEventKind::TurnSettled)
         );
-
-        let missing_key = serde_json::json!({});
         assert_eq!(
-            translate_agent_event("claude", "Stop", &missing_key),
-            Some("done")
+            kind("claude", "Stop", &serde_json::json!({})),
+            Some(CanonicalEventKind::TurnSettled)
         );
     }
 
     #[test]
-    fn claude_stop_with_background_tasks_does_not_settle() {
-        let with_tasks = serde_json::json!({"background_tasks":[{"id":1}]});
-        let canonical = translate_native_event("claude", "Stop", &with_tasks).unwrap();
-        assert_eq!(canonical.kind, CanonicalEventKind::TurnStarted);
-        assert_ne!(canonical.kind, CanonicalEventKind::TurnSettled);
-        assert_eq!(
-            translate_agent_event("claude", "Stop", &with_tasks),
-            Some("working")
-        );
-    }
-
-    #[test]
-    fn cursor_stop_error_projects_failed() {
+    fn cursor_stop_error_is_a_failed_turn_settled() {
         let payload = serde_json::json!({"status":"error"});
-        assert_eq!(
-            translate_agent_event("cursor", "stop", &payload),
-            Some("failed")
-        );
         let canonical = translate_native_event("cursor", "stop", &payload).unwrap();
         assert_eq!(canonical.kind, CanonicalEventKind::TurnSettled);
         assert_eq!(
@@ -657,96 +542,90 @@ mod tests {
     }
 
     #[test]
-    fn translate_claude_notification_permission_vs_idle() {
+    fn claude_notification_permission_vs_question() {
         let permission = serde_json::json!({
             "message": "Claude needs your permission to run Bash"
         });
         assert_eq!(
-            translate_agent_event("claude", "Notification", &permission),
-            Some("ask")
+            translate_native_event("claude", "Notification", &permission)
+                .and_then(|canonical| canonical.detail),
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Permission
+            })
         );
-
         let idle = serde_json::json!({"message": "waiting for your input"});
         assert_eq!(
-            translate_agent_event("claude", "Notification", &idle),
-            Some("wait")
+            translate_native_event("claude", "Notification", &idle)
+                .and_then(|canonical| canonical.detail),
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Question
+            })
         );
     }
 
     #[test]
-    fn translate_codex_and_pi_verified_events() {
+    fn four_client_event_mappings_to_canonical_kinds() {
         let payload = serde_json::json!({});
+        // Claude
         assert_eq!(
-            translate_agent_event("codex", "UserPromptSubmit", &payload),
-            Some("working")
+            kind("claude", "UserPromptSubmit", &payload),
+            Some(CanonicalEventKind::TurnStarted)
         );
         assert_eq!(
-            translate_agent_event("codex", "Stop", &payload),
-            Some("done")
+            kind("claude", "SessionStart", &payload),
+            Some(CanonicalEventKind::SessionOpened)
         );
         assert_eq!(
-            translate_agent_event("codex", "PermissionRequest", &payload),
-            Some("ask")
+            kind("claude", "SessionEnd", &payload),
+            Some(CanonicalEventKind::SessionClosed)
+        );
+        // Codex
+        assert_eq!(
+            kind("codex", "UserPromptSubmit", &payload),
+            Some(CanonicalEventKind::TurnStarted)
         );
         assert_eq!(
-            translate_agent_event("cursor", "preToolUse", &payload),
-            Some("working")
+            kind("codex", "Stop", &payload),
+            Some(CanonicalEventKind::TurnSettled)
         );
         assert_eq!(
-            translate_agent_event("cursor", "postToolUse", &payload),
-            None
+            kind("codex", "PermissionRequest", &payload),
+            Some(CanonicalEventKind::AttentionRequested)
+        );
+        // Cursor
+        assert_eq!(
+            kind("cursor", "preToolUse", &payload),
+            Some(CanonicalEventKind::ActivityStarted)
         );
         assert_eq!(
-            translate_agent_event("pi", "agent_settled", &payload),
-            Some("done")
-        );
-        assert_eq!(translate_agent_event("pi", "agent_end", &payload), None);
-    }
-
-    #[test]
-    fn translate_session_start_end_projects_working_done() {
-        let payload = serde_json::json!({});
-        assert_eq!(
-            translate_agent_event("claude", "SessionStart", &payload),
-            Some("working")
+            kind("cursor", "postToolUse", &payload),
+            Some(CanonicalEventKind::ActivityFinished)
         );
         assert_eq!(
-            translate_agent_event("claude", "SessionEnd", &payload),
-            Some("done")
+            kind("cursor", "sessionStart", &payload),
+            Some(CanonicalEventKind::SessionOpened)
+        );
+        // Pi
+        assert_eq!(
+            kind("pi", "before_agent_start", &payload),
+            Some(CanonicalEventKind::TurnStarted)
         );
         assert_eq!(
-            translate_agent_event("codex", "SessionStart", &payload),
-            Some("working")
+            kind("pi", "agent_settled", &payload),
+            Some(CanonicalEventKind::TurnSettled)
         );
-        assert_eq!(
-            translate_agent_event("codex", "SessionEnd", &payload),
-            Some("done")
-        );
-        assert_eq!(
-            translate_agent_event("cursor", "sessionStart", &payload),
-            Some("working")
-        );
-        assert_eq!(
-            translate_agent_event("cursor", "sessionEnd", &payload),
-            Some("done")
-        );
+        assert_eq!(kind("pi", "agent_end", &payload), None);
     }
 
     #[test]
     fn translate_ignores_unknown_events() {
-        assert_eq!(
-            translate_agent_event("cursor", "subagentStop", &serde_json::json!({})),
-            None
-        );
-        assert_eq!(
-            translate_agent_event("nope", "stop", &serde_json::json!({})),
-            None
-        );
+        assert_eq!(kind("cursor", "subagentStop", &serde_json::json!({})), None);
+        assert_eq!(kind("nope", "stop", &serde_json::json!({})), None);
     }
 
     #[test]
-    fn write_appends_jsonl_and_updates_legacy_snapshot() {
-        let (root, dir) = temp_events_fixture("jsonl-dual-write");
+    fn run_agent_event_appends_jsonl_only_no_scalar_snapshot() {
+        let (root, dir) = temp_events_fixture("jsonl-only");
         write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
         let identity = test_identity(&dir, "web/fix-login");
 
@@ -759,18 +638,15 @@ mod tests {
         .unwrap();
 
         let stem = "web__fix-login";
-        let jsonl_path = dir.join(format!("{stem}.jsonl"));
-        let jsonl = fs::read_to_string(&jsonl_path).unwrap();
+        let jsonl = fs::read_to_string(dir.join(format!("{stem}.jsonl"))).unwrap();
         let lines: Vec<&str> = jsonl.lines().collect();
         assert_eq!(lines.len(), 1);
         let envelope: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(envelope["schema_version"], 1);
         assert_eq!(envelope["kind"], "turn_started");
 
-        let latest_path = dir.join(format!("{stem}.json"));
-        let snapshot: AgentEventSnapshot =
-            serde_json::from_str(&fs::read_to_string(&latest_path).unwrap()).unwrap();
-        assert_eq!(snapshot.value, "working");
+        // The legacy scalar `{stem}.json` snapshot is no longer written.
+        assert!(!dir.join(format!("{stem}.json")).exists());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -794,65 +670,6 @@ mod tests {
         let stem = agent_runtime::task_file_stem(task_id);
         let encoded = serde_json::to_vec(&snapshot).unwrap();
         fs::write(runtime_root.join(format!("{stem}.json")), encoded).unwrap();
-    }
-
-    #[test]
-    fn activity_finished_appends_jsonl_without_clobbering_ask_snapshot() {
-        let (root, dir) = temp_events_fixture("jsonl-no-clobber");
-        write_test_runtime_snapshot(&dir, "web/fix-login", AgentRuntimeState::Running, 1);
-        let identity = test_identity(&dir, "web/fix-login");
-        let permission = serde_json::json!({
-            "message": "Claude needs your permission to run Bash"
-        });
-
-        run_agent_event(Some(&identity), "claude", "Notification", &permission).unwrap();
-        run_agent_event(
-            Some(&identity),
-            "claude",
-            "PostToolUse",
-            &serde_json::json!({}),
-        )
-        .unwrap();
-
-        let stem = "web__fix-login";
-        let jsonl = fs::read_to_string(dir.join(format!("{stem}.jsonl"))).unwrap();
-        assert_eq!(jsonl.lines().count(), 2);
-
-        let snapshot: AgentEventSnapshot =
-            serde_json::from_str(&fs::read_to_string(dir.join(format!("{stem}.json"))).unwrap())
-                .unwrap();
-        assert_eq!(snapshot.value, "ask");
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn write_agent_event_is_atomic_and_task_keyed() {
-        let (root, dir) = temp_events_fixture("atomic");
-        let identity = AgentEventIdentity {
-            task_id: "web/fix-login".to_string(),
-            run_id: "primary".to_string(),
-            events_dir: dir.clone(),
-        };
-
-        write_agent_event(&identity, "done", 1).unwrap();
-        write_agent_event(&identity, "working", 2).unwrap();
-
-        let latest_path = dir.join("web__fix-login.json");
-        let snapshot: AgentEventSnapshot =
-            serde_json::from_str(&fs::read_to_string(&latest_path).unwrap()).unwrap();
-        assert_eq!(snapshot.value, "working");
-        assert_eq!(snapshot.run_id, "primary");
-        assert_eq!(snapshot.parent_run_id, None);
-
-        let tmp_files = fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
-            .count();
-        assert_eq!(tmp_files, 0);
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

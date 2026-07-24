@@ -198,10 +198,10 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     runner: &mut C,
     tier: RefreshTier,
 ) -> Result<bool, ajax_core::commands::CommandError> {
-    let cache = crate::agent_status_cache::TmuxAgentStatusSnapshot::from_runtime_cache(
+    let source = crate::agent_status_cache::AgentStatusFiles::from_runtime_cache(
         &context.runtime_paths.cache_dir,
     );
-    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &cache, tier)
+    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &source, tier)
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
@@ -625,21 +625,68 @@ mod tests {
     }
 
     fn write_agent_status_event(cache_dir: &std::path::Path, task_id: &str, value: &str) {
+        use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
+
         let events_dir = cache_dir.join("agent-events");
+        let runtime_dir = cache_dir.join("agent-runtime");
         std::fs::create_dir_all(&events_dir).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
         let now_millis = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis();
+        let stem = task_file_stem(task_id);
+
+        let state = match value {
+            "done" => AgentRuntimeState::ExitedSuccess,
+            "failed" => AgentRuntimeState::ExitedFailure,
+            _ => AgentRuntimeState::Running,
+        };
+        let snapshot = AgentRuntimeSnapshot {
+            task_id: task_id.to_string(),
+            state,
+            observed_at_unix_millis: now_millis,
+            pid: Some(1),
+            exit_code: None,
+            message: None,
+        };
         std::fs::write(
-            events_dir.join(format!("{}.json", task_id.replace('/', "__"))),
-            serde_json::json!({
-                "task_id": task_id,
-                "run_id": "primary",
-                "value": value,
-                "observed_at_unix_millis": now_millis,
-            })
-            .to_string(),
+            runtime_dir.join(format!("{stem}.json")),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let (kind, detail) = match value {
+            "ask" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "permission"}}),
+            ),
+            "wait" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "question"}}),
+            ),
+            "done" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "completed"}}),
+            ),
+            "failed" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "failed"}}),
+            ),
+            _ => ("turn_started", serde_json::Value::Null),
+        };
+        let mut envelope = serde_json::json!({
+            "schema_version": 1,
+            "kind": kind,
+            "received_at_unix_millis": now_millis,
+            "occurred_at_unix_millis": now_millis,
+        });
+        if !detail.is_null() {
+            envelope["detail"] = detail;
+        }
+        std::fs::write(
+            events_dir.join(format!("{stem}.jsonl")),
+            format!("{}\n", serde_json::to_string(&envelope).unwrap()),
         )
         .unwrap();
     }

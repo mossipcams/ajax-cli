@@ -55,10 +55,8 @@ pub fn operator_explanation_for_summary(summary: &str) -> Option<&'static str> {
 pub enum ObservationSource {
     /// Terminal process exit / fatal runtime error: authoritative.
     ProcessExit,
-    /// Structured provider lifecycle event (e.g. supervisor heartbeat).
+    /// Structured native lifecycle event folded from the canonical JSONL log.
     ProviderLifecycle,
-    /// Provider hook event (e.g. tmux agent-status "working" file).
-    ProviderHook,
     /// Process liveness — informational, never selects activity.
     ProcessLiveness,
 }
@@ -68,8 +66,7 @@ impl ObservationSource {
         match self {
             Self::ProcessExit => 0,
             Self::ProviderLifecycle => 1,
-            Self::ProviderHook => 2,
-            Self::ProcessLiveness => 3,
+            Self::ProcessLiveness => 2,
         }
     }
 }
@@ -481,7 +478,7 @@ mod tests {
     #[test]
     fn live_process_waiting_approval_from_hook() {
         let obs = obs(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::WaitingApproval,
             1,
             120,
@@ -497,7 +494,7 @@ mod tests {
         // Stale wrapper working is supplied as liveness only, not activity.
         // A fresh wait hook then wins the activity projection.
         let observations = [obs(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::WaitingInput,
             1,
             120,
@@ -512,7 +509,7 @@ mod tests {
     fn parent_waiting_on_one_active_child() {
         // Primary has no activity observation; one non-detached child Working.
         let child = obs_with_run(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
             1,
             120,
@@ -531,7 +528,7 @@ mod tests {
         // derived kind must not be Done.
         let primary = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let child = obs_with_run(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
             1,
             120,
@@ -554,7 +551,7 @@ mod tests {
         // complete because the Working child remains non-terminal.
         let primary = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let running = obs_with_run(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
             1,
             120,
@@ -599,7 +596,7 @@ mod tests {
     fn child_completion_then_parent_resumption() {
         // After a child completes, the primary resumes Working → ActivelyWorking.
         let primary = obs(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
             1,
             120,
@@ -626,7 +623,7 @@ mod tests {
         let expired_child = {
             let observed_at = now() - Duration::from_secs(200);
             StatusObservation {
-                source: ObservationSource::ProviderHook,
+                source: ObservationSource::ProviderLifecycle,
                 observed_at,
                 expires_at: observed_at + Duration::from_secs(120),
                 confidence: Confidence::High,
@@ -645,13 +642,13 @@ mod tests {
     fn conflicting_observations_time_and_confidence() {
         // Older High Working vs newer High Waiting, same run → newer wins.
         let older = obs(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
             10,
             120,
         );
         let newer = obs(
-            ObservationSource::ProviderHook,
+            ObservationSource::ProviderLifecycle,
             ActivityKind::WaitingInput,
             1,
             120,
@@ -661,9 +658,12 @@ mod tests {
         assert_eq!(projection.phase, ParentPhase::WaitingForUser);
         assert_eq!(projection.live.kind, LiveStatusKind::WaitingForInput);
 
-        // Equal-fresh contradictory sources at equal observed_at → Unknown.
+        // Equal-timestamp disagreement within the single structured lifecycle
+        // source resolves by activity-state rank (busy beats waiting) rather
+        // than projecting Unknown: cross-source conflict is unreachable now
+        // that the only structured source is the folded native lifecycle.
         let at = |age: u64| now() - Duration::from_secs(age);
-        let lifecycle = StatusObservation {
+        let working = StatusObservation {
             source: ObservationSource::ProviderLifecycle,
             observed_at: at(1),
             expires_at: at(1) + Duration::from_secs(120),
@@ -672,8 +672,8 @@ mod tests {
             parent_run_id: None,
             kind: ActivityKind::Working,
         };
-        let hook = StatusObservation {
-            source: ObservationSource::ProviderHook,
+        let waiting = StatusObservation {
+            source: ObservationSource::ProviderLifecycle,
             observed_at: at(1),
             expires_at: at(1) + Duration::from_secs(120),
             confidence: Confidence::High,
@@ -681,20 +681,20 @@ mod tests {
             parent_run_id: None,
             kind: ActivityKind::WaitingInput,
         };
-        let projection = reduce(false, &[lifecycle, hook]);
+        let projection = reduce(false, &[working, waiting]);
 
-        assert_eq!(projection.phase, ParentPhase::Unknown);
-        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
+        assert_eq!(projection.phase, ParentPhase::ActivelyWorking);
+        assert_eq!(projection.live.kind, LiveStatusKind::AgentRunning);
     }
 
     #[test]
     fn process_exit_beats_stale_hook() {
-        // ProcessExit Done + expired ProviderHook Working → Done.
+        // ProcessExit Done + expired lifecycle Working → Done.
         let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 5, 120);
         let stale_hook = {
             let observed_at = now() - Duration::from_secs(200);
             StatusObservation {
-                source: ObservationSource::ProviderHook,
+                source: ObservationSource::ProviderLifecycle,
                 observed_at,
                 expires_at: observed_at + Duration::from_secs(120),
                 confidence: Confidence::High,
@@ -719,5 +719,28 @@ mod tests {
         let projection = reduce_no_liveness(&[]);
         assert_eq!(projection.phase, ParentPhase::Unknown);
         assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
+    }
+
+    #[test]
+    fn fresh_process_exit_outranks_fresh_lifecycle_working() {
+        // Tier-strict precedence: a confirmed ProcessExit outranks ongoing
+        // lifecycle activity even at equal freshness — a live process's stale
+        // "working" cannot disprove an actual exit. This is safe against the
+        // resume race because the pipeline (`AgentStatusSource`) only emits a
+        // ProcessExit observation while the wrapper snapshot says `Exited*`; on
+        // resume the new wrapper rewrites it to `Running` before the agent's
+        // first native event, so a fresh exit and a fresh native turn never
+        // coexist. See `agent_status_cache` tests for that invariant.
+        let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
+        let working = obs(
+            ObservationSource::ProviderLifecycle,
+            ActivityKind::Working,
+            1,
+            120,
+        );
+        let projection = reduce(true, &[working, exit]);
+
+        assert_eq!(projection.phase, ParentPhase::FullyCompleted);
+        assert_eq!(projection.live.kind, LiveStatusKind::Done);
     }
 }

@@ -81,6 +81,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             | LiveStatusKind::CommandRunning
             | LiveStatusKind::TestsRunning
             | LiveStatusKind::AgentRunning
+            | LiveStatusKind::CiPending
             | LiveStatusKind::Unknown => "live_status",
         },
         Evidence::AgentStatus(status) => match status {
@@ -173,7 +174,9 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
                 crate::ui_state::TaskStatus::Error => {
                     primary_blocker_reason(task).unwrap_or("resolve_blocker")
                 }
-                crate::ui_state::TaskStatus::Idle => "resume",
+                crate::ui_state::TaskStatus::Idle | crate::ui_state::TaskStatus::Unknown => {
+                    "resume"
+                }
             }
         }
     }

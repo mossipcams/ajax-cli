@@ -71,7 +71,7 @@ pub enum CanonicalEventDetail {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RunPhase {
+pub enum AgentPhase {
     Active,
     Blocked,
     Settled,
@@ -81,7 +81,7 @@ pub enum RunPhase {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunSnapshot {
-    pub phase: RunPhase,
+    pub phase: AgentPhase,
     pub activity: Option<ActivityKind>,
     pub blocker: Option<AttentionReason>,
     pub outcome: Option<TurnOutcome>,
@@ -98,7 +98,7 @@ pub struct ParsedEnvelope {
 }
 
 struct FoldState {
-    phase: RunPhase,
+    phase: AgentPhase,
     activity: Option<ActivityKind>,
     blocker: Option<AttentionReason>,
     outcome: Option<TurnOutcome>,
@@ -111,7 +111,7 @@ struct FoldState {
 impl FoldState {
     fn new() -> Self {
         Self {
-            phase: RunPhase::Unknown,
+            phase: AgentPhase::Unknown,
             activity: None,
             blocker: None,
             outcome: None,
@@ -136,8 +136,8 @@ impl FoldState {
     fn clear_pending_attention(&mut self) {
         self.pending_attention = None;
         self.blocker = None;
-        if self.phase == RunPhase::Blocked && !self.turn_settled {
-            self.phase = RunPhase::Active;
+        if self.phase == AgentPhase::Blocked && !self.turn_settled {
+            self.phase = AgentPhase::Active;
         }
     }
 
@@ -145,13 +145,13 @@ impl FoldState {
         self.turn_settled = true;
         self.outcome = Some(outcome.clone());
         if matches!(outcome, TurnOutcome::Failed) {
-            self.phase = RunPhase::Failed;
+            self.phase = AgentPhase::Failed;
             return;
         }
         if !self.active_tools.is_empty() {
-            self.phase = RunPhase::Active;
+            self.phase = AgentPhase::Active;
         } else {
-            self.phase = RunPhase::Settled;
+            self.phase = AgentPhase::Settled;
         }
     }
 }
@@ -166,7 +166,7 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
             CanonicalEventKind::TurnStarted => {
                 state.turn_started = true;
                 state.clear_pending_attention();
-                state.phase = RunPhase::Active;
+                state.phase = AgentPhase::Active;
             }
             CanonicalEventKind::ActivityStarted => {
                 if let Some(CanonicalEventDetail::Activity {
@@ -178,7 +178,7 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                         state.active_tools.insert(id.clone(), ());
                     }
                     state.activity = Some(ActivityKind::Tool);
-                    state.phase = RunPhase::Active;
+                    state.phase = AgentPhase::Active;
                 }
             }
             CanonicalEventKind::ActivityFinished => {
@@ -200,16 +200,16 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                 }
                 if state.active_tools.is_empty() {
                     state.activity = None;
-                    if state.turn_settled && state.phase != RunPhase::Failed {
+                    if state.turn_settled && state.phase != AgentPhase::Failed {
                         if state.pending_attention.is_some() {
-                            state.phase = RunPhase::Blocked;
+                            state.phase = AgentPhase::Blocked;
                         } else {
-                            state.phase = RunPhase::Settled;
+                            state.phase = AgentPhase::Settled;
                         }
                     } else if state.pending_attention.is_none()
                         && (state.turn_started || !state.active_tools.is_empty())
                     {
-                        state.phase = RunPhase::Active;
+                        state.phase = AgentPhase::Active;
                     }
                 }
             }
@@ -217,7 +217,7 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                 if let Some(CanonicalEventDetail::Attention { attention }) = &event.detail {
                     state.pending_attention = Some(attention.clone());
                     state.blocker = Some(attention.clone());
-                    state.phase = RunPhase::Blocked;
+                    state.phase = AgentPhase::Blocked;
                 }
             }
             CanonicalEventKind::AttentionCleared => {
@@ -238,37 +238,19 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                 state.apply_turn_settled(outcome);
             }
             CanonicalEventKind::SessionOpened | CanonicalEventKind::ChildStarted => {
-                state.phase = RunPhase::Active;
+                state.phase = AgentPhase::Active;
             }
             CanonicalEventKind::SessionClosed => {
                 state.active_tools.clear();
                 state.activity = None;
-                if state.phase != RunPhase::Failed {
-                    state.phase = RunPhase::Settled;
+                if state.phase != AgentPhase::Failed {
+                    state.phase = AgentPhase::Settled;
                 }
             }
             CanonicalEventKind::ChildSettled | CanonicalEventKind::Heartbeat => {}
         }
     }
     state.snapshot()
-}
-
-pub fn project_snapshot(snapshot: &RunSnapshot) -> Option<&'static str> {
-    match snapshot.phase {
-        RunPhase::Failed => Some("failed"),
-        RunPhase::Blocked => match snapshot.pending_attention.as_ref() {
-            Some(AttentionReason::Permission) => Some("ask"),
-            Some(_) => Some("wait"),
-            None => match snapshot.blocker.as_ref() {
-                Some(AttentionReason::Permission) => Some("ask"),
-                Some(_) => Some("wait"),
-                None => Some("wait"),
-            },
-        },
-        RunPhase::Settled => Some("done"),
-        RunPhase::Active => Some("working"),
-        RunPhase::Unknown => None,
-    }
 }
 
 /// Map a folded [`RunSnapshot`] onto reducer-ready [`StatusObservation`]s.
@@ -278,9 +260,9 @@ pub fn observations_from_run_snapshot(
     run_id: &str,
 ) -> Vec<StatusObservation> {
     let kind = match snapshot.phase {
-        RunPhase::Unknown => return Vec::new(),
-        RunPhase::Active => StatusActivityKind::Working,
-        RunPhase::Blocked => {
+        AgentPhase::Unknown => return Vec::new(),
+        AgentPhase::Active => StatusActivityKind::Working,
+        AgentPhase::Blocked => {
             let is_permission = snapshot
                 .pending_attention
                 .as_ref()
@@ -295,8 +277,8 @@ pub fn observations_from_run_snapshot(
                 StatusActivityKind::WaitingInput
             }
         }
-        RunPhase::Settled => StatusActivityKind::Done,
-        RunPhase::Failed => StatusActivityKind::Failed,
+        AgentPhase::Settled => StatusActivityKind::Done,
+        AgentPhase::Failed => StatusActivityKind::Failed,
     };
 
     let expires_at = match kind {
@@ -320,11 +302,31 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::{
-        fold_envelopes, observations_from_run_snapshot, project_snapshot, ActivityKind,
-        AttentionReason, CanonicalEventDetail, CanonicalEventKind, ParsedEnvelope, TurnOutcome,
+        fold_envelopes, observations_from_run_snapshot, ActivityKind, AgentPhase, AttentionReason,
+        CanonicalEventDetail, CanonicalEventKind, ParsedEnvelope, RunSnapshot, TurnOutcome,
     };
     use crate::agent_status::{reduce_agent_status, ReduceInput};
     use crate::models::LiveStatusKind;
+
+    /// Compact folded-phase label used by the fold tests. Mirrors how the CLI's
+    /// legacy string projection read a `RunSnapshot`; kept test-local since no
+    /// production code projects a snapshot to a string anymore.
+    fn phase_label(snapshot: &RunSnapshot) -> Option<&'static str> {
+        match snapshot.phase {
+            AgentPhase::Failed => Some("failed"),
+            AgentPhase::Blocked => match snapshot
+                .pending_attention
+                .as_ref()
+                .or(snapshot.blocker.as_ref())
+            {
+                Some(AttentionReason::Permission) => Some("ask"),
+                _ => Some("wait"),
+            },
+            AgentPhase::Settled => Some("done"),
+            AgentPhase::Active => Some("working"),
+            AgentPhase::Unknown => None,
+        }
+    }
 
     fn envelope(
         kind: CanonicalEventKind,
@@ -375,7 +377,7 @@ mod tests {
             tool_finished("a", 4),
         ];
         let snapshot = fold_envelopes(&events);
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
         assert!(snapshot.active_tools.contains_key("b"));
     }
 
@@ -392,7 +394,7 @@ mod tests {
             tool_finished("a", 2),
         ];
         let snapshot = fold_envelopes(&events);
-        assert_eq!(project_snapshot(&snapshot), Some("ask"));
+        assert_eq!(phase_label(&snapshot), Some("ask"));
     }
 
     #[test]
@@ -408,7 +410,7 @@ mod tests {
             ),
         ];
         let snapshot = fold_envelopes(&started);
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
 
         let finished = vec![
             tool_started("a", 1),
@@ -422,7 +424,7 @@ mod tests {
             tool_finished("a", 3),
         ];
         let snapshot = fold_envelopes(&finished);
-        assert_eq!(project_snapshot(&snapshot), Some("done"));
+        assert_eq!(phase_label(&snapshot), Some("done"));
     }
 
     #[test]
@@ -460,7 +462,7 @@ mod tests {
         ];
         let snapshot = fold_envelopes(&events);
         assert!(snapshot.active_tools.is_empty());
-        assert_eq!(project_snapshot(&snapshot), Some("done"));
+        assert_eq!(phase_label(&snapshot), Some("done"));
     }
 
     #[test]
@@ -485,7 +487,7 @@ mod tests {
         ];
         let snapshot = fold_envelopes(&events);
         assert!(snapshot.active_tools.contains_key("a"));
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
     }
 
     #[test]

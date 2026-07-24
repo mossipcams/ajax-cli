@@ -93,6 +93,7 @@ pub(crate) fn task_card_bucket(card: &TaskCard) -> StatusBucket {
             | ajax_core::models::LifecycleStatus::Removed => StatusBucket::Done,
             _ => StatusBucket::Idle,
         },
+        TaskStatus::Unknown => StatusBucket::Idle,
     }
 }
 

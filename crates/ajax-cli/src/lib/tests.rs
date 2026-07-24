@@ -558,21 +558,70 @@ fn test_agent_cache_directory(label: &str) -> PathBuf {
 }
 
 fn write_agent_status_event(cache_dir: &Path, task_id: &str, value: &str) {
+    use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
+
     let events_dir = cache_dir.join("agent-events");
+    let runtime_dir = cache_dir.join("agent-runtime");
     std::fs::create_dir_all(&events_dir).unwrap();
+    std::fs::create_dir_all(&runtime_dir).unwrap();
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
+    let stem = task_file_stem(task_id);
+
+    // Wrapper runtime snapshot: alive for non-terminal, exited for terminal.
+    let state = match value {
+        "done" => AgentRuntimeState::ExitedSuccess,
+        "failed" => AgentRuntimeState::ExitedFailure,
+        _ => AgentRuntimeState::Running,
+    };
+    let snapshot = AgentRuntimeSnapshot {
+        task_id: task_id.to_string(),
+        state,
+        observed_at_unix_millis: now_millis,
+        pid: Some(1),
+        exit_code: None,
+        message: None,
+    };
     std::fs::write(
-        events_dir.join(format!("{}.json", task_id.replace('/', "__"))),
-        serde_json::json!({
-            "task_id": task_id,
-            "run_id": "primary",
-            "value": value,
-            "observed_at_unix_millis": now_millis,
-        })
-        .to_string(),
+        runtime_dir.join(format!("{stem}.json")),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+
+    // Canonical JSONL envelope for the native lifecycle event.
+    let (kind, detail) = match value {
+        "ask" => (
+            "attention_requested",
+            serde_json::json!({"attention": {"attention": "permission"}}),
+        ),
+        "wait" => (
+            "attention_requested",
+            serde_json::json!({"attention": {"attention": "question"}}),
+        ),
+        "done" => (
+            "turn_settled",
+            serde_json::json!({"outcome": {"outcome": "completed"}}),
+        ),
+        "failed" => (
+            "turn_settled",
+            serde_json::json!({"outcome": {"outcome": "failed"}}),
+        ),
+        _ => ("turn_started", serde_json::Value::Null),
+    };
+    let mut envelope = serde_json::json!({
+        "schema_version": 1,
+        "kind": kind,
+        "received_at_unix_millis": now_millis,
+        "occurred_at_unix_millis": now_millis,
+    });
+    if !detail.is_null() {
+        envelope["detail"] = detail;
+    }
+    std::fs::write(
+        events_dir.join(format!("{stem}.jsonl")),
+        format!("{}\n", serde_json::to_string(&envelope).unwrap()),
     )
     .unwrap();
 }
@@ -740,16 +789,6 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
             ],
         ),
     ]
-}
-
-/// Capability-gated pane wait fallback captures the visible pane when
-/// lifecycle/hook evidence did not apply (Codex/Other question gaps).
-fn expected_pane_capture_command() -> CommandSpec {
-    CommandSpec::new(
-        "tmux",
-        ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
-    )
-    .with_timeout(std::time::Duration::from_secs(8))
 }
 
 /// Runtime refresh now ends with a GitHub PR check probe for the fixture
@@ -2175,7 +2214,6 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
-    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
@@ -2222,7 +2260,6 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
         .as_ref()
         .is_some_and(|status| status.points_at_expected_path));
     let mut expected = tmux_live_commands();
-    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
@@ -2267,7 +2304,6 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
     assert!(changed);
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
-    expected.insert(2, expected_pane_capture_command());
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
 }
