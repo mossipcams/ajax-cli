@@ -202,6 +202,12 @@ mod tests {
             .iter()
             .any(|o| o.source == ObservationSource::ProviderLifecycle
                 && o.kind == ActivityKind::Working));
+        // Resume-race guard: while the wrapper snapshot says Running, no
+        // terminal ProcessExit observation is produced, so a fresh native turn
+        // can never be dragged back to Done by a prior exit.
+        assert!(!observations
+            .iter()
+            .any(|o| o.source == ObservationSource::ProcessExit));
         fs::remove_dir_all(root).unwrap();
     }
 

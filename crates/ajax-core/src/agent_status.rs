@@ -720,4 +720,27 @@ mod tests {
         assert_eq!(projection.phase, ParentPhase::Unknown);
         assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
     }
+
+    #[test]
+    fn fresh_process_exit_outranks_fresh_lifecycle_working() {
+        // Tier-strict precedence: a confirmed ProcessExit outranks ongoing
+        // lifecycle activity even at equal freshness — a live process's stale
+        // "working" cannot disprove an actual exit. This is safe against the
+        // resume race because the pipeline (`AgentStatusSource`) only emits a
+        // ProcessExit observation while the wrapper snapshot says `Exited*`; on
+        // resume the new wrapper rewrites it to `Running` before the agent's
+        // first native event, so a fresh exit and a fresh native turn never
+        // coexist. See `agent_status_cache` tests for that invariant.
+        let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
+        let working = obs(
+            ObservationSource::ProviderLifecycle,
+            ActivityKind::Working,
+            1,
+            120,
+        );
+        let projection = reduce(true, &[working, exit]);
+
+        assert_eq!(projection.phase, ParentPhase::FullyCompleted);
+        assert_eq!(projection.live.kind, LiveStatusKind::Done);
+    }
 }

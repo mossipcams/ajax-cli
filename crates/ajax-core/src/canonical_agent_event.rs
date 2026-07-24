@@ -253,24 +253,6 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
     state.snapshot()
 }
 
-pub fn project_snapshot(snapshot: &RunSnapshot) -> Option<&'static str> {
-    match snapshot.phase {
-        AgentPhase::Failed => Some("failed"),
-        AgentPhase::Blocked => match snapshot.pending_attention.as_ref() {
-            Some(AttentionReason::Permission) => Some("ask"),
-            Some(_) => Some("wait"),
-            None => match snapshot.blocker.as_ref() {
-                Some(AttentionReason::Permission) => Some("ask"),
-                Some(_) => Some("wait"),
-                None => Some("wait"),
-            },
-        },
-        AgentPhase::Settled => Some("done"),
-        AgentPhase::Active => Some("working"),
-        AgentPhase::Unknown => None,
-    }
-}
-
 /// Map a folded [`RunSnapshot`] onto reducer-ready [`StatusObservation`]s.
 pub fn observations_from_run_snapshot(
     snapshot: &RunSnapshot,
@@ -320,11 +302,31 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::{
-        fold_envelopes, observations_from_run_snapshot, project_snapshot, ActivityKind,
-        AttentionReason, CanonicalEventDetail, CanonicalEventKind, ParsedEnvelope, TurnOutcome,
+        fold_envelopes, observations_from_run_snapshot, ActivityKind, AgentPhase, AttentionReason,
+        CanonicalEventDetail, CanonicalEventKind, ParsedEnvelope, RunSnapshot, TurnOutcome,
     };
     use crate::agent_status::{reduce_agent_status, ReduceInput};
     use crate::models::LiveStatusKind;
+
+    /// Compact folded-phase label used by the fold tests. Mirrors how the CLI's
+    /// legacy string projection read a `RunSnapshot`; kept test-local since no
+    /// production code projects a snapshot to a string anymore.
+    fn phase_label(snapshot: &RunSnapshot) -> Option<&'static str> {
+        match snapshot.phase {
+            AgentPhase::Failed => Some("failed"),
+            AgentPhase::Blocked => match snapshot
+                .pending_attention
+                .as_ref()
+                .or(snapshot.blocker.as_ref())
+            {
+                Some(AttentionReason::Permission) => Some("ask"),
+                _ => Some("wait"),
+            },
+            AgentPhase::Settled => Some("done"),
+            AgentPhase::Active => Some("working"),
+            AgentPhase::Unknown => None,
+        }
+    }
 
     fn envelope(
         kind: CanonicalEventKind,
@@ -375,7 +377,7 @@ mod tests {
             tool_finished("a", 4),
         ];
         let snapshot = fold_envelopes(&events);
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
         assert!(snapshot.active_tools.contains_key("b"));
     }
 
@@ -392,7 +394,7 @@ mod tests {
             tool_finished("a", 2),
         ];
         let snapshot = fold_envelopes(&events);
-        assert_eq!(project_snapshot(&snapshot), Some("ask"));
+        assert_eq!(phase_label(&snapshot), Some("ask"));
     }
 
     #[test]
@@ -408,7 +410,7 @@ mod tests {
             ),
         ];
         let snapshot = fold_envelopes(&started);
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
 
         let finished = vec![
             tool_started("a", 1),
@@ -422,7 +424,7 @@ mod tests {
             tool_finished("a", 3),
         ];
         let snapshot = fold_envelopes(&finished);
-        assert_eq!(project_snapshot(&snapshot), Some("done"));
+        assert_eq!(phase_label(&snapshot), Some("done"));
     }
 
     #[test]
@@ -460,7 +462,7 @@ mod tests {
         ];
         let snapshot = fold_envelopes(&events);
         assert!(snapshot.active_tools.is_empty());
-        assert_eq!(project_snapshot(&snapshot), Some("done"));
+        assert_eq!(phase_label(&snapshot), Some("done"));
     }
 
     #[test]
@@ -485,7 +487,7 @@ mod tests {
         ];
         let snapshot = fold_envelopes(&events);
         assert!(snapshot.active_tools.contains_key("a"));
-        assert_eq!(project_snapshot(&snapshot), Some("working"));
+        assert_eq!(phase_label(&snapshot), Some("working"));
     }
 
     #[test]
