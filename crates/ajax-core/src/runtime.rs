@@ -20,8 +20,6 @@ pub enum RuntimeEvidenceSource {
     GitProbe,
     TmuxProbe,
     AgentWrapper,
-    AgentStatusCache,
-    PaneClassifier,
     SupervisorEvent,
     FilesystemEvent,
 }

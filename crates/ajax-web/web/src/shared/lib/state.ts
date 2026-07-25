@@ -17,6 +17,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   waiting: "Waiting",
   idle: "Idle",
   error: "Error",
+  unknown: "Unknown",
 };
 
 export function statusMeta(status: string): StatusMeta {
@@ -35,7 +36,7 @@ export function severityBucket(value: number): "high" | "medium" | "low" {
 }
 
 /** Presentation-only ordering. NOT a priority policy (that lives in Rust). */
-export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle"];
+export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle", "unknown"];
 
 export function statusRank(status: string): number {
   const index = STATUS_ORDER.indexOf((status || "").toLowerCase() as TaskStatus);
@@ -94,7 +95,7 @@ export function isQuiet(card: BrowserTaskCard, nowSecs: number): boolean {
   );
 }
 
-export type ActiveStatus = Exclude<TaskStatus, "idle">;
+export type ActiveStatus = Exclude<TaskStatus, "idle" | "unknown">;
 
 export interface FleetSegment {
   status: ActiveStatus;

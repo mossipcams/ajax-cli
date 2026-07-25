@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     adapters::{CiChecksObservation, CommandRunner, GitAdapter, GithubChecksAdapter, TmuxAdapter},
+    agent_status::{ProcessLiveness, StatusObservation},
     commands::{self, CommandContext, CommandError},
     config::WorktreePlacement,
     live::{self, LiveObservation, LiveStatusKind},
@@ -17,35 +18,24 @@ use crate::{
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentStatusCacheEntry {
-    pub value: String,
-    pub observed_at: SystemTime,
-    pub fresh: bool,
-    pub source: AgentStatusCacheSource,
-    /// Optional run key. Session-level hooks omit this (primary). Pane hook
-    /// files set `pane:{session}:{pane_id}` with `parent_run_id = primary`.
-    pub run_id: Option<String>,
-    pub parent_run_id: Option<String>,
-}
+/// Run identity of the primary (session-level) agent run.
+pub const PRIMARY_RUN_ID: &str = "primary";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AgentStatusCacheSource {
-    Hook,
-    RuntimeWrapper,
-    /// Agent-event lifecycle snapshot written by the `__agent-event` sink.
-    Lifecycle,
-}
+/// Source of native hook-derived agent-status evidence for a task.
+///
+/// Implementors (in `ajax-cli`) own filesystem I/O: they fold the canonical
+/// JSONL event log per run into reducer observations and translate the launch
+/// wrapper's confirmed exit / liveness into a terminal observation. Core never
+/// reads files and never parses status strings; it reduces the observations
+/// this trait yields.
+pub trait AgentStatusSource {
+    /// Reducer-ready observations for the task, one or more per active run.
+    fn observations_for_task(&self, task_id: &TaskId) -> Vec<StatusObservation>;
 
-pub trait AgentStatusCache {
-    fn status_entries_for_session(&self, session: &str) -> Vec<AgentStatusCacheEntry>;
-
-    fn status_entries_for_task(
-        &self,
-        _task_id: &TaskId,
-        session: &str,
-    ) -> Vec<AgentStatusCacheEntry> {
-        self.status_entries_for_session(session)
+    /// Confirmed launch-wrapper process liveness, if observed. Never alone
+    /// implies the agent is running.
+    fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
+        None
     }
 }
 
@@ -60,10 +50,10 @@ pub enum RefreshTier {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NoAgentStatusCache;
+pub struct NoAgentStatusSource;
 
-impl AgentStatusCache for NoAgentStatusCache {
-    fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
+impl AgentStatusSource for NoAgentStatusSource {
+    fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
         Vec::new()
     }
 }
@@ -78,13 +68,13 @@ pub fn refresh_runtime_context<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
 ) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, RefreshTier::Full)
+    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusSource, RefreshTier::Full)
 }
 
 pub fn refresh_runtime_context_with_tier<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
-    agent_status_cache: &impl AgentStatusCache,
+    agent_status_source: &impl AgentStatusSource,
     tier: RefreshTier,
 ) -> Result<bool, CommandError> {
     let mut tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
@@ -350,144 +340,69 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
+        // Native hook-derived agent status: fold canonical events per run into
+        // reducer observations (plus confirmed wrapper exit / liveness), then
+        // reduce to one live observation. There is no string round-trip and no
+        // pane-text inference.
         let now = SystemTime::now();
-        let agent_status_entries = agent_status_cache
-            .status_entries_for_task(&task_snapshot.id, &task_snapshot.tmux_session);
-        let candidates: Vec<live::StatusCandidate> = agent_status_entries
-            .iter()
-            .map(|entry| {
-                let mut candidate = live::StatusCandidate::new(
-                    match entry.source {
-                        AgentStatusCacheSource::Hook => live::AgentEvidenceSource::Hook,
-                        AgentStatusCacheSource::RuntimeWrapper => {
-                            live::AgentEvidenceSource::RuntimeWrapper
-                        }
-                        AgentStatusCacheSource::Lifecycle => live::AgentEvidenceSource::Lifecycle,
-                    },
-                    entry.value.clone(),
-                    entry.observed_at,
-                );
-                if let Some(run_id) = entry.run_id.as_ref() {
-                    candidate = candidate.with_run(run_id.clone(), entry.parent_run_id.clone());
-                }
-                candidate
-            })
-            .collect();
-        let decision = live::select_status_observation(live::StatusDecisionInput {
-            selected_agent: task_snapshot.selected_agent,
-            prior: task_snapshot.live_status.as_ref(),
-            acknowledged_at: task_snapshot.attention_acknowledged_at,
-            now,
-            candidates: &candidates,
-            extra_observations: &[],
-        });
-        if decision.applied {
-            if let (Some(observation), Some(observed_at)) =
-                (decision.observation.clone(), decision.observed_at)
-            {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    let live_status_unchanged = task
-                        .live_status
-                        .as_ref()
-                        .is_some_and(|status| status.kind == observation.kind)
-                        && task
-                            .live_status_observed_at
-                            .is_some_and(|current| current >= observed_at);
-                    let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
-                        && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-                    if live_status_unchanged && !needs_agent_running_flag {
-                        continue;
-                    }
-                    let previous = task.clone();
-                    task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
-                    task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
-                    match decision.source {
-                        Some(live::AgentEvidenceSource::Hook)
-                        | Some(live::AgentEvidenceSource::Lifecycle) => {
-                            live::apply_authoritative_observation_at(
-                                task,
-                                observation,
-                                observed_at,
-                            );
-                        }
-                        Some(live::AgentEvidenceSource::RuntimeWrapper) => {
-                            live::apply_trusted_observation_at(task, observation, observed_at);
-                        }
-                        None => {
-                            live::apply_observation_at(task, observation, observed_at);
-                        }
-                    }
-                    refresh_cached_annotations(task);
-                    changed |= *task != previous;
-                }
-                continue;
-            }
-        }
-
-        if decision.acknowledged_hold {
-            // A fresh Claude waiting hook is acknowledged: hold the current
-            // non-actionable state without further status application.
+        let observations = agent_status_source.observations_for_task(&task_snapshot.id);
+        let process_liveness = agent_status_source.process_liveness_for_task(&task_snapshot.id);
+        if observations.is_empty() && process_liveness.is_none() {
             continue;
         }
-
-        let prior_terminal = task_snapshot.live_status.as_ref().is_some_and(|status| {
-            matches!(
-                status.kind,
-                LiveStatusKind::Done | LiveStatusKind::CommandFailed
-            )
-        });
-        if !decision.applied
-            && !prior_terminal
-            && crate::pane_fallback::profile_allows_any_pane_wait_fallback(
-                task_snapshot.selected_agent,
-            )
+        let projection =
+            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
+                now,
+                primary_run_id: PRIMARY_RUN_ID.to_string(),
+                process_liveness,
+                observations: &observations,
+            });
+        if projection.phase == crate::agent_status::ParentPhase::Unknown {
+            continue;
+        }
+        let observation = projection.live.clone();
+        let observed_at = projection.selected_observed_at.unwrap_or(now);
+        // Waiting/completion evidence at or before an acknowledgment is held:
+        // opening a task suppresses it until newer evidence arrives.
+        if observation.kind.class() == crate::models::LiveStatusClass::Waiting
+            && task_snapshot
+                .attention_acknowledged_at
+                .is_some_and(|ack| observed_at <= ack)
         {
-            let pane_command =
-                tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
-            let pane_output = match runner.run(&pane_command) {
-                Ok(output) if output.status_code == 0 => output.stdout,
-                Ok(output) => {
-                    record_runtime_probe_failure(
-                        context,
-                        &task_id,
-                        format!(
-                            "tmux capture-pane probe failed: exited with status {}",
-                            output.status_code
-                        ),
-                        &mut changed,
-                    );
-                    continue;
+            continue;
+        }
+        if let Some(task) = context.registry.get_task_mut(&task_id) {
+            let live_status_unchanged = task
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == observation.kind)
+                && task
+                    .live_status_observed_at
+                    .is_some_and(|current| current >= observed_at);
+            let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
+                && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
+            if live_status_unchanged && !needs_agent_running_flag {
+                continue;
+            }
+            let previous = task.clone();
+            task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
+            task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
+            match projection.selected_source {
+                // Confirmed wrapper exit is trusted process evidence and may
+                // advance lifecycle on terminal completion.
+                Some(crate::agent_status::ObservationSource::ProcessExit) => {
+                    live::apply_trusted_observation_at(task, observation, observed_at);
                 }
-                Err(error) => {
-                    record_runtime_probe_failure(
-                        context,
-                        &task_id,
-                        format!("tmux capture-pane probe failed: {error}"),
-                        &mut changed,
-                    );
-                    continue;
+                // Folded native lifecycle events are authoritative for activity.
+                Some(crate::agent_status::ObservationSource::ProviderLifecycle) => {
+                    live::apply_authoritative_observation_at(task, observation, observed_at);
                 }
-            };
-            let pane_now = SystemTime::now();
-            if let Some(observation) =
-                crate::pane_fallback::maybe_pane_wait(task_snapshot.selected_agent, &pane_output)
-            {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    let live_status_unchanged = task
-                        .live_status
-                        .as_ref()
-                        .is_some_and(|status| status.kind == observation.kind);
-                    if live_status_unchanged {
-                        continue;
-                    }
-                    let previous = task.clone();
-                    task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
-                    task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
-                    live::apply_observation_at(task, observation, pane_now);
-                    refresh_cached_annotations(task);
-                    changed |= *task != previous;
+                _ => {
+                    live::apply_observation_at(task, observation, observed_at);
                 }
             }
+            refresh_cached_annotations(task);
+            changed |= *task != previous;
         }
     }
 
@@ -597,14 +512,28 @@ fn apply_github_checks_observation(
     match observation {
         CiChecksObservation::Failed { summary } => {
             task.metadata.remove(CI_PROBE_ERROR_KEY);
-            if can_apply_github_ci_failure(task) {
+            if can_apply_github_override(task) {
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::CiFailed, format!("ci failed: {summary}")),
                 );
             }
         }
-        CiChecksObservation::Healthy | CiChecksObservation::Pending => {
+        CiChecksObservation::Pending => {
+            // Pending checks are a relevant GitHub result: surface them as
+            // Running with a CI explanation (override the native phase), but
+            // never over an existing error or missing-substrate state.
+            task.metadata.remove(CI_PROBE_ERROR_KEY);
+            if can_apply_github_override(task) {
+                live::apply_observation(
+                    task,
+                    LiveObservation::new(LiveStatusKind::CiPending, "ci running"),
+                );
+            }
+        }
+        CiChecksObservation::Healthy => {
+            // Passing checks clear the GitHub override and reveal the native
+            // hook-derived status. Passing CI alone is not Done.
             task.metadata.remove(CI_PROBE_ERROR_KEY);
             clear_github_ci_evidence(task);
         }
@@ -615,7 +544,7 @@ fn apply_github_checks_observation(
 }
 
 fn clear_github_ci_evidence(task: &mut Task) {
-    if task.live_status.as_ref().is_some_and(is_github_ci_failure) {
+    if task.live_status.as_ref().is_some_and(is_github_owned_ci) {
         task.live_status = None;
         task.live_status_observed_at = None;
     }
@@ -628,7 +557,7 @@ fn clear_github_ci_evidence(task: &mut Task) {
     }
 }
 
-fn can_apply_github_ci_failure(task: &Task) -> bool {
+fn can_apply_github_override(task: &Task) -> bool {
     match task.live_status.as_ref() {
         None => true,
         Some(status) if is_github_ci_failure(status) => true,
@@ -641,6 +570,12 @@ fn can_apply_github_ci_failure(task: &Task) -> bool {
 
 fn is_github_ci_failure(status: &LiveObservation) -> bool {
     status.kind == LiveStatusKind::CiFailed && status.summary.starts_with(GITHUB_CI_FAILED_PREFIX)
+}
+
+/// GitHub-owned CI live status (failure or pending) that a passing probe clears
+/// to reveal the native hook-derived status.
+fn is_github_owned_ci(status: &LiveObservation) -> bool {
+    is_github_ci_failure(status) || status.kind == LiveStatusKind::CiPending
 }
 
 fn is_local_check_failure(status: &LiveObservation) -> bool {
@@ -933,12 +868,14 @@ mod tests {
     };
 
     use super::{
-        refresh_runtime_context, refresh_runtime_context_with_tier, AgentStatusCache,
-        AgentStatusCacheEntry, AgentStatusCacheSource, CiChecksObservation, GithubChecksAdapter,
-        NoAgentStatusCache, RefreshTier,
+        refresh_runtime_context, refresh_runtime_context_with_tier, AgentStatusSource,
+        CiChecksObservation, GithubChecksAdapter, NoAgentStatusSource, RefreshTier, PRIMARY_RUN_ID,
     };
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        agent_status::{
+            ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
+        },
         commands::CommandContext,
         config::{Config, ManagedRepo, RuntimePathRequest},
         live::{LiveObservation, LiveStatusKind},
@@ -951,8 +888,52 @@ mod tests {
         ui_state::{derive_operator_status, TaskStatus},
     };
 
-    struct StaticAgentStatusCache {
-        values: Vec<String>,
+    struct ObsSource {
+        observations: Vec<StatusObservation>,
+        liveness: Option<ProcessLiveness>,
+    }
+
+    impl ObsSource {
+        fn new(observations: Vec<StatusObservation>) -> Self {
+            Self {
+                observations,
+                liveness: None,
+            }
+        }
+
+        fn with_liveness(mut self, liveness: ProcessLiveness) -> Self {
+            self.liveness = Some(liveness);
+            self
+        }
+    }
+
+    /// Reducer-ready lifecycle observation `age_secs` old with a `ttl_secs`
+    /// freshness window, on the primary run.
+    fn lifecycle_obs(kind: ActivityKind, age_secs: u64, ttl_secs: u64) -> StatusObservation {
+        let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
+        StatusObservation {
+            source: ObservationSource::ProviderLifecycle,
+            observed_at,
+            expires_at: observed_at + Duration::from_secs(ttl_secs),
+            confidence: Confidence::High,
+            run_id: PRIMARY_RUN_ID.to_string(),
+            parent_run_id: None,
+            kind,
+        }
+    }
+
+    /// Confirmed wrapper exit `age_secs` old on the primary run.
+    fn exit_obs(kind: ActivityKind, age_secs: u64) -> StatusObservation {
+        let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
+        StatusObservation {
+            source: ObservationSource::ProcessExit,
+            observed_at,
+            expires_at: observed_at + Duration::from_secs(120),
+            confidence: Confidence::High,
+            run_id: PRIMARY_RUN_ID.to_string(),
+            parent_run_id: None,
+            kind,
+        }
     }
 
     const BASE_BRANCH: &str = "main";
@@ -964,20 +945,13 @@ mod tests {
     const TASK_WORKTREE: &str = "/tmp/worktrees/web-fix-login";
     const TASK_WINDOW: &str = "task";
 
-    impl AgentStatusCache for StaticAgentStatusCache {
-        fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
-            self.values
-                .iter()
-                .cloned()
-                .map(|value| AgentStatusCacheEntry {
-                    value,
-                    observed_at: SystemTime::now(),
-                    fresh: true,
-                    source: AgentStatusCacheSource::Hook,
-                    run_id: None,
-                    parent_run_id: None,
-                })
-                .collect()
+    impl AgentStatusSource for ObsSource {
+        fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
+            self.observations.clone()
+        }
+
+        fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
+            self.liveness
         }
     }
 
@@ -1357,170 +1331,25 @@ mod tests {
     }
 
     #[test]
-    fn hook_status_cache_can_drive_live_refresh_before_pane_classification() {
+    fn native_running_observation_drives_agent_running() {
         let mut context = context_with_active_task();
         let mut runner = RuntimeRefreshRunner;
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::AgentRunning)
-        );
+        assert_eq!(derive_operator_status(task).status, TaskStatus::Running);
     }
 
     #[test]
-    fn wrapper_completion_beats_stale_hook_working_status() {
-        struct MixedAgentStatusCache;
-
-        impl AgentStatusCache for MixedAgentStatusCache {
-            fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
-                Vec::new()
-            }
-
-            fn status_entries_for_task(
-                &self,
-                _task_id: &TaskId,
-                _session: &str,
-            ) -> Vec<AgentStatusCacheEntry> {
-                vec![
-                    AgentStatusCacheEntry {
-                        value: "working".to_string(),
-                        observed_at: SystemTime::UNIX_EPOCH,
-                        fresh: false,
-                        source: AgentStatusCacheSource::Hook,
-                        run_id: None,
-                        parent_run_id: None,
-                    },
-                    AgentStatusCacheEntry {
-                        value: "done".to_string(),
-                        observed_at: SystemTime::now(),
-                        fresh: true,
-                        source: AgentStatusCacheSource::RuntimeWrapper,
-                        run_id: None,
-                        parent_run_id: None,
-                    },
-                ]
-            }
-        }
-
-        let mut context = context_with_task_for_missing_session();
-        let mut runner = HealthyRefreshRunner::default();
-
-        let changed = refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &MixedAgentStatusCache,
-            RefreshTier::Full,
-        )
-        .unwrap();
-
-        assert!(changed);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::Done)
-        );
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
-    }
-
-    struct ScriptedAgentStatusCache {
-        entries: Vec<AgentStatusCacheEntry>,
-    }
-
-    impl AgentStatusCache for ScriptedAgentStatusCache {
-        fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
-            Vec::new()
-        }
-
-        fn status_entries_for_task(
-            &self,
-            _task_id: &TaskId,
-            _session: &str,
-        ) -> Vec<AgentStatusCacheEntry> {
-            self.entries.clone()
-        }
-    }
-
-    fn scripted_entry(
-        source: AgentStatusCacheSource,
-        value: &str,
-        ago: Duration,
-    ) -> AgentStatusCacheEntry {
-        AgentStatusCacheEntry {
-            value: value.to_string(),
-            observed_at: SystemTime::now() - ago,
-            fresh: true,
-            source,
-            run_id: None,
-            parent_run_id: None,
-        }
-    }
-
-    fn captured_pane(runner: &HealthyRefreshRunner) -> usize {
-        runner
-            .commands
-            .iter()
-            .filter(|command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane"))
-            .count()
-    }
-
-    #[test]
-    fn missing_session_skips_wrapper_hook_and_pane_status_application() {
-        let mut context = context_with_task_for_missing_session();
-        let mut runner = MissingSessionRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![
-                scripted_entry(
-                    AgentStatusCacheSource::RuntimeWrapper,
-                    "done",
-                    Duration::from_secs(1),
-                ),
-                scripted_entry(
-                    AgentStatusCacheSource::Hook,
-                    "working",
-                    Duration::from_secs(1),
-                ),
-            ],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::TmuxMissing)
-        );
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
-        assert!(!runner.commands.iter().any(
-            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
-        ));
-    }
-
-    #[test]
-    fn fresh_wrapper_completion_beats_new_hook_during_refresh() {
+    fn wrapper_exit_success_is_terminal_done_fallback() {
         let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![
-                scripted_entry(
-                    AgentStatusCacheSource::RuntimeWrapper,
-                    "done",
-                    Duration::from_secs(60),
-                ),
-                scripted_entry(
-                    AgentStatusCacheSource::Hook,
-                    "working",
-                    Duration::from_secs(1),
-                ),
-            ],
-        };
+        let mut runner = RuntimeRefreshRunner;
+        // No native lifecycle events; only a confirmed wrapper exit. Requirement
+        // 12: confirmed exit 0 is a Done fallback where native evidence is absent.
+        let cache = ObsSource::new(vec![exit_obs(ActivityKind::Done, 1)]);
 
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
@@ -1530,42 +1359,17 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::Done)
         );
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
     }
 
     #[test]
-    fn stale_wrapper_completion_preserves_prior_state_without_pane_capture() {
+    fn wrapper_liveness_alone_does_not_set_agent_running() {
         let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::RuntimeWrapper,
-                "done",
-                Duration::from_secs(3_600),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        // Gated pane wait fallback may capture when lifecycle/hook did not apply;
-        // empty/non-wait chrome must not invent status.
-        assert_eq!(captured_pane(&runner), 1);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status, None);
-    }
-
-    #[test]
-    fn wrapper_heartbeat_alone_does_not_set_agent_running() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::RuntimeWrapper,
-                "working",
-                Duration::from_secs(1),
-            )],
-        };
+        let mut runner = RuntimeRefreshRunner;
+        // Requirement 12: wrapper Running is liveness only, never Agent Running.
+        let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+            alive: true,
+            observed_at: SystemTime::now(),
+        });
 
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
             .unwrap();
@@ -1576,487 +1380,6 @@ mod tests {
             Some(LiveStatusKind::AgentRunning)
         );
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
-    }
-
-    #[test]
-    fn parent_wrapper_done_with_active_child_pane_hook_is_not_reviewable() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![
-                scripted_entry(
-                    AgentStatusCacheSource::RuntimeWrapper,
-                    "done",
-                    Duration::from_secs(1),
-                ),
-                AgentStatusCacheEntry {
-                    value: "working".to_string(),
-                    observed_at: SystemTime::now() - Duration::from_secs(1),
-                    fresh: true,
-                    source: AgentStatusCacheSource::Hook,
-                    run_id: Some("pane:ajax-web-fix-login:%1".to_string()),
-                    parent_run_id: Some("primary".to_string()),
-                },
-            ],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_ne!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::Done)
-        );
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
-        assert_ne!(task.lifecycle_status, LifecycleStatus::Reviewable);
-    }
-
-    #[test]
-    fn prior_done_persists_after_stale_wrapper_completion() {
-        let mut context = context_with_active_task();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new(TASK_ID))
-            .unwrap();
-        task.lifecycle_status = LifecycleStatus::Reviewable;
-        task.agent_status = AgentRuntimeStatus::Done;
-        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::RuntimeWrapper,
-                "done",
-                Duration::from_secs(3_600),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::Done)
-        );
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
-    }
-
-    #[test]
-    fn codex_working_hook_within_window_applies_running() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "working",
-                Duration::from_secs(21),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::AgentRunning)
-        );
-    }
-
-    #[test]
-    fn fresh_codex_wait_skips_pane_capture() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "wait",
-                Duration::from_secs(119),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-    }
-
-    #[derive(Default)]
-    struct IdlePromptRefreshRunner {
-        commands: Vec<CommandSpec>,
-    }
-
-    impl CommandRunner for IdlePromptRefreshRunner {
-        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            self.commands.push(command.clone());
-            let stdout = match command.args.as_slice() {
-                [command, ..] if command == "capture-pane" => {
-                    "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n"
-                }
-                _ => runtime_stdout(&command.args),
-            };
-
-            Ok(CommandOutput {
-                status_code: 0,
-                stdout: stdout.to_string(),
-                stderr: String::new(),
-            })
-        }
-    }
-
-    #[test]
-    fn pane_fallback_same_kind_skips_reapply() {
-        let mut context = context_with_active_task();
-        context
-            .registry
-            .get_task_mut(&TaskId::new(TASK_ID))
-            .unwrap()
-            .selected_agent = AgentClient::Other;
-        let cache = ScriptedAgentStatusCache { entries: vec![] };
-        let mut runner = IdlePromptRefreshRunner::default();
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let observed_at = context
-            .registry
-            .get_task(&TaskId::new(TASK_ID))
-            .unwrap()
-            .live_status_observed_at
-            .expect("pane fallback should apply wait hint");
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new(TASK_ID))
-                .unwrap()
-                .live_status
-                .as_ref()
-                .map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-
-        let changed =
-            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-                .unwrap();
-        assert!(!changed);
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status_observed_at, Some(observed_at));
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-    }
-
-    #[test]
-    fn stale_codex_wait_preserves_prior_state() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "wait",
-                Duration::from_secs(121),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 1);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status, None);
-    }
-
-    #[test]
-    fn unsupported_agent_hook_is_ignored_without_inventing_wait_from_thinking_pane() {
-        let mut context = context_with_active_task();
-        context
-            .registry
-            .get_task_mut(&TaskId::new(TASK_ID))
-            .unwrap()
-            .selected_agent = AgentClient::Other;
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "working",
-                Duration::from_secs(1),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        // Other ignores ProviderHook; capability-gated fallback may capture, but
-        // thinking stream-json is not a wait hint.
-        assert_eq!(captured_pane(&runner), 1);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status, None);
-    }
-
-    #[test]
-    fn malformed_newest_hook_does_not_hide_older_valid_wait() {
-        let mut context = context_with_active_task();
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![
-                scripted_entry(
-                    AgentStatusCacheSource::Hook,
-                    "garbage",
-                    Duration::from_secs(1),
-                ),
-                scripted_entry(
-                    AgentStatusCacheSource::Hook,
-                    "wait",
-                    Duration::from_secs(10),
-                ),
-            ],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-    }
-
-    #[test]
-    fn acknowledged_old_claude_wait_stays_idle_without_pane_capture() {
-        let mut context = context_with_active_task();
-        {
-            let task = context
-                .registry
-                .get_task_mut(&TaskId::new(TASK_ID))
-                .unwrap();
-            task.selected_agent = AgentClient::Claude;
-            task.agent_status = AgentRuntimeStatus::NotStarted;
-            task.live_status = None;
-            task.attention_acknowledged_at = Some(SystemTime::now() - Duration::from_secs(5));
-        }
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "wait",
-                Duration::from_secs(10),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status, None);
-        assert!(!task.has_side_flag(SideFlag::NeedsInput));
-    }
-
-    #[test]
-    fn new_claude_wait_after_acknowledgment_restores_attention() {
-        let acknowledged_at = SystemTime::now() - Duration::from_secs(10);
-        let mut context = context_with_active_task();
-        {
-            let task = context
-                .registry
-                .get_task_mut(&TaskId::new(TASK_ID))
-                .unwrap();
-            task.selected_agent = AgentClient::Claude;
-            task.agent_status = AgentRuntimeStatus::NotStarted;
-            task.live_status = None;
-            task.attention_acknowledged_at = Some(acknowledged_at);
-        }
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![AgentStatusCacheEntry {
-                value: "wait".to_string(),
-                observed_at: acknowledged_at + Duration::from_nanos(1),
-                fresh: true,
-                source: AgentStatusCacheSource::Hook,
-                run_id: None,
-                parent_run_id: None,
-            }],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert!(task
-            .annotations
-            .iter()
-            .any(|annotation| annotation.kind == crate::models::AnnotationKind::NeedsMe));
-    }
-
-    #[test]
-    fn acknowledged_old_codex_wait_stays_idle_without_pane_capture() {
-        let mut context = context_with_active_task();
-        context
-            .registry
-            .get_task_mut(&TaskId::new(TASK_ID))
-            .unwrap()
-            .attention_acknowledged_at = Some(SystemTime::now() - Duration::from_secs(1));
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![scripted_entry(
-                AgentStatusCacheSource::Hook,
-                "wait",
-                Duration::from_secs(10),
-            )],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        assert_eq!(captured_pane(&runner), 0);
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status, None);
-        assert!(!task.has_side_flag(SideFlag::NeedsInput));
-    }
-
-    #[test]
-    fn newer_same_kind_waiting_evidence_is_applied_after_acknowledgment() {
-        let acknowledged_at = SystemTime::now() - Duration::from_secs(10);
-        let previous_observed_at = acknowledged_at - Duration::from_secs(1);
-        let next_observed_at = acknowledged_at + Duration::from_nanos(1);
-        let mut context = context_with_active_task();
-        {
-            let task = context
-                .registry
-                .get_task_mut(&TaskId::new(TASK_ID))
-                .unwrap();
-            task.live_status = Some(LiveObservation::new(
-                LiveStatusKind::WaitingForInput,
-                "old wait",
-            ));
-            task.live_status_observed_at = Some(previous_observed_at);
-            task.attention_acknowledged_at = Some(acknowledged_at);
-        }
-        let mut runner = HealthyRefreshRunner::default();
-        let cache = ScriptedAgentStatusCache {
-            entries: vec![AgentStatusCacheEntry {
-                value: "wait".to_string(),
-                observed_at: next_observed_at,
-                fresh: true,
-                source: AgentStatusCacheSource::Hook,
-                run_id: None,
-                parent_run_id: None,
-            }],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.live_status_observed_at, Some(next_observed_at));
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-    }
-
-    #[test]
-    fn status_decision_preserves_steady_state_command_budget() {
-        let mut context = context_with_unchanged_running_task();
-        let mut runner = GitSkippingRunner::default();
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
-            .unwrap();
-
-        let git_worktree_lists = runner
-            .commands
-            .iter()
-            .filter(|command| git_worktree_list(&command.args))
-            .count();
-        let capture_panes = runner
-            .commands
-            .iter()
-            .filter(|command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane"))
-            .count();
-        let tmux_commands = runner
-            .commands
-            .iter()
-            .filter(|command| {
-                matches!(
-                    command.args.first().map(String::as_str),
-                    Some("list-sessions" | "list-windows")
-                )
-            })
-            .count();
-
-        assert_eq!(git_worktree_lists, 0);
-        assert_eq!(capture_panes, 0);
-        assert!(tmux_commands <= 2, "got {tmux_commands}");
-    }
-
-    #[test]
-    fn hook_working_status_reactivates_previously_done_task() {
-        let mut context = context_with_active_task();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new(TASK_ID))
-            .unwrap();
-        task.lifecycle_status = LifecycleStatus::Reviewable;
-        task.agent_status = AgentRuntimeStatus::Done;
-        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
-        let mut runner = RuntimeRefreshRunner;
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
-
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
-
-        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::AgentRunning)
-        );
-    }
-
-    #[test]
-    fn unchanged_live_refresh_does_not_report_durable_state_change() {
-        let mut context = context_with_unchanged_running_task();
-        seed_fresh_ci_probe(&mut context);
-        let previous = context
-            .registry
-            .get_task(&TaskId::new(TASK_ID))
-            .unwrap()
-            .clone();
-        let mut runner = HealthyRefreshRunner::default();
-
-        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
-
-        let refreshed = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert!(!changed);
-        assert_eq!(refreshed.last_activity_at, previous.last_activity_at);
-        assert!(runner.commands.iter().any(
-            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
-        ));
     }
 
     #[test]
@@ -2148,7 +1471,7 @@ mod tests {
         let changed = super::refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             super::RefreshTier::Full,
         )
         .unwrap();
@@ -2259,7 +1582,7 @@ mod tests {
         let changed = refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2294,7 +1617,10 @@ mod tests {
     }
 
     #[test]
-    fn github_pending_checks_clear_github_ci_live_status() {
+    fn github_pending_checks_surface_ci_running_over_github_failure() {
+        // Relevant pending checks override the native/github failure with a
+        // Running "ci running" state, but never override a local check failure
+        // or a merge conflict (requirement 6).
         let now = SystemTime::now();
         let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
         github.add_side_flag(SideFlag::TestsFailed);
@@ -2306,7 +1632,13 @@ mod tests {
         super::apply_github_checks_observation(&mut local, CiChecksObservation::Pending, now);
         super::apply_github_checks_observation(&mut conflict, CiChecksObservation::Pending, now);
 
-        assert!(github.live_status.is_none());
+        assert_eq!(
+            github
+                .live_status
+                .as_ref()
+                .map(|status| (status.kind, status.summary.as_str())),
+            Some((LiveStatusKind::CiPending, "ci running"))
+        );
         assert!(!github.has_side_flag(SideFlag::TestsFailed));
         assert_eq!(
             local
@@ -2421,7 +1753,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut fresh_context,
             &mut fresh_runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2440,7 +1772,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut stale_context,
             &mut stale_runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2470,7 +1802,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut failed_context,
             &mut failed_runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2487,7 +1819,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut healthy_context,
             &mut healthy_runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2523,7 +1855,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Live,
         )
         .unwrap();
@@ -2551,7 +1883,7 @@ mod tests {
         let changed = refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Live,
         )
         .unwrap();
@@ -2582,9 +1914,7 @@ mod tests {
     fn steady_state_refresh_skips_capture_pane_when_agent_cache_is_stable() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = GitSkippingRunner::default();
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
         let _changed =
             refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
@@ -2623,9 +1953,7 @@ mod tests {
     fn steady_state_refresh_operation_budget() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = GitSkippingRunner::default();
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
         let _changed =
             refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
@@ -3039,9 +2367,7 @@ mod tests {
     fn live_refresh_many_active_tasks_use_bounded_tmux_commands() {
         let mut context = context_with_many_active_tasks(24);
         let mut runner = GitSkippingRunner::default();
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string(); 24],
-        };
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
         refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
             .unwrap();
@@ -3100,7 +2426,7 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Live,
         )
         .unwrap();
@@ -3127,7 +2453,7 @@ mod tests {
         let changed = refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusCache,
+            &NoAgentStatusSource,
             RefreshTier::Live,
         )
         .unwrap();

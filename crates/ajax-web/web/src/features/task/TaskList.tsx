@@ -194,8 +194,17 @@ export default function TaskList({
   const faults = useMemo(() => calm.filter((card) => card.status === "error"), [calm]);
   const waiting = useMemo(() => calm.filter((card) => card.status === "waiting"), [calm]);
   const running = useMemo(() => calm.filter((card) => card.status === "running"), [calm]);
-  const idle = useMemo(() => calm.filter((card) => card.status === "idle"), [calm]);
-  const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
+  // Unknown ("no provable status") is calm, not actionable: it joins the idle
+  // tail rather than the active fleet, and never lands in an error/waiting/
+  // running tier.
+  const idle = useMemo(
+    () => calm.filter((card) => card.status === "idle" || card.status === "unknown"),
+    [calm],
+  );
+  const active = useMemo(
+    () => calm.filter((card) => card.status !== "idle" && card.status !== "unknown"),
+    [calm],
+  );
 
   const segments = useMemo(() => fleetSegments(active), [active]);
 

@@ -5,7 +5,7 @@
 import type { ApiError } from "./api";
 
 /** Canonical four-state task status owned by Rust. */
-export type TaskStatus = "running" | "waiting" | "idle" | "error";
+export type TaskStatus = "running" | "waiting" | "idle" | "error" | "unknown";
 
 /** Connection display states surfaced in the UI. */
 export type ConnectionState =

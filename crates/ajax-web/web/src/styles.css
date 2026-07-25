@@ -100,6 +100,7 @@
 .tone-running { --tone: var(--accent); --tone-bg: rgba(135, 175, 215, 0.14); }
 .tone-waiting { --tone: var(--warn); --tone-bg: rgba(215, 175, 95, 0.14); }
 .tone-idle { --tone: var(--ink-muted); --tone-bg: rgba(168, 168, 168, 0.1); }
+.tone-unknown { --tone: var(--ink-muted); --tone-bg: rgba(168, 168, 168, 0.1); }
 .tone-error { --tone: var(--danger); --tone-bg: rgba(215, 135, 135, 0.14); }
 .tone-ready { --tone: var(--warn-bright); --tone-bg: rgba(229, 200, 138, 0.14); }
 .tone-attention { --tone: var(--warn); --tone-bg: rgba(215, 175, 95, 0.14); }

@@ -144,32 +144,33 @@ accepts and drains lines with bounded reads but does not yet fan out immediate
 status delivery to Cockpit. Durable operator status comes from folding the JSONL
 log on runtime refresh.
 
-Legacy provider hook files remain observational hints with explicit confidence
-during migration. Pane text is not classified for agent activity except where a
-capability is explicitly `unavailable`/`unverified` and a narrow, low-confidence
-structural fallback is authorized. Uninstrumented sessions project no confident
-activity beyond prior state, process liveness, and wrapper exit
-(`done`/`failed`). When sources disagree, core's status decision applies this
+Native hooks are the primary agent-status evidence. There is one structured
+source: the canonical JSONL event log folded per run. `ajax-cli`'s
+`AgentStatusSource` reads only the two files Ajax writes per task — the event
+log (`agent-events/{stem}.jsonl`) and the launch-wrapper runtime snapshot
+(`agent-runtime/{stem}.json`) — and yields reducer-ready `StatusObservation`s
+directly to core; there is no status-string round-trip, no pane-text inference,
+and no legacy `~/.cache/tmux-agent-status` or scalar `{stem}.json` reads.
+Uninstrumented sessions project no confident activity beyond prior state,
+process liveness, and confirmed wrapper exit (`done`/`failed`). When sources
+disagree, the single reducer (`agent_status::reduce_agent_status`) applies this
 precedence:
 
-1. Terminal process exit or fatal runtime error (wrapper `done`/`failed`, 120s)
-2. Structured provider lifecycle / canonical agent events (attention and open
-   activities persist until cleared or session end; non-terminal hints without
-   open-set backing expire after a generous window; terminal outcomes persist
-   until superseded)
-3. Provider hook event (120s freshness for accepted agents;
-   `AgentClient::Other` ignores hooks; `Cursor` and `Pi` are first-class clients)
-4. Process liveness (wrapper heartbeat, 30s) — informational only; never alone
-   becomes `AgentRunning`
+1. Terminal process exit or fatal runtime error (confirmed wrapper exit, 120s)
+2. Structured native lifecycle events folded from the JSONL log (attention and
+   open activities persist until cleared or session end; non-terminal phases
+   expire after a generous window; terminal outcomes persist until superseded)
+3. Process liveness (wrapper `Starting`/`Running`, 30s) — informational only;
+   never alone becomes `AgentRunning`
 
+Confirmed wrapper exit is a terminal fallback where native evidence is absent:
+`Starting`/`Running` yield only liveness, never activity, and an `Exited*`
+observation can only exist once the supervised process has actually ended.
 Missing substrate stays authoritative over activity candidates. Ambiguous or
 contradictory fresh evidence projects `Unknown`. Parent and delegated runs are
 aggregated as a run graph: a parent is not fully complete while non-detached
-descendants remain active. Session-level hook files map to the primary run;
-pane-scoped hook files under `~/.cache/tmux-agent-status/panes/` map to child
-runs (`pane:{session}:{pane_id}` with `parent_run_id = primary`). Equal-timestamp
-conflicts across sources on the same run project `Unknown`; malformed values
-never participate.
+descendants remain active. Equal-timestamp conflicts across sources on the same
+run project `Unknown`; malformed values never participate.
 
 See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
 client mapping matrix, and migration phases.
@@ -418,11 +419,14 @@ one episode; a class change (Waiting→Error) re-fires.
 
 ### Live Status
 
-`live.rs` reduces observations into live-status classifications. The internal
-`agent_status` module owns the conservative observation/run reducer
-(source, freshness, confidence, `run_id` / `parent_run_id`, and parent-phase
-aggregation). `LiveStatusKind` remains the presentation projection derived at
-the status-decision boundary.
+`agent_status` is the single agent reducer: it maps observations (source,
+freshness, confidence, `run_id` / `parent_run_id`, and parent-phase
+aggregation) onto one `LiveObservation`. Runtime refresh feeds it the folded
+native `RunSnapshot` observations (via `observations_from_run_snapshot`) plus
+the confirmed wrapper exit / liveness, and applies the result directly — the
+prior string-candidate arbitration reducer is gone. `LiveStatusKind` remains
+the presentation projection. `live.rs` keeps only `reduce_live_observation`
+(supervisor/application status folding) and the `apply_*` writers.
 
 `live.rs` (`application` submodule) applies reduced observations to task state, agent status,
 side flags, activity timestamps, visible live status, and the live evidence's
@@ -470,13 +474,19 @@ re-acknowledging only when live evidence is newer than the last acknowledgment.
 Agent-deck inspired this status model, but Ajax retains its own lifecycle,
 substrate, task-operation, and operator-projection boundaries.
 
-`ui_state::derive_operator_status` is the single operator-facing reduction over
-lifecycle, runtime health, freshness/probe errors, live status, and
-acknowledgment. It emits only `Running`, `Waiting`, `Idle`, or `Error`, plus an
-optional explanation. Error evidence wins over running evidence, running wins
-over unacknowledged waiting/completion evidence, and otherwise the task is idle.
-Cleanup/terminal lifecycles (`Merged`, `Cleanable`, `Removing`, and hidden
-`Removed`) remain idle unless current error or running evidence overrides them.
+`ui_state::derive_operator_status` is the single operator-facing projector over
+lifecycle, expected runtime substrate, GitHub status, the native hook-derived
+phase, and acknowledgment. It emits `Running`, `Waiting`, `Idle`, `Error`, or
+`Unknown`, plus an optional explanation. Precedence: `TeardownIncomplete` is
+always `Error`; terminal/cleanup lifecycle decides whether substrate is still
+expected, so a missing tmux session, task window, worktree, or branch is
+`Error` only while the lifecycle expects those resources; relevant GitHub
+failure or conflict is `Error` and pending checks are `Running` ("CI running"),
+while passing checks clear the override and reveal the native phase; otherwise
+the native phase applies, with confirmed wrapper exit as a terminal fallback;
+and a task no source can prove is `Unknown`. Cleanup/terminal lifecycles
+(`Merged`, `Cleanable`, `Removing`, hidden `Removed`) stay idle unless current
+error or running evidence overrides them.
 
 Lifecycle remains workflow authority. Annotations remain typed attention and
 diagnostic evidence. Operation eligibility and action policy remain capability
@@ -567,9 +577,10 @@ task-operation commands or separate operator domains.
   process from a resolved CLI context. Process launching is orchestration only;
   the launcher passes explicit runtime context to `ajax-web` and must not
   reinterpret task state or duplicate web server internals.
-- `agent_status_cache` owns filesystem reads for hook-backed agent status caches
-  such as `tmux-agent-status` and Ajax runtime snapshots; core owns status value
-  interpretation and authority reduction.
+- `agent_status_cache` implements core's `AgentStatusSource`: it reads the
+  canonical JSONL event log and the launch-wrapper runtime snapshot and yields
+  reducer-ready `StatusObservation`s; core owns authority reduction. It performs
+  no legacy `tmux-agent-status`, pane, or scalar-snapshot reads.
 - `agent_runtime` owns the hidden `__agent-runtime` launch wrapper. Normal task
   start commands run the selected agent through this wrapper, which preserves
   inherited terminal I/O while atomically writing the latest starting/running/
@@ -881,11 +892,11 @@ runtime concurrency tests.
 ### Post-startup runtime refresh
 
 `ajax-core::runtime_refresh` owns refresh tiers. Steady-state Cockpit polling
-uses `RefreshTier::Live`, which skips default orphan git discovery and
-per-task pane capture when agent status cache and runtime projections are
-fresh. `RefreshTier::Full` remains available for explicit recovery and
-maintenance. Agent status is hydrated once per refresh from the tmux-agent-status
-pane cache snapshot. Registered tmux sessions are matched by exact expected
+uses `RefreshTier::Live`, which skips default orphan git discovery when runtime
+projections are fresh. `RefreshTier::Full` remains available for explicit
+recovery and maintenance. Agent status is hydrated once per refresh from the
+`AgentStatusSource` (canonical JSONL fold plus wrapper snapshot). Registered
+tmux sessions are matched by exact expected
 session names, not `ajax-{repo}-{handle}` parsing, so hyphenated repo names do
 not trigger false orphan discovery.
 

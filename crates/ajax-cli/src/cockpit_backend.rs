@@ -16,7 +16,7 @@ use std::{
 };
 
 use crate::{
-    agent_status_cache::TmuxAgentStatusSnapshot,
+    agent_status_cache::AgentStatusFiles,
     cockpit_actions::{
         cockpit_action_outcome, execute_pending_cockpit_action_with_task_session,
         execute_pending_cockpit_action_with_task_session_and_checkpoint,
@@ -421,8 +421,8 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&context.runtime_paths.cache_dir);
-    let refreshed = refresh_runtime_context_with_tier(context, runner, &cache, RefreshTier::Full)
+    let source = AgentStatusFiles::from_runtime_cache(&context.runtime_paths.cache_dir);
+    let refreshed = refresh_runtime_context_with_tier(context, runner, &source, RefreshTier::Full)
         .map_err(crate::command_error)?;
     let notified = crate::notify::notify_attention_transitions(context, runner);
     Ok(refreshed || notified)
@@ -657,6 +657,9 @@ mod tests {
     use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        agent_status::{
+            ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
+        },
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{
@@ -666,7 +669,7 @@ mod tests {
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry},
-        runtime_refresh::{refresh_runtime_context_with_tier, AgentStatusCache, RefreshTier},
+        runtime_refresh::{refresh_runtime_context_with_tier, AgentStatusSource, RefreshTier},
     };
     use ajax_tui::CockpitSnapshot;
 
@@ -804,27 +807,36 @@ mod tests {
         context
     }
 
-    struct StaticAgentStatusCache {
-        values: Vec<String>,
+    struct StaticAgentStatusSource {
+        observations: Vec<StatusObservation>,
+        liveness: Option<ProcessLiveness>,
     }
 
-    impl AgentStatusCache for StaticAgentStatusCache {
-        fn status_entries_for_session(
-            &self,
-            _session: &str,
-        ) -> Vec<ajax_core::runtime_refresh::AgentStatusCacheEntry> {
-            self.values
-                .iter()
-                .cloned()
-                .map(|value| ajax_core::runtime_refresh::AgentStatusCacheEntry {
-                    value,
-                    observed_at: std::time::SystemTime::now(),
-                    fresh: true,
-                    source: ajax_core::runtime_refresh::AgentStatusCacheSource::Hook,
-                    run_id: None,
+    impl StaticAgentStatusSource {
+        fn lifecycle(kind: ActivityKind) -> Self {
+            let now = std::time::SystemTime::now();
+            Self {
+                observations: vec![StatusObservation {
+                    source: ObservationSource::ProviderLifecycle,
+                    observed_at: now,
+                    expires_at: now + std::time::Duration::from_secs(1800),
+                    confidence: Confidence::High,
+                    run_id: "primary".to_string(),
                     parent_run_id: None,
-                })
-                .collect()
+                    kind,
+                }],
+                liveness: None,
+            }
+        }
+    }
+
+    impl AgentStatusSource for StaticAgentStatusSource {
+        fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
+            self.observations.clone()
+        }
+
+        fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
+            self.liveness
         }
     }
 
@@ -832,9 +844,7 @@ mod tests {
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
         let mut runner = LiveRefreshRunner;
-        let cache = StaticAgentStatusCache {
-            values: vec!["ask".to_string()],
-        };
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::WaitingApproval);
         let mut state_changed = false;
 
         state_changed |=
@@ -869,9 +879,7 @@ mod tests {
     fn cockpit_refresh_uses_hook_backed_agent_status_cache() {
         let mut context = context_with_active_task();
         let mut runner = LiveRefreshRunner;
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::Working);
         let mut state_changed = false;
 
         state_changed |=
@@ -905,9 +913,7 @@ mod tests {
         ));
         task.annotations = ajax_core::attention::annotate(task);
         let mut runner = LiveRefreshRunner;
-        let cache = StaticAgentStatusCache {
-            values: vec!["working".to_string()],
-        };
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::Working);
         let mut state_changed = false;
 
         state_changed |=

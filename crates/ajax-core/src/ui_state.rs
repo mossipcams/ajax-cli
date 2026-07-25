@@ -10,6 +10,7 @@ pub enum TaskStatus {
     Waiting,
     Idle,
     Error,
+    Unknown,
 }
 
 impl TaskStatus {
@@ -19,6 +20,7 @@ impl TaskStatus {
             Self::Waiting => "Waiting",
             Self::Idle => "Idle",
             Self::Error => "Error",
+            Self::Unknown => "Unknown",
         }
     }
 }
@@ -27,107 +29,205 @@ impl TaskStatus {
 pub struct OperatorStatus {
     pub status: TaskStatus,
     pub explanation: Option<String>,
+    /// True when this is an actionable operator-attention state — an `Error`, or
+    /// a genuine input/approval `Waiting` — that should phone-ping. Derived from
+    /// structured evidence at projection time; the notifier reads this field, it
+    /// never matches the explanation string.
+    pub actionable: bool,
 }
 
 pub fn derive_operator_status(task: &Task) -> OperatorStatus {
-    let (status, explanation) = derive_task_status(task);
+    derive_task_status(task)
+}
+
+/// Error: always actionable.
+fn err(explanation: impl Into<String>) -> OperatorStatus {
     OperatorStatus {
-        status,
-        explanation,
+        status: TaskStatus::Error,
+        explanation: Some(explanation.into()),
+        actionable: true,
     }
 }
 
-fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
+/// Running: never actionable.
+fn run(explanation: impl Into<String>) -> OperatorStatus {
+    OperatorStatus {
+        status: TaskStatus::Running,
+        explanation: Some(explanation.into()),
+        actionable: false,
+    }
+}
+
+/// Actionable Waiting: a real operator input/approval gate — phone-pings.
+fn ping(explanation: impl Into<String>) -> OperatorStatus {
+    OperatorStatus {
+        status: TaskStatus::Waiting,
+        explanation: Some(explanation.into()),
+        actionable: true,
+    }
+}
+
+/// Soft Waiting: visible as Waiting but not a personal attention gate (auth,
+/// rate limit, context limit, response-ready, ready-for-review, delegated) —
+/// no phone-ping.
+fn soft(explanation: impl Into<String>) -> OperatorStatus {
+    OperatorStatus {
+        status: TaskStatus::Waiting,
+        explanation: Some(explanation.into()),
+        actionable: false,
+    }
+}
+
+fn idle() -> OperatorStatus {
+    OperatorStatus {
+        status: TaskStatus::Idle,
+        explanation: None,
+        actionable: false,
+    }
+}
+
+fn unknown() -> OperatorStatus {
+    OperatorStatus {
+        status: TaskStatus::Unknown,
+        explanation: None,
+        actionable: false,
+    }
+}
+
+fn derive_task_status(task: &Task) -> OperatorStatus {
+    // 0. TeardownIncomplete is always an error (requirement 11).
     if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
-        return canonical(TaskStatus::Error, "Teardown incomplete");
-    }
-    if task.runtime_projection.observation_error.is_some() {
-        return canonical(TaskStatus::Error, "Status unavailable");
-    }
-    if let Some(explanation) = canonical_missing_substrate_explanation(task) {
-        return canonical(TaskStatus::Error, explanation);
-    }
-    if let Some(explanation) = canonical_checkout_mismatch_explanation(task) {
-        return canonical(TaskStatus::Error, explanation);
-    }
-    if let Some(live) = task.live_status.as_ref() {
-        if let Some(explanation) = canonical_error_explanation(live.kind) {
-            return canonical(TaskStatus::Error, explanation);
-        }
-    }
-    if task.has_side_flag(SideFlag::TestsFailed) {
-        return canonical(TaskStatus::Error, "Tests failed");
-    }
-    if task.has_side_flag(SideFlag::Conflicted) {
-        return canonical(TaskStatus::Error, "Merge conflict");
-    }
-    if task.has_side_flag(SideFlag::AgentDead) || task.agent_status == AgentRuntimeStatus::Dead {
-        return canonical(TaskStatus::Error, "Agent unavailable");
-    }
-    if task.lifecycle_status == LifecycleStatus::Error {
-        return canonical(TaskStatus::Error, "Task failed");
+        return err("Teardown incomplete");
     }
 
-    if let Some(live) = task.live_status.as_ref() {
-        if let Some(explanation) = canonical_running_explanation(live.kind) {
-            return canonical(TaskStatus::Running, explanation);
-        }
-    }
-    if task.agent_status == AgentRuntimeStatus::Running
-        || task.has_side_flag(SideFlag::AgentRunning)
-    {
-        return canonical(TaskStatus::Running, "Agent working");
-    }
-
-    if matches!(
+    // 1. Terminal/cleanup lifecycle decides whether runtime substrate is still
+    //    expected. Once merged or being cleaned up, a missing tmux session,
+    //    task window, worktree, or branch is normal — not an error (req 7, 10).
+    let resources_expected = !matches!(
         task.lifecycle_status,
         LifecycleStatus::Merged
             | LifecycleStatus::Cleanable
             | LifecycleStatus::Removing
             | LifecycleStatus::Removed
-    ) {
-        return (TaskStatus::Idle, None);
+    );
+
+    // 2-4. Missing required substrate, an unobservable probe, or a checkout
+    //      mismatch are errors only while the lifecycle still expects those
+    //      resources (requirements 8-10).
+    if resources_expected {
+        if let Some(explanation) = canonical_missing_substrate_explanation(task) {
+            return err(explanation);
+        }
+        if task.runtime_projection.observation_error.is_some() {
+            return err("Status unavailable");
+        }
+        if let Some(explanation) = canonical_checkout_mismatch_explanation(task) {
+            return err(explanation);
+        }
+    }
+
+    // 5. Relevant GitHub failure/conflict (and other error-class live status)
+    //    overrides the native agent phase (requirement 6).
+    if let Some(live) = task.live_status.as_ref() {
+        if let Some(explanation) = canonical_error_explanation(live.kind) {
+            return err(explanation);
+        }
+    }
+    if task.has_side_flag(SideFlag::TestsFailed) {
+        return err("Tests failed");
+    }
+    if task.has_side_flag(SideFlag::Conflicted) {
+        return err("Merge conflict");
+    }
+    if task.has_side_flag(SideFlag::AgentDead) || task.agent_status == AgentRuntimeStatus::Dead {
+        return err("Agent unavailable");
+    }
+    if task.lifecycle_status == LifecycleStatus::Error {
+        return err("Task failed");
+    }
+
+    // 6/9. Running: GitHub pending (CiPending, "CI running") or a native running
+    //      phase. Passing CI is not represented here — it clears the override
+    //      and reveals the native phase (requirement 6).
+    if let Some(live) = task.live_status.as_ref() {
+        if let Some(explanation) = canonical_running_explanation(live.kind) {
+            return run(explanation);
+        }
+    }
+    if task.agent_status == AgentRuntimeStatus::Running
+        || task.has_side_flag(SideFlag::AgentRunning)
+    {
+        return run("Agent working");
+    }
+
+    // 14. Terminal/cleanup lifecycles are idle unless running/error overrode
+    //     them above (requirement 10).
+    if !resources_expected {
+        return idle();
     }
 
     let live_acknowledged = live_evidence_is_acknowledged(task);
     if !live_acknowledged {
         if let Some(live) = task.live_status.as_ref() {
+            // Delegated waiting is on children, not the operator — soft.
             if let Some(explanation) =
                 crate::agent_status::operator_explanation_for_summary(&live.summary)
             {
-                return canonical(TaskStatus::Waiting, explanation);
+                return soft(explanation);
             }
-            if let Some(explanation) = canonical_waiting_explanation(live.kind) {
-                return canonical(TaskStatus::Waiting, explanation);
+            if let Some((explanation, actionable)) = canonical_waiting_explanation(live.kind) {
+                return if actionable {
+                    ping(explanation)
+                } else {
+                    soft(explanation)
+                };
             }
         }
     }
 
+    // Lifecycle review boundary is Waiting in the UI but not a personal ping.
     if matches!(
         task.lifecycle_status,
         LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
     ) && !workflow_boundary_is_acknowledged(task)
     {
-        return canonical(TaskStatus::Waiting, "Ready for review");
+        return soft("Ready for review");
     }
     if !live_acknowledged
         && (task.has_side_flag(SideFlag::NeedsInput)
             || task.agent_status == AgentRuntimeStatus::Waiting)
     {
-        return canonical(TaskStatus::Waiting, "Waiting for input");
+        return ping("Waiting for input");
     }
     if !live_acknowledged && task.agent_status == AgentRuntimeStatus::Blocked {
-        return canonical(TaskStatus::Error, "Agent blocked");
+        return err("Agent blocked");
     }
     if !live_acknowledged && task.agent_status == AgentRuntimeStatus::Done {
-        return canonical(TaskStatus::Waiting, "Response ready");
+        return soft("Response ready");
     }
 
-    (TaskStatus::Idle, None)
+    // 16. An operational task with no status evidence at all cannot be proven
+    //     Running, Waiting, Done, or Error — report Unknown rather than pretend
+    //     it is at rest (precedence step 6). Every other resting state (terminal
+    //     lifecycle, acknowledged waiting, any live status) is Idle above/here.
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Active | LifecycleStatus::Waiting
+    ) && has_no_status_evidence(task)
+    {
+        return unknown();
+    }
+
+    idle()
 }
 
-fn canonical(status: TaskStatus, explanation: impl Into<String>) -> (TaskStatus, Option<String>) {
-    (status, Some(explanation.into()))
+/// True when a task carries no agent-status evidence of any kind: no live
+/// status, an unstarted agent, and no running/waiting side flags.
+fn has_no_status_evidence(task: &Task) -> bool {
+    task.live_status.is_none()
+        && task.agent_status == AgentRuntimeStatus::NotStarted
+        && !task.has_side_flag(SideFlag::AgentRunning)
+        && !task.has_side_flag(SideFlag::NeedsInput)
 }
 
 fn live_evidence_is_acknowledged(task: &Task) -> bool {
@@ -153,18 +253,22 @@ fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {
         LiveStatusKind::AgentRunning => Some("Agent working"),
         LiveStatusKind::CommandRunning => Some("Running command"),
         LiveStatusKind::TestsRunning => Some("Running tests"),
+        LiveStatusKind::CiPending => Some("CI running"),
         _ => None,
     }
 }
 
-fn canonical_waiting_explanation(kind: LiveStatusKind) -> Option<&'static str> {
+/// Waiting-class explanation and whether it is an actionable operator gate.
+/// Approval/input are actionable (phone-ping); auth, rate limit, context limit,
+/// and response-ready are soft — visible as Waiting but not personal attention.
+fn canonical_waiting_explanation(kind: LiveStatusKind) -> Option<(&'static str, bool)> {
     match kind {
-        LiveStatusKind::WaitingForApproval => Some("Waiting for approval"),
-        LiveStatusKind::WaitingForInput => Some("Waiting for input"),
-        LiveStatusKind::AuthRequired => Some("Authentication required"),
-        LiveStatusKind::RateLimited => Some("Rate limited"),
-        LiveStatusKind::ContextLimit => Some("Context limit reached"),
-        LiveStatusKind::Done => Some("Response ready"),
+        LiveStatusKind::WaitingForApproval => Some(("Waiting for approval", true)),
+        LiveStatusKind::WaitingForInput => Some(("Waiting for input", true)),
+        LiveStatusKind::AuthRequired => Some(("Authentication required", false)),
+        LiveStatusKind::RateLimited => Some(("Rate limited", false)),
+        LiveStatusKind::ContextLimit => Some(("Context limit reached", false)),
+        LiveStatusKind::Done => Some(("Response ready", false)),
         _ => None,
     }
 }
@@ -600,11 +704,73 @@ mod tests {
     }
 
     #[test]
-    fn active_lifecycle_without_signals_is_idle() {
+    fn active_lifecycle_without_signals_is_unknown() {
+        // An active task with no live status, an unstarted agent, and no flags
+        // has no source that can prove Running/Waiting/Done/Error — it projects
+        // Unknown rather than a fabricated Idle (precedence step 6).
         let mut task = base_task();
         mark_active(&mut task).unwrap();
 
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
+    }
+
+    #[test]
+    fn active_lifecycle_with_acknowledged_waiting_is_idle_not_unknown() {
+        // Positive evidence of rest (an acknowledged waiting live status) keeps
+        // the task Idle; only the true no-evidence case becomes Unknown.
+        let mut task = claude_active_task();
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
+        );
+
         assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
+    }
+
+    #[test]
+    fn actionable_flag_is_set_structurally_per_evidence() {
+        // Genuine input/approval waiting and errors are actionable; soft waits
+        // (rate limit) and the review boundary are not; running/idle are not.
+        let mut approval = claude_active_task();
+        crate::live::apply_observation(
+            &mut approval,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+        );
+        assert!(derive_operator_status(&approval).actionable);
+
+        let mut ci = claude_active_task();
+        crate::live::apply_observation(
+            &mut ci,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed: ci"),
+        );
+        assert!(derive_operator_status(&ci).actionable);
+
+        let mut rate_limited = claude_active_task();
+        crate::live::apply_observation(
+            &mut rate_limited,
+            LiveObservation::new(LiveStatusKind::RateLimited, "rate limited"),
+        );
+        let rate_limited = derive_operator_status(&rate_limited);
+        assert_eq!(rate_limited.status, TaskStatus::Waiting);
+        assert!(!rate_limited.actionable);
+
+        let mut reviewable = claude_active_task();
+        crate::lifecycle::mark_reviewable(&mut reviewable).unwrap();
+        let reviewable = derive_operator_status(&reviewable);
+        assert_eq!(reviewable.status, TaskStatus::Waiting);
+        assert!(!reviewable.actionable);
+
+        let mut running = claude_active_task();
+        crate::live::apply_observation(
+            &mut running,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+        assert!(!derive_operator_status(&running).actionable);
     }
 
     #[rstest::rstest]

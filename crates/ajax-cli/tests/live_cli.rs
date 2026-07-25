@@ -206,19 +206,73 @@ printf 'fake codex'
         self.fake_lifecycle_log()
     }
 
-    fn write_hook_status(&self, session: &str, value: &str) {
-        let hook_dir = self.root.join(".cache/tmux-agent-status");
-        fs::create_dir_all(&hook_dir).unwrap_or_else(|error| {
-            panic!(
-                "failed to create hook status directory {}: {error}",
-                hook_dir.display()
-            )
-        });
+    /// Seed native hook-derived status for a task by writing the canonical
+    /// JSONL event log and the launch-wrapper runtime snapshot the refresh
+    /// reads (there is no legacy `~/.cache/tmux-agent-status` path anymore).
+    fn write_hook_status(&self, task_id: &str, value: &str) {
+        let stem = task_id.replace('/', "__");
+        let cache = self.root.join(".cache/ajax");
+        let events_dir = cache.join("agent-events");
+        let runtime_dir = cache.join("agent-runtime");
+        fs::create_dir_all(&events_dir).unwrap();
+        fs::create_dir_all(&runtime_dir).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        let state = match value {
+            "done" => "exited_success",
+            "failed" => "exited_failure",
+            _ => "running",
+        };
         fs::write(
-            hook_dir.join(format!("{session}.status")),
-            format!("{value}\n"),
+            runtime_dir.join(format!("{stem}.json")),
+            serde_json::json!({
+                "task_id": task_id,
+                "state": state,
+                "observed_at_unix_millis": now,
+                "pid": 1,
+                "exit_code": null,
+                "message": null,
+            })
+            .to_string(),
         )
-        .unwrap_or_else(|error| panic!("failed to write hook status for {session}: {error}"));
+        .unwrap_or_else(|error| panic!("failed to write runtime snapshot for {task_id}: {error}"));
+
+        let (kind, detail) = match value {
+            "ask" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "permission"}}),
+            ),
+            "wait" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "question"}}),
+            ),
+            "done" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "completed"}}),
+            ),
+            "failed" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "failed"}}),
+            ),
+            _ => ("turn_started", serde_json::Value::Null),
+        };
+        let mut envelope = serde_json::json!({
+            "schema_version": 1,
+            "kind": kind,
+            "received_at_unix_millis": now,
+            "occurred_at_unix_millis": now,
+        });
+        if !detail.is_null() {
+            envelope["detail"] = detail;
+        }
+        fs::write(
+            events_dir.join(format!("{stem}.jsonl")),
+            format!("{envelope}\n"),
+        )
+        .unwrap_or_else(|error| panic!("failed to write hook status for {task_id}: {error}"));
     }
 
     fn install_fake_live_status_tools(&self, session: &str, worktree_path: &Path) {
@@ -383,7 +437,7 @@ fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
         )
     });
     home.seed_risky_reviewable_task("web", &repo_path);
-    home.write_hook_status("ajax-web-fix-login", "ask");
+    home.write_hook_status("web/fix-login", "ask");
     home.install_fake_live_status_tools("ajax-web-fix-login", &worktree_path);
 
     let output = home.ajax_with_fake_tools(["cockpit", "--json"]);

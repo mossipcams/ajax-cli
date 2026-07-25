@@ -96,7 +96,7 @@ pub fn take_attention_transition_at(
                 client: format!("{:?}", task.selected_agent).to_ascii_lowercase(),
             })
         }
-        TaskStatus::Running | TaskStatus::Idle => {
+        TaskStatus::Running | TaskStatus::Idle | TaskStatus::Unknown => {
             clear_notify_candidate(task);
             clear_notify_episode_if_quiet(task, now);
             None
@@ -127,15 +127,10 @@ fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
     status.status.as_str().to_string()
 }
 
+/// Actionable operator-attention is decided structurally by the projector
+/// (`OperatorStatus::actionable`), not by matching the explanation string.
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
-    match status.status {
-        TaskStatus::Error => true,
-        TaskStatus::Waiting => matches!(
-            status.explanation.as_deref(),
-            Some("Waiting for input" | "Waiting for approval")
-        ),
-        TaskStatus::Running | TaskStatus::Idle => false,
-    }
+    status.actionable
 }
 
 fn clear_notify_candidate(task: &mut Task) {
