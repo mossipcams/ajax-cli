@@ -1720,6 +1720,62 @@ test("terminal Space input preserves scroll and keyboard-band geometry", async (
   expect(after.keyboardOpen).toBe(true);
 });
 
+// Backspace is the one key we leave uncancelled (cancelling it kills the iOS
+// hold-to-delete repeat), so WebKit really edits the helper textarea and then
+// reveals the caret. .terminal-host is position: sticky, so that reveal used to
+// yank the wrap — and the whole terminal with it — up into scrollback.
+test("terminal Backspace input preserves scroll and keyboard-band geometry", async ({ page }) => {
+  await openTaskTerminal(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await scrollInteractionSurfaceAway(page);
+  await page.evaluate(() => {
+    const ta = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+    if (!(ta instanceof HTMLTextAreaElement)) throw new Error("textarea missing");
+    ta.focus({ preventScroll: true });
+  });
+  await simulateKeyboardBand(page);
+  await new Promise((r) => setTimeout(r, 400));
+
+  const read = () =>
+    page.evaluate(() => {
+      const host = document.querySelector(
+        "[data-testid='task-terminal-panel'] .terminal-host",
+      ) as (HTMLElement & { __xterm?: { buffer: { active: { viewportY: number } } } }) | null;
+      const wrap = document.querySelector(
+        "[data-testid='terminal-interaction-surface']",
+      ) as HTMLElement | null;
+      const panel = document
+        .querySelector("[data-testid='task-terminal-panel']")
+        ?.getBoundingClientRect();
+      const ta = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+      return {
+        wrapScrollTop: wrap?.scrollTop ?? -1,
+        viewportY: host?.__xterm?.buffer.active.viewportY ?? -1,
+        panelTop: panel?.top ?? -1,
+        focused: ta === document.activeElement,
+        keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+      };
+    });
+
+  const baseline = await inputFrameCount(page);
+  const before = await read();
+  expect(before.focused).toBe(true);
+  expect(before.keyboardOpen).toBe(true);
+  expect(before.wrapScrollTop).toBeGreaterThan(0);
+
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe("\x7f");
+  await new Promise((r) => setTimeout(r, 400));
+
+  const after = await read();
+  expect(after.wrapScrollTop).toBe(before.wrapScrollTop);
+  expect(after.viewportY).toBe(before.viewportY);
+  expect(Math.abs(after.panelTop - before.panelTop)).toBeLessThanOrEqual(1);
+  expect(after.focused).toBe(true);
+  expect(after.keyboardOpen).toBe(true);
+});
+
 test("Paste preserves prior terminal focus when another control owns focus", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
