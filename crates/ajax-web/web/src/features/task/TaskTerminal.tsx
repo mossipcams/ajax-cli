@@ -326,9 +326,39 @@ export default function TaskTerminal({ handle }: Props) {
     return null;
   };
 
+  // Backspace is the one key we leave uncancelled (cancelling it kills the iOS
+  // hold-to-delete repeat), so WebKit really edits the helper textarea and then
+  // reveals the caret — after the input event, measured on mobile-webkit as
+  // input → selectionchange → scroll. .terminal-host is sticky, so the
+  // textarea's layout position sits near the top of the spacer-extended scroll
+  // range and the reveal drags the wrap, and the whole terminal with it, up into
+  // scrollback. Pin the offset over the edit and put it back from the scroll
+  // event the reveal fires, before that scroll can drive the PTY viewport.
+  const pinnedScrollTopRef = useRef<number | null>(null);
+
+  const pinInteractionScroll = () => {
+    pinnedScrollTopRef.current = interactionElRef.current?.scrollTop ?? null;
+  };
+
+  const clearInteractionScrollPin = () => {
+    pinnedScrollTopRef.current = null;
+  };
+
+  /** True when this scroll was the caret reveal and has been undone. */
+  const restorePinnedInteractionScroll = (): boolean => {
+    const wrap = interactionElRef.current;
+    const pinned = pinnedScrollTopRef.current;
+    if (!wrap || pinned === null) return false;
+    clearInteractionScrollPin();
+    if (wrap.scrollTop === pinned) return false;
+    wrap.scrollTop = pinned;
+    return true;
+  };
+
   const onTextareaBeforeInput = (event: InputEvent) => {
     const payload = deleteInputPayload(event.inputType);
     if (!payload) return;
+    pinInteractionScroll();
     // No preventDefault: cancelling here also cancels the iOS repeat loop.
     sendKey(consumeCtrl(payload));
   };
@@ -339,7 +369,11 @@ export default function TaskTerminal({ handle }: Props) {
   // next repeat tick.
   const onTextareaInput = (event: Event) => {
     const inputType = (event as InputEvent).inputType ?? "";
-    if (inputType.startsWith("delete")) seedTermSentinel();
+    if (!inputType.startsWith("delete")) return;
+    seedTermSentinel();
+    // The reveal scroll lands in this frame; drop the pin after it so it can
+    // never swallow a later finger scroll.
+    requestAnimationFrame(clearInteractionScrollPin);
   };
 
   const termOwnedFocus = (): boolean => {
@@ -575,6 +609,7 @@ export default function TaskTerminal({ handle }: Props) {
   const onSeedTermSentinel = useEffectEvent(() => {
     seedTermSentinel();
   });
+  const onRestorePinnedScroll = useEffectEvent(() => restorePinnedInteractionScroll());
 
   useEffect(() => {
     const onBlur = () => {
@@ -1153,7 +1188,12 @@ export default function TaskTerminal({ handle }: Props) {
     scrollSync.refreshFollow();
 
     const scrollDisposable = liveTerm.onScroll(scrollSync.onTermScroll);
-    interactionEl.addEventListener("scroll", scrollSync.onInteractionScroll, { passive: true });
+    const onWrapScroll = () => {
+      // Undone caret reveal: never map it onto the PTY viewport.
+      if (onRestorePinnedScroll()) return;
+      scrollSync.onInteractionScroll();
+    };
+    interactionEl.addEventListener("scroll", onWrapScroll, { passive: true });
     interactionEl.addEventListener("click", onInteractionClick);
 
     const dataDisposable = liveTerm.onData(onTermData);
@@ -1254,7 +1294,7 @@ export default function TaskTerminal({ handle }: Props) {
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();
       if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
-      interactionEl.removeEventListener("scroll", scrollSync.onInteractionScroll);
+      interactionEl.removeEventListener("scroll", onWrapScroll);
       interactionEl.removeEventListener("click", onInteractionClick);
       interactionEl.removeEventListener("touchstart", onTouchStart);
       interactionEl.removeEventListener("touchmove", onTouchMove);
