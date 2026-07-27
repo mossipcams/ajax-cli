@@ -7,14 +7,35 @@ import {
 } from "./contracts";
 
 describe("isTaskStatus", () => {
-  it("accepts the four canonical statuses", () => {
-    for (const s of ["running", "waiting", "idle", "error"]) {
+  it("accepts the five canonical statuses", () => {
+    for (const s of ["running", "waiting", "idle", "error", "unknown"]) {
       expect(isTaskStatus(s)).toBe(true);
     }
   });
   it("rejects anything else", () => {
     expect(isTaskStatus("done")).toBe(false);
     expect(isTaskStatus(undefined)).toBe(false);
+  });
+});
+
+describe("assertCockpit unknown status", () => {
+  it("accepts a card with status unknown", () => {
+    const cockpit = {
+      backend: { authority: "host-native", control_enabled: true },
+      repos: { repos: [] },
+      cards: [
+        {
+          qualified_handle: "x/y",
+          repo: "x",
+          title: "y",
+          status: "unknown",
+          last_activity_unix_secs: 0,
+          actions: [],
+        },
+      ],
+      inbox: { items: [] },
+    };
+    expect(assertCockpit(cockpit).cards[0].status).toBe("unknown");
   });
 });
 
