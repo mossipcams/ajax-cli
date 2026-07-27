@@ -17,7 +17,7 @@ use ajax_core::{
     agent_status::{
         ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
     },
-    canonical_agent_event::{fold_envelopes, observations_from_run_snapshot},
+    canonical_agent_event::{fold_envelopes, observations_from_run_snapshot, ParsedEnvelope},
     models::TaskId,
     runtime_refresh::{AgentStatusSource, PRIMARY_RUN_ID},
 };
@@ -63,10 +63,12 @@ impl AgentStatusSource for AgentStatusFiles {
         let stem = task_file_stem(task_id.as_str());
         let mut observations = Vec::new();
 
-        // Native lifecycle: fold the canonical JSONL log for the primary run.
+        // Native lifecycle: every run appends to the one per-task log, so group
+        // by run before folding — a child's events must not move the parent's
+        // phase. Each run yields its own observation so the reducer can
+        // aggregate the run graph.
         let jsonl = self.events_dir.join(format!("{stem}.jsonl"));
-        let envelopes = parse_envelopes_from_jsonl(&jsonl);
-        if !envelopes.is_empty() {
+        for (run_id, parent_run_id, envelopes) in group_envelopes_by_run(&jsonl) {
             let observed_at = envelopes
                 .iter()
                 .map(|event| event.received_at_unix_millis)
@@ -74,11 +76,14 @@ impl AgentStatusSource for AgentStatusFiles {
                 .and_then(millis_to_systemtime)
                 .unwrap_or(now);
             let snapshot = fold_envelopes(&envelopes);
-            observations.extend(observations_from_run_snapshot(
-                &snapshot,
-                observed_at,
-                PRIMARY_RUN_ID,
-            ));
+            observations.extend(
+                observations_from_run_snapshot(&snapshot, observed_at, &run_id)
+                    .into_iter()
+                    .map(|observation| StatusObservation {
+                        parent_run_id: parent_run_id.clone(),
+                        ..observation
+                    }),
+            );
         }
 
         // Confirmed wrapper exit is a terminal fallback (requirement 12).
@@ -122,6 +127,35 @@ fn wrapper_exit_observation(snapshot: &AgentRuntimeSnapshot) -> Option<StatusObs
         parent_run_id: None,
         kind,
     })
+}
+
+/// Group a task's canonical log into `(run_id, parent_run_id, envelopes)`,
+/// preserving append order within each run. Envelopes with no `run_id` (written
+/// before the field existed) fold into the primary run, and the primary run is
+/// always keyed [`PRIMARY_RUN_ID`] with no parent.
+fn group_envelopes_by_run(jsonl: &Path) -> Vec<(String, Option<String>, Vec<ParsedEnvelope>)> {
+    let mut runs: Vec<(String, Option<String>, Vec<ParsedEnvelope>)> = Vec::new();
+    for envelope in parse_envelopes_from_jsonl(jsonl) {
+        let run_id = envelope
+            .run_id
+            .clone()
+            .filter(|run| !run.trim().is_empty())
+            .unwrap_or_else(|| PRIMARY_RUN_ID.to_string());
+        let parent_run_id = if run_id == PRIMARY_RUN_ID {
+            None
+        } else {
+            envelope
+                .parent_run_id
+                .clone()
+                .filter(|parent| !parent.trim().is_empty())
+                .or_else(|| Some(PRIMARY_RUN_ID.to_string()))
+        };
+        match runs.iter_mut().find(|(id, _, _)| *id == run_id) {
+            Some((_, _, envelopes)) => envelopes.push(envelope),
+            None => runs.push((run_id, parent_run_id, vec![envelope])),
+        }
+    }
+    runs
 }
 
 fn millis_to_systemtime(millis: u128) -> Option<SystemTime> {
@@ -251,6 +285,91 @@ mod tests {
         assert!(src
             .process_liveness_for_task(&TaskId::new("web/fix-login"))
             .is_some_and(|liveness| liveness.alive));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Append a raw canonical envelope for an explicit run, which
+    /// `run_agent_event` cannot do (it only ever writes `primary`).
+    fn append_envelope(root: &std::path::Path, task_id: &str, run: &str, kind: &str, at: u128) {
+        let stem = crate::agent_runtime::task_file_stem(task_id);
+        let mut envelope = serde_json::json!({
+            "schema_version": 1,
+            "task_id": task_id,
+            "run_id": run,
+            "kind": kind,
+            "received_at_unix_millis": at,
+            "occurred_at_unix_millis": at,
+        });
+        if run != "primary" {
+            envelope["parent_run_id"] = serde_json::json!("primary");
+        }
+        if kind == "turn_settled" {
+            envelope["detail"] = serde_json::json!({"outcome": {"outcome": "completed"}});
+        }
+        let path = root.join("agent-events").join(format!("{stem}.jsonl"));
+        let mut line = serde_json::to_string(&envelope).unwrap();
+        line.push('\n');
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap()
+            .write_all(line.as_bytes())
+            .unwrap();
+    }
+
+    #[test]
+    fn delegated_run_events_do_not_move_the_primary_phase() {
+        // architecture.md: "Parent and delegated runs are aggregated as a run
+        // graph: a parent is not fully complete while non-detached descendants
+        // remain active." Every run appends to the one {stem}.jsonl, so the
+        // fold must be per-run — otherwise a child's TurnStarted drags the
+        // settled parent back to Working.
+        let root = temp_root("per-run");
+        write_runtime(
+            &root,
+            "web/fix-login",
+            AgentRuntimeState::Running,
+            crate::agent_runtime::now_millis().unwrap(),
+        );
+        let base = crate::agent_runtime::now_millis().unwrap();
+        append_envelope(&root, "web/fix-login", "primary", "turn_settled", base);
+        append_envelope(&root, "web/fix-login", "deleg-1", "turn_started", base + 10);
+
+        let observations = source(&root).observations_for_task(&TaskId::new("web/fix-login"));
+
+        let primary = observations
+            .iter()
+            .find(|o| o.run_id == "primary")
+            .expect("primary run observation");
+        assert_eq!(
+            primary.kind,
+            ActivityKind::Done,
+            "the child's turn must not reopen the settled parent"
+        );
+
+        let child = observations
+            .iter()
+            .find(|o| o.run_id == "deleg-1")
+            .expect("delegated run observation");
+        assert_eq!(child.kind, ActivityKind::Working);
+        assert_eq!(child.parent_run_id.as_deref(), Some("primary"));
+
+        // The reducer can now actually see the run graph.
+        let projection =
+            ajax_core::agent_status::reduce_agent_status(ajax_core::agent_status::ReduceInput {
+                now: std::time::SystemTime::now(),
+                primary_run_id: "primary".to_string(),
+                process_liveness: None,
+                observations: &observations,
+            });
+        assert_eq!(
+            projection.phase,
+            ajax_core::agent_status::ParentPhase::CompletedLocallyChildrenActive,
+            "parent is not fully complete while a descendant is active"
+        );
+
         fs::remove_dir_all(root).unwrap();
     }
 
