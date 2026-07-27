@@ -221,13 +221,30 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     idle()
 }
 
+/// Metadata key stamped by runtime refresh while the launch wrapper reports a
+/// fresh live process. This is precedence tier 3: it proves the process exists
+/// and never asserts activity, so it can rule out `Unknown` but never produce
+/// `Running`.
+pub const AGENT_PROCESS_ALIVE_KEY: &str = "agent_process_alive_at";
+
+/// True when refresh last saw a fresh launch-wrapper heartbeat for this task.
+///
+/// Presence alone is the signal: refresh writes the key only while the
+/// heartbeat is inside `agent_status::PROCESS_LIVENESS_FRESH_FOR` and removes
+/// it otherwise, which keeps this projection free of any notion of "now".
+pub fn agent_process_is_alive(task: &Task) -> bool {
+    task.metadata.contains_key(AGENT_PROCESS_ALIVE_KEY)
+}
+
 /// True when a task carries no agent-status evidence of any kind: no live
-/// status, an unstarted agent, and no running/waiting side flags.
+/// status, an unstarted agent, no running/waiting side flags, and no confirmed
+/// live process.
 fn has_no_status_evidence(task: &Task) -> bool {
     task.live_status.is_none()
         && task.agent_status == AgentRuntimeStatus::NotStarted
         && !task.has_side_flag(SideFlag::AgentRunning)
         && !task.has_side_flag(SideFlag::NeedsInput)
+        && !agent_process_is_alive(task)
 }
 
 fn live_evidence_is_acknowledged(task: &Task) -> bool {
@@ -328,7 +345,7 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_operator_status, TaskStatus};
+    use super::{derive_operator_status, TaskStatus, AGENT_PROCESS_ALIVE_KEY};
     use crate::{
         lifecycle::{
             mark_active, mark_cleanable, mark_error, mark_mergeable, mark_merged, mark_removed,
@@ -711,6 +728,35 @@ mod tests {
         let mut task = base_task();
         mark_active(&mut task).unwrap();
 
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
+    }
+
+    #[test]
+    fn live_process_without_native_events_is_idle_not_unknown() {
+        // Precedence tier 3: a confirmed live wrapper process is real evidence,
+        // so the task is at rest — not unprovable. It must never read Running,
+        // because liveness alone never becomes AgentRunning.
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        assert_eq!(
+            derive_operator_status(&task).status,
+            TaskStatus::Unknown,
+            "no evidence at all is still Unknown"
+        );
+
+        task.metadata.insert(
+            AGENT_PROCESS_ALIVE_KEY.to_string(),
+            "1700000000".to_string(),
+        );
+
+        let projected = derive_operator_status(&task);
+        assert_eq!(projected.status, TaskStatus::Idle);
+        assert_ne!(projected.status, TaskStatus::Running);
+        assert!(!projected.actionable);
+
+        // Refresh removes the key once the heartbeat goes stale, and the task
+        // falls back to Unknown.
+        task.metadata.remove(AGENT_PROCESS_ALIVE_KEY);
         assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
     }
 

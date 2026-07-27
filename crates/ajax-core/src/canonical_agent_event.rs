@@ -95,6 +95,14 @@ pub struct ParsedEnvelope {
     #[serde(default)]
     pub detail: Option<CanonicalEventDetail>,
     pub received_at_unix_millis: u128,
+    /// Run this event belongs to. Every run appends to the same per-task log,
+    /// so folding must group by this field or a child's events corrupt the
+    /// parent's phase. Absent on envelopes written before the field existed,
+    /// which are treated as the primary run.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub parent_run_id: Option<String>,
 }
 
 struct FoldState {
@@ -337,6 +345,8 @@ mod tests {
             kind,
             detail,
             received_at_unix_millis: received_at,
+            run_id: None,
+            parent_run_id: None,
         }
     }
 

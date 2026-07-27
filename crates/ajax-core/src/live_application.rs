@@ -125,9 +125,10 @@ fn apply_reduced_observation(
         }
         LiveStatusKind::CiPending => {
             // Remote CI is running; this is a GitHub override, not an assertion
-            // about the local agent process.
+            // about the local agent process. It clears the remote check result
+            // it supersedes and nothing else — the agent's own flags
+            // (NeedsInput, AgentRunning) belong to the native hook evidence.
             task.remove_side_flag(SideFlag::TestsFailed);
-            task.remove_side_flag(SideFlag::NeedsInput);
         }
         LiveStatusKind::MergeConflict => {
             task.agent_status = AgentRuntimeStatus::Blocked;

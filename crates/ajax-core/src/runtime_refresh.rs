@@ -347,7 +347,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         let now = SystemTime::now();
         let observations = agent_status_source.observations_for_task(&task_snapshot.id);
         let process_liveness = agent_status_source.process_liveness_for_task(&task_snapshot.id);
-        if observations.is_empty() && process_liveness.is_none() {
+        if observations.is_empty()
+            && process_liveness.is_none()
+            && !crate::ui_state::agent_process_is_alive(&task_snapshot)
+        {
             continue;
         }
         let projection =
@@ -357,6 +360,27 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 process_liveness,
                 observations: &observations,
             });
+
+        // Precedence tier 3: a fresh wrapper heartbeat proves the process
+        // exists without asserting activity. Stamping it lets the projector
+        // report a live-but-quiet task as Idle rather than Unknown; it never
+        // becomes `AgentRunning`. Recorded before the Unknown bail below,
+        // because liveness is exactly the evidence that survives when no
+        // native event has arrived yet.
+        if let Some(task) = context.registry.get_task_mut(&task_id) {
+            let previous = task.clone();
+            if projection.process_alive {
+                task.metadata.insert(
+                    crate::ui_state::AGENT_PROCESS_ALIVE_KEY.to_string(),
+                    unix_seconds(now).to_string(),
+                );
+            } else {
+                task.metadata
+                    .remove(crate::ui_state::AGENT_PROCESS_ALIVE_KEY);
+            }
+            changed |= *task != previous;
+        }
+
         if projection.phase == crate::agent_status::ParentPhase::Unknown {
             continue;
         }
@@ -451,6 +475,19 @@ fn refresh_github_check_evidence<R: Registry>(
             .get(task_id)
             .copied()
             .unwrap_or(false);
+        // Retired probes leave evidence nothing can ever confirm again: drop it
+        // so a merged task stops projecting "CI running" (plan §7).
+        if let Some(task) = context.registry.get_task_mut(task_id) {
+            if github_probe_is_retired(task)
+                && task.live_status.as_ref().is_some_and(is_github_owned_ci)
+            {
+                let previous = task.clone();
+                clear_github_ci_evidence(task);
+                refresh_cached_annotations(task);
+                *changed |= *task != previous;
+            }
+        }
+
         let should_probe = context
             .registry
             .get_task_mut(task_id)
@@ -472,13 +509,19 @@ fn refresh_github_check_evidence<R: Registry>(
     }
 }
 
-fn should_probe_github_checks(task: &Task, now: SystemTime, had_github_ci_failure: bool) -> bool {
-    if matches!(
+/// True when this task will never be probed again, so any GitHub-owned CI
+/// evidence it still holds can no longer be confirmed and must not keep
+/// projecting (plan §7: rows 5/6 require "relevant + not stale").
+fn github_probe_is_retired(task: &Task) -> bool {
+    matches!(
         task.lifecycle_status,
         LifecycleStatus::Removed | LifecycleStatus::Merged | LifecycleStatus::Cleanable
     ) || task.branch.trim().is_empty()
         || task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
-    {
+}
+
+fn should_probe_github_checks(task: &Task, now: SystemTime, had_github_ci_failure: bool) -> bool {
+    if github_probe_is_retired(task) {
         return false;
     }
 
@@ -538,7 +581,19 @@ fn apply_github_checks_observation(
             clear_github_ci_evidence(task);
         }
         CiChecksObservation::Unobservable { reason } => {
+            // A probe that cannot observe the PR can no longer vouch for a run
+            // it previously reported pending; leaving it would project
+            // "CI running" indefinitely (plan §7 staleness). A failure we did
+            // observe stays until a later probe supersedes it.
             task.metadata.insert(CI_PROBE_ERROR_KEY.to_string(), reason);
+            if task
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == LiveStatusKind::CiPending)
+            {
+                task.live_status = None;
+                task.live_status_observed_at = None;
+            }
         }
     }
 }
@@ -561,11 +616,31 @@ fn can_apply_github_override(task: &Task) -> bool {
     match task.live_status.as_ref() {
         None => true,
         Some(status) if is_github_ci_failure(status) => true,
+        Some(status) if is_unacknowledged_attention_gate(task, status) => false,
         Some(status) => !matches!(
             status.kind.class(),
             LiveStatusClass::Error | LiveStatusClass::MissingSubstrate
         ),
     }
+}
+
+/// True when the task is parked on an approval/input gate the operator has not
+/// acknowledged yet.
+///
+/// Such a gate is the only actionable signal the operator receives, and a
+/// `Running` projection can never notify (`attention.rs` clears the notify
+/// candidate for `Running`). A GitHub override would therefore make the gate
+/// both invisible and unnotified for as long as CI runs, so it yields here.
+/// This narrows plan §6 row 6, which ranks display and does not model
+/// notification.
+fn is_unacknowledged_attention_gate(task: &Task, status: &LiveObservation) -> bool {
+    matches!(
+        status.kind,
+        LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput
+    ) && !matches!(
+        (task.live_status_observed_at, task.attention_acknowledged_at),
+        (Some(observed_at), Some(acknowledged_at)) if observed_at <= acknowledged_at
+    )
 }
 
 fn is_github_ci_failure(status: &LiveObservation) -> bool {
@@ -1655,6 +1730,87 @@ mod tests {
                 .map(|status| (status.kind, status.summary.as_str())),
             Some((LiveStatusKind::MergeConflict, "merge failed"))
         );
+    }
+
+    #[test]
+    fn github_pending_checks_do_not_mask_unacknowledged_attention_gate() {
+        // A `Running "CI running"` projection can never notify (attention.rs
+        // clears the notify candidate for Running), so letting pending CI
+        // overwrite an unacknowledged approval/input gate would make the only
+        // actionable signal both invisible and unnotified. Narrow deviation
+        // from plan §6 row 6, which ranks display and ignores notification.
+        let now = SystemTime::now();
+        let observed_at = now - Duration::from_secs(60);
+
+        let mut gate = task_with_live(LiveStatusKind::WaitingForApproval, "waiting for approval");
+        gate.live_status_observed_at = Some(observed_at);
+        gate.add_side_flag(SideFlag::NeedsInput);
+
+        super::apply_github_checks_observation(&mut gate, CiChecksObservation::Pending, now);
+
+        assert_eq!(
+            gate.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval),
+            "pending CI must not overwrite an unacknowledged approval gate"
+        );
+        assert!(
+            gate.has_side_flag(SideFlag::NeedsInput),
+            "GitHub CI state must not clear the agent's needs-input flag"
+        );
+        let projected = crate::ui_state::derive_operator_status(&gate);
+        assert_eq!(projected.status, crate::ui_state::TaskStatus::Waiting);
+        assert!(projected.actionable, "the operator still has to act");
+
+        // Once acknowledged, the gate is no longer an actionable signal and CI
+        // takes the display back (plan §6 row 6).
+        let mut acknowledged =
+            task_with_live(LiveStatusKind::WaitingForApproval, "waiting for approval");
+        acknowledged.live_status_observed_at = Some(observed_at);
+        acknowledged.record_attention_acknowledgment(now);
+
+        super::apply_github_checks_observation(
+            &mut acknowledged,
+            CiChecksObservation::Pending,
+            now,
+        );
+
+        assert_eq!(
+            acknowledged.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CiPending)
+        );
+    }
+
+    #[test]
+    fn github_ci_evidence_is_cleared_when_probing_stops() {
+        // Plan §7: rows 5/6 apply only while evidence is "relevant + not
+        // stale". Once the lifecycle retires the probe, CI evidence can never
+        // be confirmed again and must not keep projecting.
+        let now = SystemTime::now();
+
+        let mut merged = task_with_live(LiveStatusKind::CiPending, "ci running");
+        merged.lifecycle_status = LifecycleStatus::Merged;
+        assert!(super::github_probe_is_retired(&merged));
+        super::clear_github_ci_evidence(&mut merged);
+        assert!(merged.live_status.is_none());
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&merged).status,
+            crate::ui_state::TaskStatus::Idle,
+            "a merged task must not report CI running forever"
+        );
+
+        let mut active = task_with_live(LiveStatusKind::CiPending, "ci running");
+        assert!(!super::github_probe_is_retired(&active));
+
+        // An unobservable probe can no longer vouch for a pending run.
+        super::apply_github_checks_observation(
+            &mut active,
+            CiChecksObservation::Unobservable {
+                reason: "no pull request for branch".to_string(),
+            },
+            now,
+        );
+        assert!(active.live_status.is_none());
+        assert!(active.metadata.contains_key(super::CI_PROBE_ERROR_KEY));
     }
 
     #[test]
