@@ -35,4 +35,9 @@ describe("swipe-to-reveal gesture", () => {
     const barely = swipeMove(swipeStart(), -(SWIPE_TRIGGER - 1), 0);
     expect(swipeEnd(barely)).toEqual({ open: false, offset: 0 });
   });
+
+  it("reserves enough width for the confirming Drop label", () => {
+    // "Tap to confirm" + button padding + reveal padding-right must fit without clip.
+    expect(SWIPE_REVEAL_WIDTH).toBeGreaterThanOrEqual(148);
+  });
 });

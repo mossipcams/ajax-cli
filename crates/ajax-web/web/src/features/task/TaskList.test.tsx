@@ -252,4 +252,11 @@ describe("TaskList", () => {
     expect(activePillRule).not.toMatch(/var\(--warn/);
     expect(faultDotRule).toMatch(/var\(--danger\)/);
   });
+
+  it("keeps swipe-reveal action labels on one line with enough horizontal pad", () => {
+    expect(stylesSource).toMatch(/\.task-row-reveal\s+\.action[\s\S]*?white-space:\s*nowrap/);
+    expect(stylesSource).toMatch(
+      /\.task-row-reveal\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
+    );
+  });
 });
