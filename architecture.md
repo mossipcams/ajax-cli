@@ -160,17 +160,25 @@ precedence:
 2. Structured native lifecycle events folded from the JSONL log (attention and
    open activities persist until cleared or session end; non-terminal phases
    expire after a generous window; terminal outcomes persist until superseded)
-3. Process liveness (wrapper `Starting`/`Running`, 30s) — informational only;
-   never alone becomes `AgentRunning`
+3. Process liveness (wrapper `Starting`/`Running`,
+   `PROCESS_LIVENESS_FRESH_FOR` = 30s) — informational only; never alone
+   becomes `AgentRunning`
 
-Confirmed wrapper exit is a terminal fallback where native evidence is absent:
-`Starting`/`Running` yield only liveness, never activity, and an `Exited*`
-observation can only exist once the supervised process has actually ended.
-Missing substrate stays authoritative over activity candidates. Ambiguous or
-contradictory fresh evidence projects `Unknown`. Parent and delegated runs are
-aggregated as a run graph: a parent is not fully complete while non-detached
-descendants remain active. Equal-timestamp conflicts across sources on the same
-run project `Unknown`; malformed values never participate.
+Liveness is supplied separately from observations and is never activity: a fresh
+heartbeat rules out `Unknown` (the process demonstrably exists, so the task is
+at rest) but can only ever project `Idle`. Refresh stamps
+`ui_state::AGENT_PROCESS_ALIVE_KEY` while the heartbeat is inside its window and
+removes it once stale, which keeps `derive_operator_status` a pure projection
+with no notion of "now". Confirmed wrapper exit is a terminal fallback where
+native evidence is absent: `Starting`/`Running` yield only liveness, never
+activity, and an `Exited*` observation can only exist once the supervised
+process has actually ended. Missing substrate stays authoritative over activity
+candidates. Ambiguous or contradictory fresh evidence projects `Unknown`. Parent
+and delegated runs are aggregated as a run graph: a parent is not fully complete
+while non-detached descendants remain active. Because every run appends to the
+one per-task log, `AgentStatusSource` groups envelopes by `run_id` before
+folding and emits one observation per run — a child's events never move the
+parent's phase. Malformed values never participate.
 
 See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
 client mapping matrix, and migration phases.
@@ -484,7 +492,12 @@ expected, so a missing tmux session, task window, worktree, or branch is
 failure or conflict is `Error` and pending checks are `Running` ("CI running"),
 while passing checks clear the override and reveal the native phase; otherwise
 the native phase applies, with confirmed wrapper exit as a terminal fallback;
-and a task no source can prove is `Unknown`. Cleanup/terminal lifecycles
+and a task no source can prove is `Unknown`. The GitHub override yields to an
+unacknowledged approval/input gate: a `Running` projection cannot raise
+attention, so CI must not mask the operator's only actionable signal. GitHub CI
+evidence is also dropped once its probe retires (terminal lifecycle, no branch,
+missing worktree) or becomes unobservable, so it never outlives what produced
+it. Cleanup/terminal lifecycles
 (`Merged`, `Cleanable`, `Removing`, hidden `Removed`) stay idle unless current
 error or running evidence overrides them.
 

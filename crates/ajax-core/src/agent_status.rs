@@ -12,7 +12,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::models::{LiveObservation, LiveStatusKind};
 
@@ -125,11 +125,26 @@ pub struct StatusObservation {
     pub kind: ActivityKind,
 }
 
+/// Freshness window for a wrapper liveness heartbeat. A heartbeat older than
+/// this proves nothing about the process now.
+pub const PROCESS_LIVENESS_FRESH_FOR: Duration = Duration::from_secs(30);
+
 /// Separately-supplied process liveness. Never alone implies activity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProcessLiveness {
     pub alive: bool,
     pub observed_at: SystemTime,
+}
+
+impl ProcessLiveness {
+    /// True when the heartbeat is both alive and inside its freshness window.
+    /// This is the whole of tier 3: informational, never activity.
+    pub fn is_fresh_at(&self, now: SystemTime) -> bool {
+        self.alive
+            && now
+                .duration_since(self.observed_at)
+                .map_or(true, |age| age <= PROCESS_LIVENESS_FRESH_FOR)
+    }
 }
 
 /// Parent-side phase derived from primary activity plus non-detached child
@@ -283,7 +298,9 @@ fn is_run_active(activity: &Option<RunActivityResult>) -> bool {
 pub fn reduce_agent_status(input: ReduceInput<'_>) -> StatusProjection {
     let now = input.now;
     let primary = input.primary_run_id.as_str();
-    let process_alive = input.process_liveness.map(|p| p.alive).unwrap_or(false);
+    let process_alive = input
+        .process_liveness
+        .is_some_and(|liveness| liveness.is_fresh_at(now));
 
     let fresh: Vec<&StatusObservation> = input
         .observations
@@ -473,6 +490,41 @@ mod tests {
         assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
         assert_ne!(projection.live.kind, LiveStatusKind::AgentRunning);
         assert!(projection.process_alive);
+    }
+
+    #[test]
+    fn liveness_expires_after_its_thirty_second_window() {
+        // Tier 3 carries a 30s window: a wrapper heartbeat older than that
+        // proves nothing about the process now.
+        let stale = ProcessLiveness {
+            alive: true,
+            observed_at: now() - Duration::from_secs(31),
+        };
+        let fresh = ProcessLiveness {
+            alive: true,
+            observed_at: now() - Duration::from_secs(29),
+        };
+        let dead = ProcessLiveness {
+            alive: false,
+            observed_at: now(),
+        };
+
+        assert!(!stale.is_fresh_at(now()));
+        assert!(fresh.is_fresh_at(now()));
+        assert!(!dead.is_fresh_at(now()));
+
+        let projection = reduce_agent_status(ReduceInput {
+            now: now(),
+            primary_run_id: PRIMARY.to_string(),
+            process_liveness: Some(stale),
+            observations: &[],
+        });
+        assert!(
+            !projection.process_alive,
+            "a stale heartbeat must not report the process alive"
+        );
+        // Still never activity, fresh or stale.
+        assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
     }
 
     #[test]
