@@ -89,6 +89,9 @@ function toVirtualElement(anchor: FloatingContextMenuAnchor): VirtualElement {
   };
 }
 
+/** Ignore scroll-dismiss briefly after open so opening tap scroll does not close the menu. */
+const SCROLL_DISMISS_GRACE_MS = 400;
+
 export function FloatingContextMenu({
   open,
   anchor,
@@ -127,14 +130,18 @@ export function FloatingContextMenu({
   const dismiss = useDismiss(context, {
     outsidePress: true,
     escapeKey: true,
-    ancestorScroll: true,
+    ancestorScroll: false,
   });
   const role = useRole(context, { role: "menu" });
   const { getFloatingProps } = useInteractions([dismiss, role]);
 
   useEffect(() => {
     if (!open) return;
-    const onScroll = () => onClose();
+    const openedAt = performance.now();
+    const onScroll = () => {
+      if (performance.now() - openedAt < SCROLL_DISMISS_GRACE_MS) return;
+      onClose();
+    };
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
   }, [open, onClose]);
