@@ -19,7 +19,13 @@ export class IncompatibleResponseError extends Error {
   }
 }
 
-const CANONICAL_STATUSES: readonly string[] = ["running", "waiting", "idle", "error"];
+const CANONICAL_STATUSES: readonly string[] = [
+  "running",
+  "waiting",
+  "idle",
+  "error",
+  "unknown",
+];
 
 export function isTaskStatus(value: unknown): value is TaskStatus {
   return typeof value === "string" && CANONICAL_STATUSES.includes(value);

@@ -6,7 +6,7 @@
 import type { BrowserTaskCard, TaskStatus } from "./types";
 
 /** Status tone + label for badges/dots. The browser only renders the canonical
- * four-state contract; Rust owns derivation. */
+ * TaskStatus contract; Rust owns derivation. */
 export interface StatusMeta {
   tone: TaskStatus;
   label: string;
