@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import type { ActiveStatus } from "@/shared/lib/state";
 import {
   filterByProject,
-  fleetSegments,
   formatDuration,
   isQuiet,
   relativeTime,
@@ -13,9 +12,6 @@ import {
 } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
-import MusterBar from "./MusterBar";
-import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
-import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -36,72 +32,28 @@ interface ActionProps {
 interface TaskRowProps extends ActionProps {
   card: BrowserTaskCard;
   nowSecs: number;
-  offset: number;
-  onOffset: (handle: string, offset: number) => void;
   onOpenTask?: (handle: string) => void;
 }
 
-function TaskRow({
-  card,
-  nowSecs,
-  offset,
-  onOffset,
-  onOpenTask,
-  onCockpit,
-  onResult,
-  onMutated,
-}: TaskRowProps) {
+function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: TaskRowProps) {
   const meta = statusMeta(card.status);
   const quiet = isQuiet(card, nowSecs);
-  const rowRef = useRef<HTMLButtonElement>(null);
-  // The primary action rides behind the row as a swipe reveal; tapping the row
-  // opens the task detail where every action lives. One gesture, one surface.
-  const revealAction = visibleTaskActions(card.actions)[0];
+  // Every action the task offers sits on the row itself. The dashboard's job is
+  // acting on the fleet, not describing it — a hidden gesture that had to be
+  // discovered before anything could be done was the opposite of that.
+  const actions = visibleTaskActions(card.actions);
 
-  useSwipeReveal(rowRef, revealAction
-    ? {
-        onOffset: (next) => onOffset(card.qualified_handle, next),
-        onOpenChange: () => {},
-      }
-    : {});
-
-  const handleTap = () => {
-    if (offset > 0) {
-      onOffset(card.qualified_handle, 0);
-      return;
-    }
-    onOpenTask?.(card.qualified_handle);
-  };
-
-  const className = [
-    "task-row",
-    `tone-${meta.tone}`,
-    offset > 0 ? "is-revealed" : "",
-    quiet ? "is-quiet" : "",
-  ]
+  const className = ["task-row", `tone-${meta.tone}`, quiet ? "is-quiet" : ""]
     .filter(Boolean)
     .join(" ");
 
   return (
     <div className="task-row-wrap" data-handle={card.qualified_handle}>
-      {revealAction ? (
-        <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
-          <ActionBar
-            actions={[revealAction]}
-            handle={card.qualified_handle}
-            onCockpit={onCockpit}
-            onResult={onResult}
-            onMutated={onMutated}
-          />
-        </div>
-      ) : null}
       <button
-        ref={rowRef}
         type="button"
         className={className}
         data-handle={card.qualified_handle}
-        style={{ transform: `translateX(-${offset}px)` }}
-        onClick={handleTap}
+        onClick={() => onOpenTask?.(card.qualified_handle)}
       >
         <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
         <div className="task-row-main">
@@ -116,8 +68,9 @@ function TaskRow({
             <span className="task-row-sub">{card.status_explanation}</span>
           ) : null}
         </div>
+        {/* No status word here: the toned dot and the tier heading above already
+            name the state, and a third copy crowds out the row's actual content. */}
         <span className="task-row-side">
-          <span className="task-row-status">{meta.label}</span>
           {card.last_activity_unix_secs ? (
             <span className="task-row-time">
               {relativeTime(card.last_activity_unix_secs, nowSecs)}
@@ -126,6 +79,15 @@ function TaskRow({
         </span>
         <span className="task-row-chevron">›</span>
       </button>
+      {actions.length > 0 ? (
+        <ActionBar
+          actions={actions}
+          handle={card.qualified_handle}
+          onCockpit={onCockpit}
+          onResult={onResult}
+          onMutated={onMutated}
+        />
+      ) : null}
     </div>
   );
 }
@@ -139,20 +101,14 @@ export default function TaskList({
   onResult,
   onMutated,
 }: Props) {
-  const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
   const [stableOrder, setStableOrder] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<ActiveStatus | null>(null);
 
   // Quiet detection turns on a 4-minute boundary, so the clock must tick faster
   // than the 60s row-time refresh to flip a running row to "quiet" on time.
   useEffect(() => {
     const timer = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 30_000);
     return () => clearInterval(timer);
-  }, []);
-
-  const setOffset = useCallback((handle: string, offset: number) => {
-    setOffsets((prev) => ({ ...prev, [handle]: offset }));
   }, []);
 
   const projects = useMemo(
@@ -201,26 +157,8 @@ export default function TaskList({
     () => calm.filter((card) => card.status === "idle" || card.status === "unknown"),
     [calm],
   );
-  const active = useMemo(
-    () => calm.filter((card) => card.status !== "idle" && card.status !== "unknown"),
-    [calm],
-  );
-
-  const segments = useMemo(() => fleetSegments(active), [active]);
-
-  const byStatus: Record<ActiveStatus, BrowserTaskCard[]> = {
-    error: faults,
-    waiting,
-    running,
-  };
-  // A filter that no longer matches any task (its last card resolved) falls back
-  // to showing everything, so the list never strands the operator on an empty view.
-  const effectiveFilter = statusFilter && byStatus[statusFilter].length ? statusFilter : null;
-  const showTier = (status: ActiveStatus) => !effectiveFilter || effectiveFilter === status;
-
   const rowProps = {
     nowSecs,
-    onOffset: setOffset,
     onOpenTask,
     onCockpit,
     onResult,
@@ -230,18 +168,13 @@ export default function TaskList({
   const band = (cards: BrowserTaskCard[]) => (
     <div className="task-list">
       {cards.map((card) => (
-        <TaskRow
-          key={card.qualified_handle}
-          card={card}
-          offset={offsets[card.qualified_handle] ?? 0}
-          {...rowProps}
-        />
+        <TaskRow key={card.qualified_handle} card={card} {...rowProps} />
       ))}
     </div>
   );
 
   const tier = (status: ActiveStatus, label: string, cards: BrowserTaskCard[]) =>
-    cards.length > 0 && showTier(status) ? (
+    cards.length > 0 ? (
       <section className="task-band" data-tier={status}>
         <div className="task-band-title">
           <span className="task-band-label">{label}</span>
@@ -253,8 +186,6 @@ export default function TaskList({
 
   return (
     <>
-      <MusterBar segments={segments} selected={effectiveFilter} onSelect={setStatusFilter} />
-
       {projects.length > 0 ? (
         <nav className="project-nav" aria-label="Projects">
           <span className="project-nav-label">Projects</span>
@@ -289,7 +220,7 @@ export default function TaskList({
           {tier("error", "Faults", faults)}
           {tier("waiting", "Waiting", waiting)}
           {tier("running", "Running", running)}
-          {idle.length > 0 && !effectiveFilter ? (
+          {idle.length > 0 ? (
             // ponytail: ships open — a closed <details> drops its rows out of the
             // accessibility tree. Flip to collapsed-by-default only together with
             // the row queries in TaskList.test.tsx.
