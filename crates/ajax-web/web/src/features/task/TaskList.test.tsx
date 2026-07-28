@@ -80,10 +80,10 @@ describe("TaskList", () => {
     expect(screen.getByText("CI failed")).toBeInTheDocument();
   });
 
-  it("reveals the first non-resume action behind a row via swipe", () => {
+  it("puts every non-resume action on the row itself, no gesture needed", () => {
     render(<TaskList cockpit={cockpit} />);
-    // web/a: resume is filtered, so Fix CI is the reveal; Drop stays on detail.
-    expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
+    // web/a: resume is filtered; the rest are reachable without opening the task.
+    expect(screen.getByRole("button", { name: "Fix CI" })).toBeVisible();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
@@ -107,24 +107,9 @@ describe("TaskList", () => {
     expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
-  it("summarizes the active fleet as a muster bar, idle excluded", () => {
+  it("leads with the task list — no fleet-summary bar above it", () => {
     render(<TaskList cockpit={cockpit} />);
-    expect(screen.getByRole("group", { name: "Fleet status" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 Error — tap to filter/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 Running — tap to filter/ })).toBeInTheDocument();
-    // idle never gets a segment.
-    expect(screen.queryByRole("button", { name: /Idle — tap to filter/ })).toBeNull();
-  });
-
-  it("filters the tiers to one state when a muster segment is tapped", () => {
-    render(<TaskList cockpit={cockpit} />);
-    fireEvent.click(screen.getByRole("button", { name: /1 Error — tap to filter/ }));
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByText("Faults")).toBeInTheDocument();
-    expect(within(tasks).queryByText("Running")).toBeNull();
-    expect(within(tasks).queryByRole("group")).toBeNull(); // idle disclosure hidden while filtered
-    expect(within(tasks).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
-    expect(within(tasks).queryByRole("button", { name: /web\/b/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Fleet status" })).toBeNull();
   });
 
   it("flags a running task that has gone quiet past the threshold", () => {
@@ -253,10 +238,12 @@ describe("TaskList", () => {
     expect(faultDotRule).toMatch(/var\(--danger\)/);
   });
 
-  it("keeps swipe-reveal action labels on one line with enough horizontal pad", () => {
-    expect(stylesSource).toMatch(/\.task-row-reveal\s+\.action[\s\S]*?white-space:\s*nowrap/);
+  it("keeps row action labels on one line with enough horizontal pad", () => {
     expect(stylesSource).toMatch(
-      /\.task-row-reveal\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
+      /\.task-row-wrap\s*>\s*\.action-row\s+\.action[\s\S]*?white-space:\s*nowrap/,
+    );
+    expect(stylesSource).toMatch(
+      /\.task-row-wrap\s*>\s*\.action-row\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
     );
   });
 });

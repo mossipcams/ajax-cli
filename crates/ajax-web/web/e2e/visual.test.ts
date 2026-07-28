@@ -58,9 +58,10 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   expect(rowStyle.bg).not.toBe(TRANSPARENT);
   expect(rowStyle.leftWidth).not.toBe("3px");
 
-  // Status label paints with the tone color (waiting -> warn), not default ink.
-  const status = taskRow.locator(".task-row-status");
-  expect(await status.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
+  // The row's status dot paints with the tone color (waiting -> warn). It is the
+  // row's only state marker now, so an unstyled dot must fail here.
+  const status = taskRow.locator(".status-dot");
+  expect(await status.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(WARN);
 
   // Task rows have the compact list padding (would be 0 if unstyled).
   const row = page.locator(".task-row").first();
