@@ -80,10 +80,10 @@ describe("TaskList", () => {
     expect(screen.getByText("CI failed")).toBeInTheDocument();
   });
 
-  it("puts every non-resume action on the row itself, no gesture needed", () => {
+  it("reveals the first non-resume action behind a row via swipe", () => {
     render(<TaskList cockpit={cockpit} />);
-    // web/a: resume is filtered; the rest are reachable without opening the task.
-    expect(screen.getByRole("button", { name: "Fix CI" })).toBeVisible();
+    // web/a: resume is filtered, so Fix CI is the reveal; Drop stays on detail.
+    expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
@@ -238,12 +238,10 @@ describe("TaskList", () => {
     expect(faultDotRule).toMatch(/var\(--danger\)/);
   });
 
-  it("keeps row action labels on one line with enough horizontal pad", () => {
+  it("keeps swipe-reveal action labels on one line with enough horizontal pad", () => {
+    expect(stylesSource).toMatch(/\.task-row-reveal\s+\.action[\s\S]*?white-space:\s*nowrap/);
     expect(stylesSource).toMatch(
-      /\.task-row-wrap\s*>\s*\.action-row\s+\.action[\s\S]*?white-space:\s*nowrap/,
-    );
-    expect(stylesSource).toMatch(
-      /\.task-row-wrap\s*>\s*\.action-row\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
+      /\.task-row-reveal\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
     );
   });
 });
