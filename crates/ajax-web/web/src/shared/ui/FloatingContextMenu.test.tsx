@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import {
   FloatingContextMenu,
@@ -65,24 +65,57 @@ describe("FloatingContextMenu", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("calls onClose on capture-phase scroll outside portal ancestors", () => {
-    const onClose = vi.fn();
-    const scroller = document.createElement("div");
-    document.body.appendChild(scroller);
+  describe("scroll dismiss grace period", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
 
-    render(
-      <FloatingContextMenu
-        open
-        anchor={{ x: 10, y: 10 }}
-        items={[{ id: "open", label: "Open", onSelect: vi.fn() }]}
-        onClose={onClose}
-      />,
-    );
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    it("does not call onClose on scroll during the first ~400ms after open", () => {
+      const onClose = vi.fn();
+      const scroller = document.createElement("div");
+      document.body.appendChild(scroller);
 
-    expect(onClose).toHaveBeenCalled();
-    scroller.remove();
+      render(
+        <FloatingContextMenu
+          open
+          anchor={{ x: 10, y: 10 }}
+          items={[{ id: "open", label: "Open", onSelect: vi.fn() }]}
+          onClose={onClose}
+        />,
+      );
+
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+      expect(onClose).not.toHaveBeenCalled();
+      scroller.remove();
+    });
+
+    it("calls onClose on scroll after the grace window", () => {
+      const onClose = vi.fn();
+      const scroller = document.createElement("div");
+      document.body.appendChild(scroller);
+
+      render(
+        <FloatingContextMenu
+          open
+          anchor={{ x: 10, y: 10 }}
+          items={[{ id: "open", label: "Open", onSelect: vi.fn() }]}
+          onClose={onClose}
+        />,
+      );
+
+      vi.advanceTimersByTime(450);
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+      expect(onClose).toHaveBeenCalled();
+      scroller.remove();
+    });
   });
 
   it("exposes safe-area aware shift padding", () => {
