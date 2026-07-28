@@ -1120,6 +1120,7 @@ header .bar h1 {
 
 .task-row-wrap {
   position: relative;
+  overflow: hidden;
   border-top: 1px solid var(--rule);
 }
 
@@ -1127,13 +1128,16 @@ header .bar h1 {
   border-top: none;
 }
 
-/* Actions ride on the row, not behind a gesture. Labels stay on one line so a
-   wrapped "Fix CI" never doubles a row's height on a narrow phone. */
-.task-row-wrap > .action-row {
-  padding: 0 var(--space-2) 10px;
+.task-row-reveal {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-right: var(--space-2);
 }
 
-.task-row-wrap > .action-row .action {
+.task-row-reveal .action {
   min-height: 36px;
   padding: 6px 12px;
   white-space: nowrap;

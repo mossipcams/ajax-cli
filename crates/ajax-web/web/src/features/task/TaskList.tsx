@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import type { ActiveStatus } from "@/shared/lib/state";
 import {
@@ -12,6 +12,8 @@ import {
 } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
+import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
+import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -32,28 +34,72 @@ interface ActionProps {
 interface TaskRowProps extends ActionProps {
   card: BrowserTaskCard;
   nowSecs: number;
+  offset: number;
+  onOffset: (handle: string, offset: number) => void;
   onOpenTask?: (handle: string) => void;
 }
 
-function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: TaskRowProps) {
+function TaskRow({
+  card,
+  nowSecs,
+  offset,
+  onOffset,
+  onOpenTask,
+  onCockpit,
+  onResult,
+  onMutated,
+}: TaskRowProps) {
   const meta = statusMeta(card.status);
   const quiet = isQuiet(card, nowSecs);
-  // Every action the task offers sits on the row itself. The dashboard's job is
-  // acting on the fleet, not describing it — a hidden gesture that had to be
-  // discovered before anything could be done was the opposite of that.
-  const actions = visibleTaskActions(card.actions);
+  const rowRef = useRef<HTMLButtonElement>(null);
+  // The primary action rides behind the row as a swipe reveal; tapping the row
+  // opens the task detail where every action lives. One gesture, one surface.
+  const revealAction = visibleTaskActions(card.actions)[0];
 
-  const className = ["task-row", `tone-${meta.tone}`, quiet ? "is-quiet" : ""]
+  useSwipeReveal(rowRef, revealAction
+    ? {
+        onOffset: (next) => onOffset(card.qualified_handle, next),
+        onOpenChange: () => {},
+      }
+    : {});
+
+  const handleTap = () => {
+    if (offset > 0) {
+      onOffset(card.qualified_handle, 0);
+      return;
+    }
+    onOpenTask?.(card.qualified_handle);
+  };
+
+  const className = [
+    "task-row",
+    `tone-${meta.tone}`,
+    offset > 0 ? "is-revealed" : "",
+    quiet ? "is-quiet" : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
   return (
     <div className="task-row-wrap" data-handle={card.qualified_handle}>
+      {revealAction ? (
+        <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
+          <ActionBar
+            actions={[revealAction]}
+            handle={card.qualified_handle}
+            onCockpit={onCockpit}
+            onResult={onResult}
+            onMutated={onMutated}
+          />
+        </div>
+      ) : null}
       <button
+        ref={rowRef}
         type="button"
         className={className}
         data-handle={card.qualified_handle}
-        onClick={() => onOpenTask?.(card.qualified_handle)}
+        style={{ transform: `translateX(-${offset}px)` }}
+        onClick={handleTap}
       >
         <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
         <div className="task-row-main">
@@ -79,15 +125,6 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
         </span>
         <span className="task-row-chevron">›</span>
       </button>
-      {actions.length > 0 ? (
-        <ActionBar
-          actions={actions}
-          handle={card.qualified_handle}
-          onCockpit={onCockpit}
-          onResult={onResult}
-          onMutated={onMutated}
-        />
-      ) : null}
     </div>
   );
 }
@@ -101,6 +138,7 @@ export default function TaskList({
   onResult,
   onMutated,
 }: Props) {
+  const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
   const [stableOrder, setStableOrder] = useState<string[]>([]);
 
@@ -109,6 +147,10 @@ export default function TaskList({
   useEffect(() => {
     const timer = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 30_000);
     return () => clearInterval(timer);
+  }, []);
+
+  const setOffset = useCallback((handle: string, offset: number) => {
+    setOffsets((prev) => ({ ...prev, [handle]: offset }));
   }, []);
 
   const projects = useMemo(
@@ -159,6 +201,7 @@ export default function TaskList({
   );
   const rowProps = {
     nowSecs,
+    onOffset: setOffset,
     onOpenTask,
     onCockpit,
     onResult,
@@ -168,7 +211,12 @@ export default function TaskList({
   const band = (cards: BrowserTaskCard[]) => (
     <div className="task-list">
       {cards.map((card) => (
-        <TaskRow key={card.qualified_handle} card={card} {...rowProps} />
+        <TaskRow
+          key={card.qualified_handle}
+          card={card}
+          offset={offsets[card.qualified_handle] ?? 0}
+          {...rowProps}
+        />
       ))}
     </div>
   );
