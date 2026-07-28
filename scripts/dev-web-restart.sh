@@ -242,9 +242,12 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
+    # Test in Stable (and any non-worktree restart): always rebuild the web
+    # embed then force-reinstall. Without --force, same-version cargo install
+    # can leave ~/.cargo/bin/ajax-cli on a stale embed after web:build.
     rebuild_web "$ROOT"
     echo "Installing ajax-cli from $ROOT ..."
-    cargo install --path "$ROOT/crates/ajax-cli" --locked
+    cargo install --path "$ROOT/crates/ajax-cli" --locked --force
   fi
 elif [[ -n "$WORKTREE" && -x "$SLOT_BIN" ]]; then
   BIN_CMD=("$SLOT_BIN")
