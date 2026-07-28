@@ -8,8 +8,7 @@ import {
   type TerminalLinkService,
 } from "./terminalLinkService";
 import { createTerminalSnapshot, type TerminalSnapshot } from "./terminalSnapshot";
-
-const HTTP_URL_REGEX = /(https?:\/\/[^\s"'<>]+)/i;
+import { HTTP_URL_REGEX } from "./terminalLinkHitTest";
 
 export type AttachTerminalAddonsOptions = {
   onLinkActivate: (activation: LinkActivation) => void;
