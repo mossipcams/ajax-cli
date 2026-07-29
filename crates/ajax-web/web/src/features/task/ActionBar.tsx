@@ -6,6 +6,8 @@ import { postOperation, requestId } from "@/shared/lib/api";
 interface Props {
   actions: WebAction[];
   handle: string;
+  /** Dashboard uses primary-key lattice; task detail keeps the default row. */
+  layout?: "default" | "primary-key";
   /** Refreshed cockpit projection returned by a mutation. */
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   /** Surface the operation result for the result banner. */
@@ -44,9 +46,43 @@ function actionClassName(
   return classes.join(" ");
 }
 
+function ActionButton({
+  action,
+  index,
+  handle,
+  pendingAction,
+  runningAction,
+  onClick,
+  label,
+}: {
+  action: WebAction;
+  index: number;
+  handle: string;
+  pendingAction: WebAction | null;
+  runningAction: string | null;
+  onClick: (action: WebAction) => void;
+  label: (action: WebAction) => string;
+}) {
+  return (
+    <button
+      key={action.action}
+      type="button"
+      className={actionClassName(action, index, pendingAction, runningAction)}
+      data-action={action.action}
+      data-task={handle}
+      {...(action.destructive ? { "data-destructive": "true" } : {})}
+      disabled={runningAction !== null && runningAction !== action.action}
+      onClick={() => onClick(action)}
+    >
+      {label(action)}
+    </button>
+  );
+}
+
 export default function ActionBar({
   actions,
   handle,
+  layout = "default",
   onCockpit,
   onResult,
   onMutated,
@@ -156,21 +192,44 @@ export default function ActionBar({
     void run(retained, needsConfirm);
   };
 
+  const buttonProps = (action: WebAction, index: number) => ({
+    action,
+    index,
+    handle,
+    pendingAction,
+    runningAction,
+    onClick: handleClick,
+    label,
+  });
+
+  if (layout === "primary-key") {
+    const [primary, ...secondary] = actions;
+    return (
+      <div
+        className="action-row action-row--primary-key"
+        data-layout="primary-key"
+        data-testid="action-row"
+      >
+        {primary ? (
+          <div className="action-primary-slot" data-testid="action-primary-slot">
+            <ActionButton {...buttonProps(primary, 0)} />
+          </div>
+        ) : null}
+        {secondary.length > 0 ? (
+          <div className="action-secondary-row" data-testid="task-row-actions-secondary">
+            {secondary.map((action, offset) => (
+              <ActionButton key={action.action} {...buttonProps(action, offset + 1)} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="action-row" style={actionRowStyle}>
       {actions.map((action, index) => (
-        <button
-          key={action.action}
-          type="button"
-          className={actionClassName(action, index, pendingAction, runningAction)}
-          data-action={action.action}
-          data-task={handle}
-          {...(action.destructive ? { "data-destructive": "true" } : {})}
-          disabled={runningAction !== null && runningAction !== action.action}
-          onClick={() => handleClick(action)}
-        >
-          {label(action)}
-        </button>
+        <ActionButton key={action.action} {...buttonProps(action, index)} />
       ))}
     </div>
   );
