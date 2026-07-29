@@ -134,6 +134,25 @@ T3–T5 (browser), then T6. Diffs reviewed and validation run locally per round.
 
 ## Deviations
 
+- **CI failure after the first push (18 e2e tests).** The strict `assertCockpit`
+  guard rejects a card without a valid `attention`, and three e2e mock payloads
+  predated the field (`e2e/fixtures.ts` COCKPIT_FIXTURE ×2 cards,
+  `visual.test.ts` TWO_ATTENTION_ITEMS, `layout-scroll.test.ts`
+  `cockpitWithManyTasks`). The app rendered an incompatible-response error
+  instead of the dashboard, so every dashboard-dependent test failed. Fixed by
+  banding the fixtures; the guard stays strict by design.
+- **The local `web:smoke` pass was false.** `playwright.config.mts` sets
+  `reuseExistingServer: !process.env.CI`, so the local run attached to a vite
+  server already up with a pre-change module graph. Re-running as
+  `pkill -f vite && CI=1 npm run web:smoke` reproduced CI exactly. **Always run
+  the smoke that way before trusting it.**
+- **Swipe-reveal retargeted (Matt's call, "accept the swipe fading").** Each row
+  shows its first non-destructive action inline, so a card with a single safe
+  action renders no reveal at all — reviewable (`[Ship]`) and waiting
+  (`[Answer]`) rows now have no swipe. The gesture survives only on faulted rows
+  carrying a remediation plus `Repair`, so `swipe-reveal.test.ts` drives that
+  case and additionally asserts the reveal never duplicates the inline control.
+
 - **T2 drops the `Start` item (2026-07-28).** `available_operator_actions`
   (`recommended.rs:185`) only ever yields `Repair`, `Resume`, `Ship`, `Drop`.
   `OperatorAction::Start` is a TUI cockpit-menu affordance
