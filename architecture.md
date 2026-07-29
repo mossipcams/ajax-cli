@@ -870,11 +870,22 @@ viewport-burst case, passes as of 2026-07-16.
 ### `ajax-web::adapters::terminal_pty`
 
 Owns the PTY/tmux attach mechanism behind the protected task terminal
-WebSocket route. It builds attach commands only from registered task evidence,
-forwards terminal I/O over bounded WebSocket frames, and closes the PTY when
-the browser socket disconnects. Browser task terminal WebSocket upgrades require
-a same-origin `Origin` that matches the request `Host` in addition to the
-normal protected-route session and Cloudflare Access checks.
+WebSocket route. It builds attach commands only from registered task evidence
+and forwards terminal I/O over bounded WebSocket frames. Each WebSocket owns a
+short-lived PTY child (connection-scoped); ajax-web does not keep an in-process
+reconnecting-PTY hub or ring buffer across sockets (PWA/companion must stay
+reconnect-safe without process-local bridge state).
+
+The browser’s durable viewport is an **isolated grouped tmux session** named
+from the task’s registered session plus a stable per-connection `client=` id
+(minted once per terminal connection controller, hashed to a 12-hex suffix).
+Duplicated browser tabs must not share that id. Setup is idempotent (`new-session -A`); disconnect kills the
+PTY child but leaves the ephemeral session for reattach. Destroy/reaper paths
+kill orphaned ephemeral sessions. Auto-reconnect dials `seed=0` and reuses the
+client id; full history seed remains for first connect / manual reconnect.
+Browser task terminal WebSocket upgrades require a same-origin `Origin` that
+matches the request `Host` in addition to the normal protected-route session
+and Cloudflare Access checks.
 
 ### `ajax-web::runtime`
 

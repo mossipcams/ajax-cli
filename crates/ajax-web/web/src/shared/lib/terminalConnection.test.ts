@@ -62,6 +62,7 @@ describe("connectTaskTerminal", () => {
     renewBrowserSession.mockReset();
     renewBrowserSession.mockResolvedValue(undefined);
     vi.stubGlobal("WebSocket", MockWebSocket);
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 
   afterEach(() => {
@@ -215,7 +216,7 @@ describe("connectTaskTerminal", () => {
     }
   });
 
-  it("treats a server error frame as unavailable", async () => {
+  it("treats a server error frame as unavailable", () => {
     createConnection();
     const socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
@@ -226,16 +227,107 @@ describe("connectTaskTerminal", () => {
         data: JSON.stringify({ type: "error", error: "tmux attach failed" }),
       }),
     );
-    await Promise.resolve();
     socket.fire("close");
 
     expect(statuses.at(-1)).toBe("unavailable");
     expect(serverErrors).toEqual(["tmux attach failed"]);
   });
 
+  it("error frame then close same turn stays unavailable without auto-redial", () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({ type: "error", error: "tmux attach failed" }),
+      }),
+    );
+    socket.fire("close");
+
+    expect(statuses.at(-1)).toBe("unavailable");
+    expect(serverErrors).toEqual(["tmux attach failed"]);
+
+    const dialsBefore = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(0);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore);
+  });
+
   it("first connect dials without a seed opt-out (seed)", () => {
     createConnection();
     expect(MockWebSocket.instances[0].url).not.toContain("seed=0");
+  });
+
+  it("first visible auto-reconnect after open dials immediately with client id", () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire("close");
+    expect(statuses.at(-1)).toBe("reconnecting");
+
+    const dialsBefore = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(0);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore + 1);
+
+    const redial = latestSocket();
+    expect(redial.url).toContain("seed=0");
+    expect(redial.url).toMatch(/client=[A-Za-z0-9_-]+/);
+  });
+
+  it("second consecutive auto-reconnect still backs off", async () => {
+    renewBrowserSession.mockRejectedValue(new Error("offline"));
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire("close");
+    vi.advanceTimersByTime(0);
+    latestSocket().fire("close");
+    await vi.advanceTimersByTimeAsync(0);
+
+    const dialsBefore = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(1999);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore + 1);
+  });
+
+  it("every dial includes the same stable client id", () => {
+    createConnection();
+    const firstUrl = latestSocket().url;
+    const firstClient = new URL(firstUrl.replace(/^ws/, "http")).searchParams.get("client");
+    expect(firstClient).toBeTruthy();
+
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    socket.fire("close");
+    vi.advanceTimersByTime(0);
+
+    const secondClient = new URL(latestSocket().url.replace(/^ws/, "http")).searchParams.get("client");
+    expect(secondClient).toBe(firstClient);
+  });
+
+  it("separate connection controllers get distinct client ids", () => {
+    createConnection();
+    const firstClient = new URL(latestSocket().url.replace(/^ws/, "http")).searchParams.get("client");
+
+    const other = connectTaskTerminal("test-handle", {
+      onOutput: () => {},
+      onServerError: () => {},
+      onStatus: () => {},
+      onOpen: () => {},
+    });
+    const secondClient = new URL(latestSocket().url.replace(/^ws/, "http")).searchParams.get("client");
+    other.dispose();
+
+    expect(firstClient).toBeTruthy();
+    expect(secondClient).toBeTruthy();
+    expect(secondClient).not.toBe(firstClient);
   });
 
   it("automatic backoff reconnect dials with seed=0 (seed)", () => {
@@ -323,6 +415,7 @@ describe("connectTaskTerminal", () => {
 
     const newSocket = latestSocket();
     expect(newSocket.url).not.toContain("seed=0");
+    expect(newSocket.url).toMatch(/client=[A-Za-z0-9_-]+/);
 
     newSocket.readyState = MockWebSocket.OPEN;
     newSocket.fire("open");
