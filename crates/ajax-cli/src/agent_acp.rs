@@ -489,6 +489,12 @@ pub(crate) async fn run_session_lifecycle_v2(
                             }
                         };
                         match event {
+                            ConsoleEvent::Redraw => {
+                                if let Err(error) = console.redraw() {
+                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                                }
+                                continue;
+                            }
                             ConsoleEvent::Interrupt | ConsoleEvent::InputError(_) => {
                                 return Ok(SessionEnd::HostFailed(
                                     AUTHENTICATION_CANCELLED.to_owned(),
@@ -620,6 +626,12 @@ pub(crate) async fn run_session_lifecycle_v2(
                         active_elicitation = Some(elicitation);
                     }
                     Some(event) = console.next_event() => {
+                        if matches!(event, ConsoleEvent::Redraw) {
+                            if let Err(error) = console.redraw() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                            }
+                            continue;
+                        }
                         if let Some(active) = active_permission.take() {
                             let outcome =
                                 permission_outcome_for_line(&event, &active.request.options);
@@ -1024,6 +1036,7 @@ async fn handle_console_event_v1(
                 CliError::CommandFailed(format!("ACP console input failed: {detail}")),
             )));
         }
+        ConsoleEvent::Redraw => {}
     }
     Ok(())
 }
@@ -1125,6 +1138,12 @@ pub(crate) async fn run_session_lifecycle_v1(
                             }
                         };
                         match event {
+                            ConsoleEvent::Redraw => {
+                                if let Err(error) = console.redraw() {
+                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                                }
+                                continue;
+                            }
                             ConsoleEvent::Interrupt | ConsoleEvent::InputError(_) => {
                                 return Ok(SessionEnd::HostFailed(
                                     AUTHENTICATION_CANCELLED.to_owned(),
@@ -1222,6 +1241,12 @@ pub(crate) async fn run_session_lifecycle_v1(
                         active_permission = Some(permission);
                     }
                     Some(event) = console.next_event() => {
+                        if matches!(event, ConsoleEvent::Redraw) {
+                            if let Err(error) = console.redraw() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                            }
+                            continue;
+                        }
                         if let Some(active) = active_permission.take() {
                             let outcome =
                                 permission_outcome_for_line_v1(&event, &active.request.options);
@@ -1762,6 +1787,7 @@ fn handle_console_event(
                 "ACP console input failed: {detail}"
             )));
         }
+        ConsoleEvent::Redraw => {}
     }
     Ok(())
 }

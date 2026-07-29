@@ -33,6 +33,8 @@ pub enum ConsoleEvent {
     PromptLine(String),
     Interrupt,
     InputError(String),
+    /// Draft/selection/resize changed; main thread must redraw (input never draws).
+    Redraw,
 }
 
 #[cfg(test)]
@@ -158,6 +160,11 @@ impl AgentAcpConsole {
             state.view.set_idle();
             Ok(())
         })
+    }
+
+    /// Redraw from the console owner thread only. Input must not call this.
+    pub fn redraw(&mut self) -> Result<(), CliError> {
+        self.update_state(|_| Ok(()))
     }
 
     pub fn render_update(&mut self, update: &v2::SessionUpdate) -> Result<(), CliError> {
@@ -412,9 +419,10 @@ fn read_stdio_input(
                 break;
             }
         };
+        // ponytail: never draw on the input thread — holding LiveConsole across
+        // Terminal::draw deadlocks the main owner on set_session_id/redraw.
         if matches!(event, Event::Resize(_, _)) {
-            let mut inner = live.lock().unwrap();
-            let _ = redraw_live(&mut inner);
+            let _ = events_tx.send(ConsoleEvent::Redraw);
             continue;
         }
         let Event::Key(key) = event else {
@@ -428,28 +436,22 @@ fn read_stdio_input(
                 let _ = events_tx.send(ConsoleEvent::Interrupt);
             }
             KeyCode::Enter => {
-                let send_line = {
-                    let mut inner = live.lock().unwrap();
-                    if inner.state.draft.is_empty()
-                        && should_expand_tool_on_enter(&inner.state.view)
-                    {
-                        inner.state.view.toggle_selected_tool_expand();
-                        let _ = redraw_live(&mut inner);
-                        false
-                    } else {
-                        let line = std::mem::take(&mut inner.state.draft);
-                        if !line.is_empty() {
-                            inner.state.view.submit_prompt(&line);
-                        }
-                        let _ = redraw_live(&mut inner);
-                        if events_tx.send(ConsoleEvent::PromptLine(line)).is_err() {
-                            break;
-                        }
-                        true
+                let mut inner = live.lock().unwrap();
+                if inner.state.draft.is_empty() && should_expand_tool_on_enter(&inner.state.view) {
+                    inner.state.view.toggle_selected_tool_expand();
+                    drop(inner);
+                    if events_tx.send(ConsoleEvent::Redraw).is_err() {
+                        break;
                     }
-                };
-                if !send_line {
-                    continue;
+                } else {
+                    let line = std::mem::take(&mut inner.state.draft);
+                    if !line.is_empty() {
+                        inner.state.view.submit_prompt(&line);
+                    }
+                    drop(inner);
+                    if events_tx.send(ConsoleEvent::PromptLine(line)).is_err() {
+                        break;
+                    }
                 }
             }
             // Arrow keys only — do not bind j/k (would steal first prompt chars).
@@ -457,27 +459,39 @@ fn read_stdio_input(
                 let mut inner = live.lock().unwrap();
                 if inner.state.draft.is_empty() {
                     inner.state.view.select_prev_tool();
-                    let _ = redraw_live(&mut inner);
+                    drop(inner);
+                    if events_tx.send(ConsoleEvent::Redraw).is_err() {
+                        break;
+                    }
                 }
             }
             KeyCode::Down if key.modifiers.is_empty() => {
                 let mut inner = live.lock().unwrap();
                 if inner.state.draft.is_empty() {
                     inner.state.view.select_next_tool();
-                    let _ = redraw_live(&mut inner);
+                    drop(inner);
+                    if events_tx.send(ConsoleEvent::Redraw).is_err() {
+                        break;
+                    }
                 }
             }
             KeyCode::Backspace => {
                 let mut inner = live.lock().unwrap();
                 inner.state.draft.pop();
                 inner.state.view.prompt_draft = inner.state.draft.clone();
-                let _ = redraw_live(&mut inner);
+                drop(inner);
+                if events_tx.send(ConsoleEvent::Redraw).is_err() {
+                    break;
+                }
             }
             KeyCode::Char(ch) if key.modifiers.is_empty() => {
                 let mut inner = live.lock().unwrap();
                 inner.state.draft.push(ch);
                 inner.state.view.prompt_draft = inner.state.draft.clone();
-                let _ = redraw_live(&mut inner);
+                drop(inner);
+                if events_tx.send(ConsoleEvent::Redraw).is_err() {
+                    break;
+                }
             }
             _ => {}
         }
