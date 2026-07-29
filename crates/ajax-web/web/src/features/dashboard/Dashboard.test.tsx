@@ -121,6 +121,53 @@ describe("Dashboard", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
   });
 
+  it("primary action is full-width on the row", () => {
+    render(<Dashboard cockpit={cockpit} connection="connected" />);
+    const actions = within(rowEl("web/a")).getByTestId("task-row-actions");
+    const layout = within(actions).getByTestId("action-row");
+    expect(layout).toHaveAttribute("data-layout", "primary-key");
+
+    const primarySlot = within(actions).getByTestId("action-primary-slot");
+    const fixCi = within(primarySlot).getByRole("button", { name: "Fix CI" });
+    expect(fixCi).toHaveClass("primary");
+    expect(fixCi).toHaveAttribute("data-action", "fix-ci");
+
+    const secondary = within(actions).getByTestId("task-row-actions-secondary");
+    const repair = within(secondary).getByRole("button", { name: "Repair" });
+    expect(repair).toHaveAttribute("data-action", "repair");
+    expect(repair).not.toHaveClass("primary");
+
+    const actionButtons = within(actions)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("data-action"));
+    expect(actionButtons).toEqual(["fix-ci", "repair"]);
+  });
+
+  it("renders no secondary row when only one safe action exists", () => {
+    const oneAction: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/solo",
+          qualified_handle: "web/solo",
+          repo: "web",
+          title: "Solo",
+          status: "idle",
+          attention: "review",
+          last_activity_unix_secs: NOW_SECS - 120,
+          actions: [
+            { action: "review", label: "Review", destructive: false, confirmation_required: false },
+            { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
+          ],
+        },
+      ],
+    };
+    render(<Dashboard cockpit={oneAction} connection="connected" />);
+    const actions = within(rowEl("web/solo")).getByTestId("task-row-actions");
+    expect(within(actions).queryByTestId("task-row-actions-secondary")).toBeNull();
+    expect(within(actions).getByRole("button", { name: "Review" })).toHaveClass("primary");
+  });
+
   it("renders no action line for a row with nothing safe to run", () => {
     render(<Dashboard cockpit={cockpit} connection="connected" />);
     expect(within(rowEl("api/c")).queryByTestId("task-row-actions")).toBeNull();

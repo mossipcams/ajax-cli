@@ -19,13 +19,14 @@ import ActionBar from "@/features/task/ActionBar";
 import RepoPanel from "@/features/repositories/RepoPanel";
 import SystemPanel from "./SystemPanel";
 
-// The dashboard is a control panel, not a ledger. Its contract: anything Rust says
-// a task can safely do is one tap away here, so the terminal stays the exception.
-// Nothing lives behind a gesture, and the browser derives no task truth — bands,
-// ordering and the action list all arrive from the server.
-//
-// Reading order is the operator's question order: what needs me, what is moving,
-// what can I close out, what happened lately, then the fleet and the machine.
+// THESIS: Dashboard is a button lattice — every safe intent is one tap, not a
+// ledger with actions tucked under titles. OWN-WORLD: Soft Charcoal steps, Soft
+// Steel Blue primary pills, amber remediation; Ajax Cockpit tokens unchanged.
+// STORY: Scan bands, tap Fix CI / Review / Ship without opening the terminal.
+// FIRST VIEWPORT: Band → one identity scan line → full-width primary pill →
+// secondary pill row. The primary is the cell's largest object.
+// FORM: Control-panel lattice (seed a3c11e37) + composition B primary-key.
+// FINISH: Drop stays on detail; Resume/Open filtered; browser owns no task truth.
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -70,6 +71,11 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
       ? card.status_explanation
       : meta.label;
 
+  const title = card.title || card.qualified_handle;
+  const statusLine = quiet
+    ? `Stale ${formatDuration(nowSecs - card.last_activity_unix_secs)} — no output`
+    : explanation;
+
   return (
     <div
       className={`task-row tone-${meta.tone}${quiet ? " is-quiet" : ""}`}
@@ -79,28 +85,19 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
       <button
         type="button"
         className="task-row-tap"
+        aria-label={`${title}. ${card.qualified_handle}. ${statusLine}`}
         onClick={() => onOpenTask?.(card.qualified_handle)}
       >
         <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
-        <span className="task-row-main">
-          <span className="task-row-head">
-            <span className="task-row-title">{card.title || card.qualified_handle}</span>
-            {card.last_activity_unix_secs ? (
-              <span className="task-row-time">
-                {relativeTime(card.last_activity_unix_secs, nowSecs)}
-              </span>
-            ) : null}
-          </span>
-          <span className="task-row-sub">
-            <span className="task-row-handle">{card.qualified_handle}</span>
-            {quiet ? (
-              <span className="task-row-quiet">
-                Stale {formatDuration(nowSecs - card.last_activity_unix_secs)} — no output
-              </span>
-            ) : (
-              <span className="task-row-note">{explanation}</span>
-            )}
-          </span>
+        <span className="task-row-scan">
+          <span className="task-row-handle">{card.qualified_handle}</span>
+          <span className="task-row-title">{title}</span>
+          <span className={quiet ? "task-row-quiet" : "task-row-note"}>{statusLine}</span>
+          {card.last_activity_unix_secs ? (
+            <span className="task-row-time">
+              {relativeTime(card.last_activity_unix_secs, nowSecs)}
+            </span>
+          ) : null}
         </span>
       </button>
 
@@ -109,6 +106,7 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
           <ActionBar
             actions={actions}
             handle={card.qualified_handle}
+            layout="primary-key"
             onCockpit={onCockpit}
             onResult={onResult}
             onMutated={onMutated}
