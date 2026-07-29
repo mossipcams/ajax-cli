@@ -126,18 +126,40 @@ Reconciliation precedence:
 pinned to `agent-client-protocol = "=2.0.0"` with `unstable_protocol_v2`. The
 `__agent-acp` host defaults to stable ACP v1. Set `AJAX_ACP_V2=1` (or `true` /
 `yes`) to enable the ACP v2-only host; there is no automatic v1 fallback when
-that flag is set, and no native-CLI fallback.
+that flag is set, and no silent fallback to native interactive harness when ACP
+was requested.
 
-Task launch selects one fixed PATH adapter and runs the hidden
-`ajax-cli __agent-acp` host in the existing task tmux window:
+Task launch defaults to ACP where supported. `ajax start --terminal acp` (and
+Web Cockpit start without an explicit terminal) runs the hidden
+`ajax-cli __agent-acp` host in the existing task tmux window. Explicit native
+interactive fallback uses `ajax start --terminal native` or Web Cockpit
+`terminal: "native"`; that path launches the provider's interactive CLI
+directly (for example `cursor-agent` without the `acp` subcommand) and never
+routes through `__agent-acp`.
 
-| Ajax selection | Adapter command |
+| Ajax selection (ACP default) | Adapter command |
 | --- | --- |
 | Codex | `codex-acp` |
 | Claude | `claude-agent-acp` |
 | Cursor | `cursor-agent acp` |
 | Pi | `pi-acp` |
 | Other | the exact requested executable, with no inferred arguments |
+
+| Ajax selection (native explicit) | Interactive command |
+| --- | --- |
+| Codex | `codex --cd <worktree>` |
+| Claude | `claude --dangerously-skip-permissions` |
+| Cursor | `cursor-agent` |
+| Pi | `pi` |
+| Other | the exact requested executable |
+
+Ownership: Ajax owns ACP transport (stdio JSON-RPC to the provider adapter),
+Ratatui coding-agent transcript presentation in the task pane (Toad visual
+model: sticky header, continuous transcript, compact tool rows, inline
+permissions, sticky prompt — not line-only banner chrome or provider TUI
+pass-through), and ACP status snapshots. Provider adapters own agent logic, tools, auth, indexing,
+models, and execution. Ajax does not silently swap to native when ACP host or
+adapter startup fails.
 
 The host negotiates ACP v1 by default (or v2 when `AJAX_ACP_V2` is enabled),
 starts or resumes one ACP session, owns stdio terminal interaction
@@ -591,8 +613,9 @@ task-operation commands or separate operator domains.
   reinterpret task state or duplicate web server internals.
 - `agent_acp` owns the hidden `__agent-acp` host: ACP v1 by default (v2 via `AJAX_ACP_V2`), session
   lifecycle, update folding, permission/form/auth boundary, and cancellation.
-- `agent_acp_console` owns terminal-first prompt/output/cancel interaction on
-  the existing task tmux stdio transport.
+- `agent_acp_console` owns Ratatui coding-agent transcript presentation on
+  the existing task tmux stdio transport (header, transcript, tool rows,
+  inline permissions, sticky prompt).
 - `agent_acp_snapshot` owns the atomic per-task `cache/agent-acp/<task-stem>.json`
   snapshot, heartbeat, generation/session identity, freshness filtering, and
   collection of observations for CLI/Web refresh.

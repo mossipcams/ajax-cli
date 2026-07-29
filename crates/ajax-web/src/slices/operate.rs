@@ -5,7 +5,10 @@ use ajax_core::{
         environment::{local_branch_exists, origin_fetch_age},
         CommandOutput, CommandRunError, CommandRunner,
     },
-    commands::{self, BranchAdoptionPlan, CommandContext, CommandError, NewTaskRequest, OpenMode},
+    commands::{
+        self, AgentTerminalMode, BranchAdoptionPlan, CommandContext, CommandError, NewTaskRequest,
+        OpenMode,
+    },
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
     remediation::{self, RemediationError},
@@ -36,6 +39,8 @@ pub struct StartTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    #[serde(default)]
+    pub terminal: Option<String>,
     #[serde(default)]
     pub request_id: String,
 }
@@ -187,6 +192,7 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         repo: request.repo,
         title: request.title,
         agent: request.agent,
+        terminal: start_terminal_mode(request.terminal.as_deref())?,
     };
     let observation = start_plan_observation(context, &core_request);
     let (_intent, plan) =
@@ -208,6 +214,16 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         state_changed: true,
         output: format!("started task: {}", core_request.title),
     })
+}
+
+fn start_terminal_mode(terminal: Option<&str>) -> Result<AgentTerminalMode, OperateError> {
+    match terminal.unwrap_or("acp") {
+        "acp" => Ok(AgentTerminalMode::Acp),
+        "native" => Ok(AgentTerminalMode::Native),
+        _ => Err(OperateError::UnsupportedCapability(
+            "unsupported terminal mode",
+        )),
+    }
 }
 
 fn start_plan_observation<R: Registry>(
@@ -680,6 +696,29 @@ mod tests {
     }
 
     #[test]
+    fn start_task_native_terminal_launches_interactive_cursor_agent() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "cursor".to_string(),
+                terminal: Some("native".to_string()),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        let line = agent_send_keys_line(runner.commands());
+        assert_eq!(line, "cursor-agent");
+        assert!(!line.contains("__agent-acp"));
+    }
+
+    #[test]
     fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
         let mut context = context_with_managed_repo();
         let mut runner = RecordingCommandRunner::default();
@@ -691,6 +730,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "cursor".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -716,6 +756,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "pi".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -741,6 +782,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "claude".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -764,6 +806,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -795,6 +838,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "   ".to_string(),
                 agent: "codex".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -820,6 +864,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "/bin/sh".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -845,6 +890,7 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )
@@ -881,6 +927,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                terminal: None,
                 request_id: String::new(),
             },
         )

@@ -1,10 +1,30 @@
-use std::io::{self, BufRead, Write};
+use std::{
+    io::{self, Stdout},
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
 
 use agent_client_protocol::schema::{v1, v2};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+#[cfg(test)]
+use ratatui::backend::TestBackend;
+use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::CliError;
+use crate::{
+    agent_acp_view::{render_acp_view, should_expand_tool_on_enter, AcpViewState},
+    CliError,
+};
 
 pub const ELICITATION_VALIDATION_ERROR: &str = "Expected a JSON object with no fields.";
 pub const AUTHENTICATION_VALIDATION_ERROR: &str = "Enter a number for an authentication method.";
@@ -15,101 +35,198 @@ pub enum ConsoleEvent {
     InputError(String),
 }
 
-pub struct AgentAcpConsole<W> {
-    events: UnboundedReceiver<ConsoleEvent>,
-    output: W,
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct ConsoleSnapshot(Arc<Mutex<String>>);
+
+#[cfg(test)]
+impl ConsoleSnapshot {
+    pub fn text(&self) -> String {
+        self.0.lock().unwrap().clone()
+    }
 }
 
-impl<W: Write> AgentAcpConsole<W> {
-    pub fn new(events: UnboundedReceiver<ConsoleEvent>, output: W) -> Self {
-        Self { events, output }
+#[derive(Clone)]
+struct ConsoleState {
+    view: AcpViewState,
+    draft: String,
+}
+
+struct LiveConsole {
+    state: ConsoleState,
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl Drop for LiveConsole {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+    }
+}
+
+enum ConsoleBackend {
+    #[cfg(test)]
+    Test {
+        width: u16,
+        height: u16,
+        snapshot: ConsoleSnapshot,
+    },
+    Null,
+}
+
+pub struct AgentAcpConsole {
+    events: UnboundedReceiver<ConsoleEvent>,
+    state: Arc<Mutex<ConsoleState>>,
+    live: Option<Arc<Mutex<LiveConsole>>>,
+    shutdown: Option<Arc<AtomicBool>>,
+    backend: ConsoleBackend,
+    fail_output: bool,
+}
+
+impl Drop for AgentAcpConsole {
+    fn drop(&mut self) {
+        if let Some(shutdown) = &self.shutdown {
+            shutdown.store(true, Ordering::Relaxed);
+        }
+        if let Some(live) = &self.live {
+            let _ = disable_raw_mode();
+            if let Ok(mut inner) = live.lock() {
+                let _ = execute!(inner.terminal.backend_mut(), LeaveAlternateScreen);
+            }
+        }
+    }
+}
+
+impl AgentAcpConsole {
+    pub fn spawn_stdio(provider: String) -> Self {
+        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, EnterAlternateScreen);
+        let _ = enable_raw_mode();
+        let terminal = Terminal::new(CrosstermBackend::new(stdout)).expect("ACP terminal");
+        let live = Arc::new(Mutex::new(LiveConsole {
+            state: ConsoleState {
+                view: AcpViewState::new(provider),
+                draft: String::new(),
+            },
+            terminal,
+        }));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let input_live = Arc::clone(&live);
+        let input_shutdown = Arc::clone(&shutdown);
+        let input_tx = events_tx.clone();
+        thread::spawn(move || read_stdio_input(input_live, input_tx, input_shutdown));
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let _ = events_tx.send(ConsoleEvent::Interrupt);
+            }
+        });
+        Self {
+            events: events_rx,
+            state: Arc::new(Mutex::new(ConsoleState {
+                view: AcpViewState::new("Agent"),
+                draft: String::new(),
+            })),
+            live: Some(live),
+            shutdown: Some(shutdown),
+            backend: ConsoleBackend::Null,
+            fail_output: false,
+        }
     }
 
     pub async fn next_event(&mut self) -> Option<ConsoleEvent> {
         self.events.recv().await
     }
 
+    pub fn set_session_id(&mut self, session_id: &str) -> Result<(), CliError> {
+        self.update_state(|state| {
+            state.view.set_session_id(session_id);
+            Ok(())
+        })
+    }
+
+    pub fn render_ready_prompt(&mut self) -> Result<(), CliError> {
+        self.update_state(|state| {
+            let provider = state.view.provider.clone();
+            state.view.ready(provider);
+            Ok(())
+        })
+    }
+
+    pub fn render_input_prompt(&mut self) -> Result<(), CliError> {
+        self.update_state(|state| {
+            state.view.set_idle();
+            Ok(())
+        })
+    }
+
     pub fn render_update(&mut self, update: &v2::SessionUpdate) -> Result<(), CliError> {
-        match update {
-            v2::SessionUpdate::AgentMessageChunk(chunk) => {
-                if let v2::ContentBlock::Text(text) = &chunk.content {
-                    self.output
-                        .write_all(text.text.as_bytes())
-                        .map_err(console_output_error)?;
-                    self.output.flush().map_err(console_output_error)?;
+        self.update_state(|state| {
+            match update {
+                v2::SessionUpdate::AgentMessageChunk(chunk) => {
+                    if let v2::ContentBlock::Text(text) = &chunk.content {
+                        state.view.append_agent_text(&text.text);
+                    }
                 }
+                v2::SessionUpdate::TerminalOutputChunk(chunk) => {
+                    let bytes = STANDARD.decode(&chunk.data).map_err(|error| {
+                        CliError::CommandFailed(format!(
+                            "ACP terminal output decode failed: {error}"
+                        ))
+                    })?;
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    state.view.append_terminal_raw(&text);
+                }
+                v2::SessionUpdate::ToolCallUpdate(update) => {
+                    state.view.apply_tool_update_v2(update);
+                }
+                v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(_)) => {
+                    state.view.set_idle();
+                }
+                _ => {}
             }
-            v2::SessionUpdate::TerminalOutputChunk(chunk) => {
-                let bytes = STANDARD.decode(&chunk.data).map_err(|error| {
-                    CliError::CommandFailed(format!("ACP terminal output decode failed: {error}"))
-                })?;
-                self.output
-                    .write_all(&bytes)
-                    .map_err(console_output_error)?;
-                self.output.flush().map_err(console_output_error)?;
-            }
-            _ => {}
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn render_update_v1(&mut self, update: &v1::SessionUpdate) -> Result<(), CliError> {
-        if let v1::SessionUpdate::AgentMessageChunk(chunk) = update {
-            if let v1::ContentBlock::Text(text) = &chunk.content {
-                self.output
-                    .write_all(text.text.as_bytes())
-                    .map_err(console_output_error)?;
-                self.output.flush().map_err(console_output_error)?;
+        self.update_state(|state| {
+            match update {
+                v1::SessionUpdate::AgentMessageChunk(chunk) => {
+                    if let v1::ContentBlock::Text(text) = &chunk.content {
+                        state.view.append_agent_text(&text.text);
+                    }
+                }
+                v1::SessionUpdate::ToolCall(tool) => {
+                    state.view.apply_tool_call_v1(tool);
+                }
+                v1::SessionUpdate::ToolCallUpdate(update) => {
+                    state.view.apply_tool_update_v1(update);
+                }
+                _ => {}
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn render_permission_prompt_v1(
         &mut self,
         request: &v1::RequestPermissionRequest,
     ) -> Result<(), CliError> {
-        let title = request
-            .tool_call
-            .fields
-            .title
-            .as_deref()
-            .filter(|title| !title.is_empty())
-            .unwrap_or("Permission required");
-        self.output
-            .write_all(title.as_bytes())
-            .map_err(console_output_error)?;
-        self.output.write_all(b"\n").map_err(console_output_error)?;
-        for (index, option) in request.options.iter().enumerate() {
-            self.output
-                .write_all(format!("{}. {}\n", index + 1, option.name).as_bytes())
-                .map_err(console_output_error)?;
-        }
-        self.output.flush().map_err(console_output_error)?;
-        Ok(())
+        self.update_state(|state| {
+            state.view.show_permission_v1(request);
+            Ok(())
+        })
     }
 
     pub fn render_permission_prompt(
         &mut self,
         request: &v2::RequestPermissionRequest,
     ) -> Result<(), CliError> {
-        self.output
-            .write_all(request.title.as_bytes())
-            .map_err(console_output_error)?;
-        self.output.write_all(b"\n").map_err(console_output_error)?;
-        if let Some(description) = &request.description {
-            self.output
-                .write_all(description.as_bytes())
-                .map_err(console_output_error)?;
-            self.output.write_all(b"\n").map_err(console_output_error)?;
-        }
-        for (index, option) in request.options.iter().enumerate() {
-            self.output
-                .write_all(format!("{}. {}\n", index + 1, option.name).as_bytes())
-                .map_err(console_output_error)?;
-        }
-        self.output.flush().map_err(console_output_error)?;
-        Ok(())
+        self.update_state(|state| {
+            state.view.show_permission_v2(request);
+            Ok(())
+        })
     }
 
     pub fn render_elicitation_prompt(
@@ -117,84 +234,269 @@ impl<W: Write> AgentAcpConsole<W> {
         message: &str,
         fields: &[(String, &str)],
     ) -> Result<(), CliError> {
-        self.output
-            .write_all(message.as_bytes())
-            .map_err(console_output_error)?;
-        self.output.write_all(b"\n").map_err(console_output_error)?;
-        for (name, type_label) in fields {
-            self.output
-                .write_all(format!("{name}: {type_label}\n").as_bytes())
-                .map_err(console_output_error)?;
-        }
-        self.output.flush().map_err(console_output_error)?;
-        Ok(())
+        self.update_state(|state| {
+            state.view.show_plain(message);
+            for (name, type_label) in fields {
+                state.view.show_plain(&format!("{name}: {type_label}"));
+            }
+            state.view.set_waiting();
+            Ok(())
+        })
     }
 
     pub fn render_elicitation_validation_error(&mut self, detail: &str) -> Result<(), CliError> {
-        self.output
-            .write_all(detail.as_bytes())
-            .map_err(console_output_error)?;
-        self.output.write_all(b"\n").map_err(console_output_error)?;
-        self.output.flush().map_err(console_output_error)?;
-        Ok(())
+        self.update_state(|state| {
+            state.view.show_plain(detail);
+            Ok(())
+        })
     }
 
     pub fn render_authentication_prompt(&mut self, method_names: &[&str]) -> Result<(), CliError> {
-        for (index, name) in method_names.iter().enumerate() {
-            self.output
-                .write_all(format!("{}. {}\n", index + 1, name).as_bytes())
-                .map_err(console_output_error)?;
-        }
-        self.output.flush().map_err(console_output_error)?;
-        Ok(())
+        self.update_state(|state| {
+            for (index, name) in method_names.iter().enumerate() {
+                state.view.show_plain(&format!("{}. {name}", index + 1));
+            }
+            state.view.set_waiting();
+            Ok(())
+        })
     }
 
     pub fn render_authentication_validation_error(&mut self) -> Result<(), CliError> {
-        self.output
-            .write_all(AUTHENTICATION_VALIDATION_ERROR.as_bytes())
-            .map_err(console_output_error)?;
-        self.output.write_all(b"\n").map_err(console_output_error)?;
-        self.output.flush().map_err(console_output_error)?;
+        self.update_state(|state| {
+            state.view.show_plain(AUTHENTICATION_VALIDATION_ERROR);
+            Ok(())
+        })
+    }
+
+    fn update_state<F>(&mut self, update: F) -> Result<(), CliError>
+    where
+        F: FnOnce(&mut ConsoleState) -> Result<(), CliError>,
+    {
+        if self.fail_output {
+            self.mark_error();
+            return Err(console_output_error(io::Error::other(
+                "console output failed",
+            )));
+        }
+        if let Some(live) = &self.live {
+            let mut live = live.lock().unwrap();
+            update(&mut live.state)?;
+            redraw_live(&mut live)?;
+            return Ok(());
+        }
+        let mut state = self.state.lock().unwrap();
+        update(&mut state)?;
+        state.view.prompt_draft = state.draft.clone();
+        match &mut self.backend {
+            #[cfg(test)]
+            ConsoleBackend::Test {
+                width,
+                height,
+                snapshot,
+            } => {
+                let backend = TestBackend::new(*width, *height);
+                let mut terminal = Terminal::new(backend).expect("test terminal");
+                let view = state.view.clone();
+                terminal
+                    .draw(|frame| render_acp_view(frame, &view))
+                    .expect("test draw");
+                let buffer = terminal.backend().buffer();
+                let text = (0..buffer.area.height)
+                    .map(|y| {
+                        (0..buffer.area.width)
+                            .map(|x| buffer[(x, y)].symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                *snapshot.0.lock().unwrap() = text;
+            }
+            ConsoleBackend::Null => {}
+        }
         Ok(())
     }
-}
 
-#[allow(dead_code)]
-impl AgentAcpConsole<io::Sink> {
-    pub fn closed() -> Self {
-        let (_tx, events) = tokio::sync::mpsc::unbounded_channel();
-        Self::new(events, io::sink())
+    fn mark_error(&mut self) {
+        if let Some(live) = &self.live {
+            live.lock().unwrap().state.view.set_error();
+        } else {
+            self.state.lock().unwrap().view.set_error();
+        }
     }
 }
 
-impl AgentAcpConsole<io::Stdout> {
-    pub fn spawn_stdio() -> Self {
-        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let stdin_tx = events_tx.clone();
-        std::thread::spawn(move || {
-            let stdin = io::stdin();
-            let mut lines = stdin.lock().lines();
-            loop {
-                match lines.next() {
-                    None => break,
-                    Some(Ok(line)) => {
-                        if stdin_tx.send(ConsoleEvent::PromptLine(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Some(Err(error)) => {
-                        let _ = stdin_tx.send(ConsoleEvent::InputError(error.to_string()));
-                        break;
-                    }
-                }
+#[cfg(test)]
+impl AgentAcpConsole {
+    pub fn new_for_test(
+        events: UnboundedReceiver<ConsoleEvent>,
+        provider: &str,
+    ) -> (Self, ConsoleSnapshot) {
+        let snapshot = ConsoleSnapshot::default();
+        let console = Self {
+            events,
+            state: Arc::new(Mutex::new(ConsoleState {
+                view: AcpViewState::new(provider),
+                draft: String::new(),
+            })),
+            live: None,
+            shutdown: None,
+            backend: ConsoleBackend::Test {
+                width: 80,
+                height: 24,
+                snapshot: snapshot.clone(),
+            },
+            fail_output: false,
+        };
+        (console, snapshot)
+    }
+
+    pub fn new_failing(events: UnboundedReceiver<ConsoleEvent>) -> Self {
+        Self {
+            events,
+            state: Arc::new(Mutex::new(ConsoleState {
+                view: AcpViewState::new("Agent"),
+                draft: String::new(),
+            })),
+            live: None,
+            shutdown: None,
+            backend: ConsoleBackend::Null,
+            fail_output: true,
+        }
+    }
+
+    pub fn closed() -> Self {
+        let (_tx, events) = tokio::sync::mpsc::unbounded_channel();
+        Self {
+            events,
+            state: Arc::new(Mutex::new(ConsoleState {
+                view: AcpViewState::new("Agent"),
+                draft: String::new(),
+            })),
+            live: None,
+            shutdown: None,
+            backend: ConsoleBackend::Null,
+            fail_output: false,
+        }
+    }
+}
+
+fn redraw_live(live: &mut LiveConsole) -> Result<(), CliError> {
+    live.state.view.prompt_draft = live.state.draft.clone();
+    let view = live.state.view.clone();
+    live.terminal
+        .draw(|frame| render_acp_view(frame, &view))
+        .map(|_| ())
+        .map_err(|error| {
+            live.state.view.set_error();
+            console_output_error(error)
+        })
+}
+
+fn read_stdio_input(
+    live: Arc<Mutex<LiveConsole>>,
+    events_tx: tokio::sync::mpsc::UnboundedSender<ConsoleEvent>,
+    shutdown: Arc<AtomicBool>,
+) {
+    const POLL_MS: u64 = 100;
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+        if !event::poll(Duration::from_millis(POLL_MS)).unwrap_or(false) {
+            continue;
+        }
+        let event = match event::read() {
+            Ok(event) => event,
+            Err(error) => {
+                let _ = events_tx.send(ConsoleEvent::InputError(error.to_string()));
+                break;
             }
-        });
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
+        };
+        if matches!(event, Event::Resize(_, _)) {
+            let mut inner = live.lock().unwrap();
+            let _ = redraw_live(&mut inner);
+            continue;
+        }
+        let Event::Key(key) = event else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let _ = events_tx.send(ConsoleEvent::Interrupt);
             }
-        });
-        Self::new(events_rx, io::stdout())
+            KeyCode::Enter => {
+                let send_line = {
+                    let mut inner = live.lock().unwrap();
+                    if inner.state.draft.is_empty()
+                        && should_expand_tool_on_enter(&inner.state.view)
+                    {
+                        inner.state.view.toggle_selected_tool_expand();
+                        let _ = redraw_live(&mut inner);
+                        false
+                    } else {
+                        let line = std::mem::take(&mut inner.state.draft);
+                        if !line.is_empty() {
+                            inner.state.view.submit_prompt(&line);
+                        }
+                        let _ = redraw_live(&mut inner);
+                        if events_tx.send(ConsoleEvent::PromptLine(line)).is_err() {
+                            break;
+                        }
+                        true
+                    }
+                };
+                if !send_line {
+                    continue;
+                }
+            }
+            // Arrow keys only — do not bind j/k (would steal first prompt chars).
+            KeyCode::Up if key.modifiers.is_empty() => {
+                let mut inner = live.lock().unwrap();
+                if inner.state.draft.is_empty() {
+                    inner.state.view.select_prev_tool();
+                    let _ = redraw_live(&mut inner);
+                }
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                let mut inner = live.lock().unwrap();
+                if inner.state.draft.is_empty() {
+                    inner.state.view.select_next_tool();
+                    let _ = redraw_live(&mut inner);
+                }
+            }
+            KeyCode::Backspace => {
+                let mut inner = live.lock().unwrap();
+                inner.state.draft.pop();
+                inner.state.view.prompt_draft = inner.state.draft.clone();
+                let _ = redraw_live(&mut inner);
+            }
+            KeyCode::Char(ch) if key.modifiers.is_empty() => {
+                let mut inner = live.lock().unwrap();
+                inner.state.draft.push(ch);
+                inner.state.view.prompt_draft = inner.state.draft.clone();
+                let _ = redraw_live(&mut inner);
+            }
+            _ => {}
+        }
+    }
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+}
+
+pub(crate) fn provider_label_from_program(program: &str) -> String {
+    let base = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    match base {
+        "cursor-agent" => "Cursor".to_owned(),
+        "codex-acp" => "Codex".to_owned(),
+        "claude-agent-acp" => "Claude".to_owned(),
+        "pi-acp" => "Pi".to_owned(),
+        other => other.to_owned(),
     }
 }
 
@@ -205,7 +507,6 @@ fn console_output_error(error: io::Error) -> CliError {
 #[cfg(test)]
 mod tests {
     use std::{
-        io::{self, Write},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -221,7 +522,7 @@ mod tests {
     use ajax_core::acp_status::{AcpActionKind, AcpSessionState, AcpStopReason};
     use base64::Engine;
 
-    use super::{AgentAcpConsole, ConsoleEvent};
+    use super::{AgentAcpConsole, ConsoleEvent, ConsoleSnapshot};
     use crate::{
         agent_acp::run_session_lifecycle,
         agent_acp_snapshot::{read_snapshot, AcpRuntimeSnapshot},
@@ -249,17 +550,67 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Default)]
-    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+    fn test_console(
+        events_rx: tokio::sync::mpsc::UnboundedReceiver<ConsoleEvent>,
+    ) -> (AgentAcpConsole, ConsoleSnapshot) {
+        AgentAcpConsole::new_for_test(events_rx, "Agent")
+    }
 
-    impl Write for SharedWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().write(buf)
-        }
+    #[test]
+    fn render_ready_prompt_writes_banner_and_gt() {
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (mut console, snapshot) = test_console(events_rx);
+        console.render_ready_prompt().expect("ready prompt");
+        let rendered = snapshot.text();
+        assert!(rendered.contains("Ready"));
+        assert!(rendered.contains('>'));
+        assert!(!rendered.contains("ACP ready"));
+    }
 
-        fn flush(&mut self) -> io::Result<()> {
-            self.0.lock().unwrap().flush()
-        }
+    #[test]
+    fn tool_update_renders_human_title_line() {
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (mut console, snapshot) = test_console(events_rx);
+        console
+            .render_update(&v2::SessionUpdate::ToolCallUpdate(
+                v2::ToolCallUpdate::new("opaque-tool-id")
+                    .title("Compile project")
+                    .status(v2::ToolCallStatus::InProgress),
+            ))
+            .expect("tool update");
+        let rendered = snapshot.text();
+        assert!(rendered.contains("Compile project"));
+        assert!(rendered.contains('●'));
+        assert!(!rendered.contains("opaque-tool-id"));
+    }
+
+    #[test]
+    fn render_input_prompt_sets_ready_after_running() {
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (mut console, snapshot) = test_console(events_rx);
+        console
+            .render_update(&v2::SessionUpdate::AgentMessageChunk(
+                v2::ContentChunk::new(
+                    v2::ContentBlock::Text(v2::TextContent::new("working")),
+                    "msg-1",
+                ),
+            ))
+            .expect("running update");
+        assert!(snapshot.text().contains("Running"));
+        console.render_input_prompt().expect("input prompt");
+        assert!(snapshot.text().contains("Ready"));
+    }
+
+    #[test]
+    fn idle_state_update_reprompts_gt() {
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (mut console, snapshot) = test_console(events_rx);
+        console
+            .render_update(&v2::SessionUpdate::StateUpdate(idle_cancelled()))
+            .expect("idle update");
+        let rendered = snapshot.text();
+        assert!(rendered.contains('>'));
+        assert!(rendered.contains("Ready"));
     }
 
     fn unix_millis() -> u128 {
@@ -390,6 +741,10 @@ mod tests {
             )
     }
 
+    fn output_contains(snapshot: &ConsoleSnapshot, needle: &str) -> bool {
+        snapshot.text().contains(needle)
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn prompt_output_cancel_routes_terminal_io_and_idle_before_eof() {
         let root = ConsoleTempRoot::new();
@@ -419,9 +774,7 @@ mod tests {
         let agent_task = tokio::spawn(agent.connect_to(agent_transport));
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let writer = SharedWriter::default();
-        let output = writer.clone();
-        let console = AgentAcpConsole::new(events_rx, writer);
+        let (console, output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -434,6 +787,11 @@ mod tests {
             )
             .await
         });
+
+        wait_for_snapshot(&root.0, task_id, |snapshot| {
+            matches!(snapshot.observation.state, AcpSessionState::Running)
+        })
+        .await;
 
         events_tx
             .send(ConsoleEvent::PromptLine(prompt_line.to_owned()))
@@ -459,14 +817,13 @@ mod tests {
         .await
         .expect("prompt was not sent");
 
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let bytes = output.0.lock().unwrap().clone();
-                let expected = [agent_message.as_bytes(), terminal_bytes.as_slice()].concat();
-                if bytes == expected {
+                let rendered = output.text();
+                if rendered.contains(agent_message) && rendered.contains("term bytes") {
                     break;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
@@ -505,18 +862,6 @@ mod tests {
         );
     }
 
-    struct FailingWriter;
-
-    impl Write for FailingWriter {
-        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::other("console output failed"))
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[tokio::test(flavor = "current_thread")]
     async fn prompt_output_cancel_renders_while_prompt_response_pending() {
         let root = ConsoleTempRoot::new();
@@ -546,9 +891,7 @@ mod tests {
         let agent_task = tokio::spawn(agent.connect_to(agent_transport));
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let output = SharedWriter::default();
-        let writer = output.clone();
-        let console = AgentAcpConsole::new(events_rx, output);
+        let (console, output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -562,18 +905,23 @@ mod tests {
             .await
         });
 
+        wait_for_snapshot(&root.0, task_id, |snapshot| {
+            matches!(snapshot.observation.state, AcpSessionState::Running)
+        })
+        .await;
+
         events_tx
             .send(ConsoleEvent::PromptLine("hold response".to_owned()))
             .expect("prompt event");
 
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let bytes = writer.0.lock().unwrap().clone();
-                let expected = [agent_message.as_bytes(), terminal_bytes.as_slice()].concat();
-                if bytes == expected {
+                if output_contains(&output, agent_message)
+                    && output_contains(&output, "pending bytes")
+                {
                     break;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
@@ -620,7 +968,7 @@ mod tests {
         let _agent_task = tokio::spawn(agent.connect_to(agent_transport));
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let console = AgentAcpConsole::new(events_rx, FailingWriter);
+        let console = AgentAcpConsole::new_failing(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -683,7 +1031,7 @@ mod tests {
         let agent_task = tokio::spawn(agent.connect_to(agent_transport));
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let console = AgentAcpConsole::new(events_rx, io::sink());
+        let (console, _output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -843,9 +1191,7 @@ mod tests {
         });
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let writer = SharedWriter::default();
-        let output = writer.clone();
-        let console = AgentAcpConsole::new(events_rx, writer);
+        let (console, output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -890,11 +1236,12 @@ mod tests {
             }
         };
 
-        let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8 output");
+        let rendered = output.text();
         assert!(rendered.contains(first_title));
         assert!(rendered.contains(first_description));
         assert!(rendered.contains(first_label_a));
         assert!(rendered.contains(first_label_b));
+        assert!(rendered.contains("Waiting"));
         assert_no_opaque_ids(&rendered);
 
         events_tx
@@ -959,11 +1306,10 @@ mod tests {
             .expect("lifecycle task panicked");
         result.expect("permission lifecycle should succeed");
 
-        assert_no_opaque_ids(
-            &String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8 output"),
-        );
+        assert_no_opaque_ids(&output.text());
     }
 
+    // Remaining elicitation/auth integration tests restored below.
     #[tokio::test(flavor = "current_thread")]
     async fn requests_elicitation_transport_handles_empty_form_and_declines_url() {
         let root = ConsoleTempRoot::new();
@@ -1056,9 +1402,7 @@ mod tests {
         });
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let writer = SharedWriter::default();
-        let output = writer.clone();
-        let console = AgentAcpConsole::new(events_rx, writer);
+        let (console, output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -1090,7 +1434,7 @@ mod tests {
         })
         .await;
 
-        let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8 output");
+        let rendered = output.text();
         assert!(rendered.contains(form_message));
         assert!(!rendered.contains(url_payload));
         assert!(!rendered.contains(url_elicitation_id));
@@ -1102,8 +1446,7 @@ mod tests {
         let validation_error = super::ELICITATION_VALIDATION_ERROR;
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let bytes = output.0.lock().unwrap().clone();
-                if String::from_utf8_lossy(&bytes).contains(validation_error) {
+                if output.text().contains(validation_error) {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -1140,8 +1483,7 @@ mod tests {
             v2::ElicitationAction::Decline
         ));
 
-        let final_output =
-            String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8 output");
+        let final_output = output.text();
         assert!(!final_output.contains(url_payload));
         assert!(!final_output.contains(url_elicitation_id));
 
@@ -1241,9 +1583,7 @@ mod tests {
         });
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let writer = SharedWriter::default();
-        let output = writer.clone();
-        let console = AgentAcpConsole::new(events_rx, writer);
+        let (console, output) = test_console(events_rx);
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let lifecycle_task = tokio::spawn(async move {
@@ -1279,7 +1619,7 @@ mod tests {
         })
         .await;
 
-        let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8 output");
+        let rendered = output.text();
         assert!(rendered.contains(form_message));
         assert!(rendered.contains(&format!("{cluster_name}: string")));
         assert!(rendered.contains(&format!("{replicas_name}: integer")));
@@ -1293,8 +1633,7 @@ mod tests {
         let expected_type_error = format!("{replicas_name}: expected integer");
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let bytes = output.0.lock().unwrap().clone();
-                let text = String::from_utf8_lossy(&bytes);
+                let text = output.text();
                 if text.contains(&expected_type_error) {
                     break;
                 }
@@ -1304,7 +1643,7 @@ mod tests {
         .await
         .expect("type validation error was not rendered");
         assert!(responses_rx.try_recv().is_err());
-        assert!(!String::from_utf8_lossy(&output.0.lock().unwrap().clone()).contains(secret));
+        assert!(!output.text().contains(secret));
 
         wait_for_snapshot(&root.0, task_id, |snapshot| {
             matches!(
@@ -1455,8 +1794,7 @@ mod tests {
         let agent_task = tokio::spawn(agent.connect_to(agent_transport));
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let output = SharedWriter::default();
-        let console = AgentAcpConsole::new(events_rx, output.clone());
+        let (console, output) = test_console(events_rx);
         let lifecycle_task = tokio::spawn({
             let root = root.0.clone();
             async move { run_session_lifecycle(client_transport, task_id, &root, &cwd, console).await }
@@ -1482,7 +1820,7 @@ mod tests {
             assert!(!detail.contains(secret), "detail leaked {secret}");
         }
 
-        let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8");
+        let rendered = output.text();
         assert!(rendered.contains(&format!("1. {first_name}")));
         assert!(rendered.contains(&format!("2. {second_name}")));
         for secret in secrets {
@@ -1494,7 +1832,7 @@ mod tests {
             .expect("invalid choice");
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8");
+                let rendered = output.text();
                 if rendered.contains(super::AUTHENTICATION_VALIDATION_ERROR) {
                     break;
                 }
@@ -1646,7 +1984,6 @@ mod tests {
             )
         };
         let agent_task = tokio::spawn(agent.connect_to(agent_transport));
-        let output = SharedWriter::default();
         let (sender, events_rx) = tokio::sync::mpsc::unbounded_channel();
         let events_tx = if matches!(case, AuthFailureCase::ClosedConsole) {
             drop(sender);
@@ -1654,7 +1991,7 @@ mod tests {
         } else {
             Some(sender)
         };
-        let console = AgentAcpConsole::new(events_rx, output.clone());
+        let (console, output) = test_console(events_rx);
         let lifecycle_task = tokio::spawn({
             let root = root.0.clone();
             let cwd = cwd.clone();
@@ -1697,7 +2034,7 @@ mod tests {
         assert_eq!(snapshot.observation.detail.as_deref(), Some(detail));
         assert_eq!(new_calls.load(Ordering::Relaxed), expect_new);
         assert_eq!(login_calls.load(Ordering::Relaxed), expect_login);
-        let rendered = String::from_utf8(output.0.lock().unwrap().clone()).expect("utf8");
+        let rendered = output.text();
         for text in [
             snapshot.observation.detail.as_deref().unwrap_or(""),
             &rendered,

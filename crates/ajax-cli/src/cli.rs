@@ -29,7 +29,14 @@ pub fn build_cli() -> Command {
                 .about("Create a new task environment")
                 .arg(Arg::new("repo").long("repo").value_name("REPO"))
                 .arg(Arg::new("title").long("title").value_name("TITLE"))
-                .arg(Arg::new("agent").long("agent").value_name("AGENT")),
+                .arg(Arg::new("agent").long("agent").value_name("AGENT"))
+                .arg(
+                    Arg::new("terminal")
+                        .long("terminal")
+                        .value_name("MODE")
+                        .default_value("acp")
+                        .help("Agent terminal mode: acp (default) or native"),
+                ),
         )
         .subcommand(executable_command(task_command("resume")))
         .subcommand(executable_command(task_command("repair")))
