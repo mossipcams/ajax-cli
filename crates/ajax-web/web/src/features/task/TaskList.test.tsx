@@ -215,7 +215,7 @@ describe("TaskList", () => {
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
-  it("renders Open navigation for a row without non-destructive actions", () => {
+  it("renders no control at all for a row with nothing to run", () => {
     const onlyIdle: BrowserCockpitView = {
       ...cockpit,
       cards: [
@@ -233,7 +233,10 @@ describe("TaskList", () => {
     };
     render(<TaskList cockpit={onlyIdle} />);
     expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
-    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    // The row tap and its chevron already open the task; a button repeating
+    // that would be a third affordance for one action.
+    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Answer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Fix CI" })).not.toBeInTheDocument();
   });
@@ -317,8 +320,12 @@ describe("TaskList", () => {
       ],
     };
     render(<TaskList cockpit={waiting} />);
+    // Drop is never the offered next step on a task that needs an answer, and
+    // answering happens in the terminal — so the row carries no control, just
+    // its own tap. The status line says what it is waiting on.
     expect(screen.queryByRole("button", { name: "Drop" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Answer" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Answer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
   });
 
   it("review_row_offers_ship_inline", () => {
