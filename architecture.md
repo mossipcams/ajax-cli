@@ -879,7 +879,7 @@ reconnect-safe without process-local bridge state).
 The browser’s durable viewport is an **isolated grouped tmux session** named
 from the task’s registered session plus a stable per-connection `client=` id
 (minted once per terminal connection controller, hashed to a 12-hex suffix).
-Duplicated browser tabs must not share that id. Setup is idempotent (`new-session -A`); disconnect kills the
+Duplicated browser tabs must not share that id. Setup uses detached `new-session -d` and treats an already-present ephemeral session (`duplicate session`) as success so reconnect reuses the viewport without attaching during setup; disconnect kills the
 PTY child but leaves the ephemeral session for reattach. Destroy/reaper paths
 kill orphaned ephemeral sessions. Auto-reconnect dials `seed=0` and reuses the
 client id; full history seed remains for first connect / manual reconnect.
