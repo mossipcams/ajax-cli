@@ -325,3 +325,35 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
   expect(routeScrollCount, "route-scroll elements").toBe(1);
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
 });
+
+// Regression: the bottom nav was a fixed 2-column grid, so adding a third
+// destination wrapped it onto a second row. The taller bar then covered the
+// bottom of the scrolled page, because the scroll band is sized for one row.
+// Measures reachability of the last control, not a column count.
+test("the last dashboard control clears the bottom nav when scrolled to the end", async ({
+  page,
+}) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  const routeScroll = page.locator('[data-testid="route-scroll"]');
+  await routeScroll.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+
+  const clearance = await page.evaluate(() => {
+    const nav = document.querySelector(".bottom-nav");
+    const last = document.querySelector(".system-settings");
+    if (!nav || !last) return null;
+    const navRect = nav.getBoundingClientRect();
+    const lastRect = last.getBoundingClientRect();
+    return { overlap: lastRect.bottom - navRect.top, navHeight: navRect.height };
+  });
+
+  expect(clearance, "bottom nav or system panel missing").not.toBeNull();
+  expect(
+    clearance!.overlap,
+    `last control overlaps the nav by ${clearance!.overlap}px (nav ${clearance!.navHeight}px tall)`,
+  ).toBeLessThanOrEqual(1);
+});

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AttentionBand, BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
+import type {
+  AttentionBand,
+  BrowserCockpitView,
+  BrowserTaskCard,
+  ConnectionState,
+} from "@/shared/lib/types";
 import {
   filterByProject,
   formatDuration,
@@ -11,17 +16,24 @@ import {
 } from "@/shared/lib/state";
 import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
+import RepoPanel from "@/features/repositories/RepoPanel";
+import SystemPanel from "./SystemPanel";
 
 // The dashboard is a control panel, not a ledger. Its contract: anything Rust says
 // a task can safely do is one tap away here, so the terminal stays the exception.
 // Nothing lives behind a gesture, and the browser derives no task truth — bands,
 // ordering and the action list all arrive from the server.
+//
+// Reading order is the operator's question order: what needs me, what is moving,
+// what can I close out, what happened lately, then the fleet and the machine.
 
 interface Props {
   cockpit: BrowserCockpitView;
+  connection: ConnectionState;
   selectedProject?: string | null;
   onSelectProject?: (project: string | null) => void;
   onOpenTask?: (handle: string) => void;
+  onOpenSettings?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
@@ -34,11 +46,14 @@ interface TaskRowProps extends RowDispatch {
   nowSecs: number;
 }
 
+// Requested operator hierarchy. NOTE this puts "running now" ahead of "ready for
+// action", inverting the order shipped in 6b3c0e5; band *membership* is still
+// Rust's `card.attention` either way.
 const BANDS: Array<[AttentionBand, string]> = [
-  ["needs-you", "Needs you"],
-  ["review", "Ready to review"],
-  ["active", "Active"],
-  ["idle", "Idle"],
+  ["needs-you", "Needs attention"],
+  ["active", "Running now"],
+  ["review", "Ready for action"],
+  ["idle", "Recent"],
 ];
 
 function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: TaskRowProps) {
@@ -47,10 +62,13 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
   // Destructive stays on task detail: Drop is never the next step you want a
   // thumb to find while scanning a list.
   const actions = visibleTaskActions(card.actions).filter((action) => !action.destructive);
+  // Say what the task is doing, always. The server's explanation is richer than
+  // the bare status word, so it wins; the status word is the fallback rather
+  // than a second chip repeating it.
   const explanation =
     card.status_explanation && card.status_explanation.toLowerCase() !== meta.label.toLowerCase()
       ? card.status_explanation
-      : null;
+      : meta.label;
 
   return (
     <div
@@ -77,11 +95,11 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
             <span className="task-row-handle">{card.qualified_handle}</span>
             {quiet ? (
               <span className="task-row-quiet">
-                Quiet {formatDuration(nowSecs - card.last_activity_unix_secs)} — no output
+                Stale {formatDuration(nowSecs - card.last_activity_unix_secs)} — no output
               </span>
-            ) : explanation ? (
+            ) : (
               <span className="task-row-note">{explanation}</span>
-            ) : null}
+            )}
           </span>
         </span>
       </button>
@@ -103,9 +121,11 @@ function TaskRow({ card, nowSecs, onOpenTask, onCockpit, onResult, onMutated }: 
 
 export default function Dashboard({
   cockpit,
+  connection,
   selectedProject = null,
   onSelectProject,
   onOpenTask,
+  onOpenSettings,
   onCockpit,
   onResult,
   onMutated,
@@ -149,6 +169,13 @@ export default function Dashboard({
       next.length === prev.length && next.every((handle, i) => handle === prev[i]) ? prev : next,
     );
   }, [cards]);
+
+  const repos = cockpit.repos?.repos ?? [];
+  // On a repo route the section collapses to that one repo — a list of one is
+  // noise, but its counts are the page's subject.
+  const scopedRepos = selectedProject
+    ? repos.filter((repo) => repo.name === selectedProject)
+    : repos;
 
   const dispatch: RowDispatch = { onOpenTask, onCockpit, onResult, onMutated };
 
@@ -225,6 +252,19 @@ export default function Dashboard({
             : "All quiet — start a new task below."}
         </p>
       )}
+
+      <RepoPanel
+        repos={scopedRepos}
+        selectedProject={selectedProject}
+        onSelectProject={onSelectProject}
+      />
+
+      <SystemPanel
+        backend={cockpit.backend}
+        connection={connection}
+        taskCount={cockpit.cards.length}
+        onOpenSettings={onOpenSettings}
+      />
     </>
   );
 }

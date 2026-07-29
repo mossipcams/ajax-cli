@@ -179,9 +179,8 @@ export default function App() {
           <p className="status-line" aria-live="polite">
             {statusText}
           </p>
-          <button className="settings-link" type="button" onClick={() => go(settingsHash())}>
-            Settings
-          </button>
+          {/* Settings is a bottom-nav destination now; the header keeps only
+              what reports state. */}
           <span
             className={`live-dot${connection === "connected" ? " is-live" : ""}`}
             aria-hidden="true"
@@ -222,6 +221,14 @@ export default function App() {
       </button>
       <button type="button" data-bottom-action="new-task" onClick={() => setSheetOpen(true)}>
         New
+      </button>
+      <button
+        type="button"
+        data-bottom-route="#/settings"
+        aria-current={route.kind === "settings" ? "page" : undefined}
+        onClick={() => go(settingsHash())}
+      >
+        Settings
       </button>
     </nav>
   );
@@ -281,11 +288,13 @@ export default function App() {
               {cockpit.data ? (
                 <Dashboard
                   cockpit={cockpit.data}
+                  connection={connection}
                   selectedProject={selectedProject}
                   onSelectProject={(project: string | null) =>
                     go(project ? projectHash(project) : dashboardHash())
                   }
                   onOpenTask={(handle: string) => go(taskHash(handle))}
+                  onOpenSettings={() => go(settingsHash())}
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => loadCockpit()}
