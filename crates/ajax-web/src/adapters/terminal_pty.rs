@@ -234,12 +234,13 @@ fn build_isolated_attach_plan_with_token(
     };
     IsolatedAttachPlan {
         setup: vec![
-            // `-A` makes setup idempotent: create the grouped session if absent,
-            // or attach to the existing one (reconnect) without error. `-d` keeps
-            // it detached for the spawned PTY attach below.
+            // Detached create only. Do not use `-A`: when the ephemeral session
+            // already exists (reconnect), `-A` becomes attach and fails with
+            // "open terminal failed: not a terminal" without a TTY. Duplicate
+            // session is treated as success in the bridge setup loop.
             TmuxCommand::new([
                 "new-session",
-                "-Ad",
+                "-d",
                 "-s",
                 &ephemeral,
                 "-t",
@@ -291,6 +292,16 @@ fn run_tmux_command_blocking(command: &TmuxCommand) -> std::io::Result<std::proc
     std::process::Command::new(&command.program)
         .args(&command.args)
         .output()
+}
+
+/// Setup `new-session -d` succeeds, or the ephemeral session already exists
+/// from a prior dial (reconnect). Attach-style failures are not benign.
+fn tmux_new_session_setup_ok(output: &std::process::Output) -> bool {
+    if output.status.success() {
+        return true;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.contains("duplicate session")
 }
 
 /// True when `name` looks like an ephemeral per-client grouped session
@@ -609,7 +620,7 @@ pub async fn bridge_task_terminal_socket(
     // attaching to nothing.
     for command in &isolated.setup {
         let failure = match run_tmux_command_blocking(command) {
-            Ok(output) if output.status.success() => continue,
+            Ok(output) if tmux_new_session_setup_ok(&output) => continue,
             Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_string(),
             Err(error) => error.to_string(),
         };
@@ -1032,7 +1043,7 @@ mod tests {
                     program: "tmux".to_string(),
                     args: vec![
                         "new-session".to_string(),
-                        "-Ad".to_string(),
+                        "-d".to_string(),
                         "-s".to_string(),
                         ephemeral.to_string(),
                         "-t".to_string(),
@@ -1354,14 +1365,40 @@ mod tests {
         let other = build_isolated_attach_plan_for_client(&plan, "viewport-b");
         assert_ne!(first.ephemeral_session, other.ephemeral_session);
 
-        // Stable plan still uses the idempotent create-or-attach setup and an
+        // Stable plan still uses detached create (no `-A` attach) and an
         // empty disconnect teardown.
         assert!(first.teardown.is_empty());
         assert_eq!(first.setup, second.setup);
         assert!(first.setup.iter().any(|cmd| {
             cmd.args.first().map(String::as_str) == Some("new-session")
-                && cmd.args.iter().any(|arg| arg == "-Ad")
+                && cmd.args.iter().any(|arg| arg == "-d")
+                && !cmd.args.iter().any(|arg| arg.contains('A'))
         }));
+    }
+
+    #[test]
+    fn tmux_new_session_setup_ok_accepts_duplicate_session() {
+        use std::os::unix::process::ExitStatusExt;
+        let ok = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        assert!(tmux_new_session_setup_ok(&ok));
+
+        let dup = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"duplicate session: ajax-web-fix-login-m1a2b3c\n".to_vec(),
+        };
+        assert!(tmux_new_session_setup_ok(&dup));
+
+        let attach_fail = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"open terminal failed: not a terminal\n".to_vec(),
+        };
+        assert!(!tmux_new_session_setup_ok(&attach_fail));
     }
 
     #[test]
