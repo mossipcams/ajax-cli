@@ -8,7 +8,7 @@ import {
 } from "@/shared/lib/polling";
 import ConnectionStatus from "@/shared/ui/ConnectionStatus";
 import ResultPanel from "@/shared/ui/ResultPanel";
-import TaskList from "@/features/task/TaskList";
+import Dashboard from "@/features/dashboard/Dashboard";
 import TaskDetail from "@/features/task/TaskDetail";
 import TaskLoadError from "@/features/task/TaskLoadError";
 import SettingsView from "@/features/settings/SettingsView";
@@ -279,7 +279,7 @@ export default function App() {
                 <span className="pull-spinner" />
               </div>
               {cockpit.data ? (
-                <TaskList
+                <Dashboard
                   cockpit={cockpit.data}
                   selectedProject={selectedProject}
                   onSelectProject={(project: string | null) =>
