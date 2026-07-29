@@ -295,12 +295,7 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
 }
 
 fn acp_v2_flag_enabled(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        matches!(
-            value.to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes"
-        )
-    })
+    value.is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
 fn acp_v2_enabled_from_env() -> bool {
@@ -797,7 +792,11 @@ impl SessionFoldV1 {
             .fields
             .title
             .as_deref()
-            .or_else(|| self.tools.get(&request.tool_call.tool_call_id).map(String::as_str))
+            .or_else(|| {
+                self.tools
+                    .get(&request.tool_call.tool_call_id)
+                    .map(String::as_str)
+            })
             .filter(|title| !title.is_empty())
             .unwrap_or("Permission required");
         let mut detail = title.to_owned();
@@ -855,12 +854,9 @@ async fn initialize_v1(
     connection: &ConnectionTo<Agent>,
 ) -> agent_client_protocol::Result<Vec<v1::AuthMethod>> {
     let response = connection
-        .send_request(
-            v1::InitializeRequest::new(ProtocolVersion::V1).client_info(v1::Implementation::new(
-                "ajax-cli",
-                env!("CARGO_PKG_VERSION"),
-            )),
-        )
+        .send_request(v1::InitializeRequest::new(ProtocolVersion::V1).client_info(
+            v1::Implementation::new("ajax-cli", env!("CARGO_PKG_VERSION")),
+        ))
         .block_task()
         .await?;
     if response.protocol_version != ProtocolVersion::V1 {
@@ -877,7 +873,10 @@ async fn start_session_v1(
 ) -> Result<String, agent_client_protocol::Error> {
     if let Some(session_id) = cached_session_id {
         connection
-            .send_request(v1::LoadSessionRequest::new(session_id.clone(), cwd.to_path_buf()))
+            .send_request(v1::LoadSessionRequest::new(
+                session_id.clone(),
+                cwd.to_path_buf(),
+            ))
             .block_task()
             .await?;
         Ok(session_id.clone())
@@ -999,7 +998,8 @@ async fn handle_console_event_v1(
                     SessionEnd::HostFailed(acp_initialization_error(error).to_string())
                 })?;
             fold.set_state(AcpSessionState::Idle(Some(AcpStopReason::Cancelled)));
-            publish(lifecycle, session_id, fold.observation()).map_err(SessionEnd::PublishFailed)?;
+            publish(lifecycle, session_id, fold.observation())
+                .map_err(SessionEnd::PublishFailed)?;
         }
         ConsoleEvent::InputError(detail) => {
             return Err(SessionEnd::HostFailed(host_failure_detail(
@@ -2711,7 +2711,8 @@ mod tests {
     }
 
     fn v1_only_test_agent(session_id: &'static str) -> impl ConnectTo<Client> + 'static {
-        Agent.builder()
+        Agent
+            .builder()
             .on_receive_request(
                 async |request: v1::InitializeRequest, responder, _cx| {
                     assert_eq!(request.protocol_version, ProtocolVersion::V1);
@@ -2799,14 +2800,14 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn v2_flag_rejects_v1_peer() {
-        let agent = Agent.protocol_router().with_v1(
-            Agent.builder().on_receive_request(
+        let agent = Agent
+            .protocol_router()
+            .with_v1(Agent.builder().on_receive_request(
                 async |request: v1::InitializeRequest, responder, _cx| {
                     responder.respond(v1::InitializeResponse::new(request.protocol_version))
                 },
                 agent_client_protocol::on_receive_request!(),
-            ),
-        );
+            ));
         let error = negotiate_v2(agent)
             .await
             .expect_err("v2 path against v1 peer must fail closed");
