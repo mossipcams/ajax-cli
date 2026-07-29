@@ -245,6 +245,8 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             repo: pending.task_handle.clone(),
             title,
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
         let (_intent, plan) = plan_start_task_operation_with_observation(
             context,
@@ -380,6 +382,8 @@ where
             repo: pending.task_handle.clone(),
             title,
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
         let (_intent, plan) = plan_start_task_operation_with_observation(
             context,

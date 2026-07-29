@@ -26,7 +26,7 @@ pub use new_task::{
     mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
     mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
     start_provisioning_step_for_command, start_task_identity, task_from_new_request,
-    NewTaskRequest, StartPlanObservation, StartProvisioningStep,
+    AgentTerminalMode, NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use orphan_gc::{
@@ -769,7 +769,9 @@ mod tests {
                     repo: "web".to_string(),
                     title: title.clone(),
                     agent: "codex".to_string(),
-                },
+
+                ..Default::default()
+            },
             )
             .unwrap();
 
@@ -2068,6 +2070,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "fix logout".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2140,6 +2144,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "fix login".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2179,6 +2185,8 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "fix login".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap_err();
@@ -2196,6 +2204,8 @@ mod tests {
                 repo: "api".to_string(),
                 title: "Ship oauth v2!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2244,6 +2254,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2269,6 +2281,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = task_from_new_request(&context, &request).unwrap();
@@ -2292,6 +2306,8 @@ mod tests {
             repo: "web".to_string(),
             title: "!!!".to_string(),
             agent: "claude".to_string(),
+
+            ..Default::default()
         };
 
         let task = task_from_new_request(&context, &request).unwrap();
@@ -2307,6 +2323,8 @@ mod tests {
             repo: "api".to_string(),
             title: "Add cache".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = super::record_new_task(&mut context, &request).unwrap();
@@ -2334,6 +2352,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2343,6 +2363,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = super::record_new_task(&mut context, &request).unwrap();
@@ -2368,6 +2390,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
         let task = super::record_new_task(&mut context, &request).unwrap();
         let task_id = task.id.clone();

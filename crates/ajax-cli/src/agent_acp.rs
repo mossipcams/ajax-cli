@@ -542,6 +542,9 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
             }
+            if let Err(error) = console.render_ready_prompt() {
+                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+            }
             let mut active_permission = None::<PermissionRequest>;
             let mut active_elicitation = None::<ElicitationRequest>;
             let mut heartbeat =
@@ -636,6 +639,9 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                                 if let Err(error) = clear_permission_snapshot(&mut fold, &lifecycle, &session_id) {
                                     return Ok(error);
                                 }
+                                if let Err(error) = console.render_input_prompt() {
+                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                                }
                                 if let Err(error) =
                                     handle_console_event(&connection, &session_id, event, &host_fail_tx)
                                 {
@@ -650,6 +656,9 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                             }
                             if let Err(error) = clear_permission_snapshot(&mut fold, &lifecycle, &session_id) {
                                 return Ok(error);
+                            }
+                            if let Err(error) = console.render_input_prompt() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
                             }
                             continue;
                         }
@@ -1157,6 +1166,9 @@ pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
             }
+            if let Err(error) = console.render_ready_prompt() {
+                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+            }
             let mut active_permission = None::<V1PermissionRequest>;
             let mut heartbeat =
                 tokio::time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MILLIS as u64));
@@ -1217,6 +1229,9 @@ pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
                                 if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
                                     return Ok(error);
                                 }
+                                if let Err(error) = console.render_input_prompt() {
+                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                                }
                                 if let Err(error) = handle_console_event_v1(
                                     &connection,
                                     &session_id,
@@ -1238,8 +1253,17 @@ pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
                             if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
                                 return Ok(error);
                             }
+                            if let Err(error) = console.render_input_prompt() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                            }
                             continue;
                         }
+                        // After a completed prompt or cancel, re-show `>` even if
+                        // subsequent adapter updates leave the snapshot Running.
+                        let should_reprompt = matches!(
+                            &event,
+                            ConsoleEvent::PromptLine(_) | ConsoleEvent::Interrupt
+                        );
                         if let Err(error) = handle_console_event_v1(
                             &connection,
                             &session_id,
@@ -1250,6 +1274,11 @@ pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
                         .await
                         {
                             return Ok(error);
+                        }
+                        if should_reprompt {
+                            if let Err(error) = console.render_input_prompt() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                            }
                         }
                     }
                     Some(detail) = host_fail_rx.recv() => {

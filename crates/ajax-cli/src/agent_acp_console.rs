@@ -8,6 +8,8 @@ use crate::CliError;
 
 pub const ELICITATION_VALIDATION_ERROR: &str = "Expected a JSON object with no fields.";
 pub const AUTHENTICATION_VALIDATION_ERROR: &str = "Enter a number for an authentication method.";
+pub const ACP_READY_BANNER: &str = "Ajax ACP session ready. Enter a prompt.\n";
+pub const ACP_INPUT_PROMPT: &str = "> ";
 
 pub enum ConsoleEvent {
     PromptLine(String),
@@ -29,6 +31,22 @@ impl<W: Write> AgentAcpConsole<W> {
         self.events.recv().await
     }
 
+    pub fn render_ready_prompt(&mut self) -> Result<(), CliError> {
+        self.output
+            .write_all(ACP_READY_BANNER.as_bytes())
+            .map_err(console_output_error)?;
+        self.render_input_prompt()?;
+        Ok(())
+    }
+
+    pub fn render_input_prompt(&mut self) -> Result<(), CliError> {
+        self.output
+            .write_all(ACP_INPUT_PROMPT.as_bytes())
+            .map_err(console_output_error)?;
+        self.output.flush().map_err(console_output_error)?;
+        Ok(())
+    }
+
     pub fn render_update(&mut self, update: &v2::SessionUpdate) -> Result<(), CliError> {
         match update {
             v2::SessionUpdate::AgentMessageChunk(chunk) => {
@@ -48,21 +66,102 @@ impl<W: Write> AgentAcpConsole<W> {
                     .map_err(console_output_error)?;
                 self.output.flush().map_err(console_output_error)?;
             }
+            v2::SessionUpdate::ToolCallUpdate(update) => {
+                self.render_tool_activity_line_v2(update)?;
+            }
+            v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(_)) => {
+                self.render_input_prompt()?;
+            }
             _ => {}
         }
         Ok(())
     }
 
     pub fn render_update_v1(&mut self, update: &v1::SessionUpdate) -> Result<(), CliError> {
-        if let v1::SessionUpdate::AgentMessageChunk(chunk) = update {
-            if let v1::ContentBlock::Text(text) = &chunk.content {
-                self.output
-                    .write_all(text.text.as_bytes())
-                    .map_err(console_output_error)?;
-                self.output.flush().map_err(console_output_error)?;
+        match update {
+            v1::SessionUpdate::AgentMessageChunk(chunk) => {
+                if let v1::ContentBlock::Text(text) = &chunk.content {
+                    self.output
+                        .write_all(text.text.as_bytes())
+                        .map_err(console_output_error)?;
+                    self.output.flush().map_err(console_output_error)?;
+                }
             }
+            v1::SessionUpdate::ToolCall(tool) => {
+                self.render_tool_activity_line(tool.title.as_str(), None)?;
+            }
+            v1::SessionUpdate::ToolCallUpdate(update) => {
+                let title = update
+                    .fields
+                    .title
+                    .as_deref()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or("Tool activity");
+                let status = update
+                    .fields
+                    .status
+                    .as_ref()
+                    .map(Self::tool_status_label_v1);
+                self.render_tool_activity_line(title, status)?;
+            }
+            _ => {}
         }
         Ok(())
+    }
+
+    fn render_tool_activity_line_v2(
+        &mut self,
+        update: &v2::ToolCallUpdate,
+    ) -> Result<(), CliError> {
+        use agent_client_protocol::schema::MaybeUndefined;
+
+        let title = match &update.title {
+            MaybeUndefined::Value(title) => title.as_str(),
+            _ => "Tool activity",
+        };
+        let status = match &update.status {
+            MaybeUndefined::Value(status) => Some(Self::tool_status_label_v2(status)),
+            _ => None,
+        };
+        self.render_tool_activity_line(title, status)?;
+        Ok(())
+    }
+
+    fn render_tool_activity_line(
+        &mut self,
+        title: &str,
+        status: Option<&str>,
+    ) -> Result<(), CliError> {
+        let line = match status {
+            Some("running") => format!("{title} (running)\n"),
+            Some("completed") => format!("{title} (completed)\n"),
+            Some("failed") => format!("{title} (failed)\n"),
+            None => format!("{title}\n"),
+            Some(label) => format!("{title} ({label})\n"),
+        };
+        self.output
+            .write_all(line.as_bytes())
+            .map_err(console_output_error)?;
+        self.output.flush().map_err(console_output_error)?;
+        Ok(())
+    }
+
+    fn tool_status_label_v2(status: &v2::ToolCallStatus) -> &'static str {
+        match status {
+            v2::ToolCallStatus::InProgress => "running",
+            v2::ToolCallStatus::Completed => "completed",
+            v2::ToolCallStatus::Failed => "failed",
+            _ => "running",
+        }
+    }
+
+    fn tool_status_label_v1(status: &v1::ToolCallStatus) -> &'static str {
+        match status {
+            v1::ToolCallStatus::InProgress => "running",
+            v1::ToolCallStatus::Completed => "completed",
+            v1::ToolCallStatus::Failed => "failed",
+            _ => "running",
+        }
     }
 
     pub fn render_permission_prompt_v1(
@@ -260,6 +359,49 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             self.0.lock().unwrap().flush()
         }
+    }
+
+    fn ready_prefix() -> Vec<u8> {
+        format!("{}{}", super::ACP_READY_BANNER, super::ACP_INPUT_PROMPT).into_bytes()
+    }
+
+    #[test]
+    fn render_ready_prompt_writes_banner_and_gt() {
+        let mut output = Vec::new();
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut console = AgentAcpConsole::new(events_rx, &mut output);
+        console.render_ready_prompt().expect("ready prompt");
+        assert_eq!(
+            output,
+            format!("{}{}", super::ACP_READY_BANNER, super::ACP_INPUT_PROMPT).into_bytes()
+        );
+    }
+
+    #[test]
+    fn tool_update_renders_human_title_line() {
+        let mut output = Vec::new();
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut console = AgentAcpConsole::new(events_rx, &mut output);
+        console
+            .render_update(&v2::SessionUpdate::ToolCallUpdate(
+                v2::ToolCallUpdate::new("opaque-tool-id")
+                    .title("Compile project")
+                    .status(v2::ToolCallStatus::InProgress),
+            ))
+            .expect("tool update");
+        assert_eq!(output, b"Compile project (running)\n");
+        assert!(!String::from_utf8_lossy(&output).contains("opaque-tool-id"));
+    }
+
+    #[test]
+    fn idle_state_update_reprompts_gt() {
+        let mut output = Vec::new();
+        let (_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut console = AgentAcpConsole::new(events_rx, &mut output);
+        console
+            .render_update(&v2::SessionUpdate::StateUpdate(idle_cancelled()))
+            .expect("idle update");
+        assert_eq!(output, super::ACP_INPUT_PROMPT.as_bytes());
     }
 
     fn unix_millis() -> u128 {
@@ -462,7 +604,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let bytes = output.0.lock().unwrap().clone();
-                let expected = [agent_message.as_bytes(), terminal_bytes.as_slice()].concat();
+                let expected = [
+                    ready_prefix(),
+                    agent_message.as_bytes().to_vec(),
+                    terminal_bytes.to_vec(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<u8>>();
                 if bytes == expected {
                     break;
                 }
@@ -569,7 +718,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let bytes = writer.0.lock().unwrap().clone();
-                let expected = [agent_message.as_bytes(), terminal_bytes.as_slice()].concat();
+                let expected = [
+                    ready_prefix(),
+                    agent_message.as_bytes().to_vec(),
+                    terminal_bytes.to_vec(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<u8>>();
                 if bytes == expected {
                     break;
                 }
