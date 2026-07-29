@@ -27,7 +27,7 @@
         "repo": "web",
         "title": "Fix login",
         "status": "waiting",
-        "status_explanation": "Waiting for approval",
+        "status_explanation": "waiting for review",
         "attention": "needs-you",
         "last_activity_unix_secs": 1700001000,
         "actions": [

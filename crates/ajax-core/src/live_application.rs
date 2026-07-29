@@ -100,7 +100,7 @@ fn apply_reduced_observation(
         }
         LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
             task.agent_status = AgentRuntimeStatus::Waiting;
-            if crate::agent_status::is_delegated_waiting_summary(&observation.summary) {
+            if crate::live::is_delegated_waiting_summary(&observation.summary) {
                 // Parent is waiting on children, not the operator.
                 task.remove_side_flag(SideFlag::NeedsInput);
             } else {

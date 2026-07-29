@@ -10,7 +10,7 @@
   "agent": "Codex",
   "agent_status": "Waiting",
   "status": "waiting",
-  "status_explanation": "Waiting for approval",
+  "status_explanation": "waiting for review",
   "runtime_observation_error": null,
   "actions": [
     {

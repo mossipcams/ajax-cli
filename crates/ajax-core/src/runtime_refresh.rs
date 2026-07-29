@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
+    acp_status::{project_acp_status, ObservedAcpStatus},
     adapters::{CiChecksObservation, CommandRunner, GitAdapter, GithubChecksAdapter, TmuxAdapter},
-    agent_status::{ProcessLiveness, StatusObservation},
     commands::{self, CommandContext, CommandError},
     config::WorktreePlacement,
     live::{self, LiveObservation, LiveStatusKind},
@@ -18,27 +18,6 @@ use crate::{
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 
-/// Run identity of the primary (session-level) agent run.
-pub const PRIMARY_RUN_ID: &str = "primary";
-
-/// Source of native hook-derived agent-status evidence for a task.
-///
-/// Implementors (in `ajax-cli`) own filesystem I/O: they fold the canonical
-/// JSONL event log per run into reducer observations and translate the launch
-/// wrapper's confirmed exit / liveness into a terminal observation. Core never
-/// reads files and never parses status strings; it reduces the observations
-/// this trait yields.
-pub trait AgentStatusSource {
-    /// Reducer-ready observations for the task, one or more per active run.
-    fn observations_for_task(&self, task_id: &TaskId) -> Vec<StatusObservation>;
-
-    /// Confirmed launch-wrapper process liveness, if observed. Never alone
-    /// implies the agent is running.
-    fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
-        None
-    }
-}
-
 /// Controls how much substrate work a refresh pass performs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RefreshTier {
@@ -47,15 +26,6 @@ pub enum RefreshTier {
     /// Always eligible for orphan git discovery when tasks are probed.
     #[default]
     Full,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoAgentStatusSource;
-
-impl AgentStatusSource for NoAgentStatusSource {
-    fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
-        Vec::new()
-    }
 }
 
 const CI_CHECKS_PROBE_INTERVAL: Duration = Duration::from_secs(300);
@@ -68,13 +38,21 @@ pub fn refresh_runtime_context<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
 ) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusSource, RefreshTier::Full)
+    refresh_runtime_context_with_tier(context, runner, RefreshTier::Full)
 }
 
 pub fn refresh_runtime_context_with_tier<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
-    agent_status_source: &impl AgentStatusSource,
+    tier: RefreshTier,
+) -> Result<bool, CommandError> {
+    refresh_runtime_context_with_acp_statuses(context, runner, &BTreeMap::new(), tier)
+}
+
+pub fn refresh_runtime_context_with_acp_statuses<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    acp_statuses: &BTreeMap<TaskId, ObservedAcpStatus>,
     tier: RefreshTier,
 ) -> Result<bool, CommandError> {
     let mut tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
@@ -340,52 +318,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
-        // Native hook-derived agent status: fold canonical events per run into
-        // reducer observations (plus confirmed wrapper exit / liveness), then
-        // reduce to one live observation. There is no string round-trip and no
-        // pane-text inference.
-        let now = SystemTime::now();
-        let observations = agent_status_source.observations_for_task(&task_snapshot.id);
-        let process_liveness = agent_status_source.process_liveness_for_task(&task_snapshot.id);
-        if observations.is_empty()
-            && process_liveness.is_none()
-            && !crate::ui_state::agent_process_is_alive(&task_snapshot)
-        {
+        let Some(acp_status) = acp_statuses.get(&task_id) else {
             continue;
-        }
-        let projection =
-            crate::agent_status::reduce_agent_status(crate::agent_status::ReduceInput {
-                now,
-                primary_run_id: PRIMARY_RUN_ID.to_string(),
-                process_liveness,
-                observations: &observations,
-            });
-
-        // Precedence tier 3: a fresh wrapper heartbeat proves the process
-        // exists without asserting activity. Stamping it lets the projector
-        // report a live-but-quiet task as Idle rather than Unknown; it never
-        // becomes `AgentRunning`. Recorded before the Unknown bail below,
-        // because liveness is exactly the evidence that survives when no
-        // native event has arrived yet.
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            let previous = task.clone();
-            if projection.process_alive {
-                task.metadata.insert(
-                    crate::ui_state::AGENT_PROCESS_ALIVE_KEY.to_string(),
-                    unix_seconds(now).to_string(),
-                );
-            } else {
-                task.metadata
-                    .remove(crate::ui_state::AGENT_PROCESS_ALIVE_KEY);
-            }
-            changed |= *task != previous;
-        }
-
-        if projection.phase == crate::agent_status::ParentPhase::Unknown {
-            continue;
-        }
-        let observation = projection.live.clone();
-        let observed_at = projection.selected_observed_at.unwrap_or(now);
+        };
+        let observation = project_acp_status(&acp_status.observation);
+        let observed_at = acp_status.observed_at;
         // Waiting/completion evidence at or before an acknowledgment is held:
         // opening a task suppresses it until newer evidence arrives.
         if observation.kind.class() == crate::models::LiveStatusClass::Waiting
@@ -396,34 +333,19 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
         if let Some(task) = context.registry.get_task_mut(&task_id) {
-            let live_status_unchanged = task
-                .live_status
-                .as_ref()
-                .is_some_and(|status| status.kind == observation.kind)
-                && task
-                    .live_status_observed_at
-                    .is_some_and(|current| current >= observed_at);
-            let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
-                && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-            if live_status_unchanged && !needs_agent_running_flag {
-                continue;
-            }
             let previous = task.clone();
             task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
             task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
-            match projection.selected_source {
-                // Confirmed wrapper exit is trusted process evidence and may
-                // advance lifecycle on terminal completion.
-                Some(crate::agent_status::ObservationSource::ProcessExit) => {
-                    live::apply_trusted_observation_at(task, observation, observed_at);
-                }
-                // Folded native lifecycle events are authoritative for activity.
-                Some(crate::agent_status::ObservationSource::ProviderLifecycle) => {
-                    live::apply_authoritative_observation_at(task, observation, observed_at);
-                }
-                _ => {
-                    live::apply_observation_at(task, observation, observed_at);
-                }
+            let observation_unchanged = task.live_status.as_ref() == Some(&observation);
+            let running_flag_missing = observation.kind == LiveStatusKind::AgentRunning
+                && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
+            if !observation_unchanged || running_flag_missing {
+                let applied_at = if observation_unchanged {
+                    task.live_status_observed_at.unwrap_or(observed_at)
+                } else {
+                    observed_at
+                };
+                live::apply_trusted_observation_at(task, observation, applied_at);
             }
             refresh_cached_annotations(task);
             changed |= *task != previous;
@@ -459,7 +381,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
 
     Ok(changed)
 }
-
 fn refresh_github_check_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -939,18 +860,19 @@ fn refresh_cached_annotations(task: &mut Task) {
 mod tests {
     use std::{
         cell::Cell,
+        collections::BTreeMap,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        refresh_runtime_context, refresh_runtime_context_with_tier, AgentStatusSource,
-        CiChecksObservation, GithubChecksAdapter, NoAgentStatusSource, RefreshTier, PRIMARY_RUN_ID,
+        refresh_runtime_context, refresh_runtime_context_with_acp_statuses,
+        refresh_runtime_context_with_tier, CiChecksObservation, GithubChecksAdapter, RefreshTier,
     };
     use crate::{
-        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
-        agent_status::{
-            ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
+        acp_status::{
+            AcpActionKind, AcpSessionState, AcpStatusObservation, AcpStopReason, ObservedAcpStatus,
         },
+        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
         config::{Config, ManagedRepo, RuntimePathRequest},
         live::{LiveObservation, LiveStatusKind},
@@ -963,54 +885,6 @@ mod tests {
         ui_state::{derive_operator_status, TaskStatus},
     };
 
-    struct ObsSource {
-        observations: Vec<StatusObservation>,
-        liveness: Option<ProcessLiveness>,
-    }
-
-    impl ObsSource {
-        fn new(observations: Vec<StatusObservation>) -> Self {
-            Self {
-                observations,
-                liveness: None,
-            }
-        }
-
-        fn with_liveness(mut self, liveness: ProcessLiveness) -> Self {
-            self.liveness = Some(liveness);
-            self
-        }
-    }
-
-    /// Reducer-ready lifecycle observation `age_secs` old with a `ttl_secs`
-    /// freshness window, on the primary run.
-    fn lifecycle_obs(kind: ActivityKind, age_secs: u64, ttl_secs: u64) -> StatusObservation {
-        let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
-        StatusObservation {
-            source: ObservationSource::ProviderLifecycle,
-            observed_at,
-            expires_at: observed_at + Duration::from_secs(ttl_secs),
-            confidence: Confidence::High,
-            run_id: PRIMARY_RUN_ID.to_string(),
-            parent_run_id: None,
-            kind,
-        }
-    }
-
-    /// Confirmed wrapper exit `age_secs` old on the primary run.
-    fn exit_obs(kind: ActivityKind, age_secs: u64) -> StatusObservation {
-        let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
-        StatusObservation {
-            source: ObservationSource::ProcessExit,
-            observed_at,
-            expires_at: observed_at + Duration::from_secs(120),
-            confidence: Confidence::High,
-            run_id: PRIMARY_RUN_ID.to_string(),
-            parent_run_id: None,
-            kind,
-        }
-    }
-
     const BASE_BRANCH: &str = "main";
     const REPO_NAME: &str = "web";
     const REPO_PATH: &str = "/Users/matt/projects/web";
@@ -1019,16 +893,6 @@ mod tests {
     const TASK_SESSION: &str = "ajax-web-fix-login";
     const TASK_WORKTREE: &str = "/tmp/worktrees/web-fix-login";
     const TASK_WINDOW: &str = "task";
-
-    impl AgentStatusSource for ObsSource {
-        fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
-            self.observations.clone()
-        }
-
-        fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
-            self.liveness
-        }
-    }
 
     #[derive(Default)]
     struct RuntimeRefreshRunner;
@@ -1118,6 +982,39 @@ mod tests {
             conflicted: false,
             last_commit: None,
         }
+    }
+
+    fn acp_statuses(state: AcpSessionState) -> BTreeMap<TaskId, ObservedAcpStatus> {
+        acp_statuses_at(state, SystemTime::now())
+    }
+
+    fn acp_statuses_at(
+        state: AcpSessionState,
+        observed_at: SystemTime,
+    ) -> BTreeMap<TaskId, ObservedAcpStatus> {
+        BTreeMap::from([(
+            TaskId::new(TASK_ID),
+            ObservedAcpStatus {
+                observation: AcpStatusObservation {
+                    state,
+                    detail: None,
+                },
+                observed_at,
+            },
+        )])
+    }
+
+    fn refresh_with_acp(
+        context: &mut CommandContext<InMemoryRegistry>,
+        acp_statuses: &BTreeMap<TaskId, ObservedAcpStatus>,
+    ) {
+        refresh_runtime_context_with_acp_statuses(
+            context,
+            &mut RuntimeRefreshRunner,
+            acp_statuses,
+            RefreshTier::Full,
+        )
+        .unwrap();
     }
 
     #[derive(Default)]
@@ -1406,28 +1303,122 @@ mod tests {
     }
 
     #[test]
-    fn native_running_observation_drives_agent_running() {
-        let mut context = context_with_active_task();
-        let mut runner = RuntimeRefreshRunner;
-        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+    fn acp_statuses_drive_runtime_refresh() {
+        let cases = [
+            (
+                AcpSessionState::Running,
+                LiveStatusKind::AgentRunning,
+                LifecycleStatus::Active,
+            ),
+            (
+                AcpSessionState::RequiresAction(AcpActionKind::Input),
+                LiveStatusKind::WaitingForInput,
+                LifecycleStatus::Active,
+            ),
+            (
+                AcpSessionState::Idle(Some(AcpStopReason::EndTurn)),
+                LiveStatusKind::Done,
+                LifecycleStatus::Reviewable,
+            ),
+            (
+                AcpSessionState::Failed,
+                LiveStatusKind::CommandFailed,
+                LifecycleStatus::Active,
+            ),
+        ];
 
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+        for (state, expected_kind, expected_lifecycle) in cases {
+            let mut context = context_with_active_task();
+            let observed_at = SystemTime::now() - Duration::from_secs(1);
+            let acp_statuses = acp_statuses_at(state, observed_at);
+            refresh_with_acp(&mut context, &acp_statuses);
+
+            let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+            assert_eq!(
+                task.live_status.as_ref().map(|status| status.kind),
+                Some(expected_kind)
+            );
+            assert_eq!(task.lifecycle_status, expected_lifecycle);
+        }
+
+        let mut acknowledged_context = context_with_active_task();
+        let acknowledged_at = SystemTime::now();
+        acknowledged_context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .attention_acknowledged_at = Some(acknowledged_at);
+        let acknowledged_statuses = acp_statuses_at(
+            AcpSessionState::RequiresAction(AcpActionKind::Input),
+            acknowledged_at,
+        );
+        refresh_with_acp(&mut acknowledged_context, &acknowledged_statuses);
+
+        let acknowledged_task = acknowledged_context
+            .registry
+            .get_task(&TaskId::new(TASK_ID))
             .unwrap();
+        assert!(acknowledged_task.live_status.is_none());
+        assert!(!acknowledged_task.has_side_flag(SideFlag::NeedsInput));
+
+        let mut heartbeat_context = context_with_active_task();
+        let first_observed_at = SystemTime::now() - Duration::from_secs(2);
+        let mut heartbeat_statuses = acp_statuses_at(AcpSessionState::Running, first_observed_at);
+        refresh_with_acp(&mut heartbeat_context, &heartbeat_statuses);
+
+        let heartbeat_task = heartbeat_context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        heartbeat_task.remove_side_flag(SideFlag::AgentRunning);
+        heartbeat_task.add_side_flag(SideFlag::TmuxMissing);
+        heartbeat_task.add_side_flag(SideFlag::TaskWindowMissing);
+
+        heartbeat_statuses
+            .get_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .observed_at = first_observed_at + Duration::from_secs(1);
+        refresh_with_acp(&mut heartbeat_context, &heartbeat_statuses);
+        let heartbeat_task = heartbeat_context
+            .registry
+            .get_task(&TaskId::new(TASK_ID))
+            .unwrap();
+        assert_eq!(
+            heartbeat_task.live_status_observed_at,
+            Some(first_observed_at)
+        );
+        assert!(
+            heartbeat_task.has_side_flag(SideFlag::AgentRunning)
+                && !heartbeat_task.has_side_flag(SideFlag::TmuxMissing)
+                && !heartbeat_task.has_side_flag(SideFlag::TaskWindowMissing),
+            "identical heartbeat left observed_at={:?}, agent_running={}, tmux_missing={}, task_window_missing={}",
+            heartbeat_task.live_status_observed_at,
+            heartbeat_task.has_side_flag(SideFlag::AgentRunning),
+            heartbeat_task.has_side_flag(SideFlag::TmuxMissing),
+            heartbeat_task.has_side_flag(SideFlag::TaskWindowMissing),
+        );
+        assert!(heartbeat_task.has_side_flag(SideFlag::AgentRunning));
+        assert!(!heartbeat_task.has_side_flag(SideFlag::TmuxMissing));
+        assert!(!heartbeat_task.has_side_flag(SideFlag::TaskWindowMissing));
+    }
+
+    #[test]
+    fn acp_running_observation_drives_agent_running() {
+        let mut context = context_with_active_task();
+        let acp_statuses = acp_statuses(AcpSessionState::Running);
+
+        refresh_with_acp(&mut context, &acp_statuses);
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(derive_operator_status(task).status, TaskStatus::Running);
     }
 
     #[test]
-    fn wrapper_exit_success_is_terminal_done_fallback() {
+    fn acp_end_turn_is_terminal_done() {
         let mut context = context_with_active_task();
-        let mut runner = RuntimeRefreshRunner;
-        // No native lifecycle events; only a confirmed wrapper exit. Requirement
-        // 12: confirmed exit 0 is a Done fallback where native evidence is absent.
-        let cache = ObsSource::new(vec![exit_obs(ActivityKind::Done, 1)]);
+        let acp_statuses = acp_statuses(AcpSessionState::Idle(Some(AcpStopReason::EndTurn)));
 
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
+        refresh_with_acp(&mut context, &acp_statuses);
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
@@ -1437,17 +1428,11 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_liveness_alone_does_not_set_agent_running() {
+    fn acp_idle_without_stop_reason_does_not_set_agent_running() {
         let mut context = context_with_active_task();
-        let mut runner = RuntimeRefreshRunner;
-        // Requirement 12: wrapper Running is liveness only, never Agent Running.
-        let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
-            alive: true,
-            observed_at: SystemTime::now(),
-        });
+        let acp_statuses = acp_statuses(AcpSessionState::Idle(None));
 
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-            .unwrap();
+        refresh_with_acp(&mut context, &acp_statuses);
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_ne!(
@@ -1546,7 +1531,6 @@ mod tests {
         let changed = super::refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
-            &NoAgentStatusSource,
             super::RefreshTier::Full,
         )
         .unwrap();
@@ -1654,13 +1638,9 @@ mod tests {
         let stdout = ci_failed_stdout("lint");
         let mut runner = CiChecksRunner::with_gh(&stdout, "", 1);
 
-        let changed = refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &NoAgentStatusSource,
-            RefreshTier::Full,
-        )
-        .unwrap();
+        let changed =
+            refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Full)
+                .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert!(changed);
@@ -1906,13 +1886,8 @@ mod tests {
         let failed_stdout = ci_failed_stdout("ci");
         let mut fresh_runner = CiChecksRunner::with_gh(&failed_stdout, "", 1);
 
-        refresh_runtime_context_with_tier(
-            &mut fresh_context,
-            &mut fresh_runner,
-            &NoAgentStatusSource,
-            RefreshTier::Full,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut fresh_context, &mut fresh_runner, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(fresh_runner.gh_command_count(), 0);
 
@@ -1925,13 +1900,8 @@ mod tests {
             .insert("ci_checks_probed_at".to_string(), (now - 301).to_string());
         let mut stale_runner = CiChecksRunner::with_gh(&failed_stdout, "", 1);
 
-        refresh_runtime_context_with_tier(
-            &mut stale_context,
-            &mut stale_runner,
-            &NoAgentStatusSource,
-            RefreshTier::Full,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut stale_context, &mut stale_runner, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(stale_runner.gh_command_count(), 1);
     }
@@ -1958,7 +1928,6 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut failed_context,
             &mut failed_runner,
-            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -1975,7 +1944,6 @@ mod tests {
         refresh_runtime_context_with_tier(
             &mut healthy_context,
             &mut healthy_runner,
-            &NoAgentStatusSource,
             RefreshTier::Full,
         )
         .unwrap();
@@ -2008,13 +1976,7 @@ mod tests {
         let mut context = context_with_unchanged_running_task();
         let mut runner = OrphanRecoveryRunner::default();
 
-        refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &NoAgentStatusSource,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live).unwrap();
 
         assert!(
             !runner.commands.iter().any(|command| {
@@ -2036,13 +1998,9 @@ mod tests {
             ..Default::default()
         };
 
-        let changed = refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &NoAgentStatusSource,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        let changed =
+            refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live)
+                .unwrap();
 
         assert!(changed);
         assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
@@ -2067,14 +2025,18 @@ mod tests {
     }
 
     #[test]
-    fn steady_state_refresh_skips_capture_pane_when_agent_cache_is_stable() {
+    fn steady_state_refresh_skips_capture_pane_when_acp_status_is_stable() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = GitSkippingRunner::default();
-        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+        let acp_statuses = acp_statuses(AcpSessionState::Running);
 
-        let _changed =
-            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
-                .unwrap();
+        let _changed = refresh_runtime_context_with_acp_statuses(
+            &mut context,
+            &mut runner,
+            &acp_statuses,
+            RefreshTier::Full,
+        )
+        .unwrap();
 
         assert!(
             !runner.commands.iter().any(|command| {
@@ -2109,10 +2071,9 @@ mod tests {
     fn steady_state_refresh_operation_budget() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = GitSkippingRunner::default();
-        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
         let _changed =
-            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+            refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live)
                 .unwrap();
 
         let git_worktree_lists = runner
@@ -2523,10 +2484,8 @@ mod tests {
     fn live_refresh_many_active_tasks_use_bounded_tmux_commands() {
         let mut context = context_with_many_active_tasks(24);
         let mut runner = GitSkippingRunner::default();
-        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
 
-        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
-            .unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live).unwrap();
 
         let list_sessions = runner
             .commands
@@ -2579,13 +2538,7 @@ mod tests {
             ..Default::default()
         };
 
-        refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &NoAgentStatusSource,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live).unwrap();
 
         assert_eq!(context.registry.list_tasks().len(), 1);
         assert!(
@@ -2606,13 +2559,9 @@ mod tests {
             ..Default::default()
         };
 
-        let changed = refresh_runtime_context_with_tier(
-            &mut context,
-            &mut runner,
-            &NoAgentStatusSource,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        let changed =
+            refresh_runtime_context_with_tier(&mut context, &mut runner, RefreshTier::Live)
+                .unwrap();
 
         assert!(changed);
         assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());

@@ -699,7 +699,7 @@ mod tests {
         let line = agent_send_keys_line(runner.commands());
         assert_eq!(
             line,
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent"
+            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp cursor-agent acp"
         );
         assert!(!line.contains("--cd"));
     }
@@ -725,7 +725,7 @@ mod tests {
         // the worktree, so the launch needs no extra arguments.
         assert_eq!(
             agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
+            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp pi-acp"
         );
     }
 
@@ -748,7 +748,7 @@ mod tests {
 
         assert_eq!(
             agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude --dangerously-skip-permissions"
+            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp claude-agent-acp"
         );
     }
 

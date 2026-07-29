@@ -25,13 +25,14 @@ this architecture document remain the durable references.
 ### `ajax-core`
 
 Owns the domain model, registry facade, lifecycle model, command planning,
-policy decisions, live-status reduction, task annotation projection, and typed output
-contracts.
+policy decisions, ACP-to-live status projection, live-status application, task
+annotation projection, and typed output contracts.
 
 ### `ajax-cli`
 
-Owns argument parsing, context loading/saving, command dispatch, human rendering,
-JSON rendering, and process execution wiring.
+Owns argument parsing, context loading/saving, command dispatch, ACP wire I/O
+and snapshot persistence, human rendering, JSON rendering, and process
+execution wiring.
 
 ### `ajax-tui`
 
@@ -121,67 +122,61 @@ Reconciliation precedence:
 - Missing-path repair ignores stale `current_branch` evidence and plans from
   expected-branch existence (`branch_exists`) instead.
 
-Agent runtime snapshots written by the Ajax launch wrapper are trusted process
-evidence for terminal exit (`done`/`failed`) and for process liveness only.
+**ACP** means Agent Client Protocol. Ajax is the ACP client. The official SDK is
+pinned to `agent-client-protocol = "=2.0.0"` with `unstable_protocol_v2`. Only
+ACP v2 is accepted: negotiation fails closed when the adapter lacks v2, with no
+ACP v1 or native-CLI fallback.
 
-Native client hooks and the launch wrapper feed a **canonical agent-event
-contract** (facts, not display statuses). Per-client adapters identify what
-happened (`TurnStarted`, `ActivityStarted`/`Finished`, `AttentionRequested`,
-`TurnSettled`, child lifecycle, heartbeat, session open/close). They do not
-choose Running / Waiting / Idle / Error. One helper (`ajax-cli __agent-event`)
-ingests stdin native JSON under wrapper identity env (or, for Cursor, a
-cwd-index entry published by `__agent-runtime` and keyed by
-`CURSOR_PROJECT_DIR` / `workspace_roots`, plus `sessionStart` session `env`
-echo-back) and appends a versioned
-event envelope; Ajax folds the log into an orthogonal per-run snapshot
-(liveness, phase, activity, blocker, outcome, open children/tools/attention)
-and projects operator status. Capability profiles mark which facts each client
-can supply (`native` / `wrapper` / `unavailable` / `unverified`); absence of an
-event must never be treated as absence of a state. Concurrent tools and
-subagents use open sets, not last-event-wins. Hooks append versioned JSONL;
-`notify.sock` is best-effort transport only — when a listener is bound it
-accepts and drains lines with bounded reads but does not yet fan out immediate
-status delivery to Cockpit. Durable operator status comes from folding the JSONL
-log on runtime refresh.
+Task launch selects one fixed PATH adapter and runs the hidden
+`ajax-cli __agent-acp` host in the existing task tmux window:
 
-Native hooks are the primary agent-status evidence. There is one structured
-source: the canonical JSONL event log folded per run. `ajax-cli`'s
-`AgentStatusSource` reads only the two files Ajax writes per task — the event
-log (`agent-events/{stem}.jsonl`) and the launch-wrapper runtime snapshot
-(`agent-runtime/{stem}.json`) — and yields reducer-ready `StatusObservation`s
-directly to core; there is no status-string round-trip, no pane-text inference,
-and no legacy `~/.cache/tmux-agent-status` or scalar `{stem}.json` reads.
-Uninstrumented sessions project no confident activity beyond prior state,
-process liveness, and confirmed wrapper exit (`done`/`failed`). When sources
-disagree, the single reducer (`agent_status::reduce_agent_status`) applies this
-precedence:
+| Ajax selection | Adapter command |
+| --- | --- |
+| Codex | `codex-acp` |
+| Claude | `claude-agent-acp` |
+| Cursor | `cursor-agent acp` |
+| Pi | `pi-acp` |
+| Other | the exact requested executable, with no inferred arguments |
 
-1. Terminal process exit or fatal runtime error (confirmed wrapper exit, 120s)
-2. Structured native lifecycle events folded from the JSONL log (attention and
-   open activities persist until cleared or session end; non-terminal phases
-   expire after a generous window; terminal outcomes persist until superseded)
-3. Process liveness (wrapper `Starting`/`Running`,
-   `PROCESS_LIVENESS_FRESH_FOR` = 30s) — informational only; never alone
-   becomes `AgentRunning`
+The host negotiates v2, starts or resumes one ACP session, owns stdio terminal
+interaction (prompt/output/cancel, permission, typed form elicitation, and
+authentication), and atomically publishes
+`cache/agent-acp/<task-stem>.json` with generation, heartbeat, session ID,
+state, stop reason/action, and safe compact detail. It heartbeats while idle so
+freshness stays meaningful without fabricating activity.
 
-Liveness is supplied separately from observations and is never activity: a fresh
-heartbeat rules out `Unknown` (the process demonstrably exists, so the task is
-at rest) but can only ever project `Idle`. Refresh stamps
-`ui_state::AGENT_PROCESS_ALIVE_KEY` while the heartbeat is inside its window and
-removes it once stale, which keeps `derive_operator_status` a pure projection
-with no notion of "now". Confirmed wrapper exit is a terminal fallback where
-native evidence is absent: `Starting`/`Running` yield only liveness, never
-activity, and an `Exited*` observation can only exist once the supervised
-process has actually ended. Missing substrate stays authoritative over activity
-candidates. Ambiguous or contradictory fresh evidence projects `Unknown`. Parent
-and delegated runs are aggregated as a run graph: a parent is not fully complete
-while non-detached descendants remain active. Because every run appends to the
-one per-task log, `AgentStatusSource` groups envelopes by `run_id` before
-folding and emits one observation per run — a child's events never move the
-parent's phase. Malformed values never participate.
+CLI adapters read only well-formed, fresh, schema- and task-matching ACP
+snapshots and pass a concrete task-ID map of timestamped observations into core
+runtime refresh. Generation prevents an older publisher from overwriting a
+newer claim; it is not a reader freshness filter. Malformed, stale,
+task-mismatched, and legacy files cannot fabricate status. Core
+`project_acp_status` is the sole ACP-to-Ajax mapping into existing
+`LiveObservation` / `LiveStatusKind`; there is no public schema expansion.
+Mapping:
 
-See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
-client mapping matrix, and migration phases.
+- connecting / running → `AgentRunning`
+- permission → `WaitingForApproval`
+- elicitation / input → `WaitingForInput`
+- `idle` / `end_turn` → `Done` (response ready)
+- `idle` / `cancelled` → `ShellIdle`
+- token / turn limits → `ContextLimit`
+- refusal → `Blocked`
+- authentication → `AuthRequired`
+- protocol / transport / child-exit failure → `CommandFailed`
+- unknown extensible values → `Unknown`
+
+State/kind owns the canonical headline and structural actionability; a
+non-empty safe detail enhances the existing explanation field only. A failed
+tool is detail while the foreground session remains running. Background or
+detail-only updates do not fabricate activity or notification. Ordinary
+terminal output, captured pane text, and prompt wording are never agent-status
+or lifecycle authority.
+
+Migration: existing on-disk `agent-events` and `agent-runtime` files or
+installed client hooks are left untouched; **Ajax** never reads or invokes
+them. External clients may still encounter their untouched configuration. The
+retired `agent-hooks`, `__agent-event`, and `__agent-runtime` commands are
+unavailable.
 
 ## Task Operations
 
@@ -333,11 +328,14 @@ substrate are pruned as ghosts.
 Lifecycle state is modeled in `ajax-core::lifecycle`. Lifecycle answers where
 the task is in the operator workflow; it does not encode transient agent
 attention. Task operations and trusted process terminal events request
-lifecycle transitions through the lifecycle boundary. Ordinary pane text,
-hooks, prompts, blockers, probe failures, and missing-resource observations
-update runtime evidence and attention without changing lifecycle. A trusted
-wrapper completion may move an active task to `Reviewable`; waiting or blocked
-runtime evidence leaves it `Active`.
+lifecycle transitions through the lifecycle boundary. Ordinary terminal output,
+captured pane text, and prompt wording update neither agent status nor
+lifecycle. ACP observations, probe failures, and missing-resource observations
+may update runtime evidence and attention without directly becoming durable
+lifecycle truth. Trusted ACP completion evidence may move an active task to
+`Reviewable`; waiting or blocked runtime evidence leaves it `Active`. ACP
+`idle`/`end_turn` means response-ready; it does not itself mean the durable
+task is completed.
 
 Annotations are task properties derived from lifecycle state, live status, side
 flags, and substrate evidence. Operator actions are projected from those
@@ -378,13 +376,14 @@ fields.
 
 Runtime refresh lives in `runtime_refresh`. It probes Git and tmux, reconciles
 runtime evidence, refreshes cached annotations, and recovers missing task
-records from observed Ajax worktrees. Core also accepts a small external
-agent-status cache port; adapters merge hook-backed status files with Ajax agent
-runtime snapshots, attach source/time/freshness metadata, and core reduces the
-newest fresh value into a live observation. Probe command failure preserves the
-last known substrate value and records an explicit observation error; it never
-pretends that a resource was observed missing. Cockpit invokes runtime refresh
-through the CLI adapter but does not own the refresh algorithm.
+records from observed Ajax worktrees. Core accepts a concrete task-ID map of
+timestamped ACP observations and applies `project_acp_status` as authoritative
+runtime evidence through the existing live-application path. CLI and Web
+backends alone read per-task `cache/agent-acp/<task-stem>.json` snapshots;
+core does not read the filesystem for agent status. Probe command failure
+preserves the last known substrate value and records an explicit observation
+error; it never pretends that a resource was observed missing. Cockpit invokes
+runtime refresh through the CLI adapter but does not own the refresh algorithm.
 
 #### Runtime refresh and registry persistence
 
@@ -396,8 +395,10 @@ rules:
 - **SQLite persistence** — stores durable operator intent. Active tasks with
   credible git worktree evidence persist even when tmux/ task window substrate is
   missing so Cockpit can offer drop/retry without recreate loops.
-- **Substrate observation** — git/tmux/pane probes update flags and live status
-  on existing rows; they must not fight persistence or silently duplicate tasks.
+- **Substrate observation** — Git/tmux probes update substrate evidence and
+  flags on existing rows; the ACP observation map updates agent live status.
+  Pane text is not a fallback status source. Substrate probes must not fight
+  persistence or silently duplicate tasks.
 
 Orphan worktree discovery runs only when a refresh gate fires: provisioning or
 stale runtime projections, or tmux lists an `ajax-{repo}-{handle}` session that
@@ -427,40 +428,36 @@ one episode; a class change (Waiting→Error) re-fires.
 
 ### Live Status
 
-`agent_status` is the single agent reducer: it maps observations (source,
-freshness, confidence, `run_id` / `parent_run_id`, and parent-phase
-aggregation) onto one `LiveObservation`. Runtime refresh feeds it the folded
-native `RunSnapshot` observations (via `observations_from_run_snapshot`) plus
-the confirmed wrapper exit / liveness, and applies the result directly — the
-prior string-candidate arbitration reducer is gone. `LiveStatusKind` remains
-the presentation projection. `live.rs` keeps only `reduce_live_observation`
-(supervisor/application status folding) and the `apply_*` writers.
+`acp_status::project_acp_status` is the sole ACP-to-Ajax projector: it maps an
+ACP session state, optional stop reason/action, and safe detail onto one
+`LiveObservation`. Runtime refresh applies that observation through the trusted
+live-application path. `LiveStatusKind` remains the presentation projection.
+`live.rs` keeps `reduce_live_observation` (supervisor/application status
+folding) and the `apply_*` writers.
 
-`live.rs` (`application` submodule) applies reduced observations to task state, agent status,
-side flags, activity timestamps, visible live status, and the live evidence's
-own durable `observed_at` timestamp. The application path
-separates ordinary observations from trusted wrapper/supervisor observations so
-only the trusted path may advance lifecycle on process start or successful
-completion. Confirmed stop or missing runtime records `Dead`. Uninstrumented
-sessions without hook or lifecycle evidence preserve prior credible state;
-process liveness alone never fabricates `AgentRunning`.
+`live.rs` (`application` submodule) applies observations to task state, agent
+status, side flags, activity timestamps, visible live status, and the live
+evidence's own durable `observed_at` timestamp. The application path separates
+ordinary observations from trusted ACP/supervisor observations so only the
+trusted path may advance lifecycle on process start or successful completion.
+Absent ACP evidence is ignored and preserves prior credible state; heartbeat
+freshness is not standalone activity and never fabricates `AgentRunning`.
 
-Trusted wrapper/hook evidence applies immediately. Trusted wrapper completion
-advances lifecycle to `Reviewable` only when the run-graph aggregation reports
-the parent as fully completed (no active non-detached descendants).
+Trusted ACP evidence applies immediately. Trusted completion
+(`idle`/`end_turn` → `Done`) may advance lifecycle to `Reviewable` through that
+existing trusted path; it remains response-ready evidence, not durable task
+completion.
 
 Attention webhooks (`attention::take_attention_transition`) fire on actionable
 Waiting and Error operator status after a shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) that applies to all actionable attention — a
-Waiting→Error flap mid-dwell does not restart the clock. Actionable Waiting is allowlisted to structured
-wait/ask explanations only (`Waiting for input`, `Waiting for approval` from
-Claude `Notification`, Codex `PermissionRequest`, and legacy provider hook files
-that write `wait`/`ask`). Cursor and Pi have no native wait/ask hook today —
-they still notify on Error-class evidence (CI/wrapper/substrate). Auth required,
-context waits, lifecycle review, rate limits, response-ready settle, and parent
-phases that wait on delegated children remain visible as Waiting but do not
-phone-ping. Ordinary user waits and approvals still notify once the dwell
-confirms sustained attention.
+Waiting→Error flap mid-dwell does not restart the clock. Within ACP-projected
+evidence, only permission/input Waiting and execution-failure Error evidence is
+actionable. Authentication, rate/context limits, `Done` / response-ready,
+lifecycle review, delegated-child waits, and detail-only churn remain visible
+but silent. CI-failure and merge-conflict Error evidence remain actionable as
+documented below. Episode identity remains status-class based (`Waiting` /
+`Error`).
 
 Opening a task persists an attention acknowledgment without changing lifecycle
 or deleting evidence. `live::acknowledge_attention` is agent-neutral:
@@ -483,21 +480,20 @@ Agent-deck inspired this status model, but Ajax retains its own lifecycle,
 substrate, task-operation, and operator-projection boundaries.
 
 `ui_state::derive_operator_status` is the single operator-facing projector over
-lifecycle, expected runtime substrate, GitHub status, the native hook-derived
+lifecycle, expected runtime substrate, GitHub status, the ACP-projected live
 phase, and acknowledgment. It emits `Running`, `Waiting`, `Idle`, `Error`, or
 `Unknown`, plus an optional explanation. Precedence: `TeardownIncomplete` is
 always `Error`; terminal/cleanup lifecycle decides whether substrate is still
 expected, so a missing tmux session, task window, worktree, or branch is
 `Error` only while the lifecycle expects those resources; relevant GitHub
 failure or conflict is `Error` and pending checks are `Running` ("CI running"),
-while passing checks clear the override and reveal the native phase; otherwise
-the native phase applies, with confirmed wrapper exit as a terminal fallback;
-and a task no source can prove is `Unknown`. The GitHub override yields to an
-unacknowledged approval/input gate: a `Running` projection cannot raise
-attention, so CI must not mask the operator's only actionable signal. GitHub CI
-evidence is also dropped once its probe retires (terminal lifecycle, no branch,
-missing worktree) or becomes unobservable, so it never outlives what produced
-it. Cleanup/terminal lifecycles
+while passing checks clear the override and reveal the ACP-projected phase;
+otherwise that phase applies; and a task no source can prove is `Unknown`. The
+GitHub override yields to an unacknowledged approval/input gate: a `Running`
+projection cannot raise attention, so CI must not mask the operator's only
+actionable signal. GitHub CI evidence is also dropped once its probe retires
+(terminal lifecycle, no branch, missing worktree) or becomes unobservable, so
+it never outlives what produced it. Cleanup/terminal lifecycles
 (`Merged`, `Cleanable`, `Removing`, hidden `Removed`) stay idle unless current
 error or running evidence overrides them.
 
@@ -553,7 +549,8 @@ task-operation commands or separate operator domains.
 - `adapters/process.rs` executes subprocesses.
 - `adapters/git.rs` builds and parses Git commands.
 - `adapters/tmux.rs` builds and parses tmux commands.
-- `adapters/agent.rs` builds and parses agent commands.
+- `adapters/agent.rs` builds fixed ACP adapter launch specs and related agent
+  command helpers.
 - `adapters/environment.rs` probes operator environment facts.
 
 ## Supervisor Architecture
@@ -590,15 +587,13 @@ task-operation commands or separate operator domains.
   process from a resolved CLI context. Process launching is orchestration only;
   the launcher passes explicit runtime context to `ajax-web` and must not
   reinterpret task state or duplicate web server internals.
-- `agent_status_cache` implements core's `AgentStatusSource`: it reads the
-  canonical JSONL event log and the launch-wrapper runtime snapshot and yields
-  reducer-ready `StatusObservation`s; core owns authority reduction. It performs
-  no legacy `tmux-agent-status`, pane, or scalar-snapshot reads.
-- `agent_runtime` owns the hidden `__agent-runtime` launch wrapper. Normal task
-  start commands run the selected agent through this wrapper, which preserves
-  inherited terminal I/O while atomically writing the latest starting/running/
-  exited snapshot and appending runtime history under the selected runtime
-  cache directory.
+- `agent_acp` owns the hidden `__agent-acp` host: ACP v2 negotiation, session
+  lifecycle, update folding, permission/form/auth boundary, and cancellation.
+- `agent_acp_console` owns terminal-first prompt/output/cancel interaction on
+  the existing task tmux stdio transport.
+- `agent_acp_snapshot` owns the atomic per-task `cache/agent-acp/<task-stem>.json`
+  snapshot, heartbeat, generation/session identity, freshness filtering, and
+  collection of observations for CLI/Web refresh.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q and Ctrl-T without installing
@@ -616,7 +611,10 @@ vocabulary remains operator-facing.
 over the same Cockpit projection and task-operation contracts used by Native
 Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
-interpretation, substrate evidence, operation outcomes, or action policy.
+interpretation, substrate evidence, operation outcomes, or action policy. The
+browser does not read ACP snapshots, negotiate ACP, or derive agent status; it
+presents core task projections and streams/attaches to the existing task tmux
+terminal.
 
 Web Cockpit is a first-class browser operator surface that is dashboard-first,
 with an authenticated raw xterm.js/tmux terminal bridge for existing Ajax task tmux
@@ -729,26 +727,23 @@ notify adapter (`[notify]` config) is the supported notification channel; the
 web runtime only hosts its background poll.
 
 The notify adapter fires once per actionable episode and only for statuses
-the operator can act on. Actionable Waiting is allowlisted to `Waiting for
-input` / `Waiting for approval` (structured hooks/lifecycle events); all other
-Waiting explanations stay inbox-visible but silent. `Error`-class evidence
-(CI failed, merge conflict, command failed, blocked, runtime probe failure)
-each fire a single webhook after the same shared 15-second confirmation dwell
-(`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient `Rate limited` Waiting,
-lifecycle-only "Ready for review", turn-settled "Response ready" (`Done` from
-Cursor `stop` / Claude·Codex·Pi settle), and auth/context waits do **not**
-phone-ping — Cursor has no native wait/ask, so settle must not look like
-actionable attention. Episode dedup is status-class only; the webhook body still
-includes the agent client and explanation
-(`repo/handle: Waiting (codex) — …`). Delivery stays on CLI/cockpit refresh
-and the web background tick — hooks only write event files and must stay
-instant. Returning to `Running`/`Idle` arms the next episode only after a
-quiet window (`EPISODE_CLEAR_DWELL`, 30s) of sustained clear evidence, so a
-turn boundary inside one episode delivers one ping. Opening a task records
-an attention acknowledgment that silences the current episode (the next
-actionable evidence re-arms), preventing re-fires while the operator is
-already looking. There is no fixed re-arm cooldown — only the quiet-clear
-gate plus the acknowledge-suppress path.
+the operator can act on. Actionable Waiting is allowlisted to permission/input
+(`Waiting for approval` / `Waiting for input`); all other Waiting explanations
+stay inbox-visible but silent. `Error`-class evidence (CI failed, merge
+conflict, command failed, blocked, runtime probe failure) each fire a single
+webhook after the same shared 15-second confirmation dwell
+(`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient
+`Rate limited` Waiting, lifecycle-only "Ready for review", turn-settled
+"Response ready" (`Done`), and auth/context waits do **not** phone-ping.
+Episode dedup is status-class only; the webhook body still includes the agent
+client and explanation (`repo/handle: Waiting (codex) — …`). Delivery stays on
+CLI/cockpit refresh and the web background tick. Returning to `Running`/`Idle`
+arms the next episode only after a quiet window (`EPISODE_CLEAR_DWELL`, 30s) of
+sustained clear evidence, so a turn boundary inside one episode delivers one
+ping. Opening a task records an attention acknowledgment that silences the
+current episode (the next actionable evidence re-arms), preventing re-fires
+while the operator is already looking. There is no fixed re-arm cooldown —
+only the quiet-clear gate plus the acknowledge-suppress path.
 
 Browser validation should check local-only shell assets, stable/dev port
 separation, clear browser error states for failed live requests or unsupported
@@ -932,10 +927,9 @@ runtime concurrency tests.
 uses `RefreshTier::Live`, which skips default orphan git discovery when runtime
 projections are fresh. `RefreshTier::Full` remains available for explicit
 recovery and maintenance. Agent status is hydrated once per refresh from the
-`AgentStatusSource` (canonical JSONL fold plus wrapper snapshot). Registered
-tmux sessions are matched by exact expected
-session names, not `ajax-{repo}-{handle}` parsing, so hyphenated repo names do
-not trigger false orphan discovery.
+collected ACP snapshot observation map. Registered tmux sessions are matched by
+exact expected session names, not `ajax-{repo}-{handle}` parsing, so hyphenated
+repo names do not trigger false orphan discovery.
 
 External command specs for refresh, status, and pane probes carry bounded
 timeouts in `ajax-core::adapters`. `CountingCommandRunner` provides reusable
