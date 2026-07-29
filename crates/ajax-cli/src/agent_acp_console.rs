@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 
-use agent_client_protocol::schema::v2;
+use agent_client_protocol::schema::{v1, v2};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -50,6 +50,45 @@ impl<W: Write> AgentAcpConsole<W> {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    pub fn render_update_v1(&mut self, update: &v1::SessionUpdate) -> Result<(), CliError> {
+        match update {
+            v1::SessionUpdate::AgentMessageChunk(chunk) => {
+                if let v1::ContentBlock::Text(text) = &chunk.content {
+                    self.output
+                        .write_all(text.text.as_bytes())
+                        .map_err(console_output_error)?;
+                    self.output.flush().map_err(console_output_error)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn render_permission_prompt_v1(
+        &mut self,
+        request: &v1::RequestPermissionRequest,
+    ) -> Result<(), CliError> {
+        let title = request
+            .tool_call
+            .fields
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .unwrap_or("Permission required");
+        self.output
+            .write_all(title.as_bytes())
+            .map_err(console_output_error)?;
+        self.output.write_all(b"\n").map_err(console_output_error)?;
+        for (index, option) in request.options.iter().enumerate() {
+            self.output
+                .write_all(format!("{}. {}\n", index + 1, option.name).as_bytes())
+                .map_err(console_output_error)?;
+        }
+        self.output.flush().map_err(console_output_error)?;
         Ok(())
     }
 
