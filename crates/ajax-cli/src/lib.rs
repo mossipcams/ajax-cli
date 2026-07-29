@@ -1,6 +1,7 @@
 mod agent_acp;
 mod agent_acp_console;
 mod agent_acp_snapshot;
+mod agent_acp_view;
 mod cli;
 mod cockpit_actions;
 mod cockpit_backend;

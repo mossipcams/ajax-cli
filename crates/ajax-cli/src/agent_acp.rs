@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -17,7 +16,7 @@ use ajax_core::acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation
 use clap::ArgMatches;
 
 use crate::{
-    agent_acp_console::{AgentAcpConsole, ConsoleEvent},
+    agent_acp_console::{provider_label_from_program, AgentAcpConsole, ConsoleEvent},
     agent_acp_snapshot::{read_snapshot, AcpSnapshotPublisher, HEARTBEAT_INTERVAL_MILLIS},
     CliError,
 };
@@ -278,7 +277,8 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
     })?;
 
     runtime.block_on(async move {
-        let console = AgentAcpConsole::spawn_stdio();
+        let provider = provider_label_from_program(&program);
+        let console = AgentAcpConsole::spawn_stdio(provider);
         let agent = AcpAgent::new(AcpAgentConfig::new(&program).args(adapter_args));
         run_session_lifecycle_dispatch(
             acp_v2_enabled_from_env(),
@@ -301,16 +301,15 @@ fn acp_v2_enabled_from_env() -> bool {
     acp_v2_flag_enabled(std::env::var("AJAX_ACP_V2").ok().as_deref())
 }
 
-async fn run_session_lifecycle_dispatch<W, A>(
+async fn run_session_lifecycle_dispatch<A>(
     use_v2: bool,
     agent: A,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    console: AgentAcpConsole<W>,
+    console: AgentAcpConsole,
 ) -> Result<(), CliError>
 where
-    W: Write + Send + 'static,
     A: ConnectTo<Client> + 'static,
 {
     if use_v2 {
@@ -332,15 +331,14 @@ async fn negotiate_v2(agent: impl ConnectTo<Client>) -> Result<(), CliError> {
 }
 
 #[cfg(test)]
-pub(crate) async fn run_session_lifecycle<W, A>(
+pub(crate) async fn run_session_lifecycle<A>(
     agent: A,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    console: AgentAcpConsole<W>,
+    console: AgentAcpConsole,
 ) -> Result<(), CliError>
 where
-    W: Write + Send + 'static,
     A: ConnectTo<Client> + 'static,
 {
     // Existing lifecycle tests exercise the v2 host path explicitly.
@@ -369,12 +367,12 @@ async fn initialize_v2(
     Ok(response.auth_methods)
 }
 
-pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
+pub(crate) async fn run_session_lifecycle_v2(
     agent: impl ConnectTo<Client>,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    mut console: AgentAcpConsole<W>,
+    mut console: AgentAcpConsole,
 ) -> Result<(), CliError> {
     let now = unix_millis();
     let cached_session_id =
@@ -541,6 +539,9 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
             fold.set_state(AcpSessionState::Running);
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
+            }
+            if let Err(error) = console.set_session_id(&session_id) {
+                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
             }
             if let Err(error) = console.render_ready_prompt() {
                 return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
@@ -729,10 +730,19 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                                 }
                             }
                         }
+                        let should_reprompt = matches!(
+                            &event,
+                            ConsoleEvent::PromptLine(_) | ConsoleEvent::Interrupt
+                        );
                         if let Err(error) =
                             handle_console_event(&connection, &session_id, event, &host_fail_tx)
                         {
                             return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                        }
+                        if should_reprompt {
+                            if let Err(error) = console.render_input_prompt() {
+                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
+                            }
                         }
                     }
                     Some(detail) = host_fail_rx.recv() => {
@@ -1018,12 +1028,12 @@ async fn handle_console_event_v1(
     Ok(())
 }
 
-pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
+pub(crate) async fn run_session_lifecycle_v1(
     agent: impl ConnectTo<Client>,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    mut console: AgentAcpConsole<W>,
+    mut console: AgentAcpConsole,
 ) -> Result<(), CliError> {
     let now = unix_millis();
     let cached_session_id =
@@ -1165,6 +1175,9 @@ pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
             fold.set_state(AcpSessionState::Running);
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
+            }
+            if let Err(error) = console.set_session_id(&session_id) {
+                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
             }
             if let Err(error) = console.render_ready_prompt() {
                 return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
@@ -2791,6 +2804,7 @@ mod tests {
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (console, _output) = AgentAcpConsole::new_for_test(events_rx, "Agent");
 
         let lifecycle = tokio::spawn(async move {
             run_session_lifecycle_dispatch(
@@ -2799,7 +2813,7 @@ mod tests {
                 task_id,
                 &lifecycle_root,
                 &lifecycle_cwd,
-                AgentAcpConsole::new(events_rx, std::io::sink()),
+                console,
             )
             .await
         });

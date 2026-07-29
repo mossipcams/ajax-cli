@@ -154,9 +154,10 @@ routes through `__agent-acp`.
 | Other | the exact requested executable |
 
 Ownership: Ajax owns ACP transport (stdio JSON-RPC to the provider adapter),
-terminal presentation (ready prompt, streamed chunks, tool-activity lines,
-permission/auth/elicitation prompts, cancel, re-prompt after idle), and ACP
-status snapshots. Provider adapters own agent logic, tools, auth, indexing,
+Ratatui coding-agent transcript presentation in the task pane (Toad visual
+model: sticky header, continuous transcript, compact tool rows, inline
+permissions, sticky prompt — not line-only banner chrome or provider TUI
+pass-through), and ACP status snapshots. Provider adapters own agent logic, tools, auth, indexing,
 models, and execution. Ajax does not silently swap to native when ACP host or
 adapter startup fails.
 
@@ -612,8 +613,9 @@ task-operation commands or separate operator domains.
   reinterpret task state or duplicate web server internals.
 - `agent_acp` owns the hidden `__agent-acp` host: ACP v1 by default (v2 via `AJAX_ACP_V2`), session
   lifecycle, update folding, permission/form/auth boundary, and cancellation.
-- `agent_acp_console` owns terminal-first prompt/output/cancel interaction on
-  the existing task tmux stdio transport.
+- `agent_acp_console` owns Ratatui coding-agent transcript presentation on
+  the existing task tmux stdio transport (header, transcript, tool rows,
+  inline permissions, sticky prompt).
 - `agent_acp_snapshot` owns the atomic per-task `cache/agent-acp/<task-stem>.json`
   snapshot, heartbeat, generation/session identity, freshness filtering, and
   collection of observations for CLI/Web refresh.
