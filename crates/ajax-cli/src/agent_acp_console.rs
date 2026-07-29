@@ -54,16 +54,13 @@ impl<W: Write> AgentAcpConsole<W> {
     }
 
     pub fn render_update_v1(&mut self, update: &v1::SessionUpdate) -> Result<(), CliError> {
-        match update {
-            v1::SessionUpdate::AgentMessageChunk(chunk) => {
-                if let v1::ContentBlock::Text(text) = &chunk.content {
-                    self.output
-                        .write_all(text.text.as_bytes())
-                        .map_err(console_output_error)?;
-                    self.output.flush().map_err(console_output_error)?;
-                }
+        if let v1::SessionUpdate::AgentMessageChunk(chunk) = update {
+            if let v1::ContentBlock::Text(text) = &chunk.content {
+                self.output
+                    .write_all(text.text.as_bytes())
+                    .map_err(console_output_error)?;
+                self.output.flush().map_err(console_output_error)?;
             }
-            _ => {}
         }
         Ok(())
     }

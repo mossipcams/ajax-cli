@@ -267,7 +267,6 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
     let task_id = task_id.to_string();
     let program = program.clone();
     let adapter_args = adapter_args.clone();
-    let state_root = state_root;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
