@@ -34,6 +34,7 @@ pub struct BrowserTaskCard {
     pub title: String,
     pub status: ajax_core::ui_state::TaskStatus,
     pub status_explanation: Option<String>,
+    pub attention: ajax_core::ui_state::AttentionBand,
     pub last_activity_unix_secs: u64,
     pub actions: Vec<WebAction>,
 }
@@ -74,6 +75,7 @@ fn browser_task_card<R: Registry>(context: &CommandContext<R>, card: &TaskCard) 
         title: card.title.clone(),
         status: card.status,
         status_explanation: card.status_explanation.clone(),
+        attention: card.attention,
         last_activity_unix_secs: unix_secs(card.last_activity_at),
         actions: browser_actions(context, card),
     }
@@ -502,6 +504,7 @@ pub(crate) mod tests {
                 OperatorAction::Ship,
             ],
             remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::Review,
         };
 
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -545,6 +548,7 @@ pub(crate) mod tests {
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
             remediations: ajax_core::remediation::remediations_for_task(&source),
+            attention: ajax_core::ui_state::AttentionBand::NeedsYou,
         };
 
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -578,6 +582,7 @@ pub(crate) mod tests {
                 OperatorAction::Drop,
             ],
             remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::Review,
         };
 
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -620,6 +625,7 @@ pub(crate) mod tests {
             primary_action: OperatorAction::Review,
             available_actions: vec![OperatorAction::Review],
             remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::Review,
         };
 
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -674,6 +680,22 @@ pub(crate) mod tests {
                 "WebAction must not expose a `status` field"
             );
         }
+    }
+
+    #[test]
+    fn browser_cockpit_json_carries_attention_band() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = crate::test_support::fix_login_task();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+
+        assert!(
+            json.contains("\"attention\":\"review\""),
+            "expected review band in cockpit json: {json}"
+        );
     }
 
     #[test]

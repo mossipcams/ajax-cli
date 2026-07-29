@@ -166,6 +166,7 @@ mod tests {
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume, OperatorAction::Review],
             remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::Active,
         };
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
@@ -192,6 +193,7 @@ mod tests {
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
             remediations: ajax_core::remediation::remediations_for_task(&blocked_ci_task()),
+            attention: ajax_core::ui_state::AttentionBand::NeedsYou,
         };
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 

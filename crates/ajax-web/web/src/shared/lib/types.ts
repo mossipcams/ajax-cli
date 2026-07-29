@@ -7,6 +7,9 @@ import type { ApiError } from "./api";
 /** Canonical task status owned by Rust (`TaskStatus` serde lowercase). */
 export type TaskStatus = "running" | "waiting" | "idle" | "error" | "unknown";
 
+/** Which of the operator's questions this task answers. Owned by Rust. */
+export type AttentionBand = "needs-you" | "review" | "active" | "idle";
+
 /** Connection display states surfaced in the UI. */
 export type ConnectionState =
   | "connected"
@@ -64,6 +67,7 @@ export interface BrowserTaskCard {
   repo: string;
   title: string;
   status: TaskStatus;
+  attention: AttentionBand;
   status_explanation?: string | null;
   last_activity_unix_secs: number;
   actions: WebAction[];

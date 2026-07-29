@@ -7,7 +7,7 @@ use crate::{
     },
     recommended::{available_operator_actions, evidence_label, operator_action},
     remediation::remediations_for_task,
-    ui_state::derive_operator_status,
+    ui_state::{attention_band, derive_operator_status},
 };
 
 pub(super) fn cockpit_summary(
@@ -101,6 +101,7 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
         primary_action: plan.action,
         available_actions: plan.available_actions,
         remediations: remediations_for_task(task),
+        attention: attention_band(&operator_status, task.lifecycle_status),
     }
 }
 

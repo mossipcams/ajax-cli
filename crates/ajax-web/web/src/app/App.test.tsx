@@ -84,6 +84,62 @@ describe("App shell", () => {
     vi.unstubAllGlobals();
   });
 
+  it("header_states_what_needs_the_operator", async () => {
+    const needsYouCockpit = {
+      ...cockpit,
+      cards: [
+        { ...cockpit.cards[0], attention: "needs-you" },
+        { ...cockpit.cards[0], id: "web/b", qualified_handle: "web/b", attention: "needs-you" },
+      ],
+    };
+    const reviewCockpit = {
+      ...cockpit,
+      cards: [{ ...cockpit.cards[0], attention: "review" }],
+    };
+    const clearCockpit = {
+      ...cockpit,
+      cards: [{ ...cockpit.cards[0], attention: "active" }],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(needsYouCockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    const statusLine = () => screen.getByText((_, el) => el?.classList.contains("status-line") ?? false);
+    await waitFor(() => expect(statusLine()).toHaveTextContent("2 need you"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(reviewCockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(statusLine()).toHaveTextContent("1 ready to review"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(clearCockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(statusLine()).toHaveTextContent("All clear"));
+  });
+
   it("renders the shared chrome", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "Ajax" })).toBeInTheDocument();

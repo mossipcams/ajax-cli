@@ -61,6 +61,7 @@ fn sample_card(
         primary_action: OperatorAction::Resume,
         available_actions: vec![OperatorAction::Resume],
         remediations: Vec::new(),
+        attention: ajax_core::ui_state::AttentionBand::Idle,
     }
 }
 

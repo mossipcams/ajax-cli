@@ -1148,26 +1148,66 @@ header .bar h1 {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   width: 100%;
   min-height: 48px;
   padding: 10px var(--space-4);
   background: var(--paper-tint);
-  border: none;
   color: var(--ink);
-  text-align: left;
   transition: background 120ms var(--ease), transform 220ms var(--ease);
   touch-action: pan-y;
 }
 
-.task-row:hover,
-.task-row:focus-visible {
-  background: var(--paper-raised);
+.task-row-tap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-row-control {
+  flex: none;
+}
+
+.row-control {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 16px;
+  min-height: 44px;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.row-control:hover,
+.row-control:focus-visible {
+  border-color: var(--ink-muted);
   outline: none;
+}
+
+.task-row:hover,
+.task-row:focus-within {
+  background: var(--paper-raised);
 }
 
 .task-row:active {
   background: var(--paper-high);
+}
+
+.task-row-tap:hover,
+.task-row-tap:focus-visible {
+  outline: none;
 }
 
 .task-row-main {

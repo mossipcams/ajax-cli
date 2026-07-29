@@ -786,7 +786,20 @@ Owns the browser Cockpit read experience. It builds browser DTOs from the core
 Cockpit projection and preserves the same task/action meaning as Native
 Cockpit. Cards and details share one status contract (`status`,
 `status_explanation`) and one ordered `actions` collection containing only
-browser-executable action metadata. Unsupported actions, legacy UI states, and
+browser-executable action metadata.
+
+Cards additionally carry `attention`, the operator attention band
+(`needs-you`, `review`, `active`, `idle`) derived by
+`ajax_core::ui_state::attention_band` from the operator status and lifecycle.
+It answers which of the operator's questions a task belongs to — what needs
+input, what is ready to review, what is merely active — and is the sole
+grouping key for the browser dashboard. Its precedence mirrors
+`derive_task_status`: an actionable attention gate is classified before the
+lifecycle review boundary, and the band reads lifecycle directly so a task
+whose review boundary has been acknowledged stays in `review` rather than
+falling through to `idle`. Because grouping is headline status, the browser
+must render this field and must never re-derive it from `status`,
+`status_explanation`, or any lifecycle value. Unsupported actions, legacy UI states, and
 action support-state records are absent. Raw live, lifecycle, pane, and runtime
 values may remain detail diagnostics, but browser JavaScript must not derive or
 override headline status from them. The browser may style the first returned
