@@ -190,8 +190,9 @@ pub fn build_isolated_attach_plan_for_client(
 }
 
 /// Stable 12 lowercase-hex token for a browser client id. Empty / whitespace-
-/// only ids fall back to [`random_session_token`] so callers that have no client
-/// id stay unique per call rather than all collapsing onto one shared session.
+/// only ids fall back to a fresh random 12-hex token so callers that have no
+/// client id stay unique per call rather than all collapsing onto one shared
+/// session.
 pub fn ephemeral_client_token(client_id: &str) -> String {
     let trimmed = client_id.trim();
     if trimmed.is_empty() {
