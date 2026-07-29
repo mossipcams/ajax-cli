@@ -371,15 +371,16 @@ mod tests {
         let mut running = task("running");
         mark_active(&mut running).unwrap();
         running.live_status = Some(LiveObservation::new(
-            LiveStatusKind::TestsRunning,
-            "tests running",
+            LiveStatusKind::AgentRunning,
+            "tool Read · plan 2/5 · 45% context",
         ));
 
         let running_card = task_card(&running);
 
+        assert_eq!(running_card.status, crate::ui_state::TaskStatus::Running);
         assert_eq!(
             running_card.status_explanation.as_deref(),
-            Some("Running tests")
+            Some("tool Read · plan 2/5 · 45% context")
         );
     }
 
@@ -389,7 +390,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
-            "raw approval summary",
+            "Allow edit src/main.rs? Allow · Deny",
         ));
 
         let card = task_card(&task);
@@ -397,7 +398,7 @@ mod tests {
         assert_eq!(card.status, crate::ui_state::TaskStatus::Waiting);
         assert_eq!(
             card.status_explanation.as_deref(),
-            Some("Waiting for approval")
+            Some("Allow edit src/main.rs? Allow · Deny")
         );
     }
 

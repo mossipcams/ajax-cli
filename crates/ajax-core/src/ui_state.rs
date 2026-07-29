@@ -165,8 +165,8 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     // 5. Relevant GitHub failure/conflict (and other error-class live status)
     //    overrides the native agent phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
-        if let Some(explanation) = canonical_error_explanation(live.kind) {
-            return err(explanation);
+        if let Some(fallback) = canonical_error_explanation(live.kind) {
+            return err(live_detail_or(&live.summary, fallback));
         }
     }
     if task.has_side_flag(SideFlag::TestsFailed) {
@@ -186,8 +186,8 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     //      phase. Passing CI is not represented here — it clears the override
     //      and reveals the native phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
-        if let Some(explanation) = canonical_running_explanation(live.kind) {
-            return run(explanation);
+        if let Some(fallback) = canonical_running_explanation(live.kind) {
+            return run(live_detail_or(&live.summary, fallback));
         }
     }
     if task.agent_status == AgentRuntimeStatus::Running
@@ -206,12 +206,12 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     if !live_acknowledged {
         if let Some(live) = task.live_status.as_ref() {
             // Delegated waiting is on children, not the operator — soft.
-            if let Some(explanation) =
-                crate::agent_status::operator_explanation_for_summary(&live.summary)
+            if let Some(explanation) = crate::live::operator_explanation_for_summary(&live.summary)
             {
                 return soft(explanation);
             }
-            if let Some((explanation, actionable)) = canonical_waiting_explanation(live.kind) {
+            if let Some((fallback, actionable)) = canonical_waiting_explanation(live.kind) {
+                let explanation = live_detail_or(&live.summary, fallback);
                 return if actionable {
                     ping(explanation)
                 } else {
@@ -257,30 +257,13 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     idle()
 }
 
-/// Metadata key stamped by runtime refresh while the launch wrapper reports a
-/// fresh live process. This is precedence tier 3: it proves the process exists
-/// and never asserts activity, so it can rule out `Unknown` but never produce
-/// `Running`.
-pub const AGENT_PROCESS_ALIVE_KEY: &str = "agent_process_alive_at";
-
-/// True when refresh last saw a fresh launch-wrapper heartbeat for this task.
-///
-/// Presence alone is the signal: refresh writes the key only while the
-/// heartbeat is inside `agent_status::PROCESS_LIVENESS_FRESH_FOR` and removes
-/// it otherwise, which keeps this projection free of any notion of "now".
-pub fn agent_process_is_alive(task: &Task) -> bool {
-    task.metadata.contains_key(AGENT_PROCESS_ALIVE_KEY)
-}
-
 /// True when a task carries no agent-status evidence of any kind: no live
-/// status, an unstarted agent, no running/waiting side flags, and no confirmed
-/// live process.
+/// status, an unstarted agent, and no running/waiting side flags.
 fn has_no_status_evidence(task: &Task) -> bool {
     task.live_status.is_none()
         && task.agent_status == AgentRuntimeStatus::NotStarted
         && !task.has_side_flag(SideFlag::AgentRunning)
         && !task.has_side_flag(SideFlag::NeedsInput)
-        && !agent_process_is_alive(task)
 }
 
 fn live_evidence_is_acknowledged(task: &Task) -> bool {
@@ -299,6 +282,16 @@ fn live_evidence_is_acknowledged(task: &Task) -> bool {
 fn workflow_boundary_is_acknowledged(task: &Task) -> bool {
     task.attention_acknowledged_at
         .is_some_and(|acknowledged_at| acknowledged_at >= task.last_activity_at)
+}
+
+/// Prefer non-empty live summary (ACP compact detail); keep canonical text as
+/// fallback for observations constructed outside the ACP projector.
+fn live_detail_or(summary: &str, fallback: &str) -> String {
+    if summary.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        summary.to_string()
+    }
 }
 
 fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {
@@ -381,9 +374,7 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        attention_band, derive_operator_status, AttentionBand, TaskStatus, AGENT_PROCESS_ALIVE_KEY,
-    };
+    use super::{attention_band, derive_operator_status, AttentionBand, TaskStatus};
     use crate::{
         lifecycle::{
             mark_active, mark_cleanable, mark_error, mark_mergeable, mark_merged, mark_removed,
@@ -462,7 +453,7 @@ mod tests {
         let status = super::derive_operator_status(&task);
 
         assert_eq!(status.status, TaskStatus::Waiting);
-        assert_eq!(status.explanation.as_deref(), Some("Waiting for input"));
+        assert_eq!(status.explanation.as_deref(), Some("waiting for input"));
     }
 
     #[test]
@@ -770,10 +761,10 @@ mod tests {
     }
 
     #[test]
-    fn live_process_without_native_events_is_idle_not_unknown() {
-        // Precedence tier 3: a confirmed live wrapper process is real evidence,
-        // so the task is at rest — not unprovable. It must never read Running,
-        // because liveness alone never becomes AgentRunning.
+    fn legacy_process_metadata_does_not_count_as_status_evidence() {
+        // Persisted legacy `agent_process_alive_at` metadata is not status
+        // evidence — active tasks without ACP/live/side-flag evidence stay
+        // Unknown rather than fabricating Idle.
         let mut task = base_task();
         mark_active(&mut task).unwrap();
         assert_eq!(
@@ -783,19 +774,14 @@ mod tests {
         );
 
         task.metadata.insert(
-            AGENT_PROCESS_ALIVE_KEY.to_string(),
+            "agent_process_alive_at".to_string(),
             "1700000000".to_string(),
         );
 
         let projected = derive_operator_status(&task);
-        assert_eq!(projected.status, TaskStatus::Idle);
+        assert_eq!(projected.status, TaskStatus::Unknown);
         assert_ne!(projected.status, TaskStatus::Running);
         assert!(!projected.actionable);
-
-        // Refresh removes the key once the heartbeat goes stale, and the task
-        // falls back to Unknown.
-        task.metadata.remove(AGENT_PROCESS_ALIVE_KEY);
-        assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
     }
 
     #[test]
@@ -904,7 +890,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(live_kind, "raw summary"),
+            LiveObservation::new(live_kind, " \t"),
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
         );
 
@@ -912,6 +898,58 @@ mod tests {
 
         assert_eq!(status.status, expected_status);
         assert_eq!(status.explanation.as_deref(), expected_explanation);
+    }
+
+    #[rstest::rstest]
+    #[case(
+        LiveStatusKind::AgentRunning,
+        "tool Read · plan 2/5 · 45% context",
+        TaskStatus::Running,
+        false
+    )]
+    #[case(
+        LiveStatusKind::WaitingForApproval,
+        "Allow edit src/main.rs? Allow · Deny",
+        TaskStatus::Waiting,
+        true
+    )]
+    #[case(
+        LiveStatusKind::WaitingForInput,
+        "Enter deployment target",
+        TaskStatus::Waiting,
+        true
+    )]
+    #[case(
+        LiveStatusKind::CommandFailed,
+        "ACP transport closed",
+        TaskStatus::Error,
+        true
+    )]
+    #[case(
+        LiveStatusKind::Done,
+        "plan 5/5 · 40% context",
+        TaskStatus::Waiting,
+        false
+    )]
+    fn acp_detail_enhances_explanation_without_changing_status_or_actionability(
+        #[case] live_kind: LiveStatusKind,
+        #[case] detail: &str,
+        #[case] expected_status: TaskStatus,
+        #[case] expected_actionable: bool,
+    ) {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(live_kind, detail),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+        );
+
+        let status = super::derive_operator_status(&task);
+
+        assert_eq!(status.status, expected_status);
+        assert_eq!(status.actionable, expected_actionable);
+        assert_eq!(status.explanation.as_deref(), Some(detail));
     }
 
     #[test]
