@@ -441,13 +441,14 @@ test("socket close reconnects, server error becomes unavailable, and manual reco
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
-  await mockTerminalWebSocket(page);
+  await mockTerminalWebSocket(page, { autoOpen: false });
 
   await gotoTaskRoute(page);
 
   const surface = terminalSurface(page);
   await expect(surface).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
+  await openLatestTerminalSocket(page);
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
 
   const status = page.getByTestId("terminal-status");
   const reconnect = page.getByRole("button", { name: "Reconnect" });
@@ -811,13 +812,14 @@ test("paste fallback retains unsent multiline Unicode text when socket closes be
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
-  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+  await mockTerminalWebSocket(page, { autoOpen: false, clipboardUnavailable: true });
 
   await gotoTaskRoute(page);
 
   const surface = terminalSurface(page);
   await expect(surface).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
+  await openLatestTerminalSocket(page);
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
 
   await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
 
@@ -842,13 +844,14 @@ test("clipboard paste retains exact text in fallback when socket is disconnected
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
-  await mockTerminalWebSocket(page, { clipboardText: MULTILINE_UNICODE_CLIPBOARD });
+  await mockTerminalWebSocket(page, { autoOpen: false, clipboardText: MULTILINE_UNICODE_CLIPBOARD });
 
   await gotoTaskRoute(page);
 
   const surface = terminalSurface(page);
   await expect(surface).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
+  await openLatestTerminalSocket(page);
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
 
   await closeLatestTerminalSocket(page);
   await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();

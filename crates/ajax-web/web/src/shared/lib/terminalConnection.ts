@@ -122,30 +122,33 @@ export function connectTaskTerminal(
     return false;
   };
 
-  const onSocketMessage = async (event: MessageEvent) => {
+  const onSocketMessage = (event: MessageEvent) => {
     const raw = event.data;
 
-    // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
-    const binaryBytes = await bytesFromBinaryData(raw);
-    if (binaryBytes) {
-      // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
-      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
-        const asText = new TextDecoder().decode(binaryBytes);
-        if (handleJsonControlFrame(asText)) return;
+    // Text frames must be handled synchronously so an error frame sets attachFailed
+    // before a same-turn close handler runs (delay-0 reconnect would otherwise race).
+    if (typeof raw === "string") {
+      if (!handleJsonControlFrame(raw)) {
+        events.onOutput(raw);
       }
-      events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
       return;
     }
 
-    if (typeof raw !== "string") {
+    void (async () => {
+      // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
+      const binaryBytes = await bytesFromBinaryData(raw);
+      if (binaryBytes) {
+        // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
+        if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
+          const asText = new TextDecoder().decode(binaryBytes);
+          if (handleJsonControlFrame(asText)) return;
+        }
+        events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
+        return;
+      }
+
       events.onOutput(String(raw));
-      return;
-    }
-
-    // Text frames: JSON control/error/legacy output, else raw pass-through.
-    if (!handleJsonControlFrame(raw)) {
-      events.onOutput(raw);
-    }
+    })();
   };
 
   const scheduleReconnect = () => {

@@ -216,7 +216,7 @@ describe("connectTaskTerminal", () => {
     }
   });
 
-  it("treats a server error frame as unavailable", async () => {
+  it("treats a server error frame as unavailable", () => {
     createConnection();
     const socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
@@ -227,11 +227,31 @@ describe("connectTaskTerminal", () => {
         data: JSON.stringify({ type: "error", error: "tmux attach failed" }),
       }),
     );
-    await Promise.resolve();
     socket.fire("close");
 
     expect(statuses.at(-1)).toBe("unavailable");
     expect(serverErrors).toEqual(["tmux attach failed"]);
+  });
+
+  it("error frame then close same turn stays unavailable without auto-redial", () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({ type: "error", error: "tmux attach failed" }),
+      }),
+    );
+    socket.fire("close");
+
+    expect(statuses.at(-1)).toBe("unavailable");
+    expect(serverErrors).toEqual(["tmux attach failed"]);
+
+    const dialsBefore = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(0);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore);
   });
 
   it("first connect dials without a seed opt-out (seed)", () => {
