@@ -881,7 +881,10 @@ header .bar h1 {
   bottom: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* One column per destination — auto-fit, so adding or removing a nav button
+     never wraps a second row into the bar's fixed height. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 8px;
   width: min(var(--shell), 100%);
   margin: 0 auto;
@@ -1001,7 +1004,9 @@ header .bar h1 {
   .status-line { font-size: var(--text-label); }
 }
 
-/* TASK LIST (dashboard) --------------------------------------------------- */
+/* DASHBOARD --------------------------------------------------------------- */
+/* A control panel: every safe action a task offers is a visible tap target on
+   its row. Nothing hidden behind a gesture — the terminal is the exception. */
 .project-nav {
   display: flex;
   flex-wrap: wrap;
@@ -1010,15 +1015,6 @@ header .bar h1 {
   margin: 4px 0 14px;
   -ms-overflow-style: none;
   scrollbar-width: none;
-}
-
-.project-nav-label {
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-right: 4px;
 }
 
 .project-pill {
@@ -1118,62 +1114,25 @@ header .bar h1 {
   box-shadow: var(--elev-1);
 }
 
-.task-row-wrap {
-  position: relative;
-  overflow: hidden;
-  border-top: 1px solid var(--rule);
-}
-
-.task-row-wrap:first-child {
-  border-top: none;
-}
-
-.task-row-reveal {
-  position: absolute;
-  inset: 0 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding-right: var(--space-2);
-}
-
-.task-row-reveal .action {
-  min-height: 36px;
-  padding: 6px 12px;
-  white-space: nowrap;
-}
-
+/* The row is the control unit: an identity block you tap to open the task, and
+   below it every operation that task can safely run right now. */
 .task-row {
-  position: relative;
-  z-index: 1;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
+  /* Grid items default to min-width:auto, so the widest row's action strip would
+     size the whole track and push every row's timestamp past the card edge. */
+  min-width: 0;
   min-height: 48px;
   padding: 10px var(--space-4);
   background: var(--paper-tint);
   color: var(--ink);
-  transition: background 120ms var(--ease), transform 220ms var(--ease);
-  touch-action: pan-y;
+  transition: background 120ms var(--ease);
 }
 
-.task-row-tap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.task-row-control {
-  flex: none;
+.task-row + .task-row {
+  border-top: 1px solid var(--rule);
 }
 
 .task-row:hover,
@@ -1183,6 +1142,20 @@ header .bar h1 {
 
 .task-row:active {
   background: var(--paper-high);
+}
+
+.task-row-tap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .task-row-tap:hover,
@@ -1198,8 +1171,20 @@ header .bar h1 {
   min-width: 0;
 }
 
-/* Title is what the operator recognises; the handle is the address below it. */
+/* Title reads against the timestamp on one line, so a long title truncates
+   against the only other thing that line is allowed to carry. */
+.task-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .task-row-title {
+  flex: 1 1 auto;
+  /* Flex items default to min-width:auto, which would push the timestamp off
+     the row instead of ellipsising a long title. */
+  min-width: 0;
   font-size: var(--text-body);
   font-weight: 500;
   white-space: nowrap;
@@ -1208,19 +1193,35 @@ header .bar h1 {
   color: var(--ink);
 }
 
+.task-row-time {
+  flex: none;
+  font-size: var(--text-micro);
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+}
+
+/* Address line: handle, then whatever the server says the task is waiting on. */
+.task-row-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+}
+
 .task-row-handle {
+  flex: none;
   font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--ink-faint);
 }
 
-.task-row-sub {
-  font-size: var(--text-label);
-  color: var(--ink-muted);
+.task-row-note {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1229,7 +1230,7 @@ header .bar h1 {
 /* "Running but wedged": amber note, and the running dot stops pulsing so a
    stalled agent doesn't read as live. */
 .task-row-quiet {
-  font-size: var(--text-label);
+  min-width: 0;
   font-weight: 500;
   color: var(--warn);
   white-space: nowrap;
@@ -1241,27 +1242,175 @@ header .bar h1 {
   animation: none;
 }
 
-.task-row-side {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
+/* Every safe action, inline. Compact enough that a three-action row still fits
+   the list's row budget; scrolls sideways rather than growing a second line. */
+.task-row-actions {
+  margin-left: calc(9px + var(--space-3));
+  overflow-x: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-.task-row-time {
-  font-size: var(--text-micro);
-  font-weight: 500;
-  color: var(--ink-faint);
-  font-feature-settings: "tnum";
+.task-row-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.task-row-actions .action-row {
+  flex-wrap: nowrap;
+}
+
+.task-row-actions .action {
+  min-height: 34px;
+  padding: 6px 14px;
   white-space: nowrap;
 }
 
-.task-row-chevron {
-  flex: none;
-  font-size: 18px;
-  line-height: 1;
+/* REPOSITORIES — the fleet's own row, one per repo, counts from Rust. -------- */
+.repo-panel,
+.system-panel {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.repo-list {
+  display: grid;
+  gap: 1px;
+}
+
+.repo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  background: var(--paper-tint);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: inherit;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+
+.repo-row:hover,
+.repo-row:focus-visible {
+  border-color: var(--rule-strong);
+  outline: none;
+}
+
+.repo-row.is-active {
+  border-color: var(--accent);
+}
+
+.repo-row-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.repo-row-name {
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The path is orientation, not a target — it truncates from the left so the
+   leaf directory (the part that identifies the repo) always survives. `rtl`
+   moves the ellipsis to the start; the inner <bdi> keeps the path itself
+   rendering left-to-right so the slashes don't invert. */
+.repo-row-path {
+  font-family: var(--mono);
+  font-size: var(--text-micro);
   color: var(--ink-faint);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.repo-row-path > bdi {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.repo-row-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 55%;
+}
+
+.repo-chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--tone-bg);
+  color: var(--tone);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.repo-row-clear {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* SYSTEM STATUS — is the thing driving all of this healthy? ------------------ */
+.system-warning {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(215, 175, 95, 0.12);
+  border: 1px solid var(--warn);
+  color: var(--warn-bright);
+  font-size: var(--text-body-sm);
+}
+
+.system-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin: 0;
+}
+
+.system-grid dt {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.system-grid dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  min-width: 0;
+  font-size: var(--text-data);
+  color: var(--tone, var(--ink-soft));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.system-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone, var(--ink-faint));
+}
+
+.system-settings {
+  margin-top: 14px;
 }
 
 /* FULLSCREEN LAYER — fixed band pin for modals/sheets above the keyboard. */

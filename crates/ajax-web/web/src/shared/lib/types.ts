@@ -35,9 +35,16 @@ export interface WebAction {
   branch_adoption?: BranchAdoptionPlan;
 }
 
+/** Mirrors `ajax_core::output::RepoSummary`. Every field but `name` is optional
+ * here on purpose: a server that stops projecting a count must degrade to a
+ * quieter repo row, never to a crashed dashboard. */
 export interface RepoSummary {
   name: string;
+  path?: string;
+  active_tasks?: number;
   attention_items?: number;
+  reviewable_tasks?: number;
+  cleanable_tasks?: number;
   [key: string]: unknown;
 }
 
