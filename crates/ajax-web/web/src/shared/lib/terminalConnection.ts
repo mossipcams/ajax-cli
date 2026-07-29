@@ -8,7 +8,7 @@
  * decoding; the component only reacts through the event callbacks.
  */
 
-import { openTaskTerminalSocket, renewBrowserSession } from "./api";
+import { createTerminalClientId, openTaskTerminalSocket, renewBrowserSession } from "./api";
 
 export type TerminalConnectionStatus =
   | "connecting"
@@ -56,6 +56,9 @@ export function connectTaskTerminal(
   let disposed = false;
   let status: TerminalConnectionStatus = "connecting";
   let lastDialSeeded = true;
+  // One id for this controller only (reconnects reuse it; a duplicated tab
+  // mounts a new controller and must not inherit another tab's viewport).
+  const clientId = createTerminalClientId();
   // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
   const outputDecoder = new TextDecoder();
   const inputEncoder = new TextEncoder();
@@ -148,7 +151,11 @@ export function connectTaskTerminal(
   const scheduleReconnect = () => {
     if (disposed) return;
     setStatus("reconnecting");
-    const delay = Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
+    const immediateAfterOpen =
+      everOpened && document.visibilityState === "visible" && reconnectAttempts === 0;
+    const delay = immediateAfterOpen
+      ? 0
+      : Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
     reconnectAttempts += 1;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
@@ -173,7 +180,7 @@ export function connectTaskTerminal(
   function connect(seedHistory: boolean) {
     lastDialSeeded = seedHistory;
     dialOpened = false;
-    socket = openTaskTerminalSocket(handle, seedHistory);
+    socket = openTaskTerminalSocket(handle, seedHistory, clientId);
     socket.addEventListener("open", () => {
       // A successful open resets the backoff. A fresh tmux attach repaints the
       // pane and the resize-on-open makes tmux redraw at the real size, so no

@@ -10,6 +10,7 @@ import {
   fetchVersion,
   openTaskTerminalSocket,
   taskTerminalWebSocketUrl,
+  createTerminalClientId,
 } from "./api";
 
 type FetchMock = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response;
@@ -530,6 +531,19 @@ describe("startTestInStable", () => {
   });
 });
 
+describe("createTerminalClientId", () => {
+  it("generates an allowlisted id", () => {
+    const id = createTerminalClientId();
+    expect(id).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+  });
+
+  it("returns a fresh id each call so duplicated tabs do not share viewports", () => {
+    const first = createTerminalClientId();
+    const second = createTerminalClientId();
+    expect(first).not.toBe(second);
+  });
+});
+
 describe("task terminal socket helpers", () => {
   it("builds an encoded terminal websocket URL", () => {
     Object.defineProperty(window, "location", {
@@ -570,5 +584,32 @@ describe("task terminal socket helpers", () => {
     const socket = openTaskTerminalSocket("web/fix-login");
     expect(socket.url).toBe("wss://ajax.local:8787/api/tasks/web%2Ffix-login/terminal");
     socket.close();
+  });
+
+  it("includes client id and seed=0 when both are requested", () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        protocol: "https:",
+        host: "ajax.local:8787",
+      },
+    });
+
+    const url = taskTerminalWebSocketUrl("web/fix-login", false, "tab-client-1");
+    const parsed = new URL(url.replace(/^wss:/, "https:"));
+    expect(parsed.searchParams.get("client")).toBe("tab-client-1");
+    expect(parsed.searchParams.get("seed")).toBe("0");
+  });
+
+  it("omits client param when not provided", () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        protocol: "https:",
+        host: "ajax.local:8787",
+      },
+    });
+
+    expect(taskTerminalWebSocketUrl("web/fix-login")).not.toContain("client=");
   });
 });

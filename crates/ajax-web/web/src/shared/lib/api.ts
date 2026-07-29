@@ -285,12 +285,34 @@ export async function startDevDeploy(taskHandle: string): Promise<DevDeployRespo
   return body;
 }
 
-export function taskTerminalWebSocketUrl(handle: string, seedHistory = true): string {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const base = `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/terminal`;
-  return seedHistory ? base : `${base}?seed=0`;
+/** Fresh allowlisted id for one terminal connection controller lifetime.
+ * Not sessionStorage: duplicated tabs copy sessionStorage and would share a
+ * tmux ephemeral viewport (competing resize/input). `connectTaskTerminal`
+ * calls this once and reuses the value across that controller's redials. */
+export function createTerminalClientId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function openTaskTerminalSocket(handle: string, seedHistory = true): WebSocket {
-  return new WebSocket(taskTerminalWebSocketUrl(handle, seedHistory));
+export function taskTerminalWebSocketUrl(
+  handle: string,
+  seedHistory = true,
+  clientId?: string,
+): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const base = `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/terminal`;
+  const params = new URLSearchParams();
+  if (clientId) params.set("client", clientId);
+  if (!seedHistory) params.set("seed", "0");
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
+}
+
+export function openTaskTerminalSocket(
+  handle: string,
+  seedHistory = true,
+  clientId?: string,
+): WebSocket {
+  return new WebSocket(taskTerminalWebSocketUrl(handle, seedHistory, clientId));
 }

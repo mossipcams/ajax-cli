@@ -152,7 +152,9 @@ impl TmuxCommand {
 /// SIGWINCH-storm the pane on each keyboard open/close. A grouped session
 /// (`new-session -t <shared>`) shares the shared session's window set but keeps
 /// an independent size, so the phone can be tiny without disturbing anyone. The
-/// ephemeral session is killed on disconnect.
+/// ephemeral session *lingers in tmux* on disconnect so the same client token
+/// can reconnect to its existing viewport; it is only destroyed by the explicit
+/// [`destroy_ephemeral_session_commands`] reaper path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IsolatedAttachPlan {
     /// The ephemeral grouped session name, e.g. `ajax-web-fix-login-m1a2b3c4`.
@@ -175,6 +177,46 @@ pub fn build_isolated_attach_plan(plan: &TerminalAttachPlan) -> IsolatedAttachPl
     build_isolated_attach_plan_with_token(plan, &random_session_token())
 }
 
+/// Build an isolated attach plan keyed to a stable client id. Two calls with the
+/// same client id produce the *same* ephemeral session name, so a browser tab
+/// reconnects to its existing tmux viewport instead of spinning up a new one.
+/// Callers without a client id should keep using [`build_isolated_attach_plan`]
+/// (random per call) to stay unique.
+pub fn build_isolated_attach_plan_for_client(
+    plan: &TerminalAttachPlan,
+    client_id: &str,
+) -> IsolatedAttachPlan {
+    build_isolated_attach_plan_with_token(plan, &ephemeral_client_token(client_id))
+}
+
+/// Stable 12 lowercase-hex token for a browser client id. Empty / whitespace-
+/// only ids fall back to [`random_session_token`] so callers that have no client
+/// id stay unique per call rather than all collapsing onto one shared session.
+pub fn ephemeral_client_token(client_id: &str) -> String {
+    let trimmed = client_id.trim();
+    if trimmed.is_empty() {
+        return random_session_token();
+    }
+    // FNV-1a 64-bit fold of the trimmed id bytes -> first 12 hex chars. No new
+    // crate dependency; this only needs uniqueness across browser client ids,
+    // not cryptographic resistance.
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &byte in trimmed.as_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let full = format!("{hash:016x}");
+    full[..12].to_string()
+}
+
+/// Explicit destroy commands for a lingering ephemeral session, used by the
+/// reaper / manual destroy path. The normal disconnect teardown is intentionally
+/// empty so reconnects reuse the viewport; this helper is the only thing that
+/// kills a grouped session.
+pub fn destroy_ephemeral_session_commands(ephemeral_session: &str) -> Vec<TmuxCommand> {
+    vec![TmuxCommand::new(["kill-session", "-t", ephemeral_session])]
+}
+
 fn build_isolated_attach_plan_with_token(
     plan: &TerminalAttachPlan,
     token: &str,
@@ -191,9 +233,12 @@ fn build_isolated_attach_plan_with_token(
     };
     IsolatedAttachPlan {
         setup: vec![
+            // `-A` makes setup idempotent: create the grouped session if absent,
+            // or attach to the existing one (reconnect) without error. `-d` keeps
+            // it detached for the spawned PTY attach below.
             TmuxCommand::new([
                 "new-session",
-                "-d",
+                "-Ad",
                 "-s",
                 &ephemeral,
                 "-t",
@@ -218,7 +263,10 @@ fn build_isolated_attach_plan_with_token(
             "-1",
         ]),
         attach: build_tmux_attach_command_plan(&ephemeral_plan),
-        teardown: vec![TmuxCommand::new(["kill-session", "-t", &ephemeral])],
+        // Disconnect leaves the ephemeral session in tmux so the same client
+        // token can reconnect; the reaper kills it later via
+        // `destroy_ephemeral_session_commands`.
+        teardown: vec![],
         ephemeral_session: ephemeral,
     }
 }
@@ -462,6 +510,55 @@ pub fn seed_history_from_query(query: Option<&str>) -> bool {
         .unwrap_or(true)
 }
 
+/// Allowlist for a `client=` token in the WS URL query. Only
+/// `[A-Za-z0-9_-]{1,64}` is accepted so the token never injects tmux name
+/// metacharacters; the token is hashed anyway but the gate keeps bad input
+/// from even reaching the hash. Anything else (absent, empty, too long,
+/// characters outside the allowlist) returns `None` so the bridge falls back
+/// to a random per-call [`build_isolated_attach_plan`].
+pub fn client_id_from_query(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    for pair in query.split('&') {
+        if let Some(rest) = pair.strip_prefix("client=") {
+            if rest.is_empty() {
+                continue;
+            }
+            if rest.len() > 64 {
+                continue;
+            }
+            if !rest
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            {
+                continue;
+            }
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Select the isolated attach plan for a bridge connection. A present, validated
+/// client id routes through [`build_isolated_attach_plan_for_client`] so a
+/// reconnecting tab reuses its tmux viewport; `None` keeps the historical
+/// random-per-call [`build_isolated_attach_plan`] path.
+pub fn isolated_plan_for_bridge(
+    plan: &TerminalAttachPlan,
+    client_id: Option<&str>,
+) -> IsolatedAttachPlan {
+    match client_id {
+        Some(id) => build_isolated_attach_plan_for_client(plan, id),
+        None => build_isolated_attach_plan(plan),
+    }
+}
+
+/// Fixed reflow beat before history capture is only worth paying when we will
+/// actually seed history *and* a client resize already fired a WINCH that tmux
+/// still needs to reflow. Unseeded auto-reconnect must skip the 100ms sleep.
+pub fn should_wait_reflow_before_seed(seed_history: bool, resize_applied: bool) -> bool {
+    seed_history && resize_applied
+}
+
 /// How long the bridge may keep waiting for the client's first resize frame
 /// before seeding anyway. Returns None when the deadline passed.
 fn remaining_resize_wait(started: Instant, now: Instant) -> Option<Duration> {
@@ -500,9 +597,10 @@ pub async fn bridge_task_terminal_socket(
     mut socket: WebSocket,
     plan: TerminalAttachPlan,
     seed_history: bool,
+    client_id: Option<String>,
     on_operator_input: Arc<dyn Fn() + Send + Sync>,
 ) {
-    let isolated = build_isolated_attach_plan(&plan);
+    let isolated = isolated_plan_for_bridge(&plan, client_id.as_deref());
 
     // Stand up the isolated grouped session before attaching so the phone's
     // dimensions never shrink the shared window for other clients. If this
@@ -656,7 +754,7 @@ pub async fn bridge_task_terminal_socket(
         return;
     }
 
-    if resize_applied {
+    if should_wait_reflow_before_seed(seed_history, resize_applied) {
         // Fixed beat so tmux processes the WINCH and reflows history before capture.
         // ponytail: replace with an event-driven readiness check if this ever proves flaky.
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -933,7 +1031,7 @@ mod tests {
                     program: "tmux".to_string(),
                     args: vec![
                         "new-session".to_string(),
-                        "-d".to_string(),
+                        "-Ad".to_string(),
                         "-s".to_string(),
                         ephemeral.to_string(),
                         "-t".to_string(),
@@ -1015,6 +1113,78 @@ mod tests {
         assert!(!seed_history_from_query(Some("a=b&seed=0")));
         assert!(seed_history_from_query(Some("seed=1")));
         assert!(seed_history_from_query(Some("seed=00")));
+    }
+
+    #[test]
+    fn client_id_from_query_parsing() {
+        // Absent / empty / no client= -> None (bridge falls back to random plan).
+        assert_eq!(client_id_from_query(None), None);
+        assert_eq!(client_id_from_query(Some("")), None);
+        assert_eq!(client_id_from_query(Some("foo=bar")), None);
+        // Empty client= value -> None.
+        assert_eq!(client_id_from_query(Some("client=")), None);
+        assert_eq!(client_id_from_query(Some("a=b&client=")), None);
+        // First matching client= wins.
+        assert_eq!(
+            client_id_from_query(Some("client=viewport-a")),
+            Some("viewport-a".to_string())
+        );
+        assert_eq!(
+            client_id_from_query(Some("seed=0&client=abc")),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            client_id_from_query(Some("client=one&client=two")),
+            Some("one".to_string())
+        );
+        // Allowlist: [A-Za-z0-9_-]{1,64}.
+        assert_eq!(
+            client_id_from_query(Some("client=Ab_1-2")),
+            Some("Ab_1-2".to_string())
+        );
+        // Anything outside the allowlist -> None (no Injection into tmux names).
+        assert_eq!(client_id_from_query(Some("client=view/port")), None);
+        assert_eq!(client_id_from_query(Some("client=view port")), None);
+        assert_eq!(client_id_from_query(Some("client=view%2Fport")), None);
+        assert_eq!(client_id_from_query(Some("client=;evil")), None);
+        // Over 64 chars -> None.
+        let too_long = format!("client={}", "x".repeat(65));
+        assert_eq!(client_id_from_query(Some(&too_long)), None);
+        let just_right_src = format!("client={}", "y".repeat(64));
+        let just_right_token = just_right_src["client=".len()..].to_string();
+        assert_eq!(
+            client_id_from_query(Some(&just_right_src)),
+            Some(just_right_token)
+        );
+    }
+
+    #[test]
+    fn isolated_plan_for_bridge_uses_stable_plan_when_client_id_present() {
+        let plan = attach_plan("web/fix-login");
+
+        // Present client id -> stable per-client plan (reconnect reuses it).
+        let a = isolated_plan_for_bridge(&plan, Some("viewport-a"));
+        let b = isolated_plan_for_bridge(&plan, Some("viewport-a"));
+        assert_eq!(a.ephemeral_session, b.ephemeral_session);
+        assert!(a.ephemeral_session.starts_with("ajax-web-fix-login-m"));
+
+        // Different ids -> different ephemeral sessions.
+        let c = isolated_plan_for_bridge(&plan, Some("viewport-b"));
+        assert_ne!(a.ephemeral_session, c.ephemeral_session);
+
+        // None -> random-per-call path (unique each call, never the shared session).
+        let r1 = isolated_plan_for_bridge(&plan, None).ephemeral_session;
+        let r2 = isolated_plan_for_bridge(&plan, None).ephemeral_session;
+        assert_ne!(r1, r2);
+        assert_ne!(r1, "ajax-web-fix-login");
+    }
+
+    #[test]
+    fn should_wait_reflow_before_seed_only_when_both_true() {
+        assert!(!should_wait_reflow_before_seed(false, false));
+        assert!(!should_wait_reflow_before_seed(false, true));
+        assert!(!should_wait_reflow_before_seed(true, false));
+        assert!(should_wait_reflow_before_seed(true, true));
     }
 
     #[test]
@@ -1116,10 +1286,14 @@ mod tests {
     fn isolated_attach_cleanup_kills_ephemeral_session() {
         let plan = attach_plan("web/fix-login");
 
-        let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
+        let isolated = build_isolated_attach_plan(&plan);
 
+        // Disconnect must not kill the ephemeral session: it lingers in tmux so
+        // the same client can reconnect to its own viewport. Only the explicit
+        // destroy/reaper path tears it down.
+        assert!(isolated.teardown.is_empty());
         assert_eq!(
-            isolated.teardown,
+            destroy_ephemeral_session_commands("ajax-web-fix-login-m1a2b3c"),
             vec![TmuxCommand {
                 program: "tmux".to_string(),
                 args: vec![
@@ -1132,7 +1306,66 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_client_token_normalizes_stable_ids() {
+        // Same non-empty id -> same 12 lowercase hex token twice.
+        let a = ephemeral_client_token("viewport-a");
+        let b = ephemeral_client_token("viewport-a");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 12);
+        assert!(a
+            .bytes()
+            .all(|c| (c as char).is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+
+        // Trimming means surrounding whitespace does not change the token.
+        assert_eq!(
+            ephemeral_client_token("viewport-a"),
+            ephemeral_client_token("  viewport-a  ")
+        );
+
+        // Different ids -> different tokens.
+        assert_ne!(
+            ephemeral_client_token("viewport-a"),
+            ephemeral_client_token("viewport-b")
+        );
+
+        // Empty / whitespace-only id falls back to random-looking 12-hex
+        // tokens; callers without a client id stay unique per call.
+        let empty = ephemeral_client_token("");
+        let ws = ephemeral_client_token("   \t");
+        assert_eq!(empty.len(), 12);
+        assert_eq!(ws.len(), 12);
+        assert!(ephemeral_client_token("")
+            .bytes()
+            .all(|c| (c as char).is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn isolated_attach_plan_is_stable_for_same_client_token() {
+        let plan = attach_plan("web/fix-login");
+
+        let first = build_isolated_attach_plan_for_client(&plan, "viewport-a");
+        let second = build_isolated_attach_plan_for_client(&plan, "viewport-a");
+
+        assert_eq!(first.ephemeral_session, second.ephemeral_session);
+        assert!(first.ephemeral_session.starts_with("ajax-web-fix-login-m"));
+        assert_eq!(first.ephemeral_session, second.ephemeral_session);
+
+        let other = build_isolated_attach_plan_for_client(&plan, "viewport-b");
+        assert_ne!(first.ephemeral_session, other.ephemeral_session);
+
+        // Stable plan still uses the idempotent create-or-attach setup and an
+        // empty disconnect teardown.
+        assert!(first.teardown.is_empty());
+        assert_eq!(first.setup, second.setup);
+        assert!(first.setup.iter().any(|cmd| {
+            cmd.args.first().map(String::as_str) == Some("new-session")
+                && cmd.args.iter().any(|arg| arg == "-Ad")
+        }));
+    }
+
+    #[test]
     fn isolated_attach_sessions_are_unique_per_call_and_never_the_shared_session() {
+        // The no-client / random path must stay unique per call.
         let plan = attach_plan("web/fix-login");
 
         let first = build_isolated_attach_plan(&plan).ephemeral_session;
