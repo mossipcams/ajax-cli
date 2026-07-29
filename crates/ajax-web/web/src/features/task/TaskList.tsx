@@ -121,8 +121,12 @@ function TaskRow({
           </span>
           <span className="task-row-chevron">›</span>
         </button>
-        <div className="task-row-control">
-          {inlineAction ? (
+        {/* Only a real operation earns a control. Navigation is already the
+            row's own tap plus the chevron; a button repeating that is a third
+            affordance for one action. A row with nothing to run shows nothing —
+            its status line says what it is waiting on. */}
+        {inlineAction ? (
+          <div className="task-row-control">
             <ActionBar
               actions={[inlineAction]}
               handle={card.qualified_handle}
@@ -130,16 +134,8 @@ function TaskRow({
               onResult={onResult}
               onMutated={onMutated}
             />
-          ) : (
-            <button
-              type="button"
-              className="row-control"
-              onClick={() => onOpenTask?.(card.qualified_handle)}
-            >
-              {card.attention === "needs-you" ? "Answer" : "Open"}
-            </button>
-          )}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
