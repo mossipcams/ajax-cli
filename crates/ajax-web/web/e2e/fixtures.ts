@@ -18,6 +18,8 @@ export const COCKPIT_FIXTURE = {
       title: "Fix login",
       status: "waiting",
       status_explanation: "Waiting for review",
+      // Rust bands each card; the browser groups on this and never re-derives it.
+      attention: "review",
       actions: [
         { action: "review", label: "Review", destructive: false, confirmation_required: false },
         { action: "drop",   label: "Drop",   destructive: true,  confirmation_required: true  },
@@ -30,6 +32,7 @@ export const COCKPIT_FIXTURE = {
       title: "Add auth",
       status: "running",
       status_explanation: null,
+      attention: "active",
       // Calm rows are where swipe-reveal lives: inbox rows render their actions
       // inline instead, so the gesture needs a non-inbox card to exercise.
       actions: [

@@ -92,6 +92,7 @@ const TWO_ATTENTION_ITEMS = {
       title: "Migrate database schema",
       status: "error",
       status_explanation: "Worktree is missing",
+      attention: "needs-you",
       actions: [
         { action: "repair", label: "Repair", destructive: false, confirmation_required: false },
       ],
