@@ -123,9 +123,10 @@ Reconciliation precedence:
   expected-branch existence (`branch_exists`) instead.
 
 **ACP** means Agent Client Protocol. Ajax is the ACP client. The official SDK is
-pinned to `agent-client-protocol = "=2.0.0"` with `unstable_protocol_v2`. Only
-ACP v2 is accepted: negotiation fails closed when the adapter lacks v2, with no
-ACP v1 or native-CLI fallback.
+pinned to `agent-client-protocol = "=2.0.0"` with `unstable_protocol_v2`. The
+`__agent-acp` host defaults to stable ACP v1. Set `AJAX_ACP_V2=1` (or `true` /
+`yes`) to enable the ACP v2-only host; there is no automatic v1 fallback when
+that flag is set, and no native-CLI fallback.
 
 Task launch selects one fixed PATH adapter and runs the hidden
 `ajax-cli __agent-acp` host in the existing task tmux window:
@@ -138,9 +139,10 @@ Task launch selects one fixed PATH adapter and runs the hidden
 | Pi | `pi-acp` |
 | Other | the exact requested executable, with no inferred arguments |
 
-The host negotiates v2, starts or resumes one ACP session, owns stdio terminal
-interaction (prompt/output/cancel, permission, typed form elicitation, and
-authentication), and atomically publishes
+The host negotiates ACP v1 by default (or v2 when `AJAX_ACP_V2` is enabled),
+starts or resumes one ACP session, owns stdio terminal interaction
+(prompt/output/cancel, permission, authentication, and — on the v2 path —
+typed form elicitation), and atomically publishes
 `cache/agent-acp/<task-stem>.json` with generation, heartbeat, session ID,
 state, stop reason/action, and safe compact detail. It heartbeats while idle so
 freshness stays meaningful without fabricating activity.
@@ -587,7 +589,7 @@ task-operation commands or separate operator domains.
   process from a resolved CLI context. Process launching is orchestration only;
   the launcher passes explicit runtime context to `ajax-web` and must not
   reinterpret task state or duplicate web server internals.
-- `agent_acp` owns the hidden `__agent-acp` host: ACP v2 negotiation, session
+- `agent_acp` owns the hidden `__agent-acp` host: ACP v1 by default (v2 via `AJAX_ACP_V2`), session
   lifecycle, update folding, permission/form/auth boundary, and cancellation.
 - `agent_acp_console` owns terminal-first prompt/output/cancel interaction on
   the existing task tmux stdio transport.
