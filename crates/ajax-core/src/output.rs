@@ -3,7 +3,7 @@ use crate::{
     models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
     remediation::RemediationOption,
-    ui_state::TaskStatus,
+    ui_state::{AttentionBand, TaskStatus},
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,7 @@ pub struct TaskCard {
     pub primary_action: OperatorAction,
     pub available_actions: Vec<OperatorAction>,
     pub remediations: Vec<RemediationOption>,
+    pub attention: AttentionBand,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

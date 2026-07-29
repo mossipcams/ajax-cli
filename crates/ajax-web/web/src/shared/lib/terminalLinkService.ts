@@ -42,7 +42,27 @@ export function createTerminalLinkService(): TerminalLinkService {
       });
     },
     onOpen(url) {
-      window.open(url, "_blank", "noopener,noreferrer");
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return;
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+
+      const safeHref = parsed.href;
+
+      // Preferred: user-initiated _blank navigation via a temporary anchor.
+      // On iOS standalone PWAs this hands off to Safari instead of replacing
+      // the Ajax document. The anchor is appended, clicked, and removed so the
+      // current document is never assigned/replaced.
+      const anchor = document.createElement("a");
+      anchor.href = safeHref;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
     },
     async onCopy(url) {
       return copyText(url);

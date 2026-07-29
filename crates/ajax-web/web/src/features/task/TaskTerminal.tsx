@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { copyText } from "@/shared/lib/clipboard";
 import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
+import { findHttpLinkAtClient } from "@/shared/lib/terminalLinkHitTest";
 import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
 import { resetDocumentScroll } from "@/shared/lib/viewport";
 import {
@@ -918,6 +919,18 @@ export default function TaskTerminal({ handle }: Props) {
     const onInteractionClick = (event: MouseEvent) => {
       const target = event.target;
       if (target instanceof Element && target.closest("button")) return;
+
+      const hit = findHttpLinkAtClient(
+        termRef.current,
+        event.clientX,
+        event.clientY,
+        hostEl,
+      );
+      if (hit) {
+        setLinkMenu({ url: hit.url, x: event.clientX, y: event.clientY });
+        return;
+      }
+
       const textarea = termTextarea();
       if (textarea) {
         resetDocumentScroll();

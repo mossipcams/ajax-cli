@@ -58,13 +58,14 @@ export default function App() {
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
 
-  // Report what's live first, then the inventory size.
+  // Report what needs the operator first.
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
-    const running = cockpit.data.cards.filter((card) => card.status === "running").length;
-    if (running) return `${running} running`;
-    const total = cockpit.data.cards.length;
-    return `${total} ${total === 1 ? "task" : "tasks"}`;
+    const needYou = cockpit.data.cards.filter((card) => card.attention === "needs-you").length;
+    if (needYou) return `${needYou} need you`;
+    const review = cockpit.data.cards.filter((card) => card.attention === "review").length;
+    if (review) return `${review} ready to review`;
+    return "All clear";
   })();
 
   function showResult(

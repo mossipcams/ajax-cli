@@ -4,6 +4,7 @@
 // coerce data or invent defaults.
 
 import type {
+  AttentionBand,
   BrowserCockpitView,
   BrowserTaskDetail,
   OperationResponse,
@@ -29,6 +30,12 @@ const CANONICAL_STATUSES: readonly string[] = [
 
 export function isTaskStatus(value: unknown): value is TaskStatus {
   return typeof value === "string" && CANONICAL_STATUSES.includes(value);
+}
+
+const CANONICAL_ATTENTION: readonly string[] = ["needs-you", "review", "active", "idle"];
+
+export function isAttentionBand(value: unknown): value is AttentionBand {
+  return typeof value === "string" && CANONICAL_ATTENTION.includes(value);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -92,6 +99,9 @@ export function assertCockpit(value: unknown): BrowserCockpitView {
     }
     if (!isTaskStatus(card.status)) {
       throw new IncompatibleResponseError(`card.status is invalid: ${String(card.status)}`);
+    }
+    if (!isAttentionBand(card.attention)) {
+      throw new IncompatibleResponseError(`card.attention is invalid: ${String(card.attention)}`);
     }
     if (!Array.isArray(card.actions)) {
       throw new IncompatibleResponseError("card.actions is not an array");

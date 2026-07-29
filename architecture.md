@@ -786,7 +786,20 @@ Owns the browser Cockpit read experience. It builds browser DTOs from the core
 Cockpit projection and preserves the same task/action meaning as Native
 Cockpit. Cards and details share one status contract (`status`,
 `status_explanation`) and one ordered `actions` collection containing only
-browser-executable action metadata. Unsupported actions, legacy UI states, and
+browser-executable action metadata.
+
+Cards additionally carry `attention`, the operator attention band
+(`needs-you`, `review`, `active`, `idle`) derived by
+`ajax_core::ui_state::attention_band` from the operator status and lifecycle.
+It answers which of the operator's questions a task belongs to — what needs
+input, what is ready to review, what is merely active — and is the sole
+grouping key for the browser dashboard. Its precedence mirrors
+`derive_task_status`: an actionable attention gate is classified before the
+lifecycle review boundary, and the band reads lifecycle directly so a task
+whose review boundary has been acknowledged stays in `review` rather than
+falling through to `idle`. Because grouping is headline status, the browser
+must render this field and must never re-derive it from `status`,
+`status_explanation`, or any lifecycle value. Unsupported actions, legacy UI states, and
 action support-state records are absent. Raw live, lifecycle, pane, and runtime
 values may remain detail diagnostics, but browser JavaScript must not derive or
 override headline status from them. The browser may style the first returned
@@ -857,11 +870,22 @@ viewport-burst case, passes as of 2026-07-16.
 ### `ajax-web::adapters::terminal_pty`
 
 Owns the PTY/tmux attach mechanism behind the protected task terminal
-WebSocket route. It builds attach commands only from registered task evidence,
-forwards terminal I/O over bounded WebSocket frames, and closes the PTY when
-the browser socket disconnects. Browser task terminal WebSocket upgrades require
-a same-origin `Origin` that matches the request `Host` in addition to the
-normal protected-route session and Cloudflare Access checks.
+WebSocket route. It builds attach commands only from registered task evidence
+and forwards terminal I/O over bounded WebSocket frames. Each WebSocket owns a
+short-lived PTY child (connection-scoped); ajax-web does not keep an in-process
+reconnecting-PTY hub or ring buffer across sockets (PWA/companion must stay
+reconnect-safe without process-local bridge state).
+
+The browser’s durable viewport is an **isolated grouped tmux session** named
+from the task’s registered session plus a stable per-connection `client=` id
+(minted once per terminal connection controller, hashed to a 12-hex suffix).
+Duplicated browser tabs must not share that id. Setup is idempotent (`new-session -A`); disconnect kills the
+PTY child but leaves the ephemeral session for reattach. Destroy/reaper paths
+kill orphaned ephemeral sessions. Auto-reconnect dials `seed=0` and reuses the
+client id; full history seed remains for first connect / manual reconnect.
+Browser task terminal WebSocket upgrades require a same-origin `Origin` that
+matches the request `Host` in addition to the normal protected-route session
+and Cloudflare Access checks.
 
 ### `ajax-web::runtime`
 

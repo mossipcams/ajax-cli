@@ -22,6 +22,7 @@ function card(handle: string, status: BrowserTaskCard["status"]): BrowserTaskCar
     repo: handle.split("/")[0],
     title: handle,
     status,
+    attention: "idle",
     last_activity_unix_secs: 0,
     actions: [],
   };

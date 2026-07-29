@@ -211,10 +211,10 @@ rebuild_web() {
     . "$NVM_DIR/nvm.sh"
     nvm use 22 >/dev/null
   fi
-  if [[ ! -d "$source_root/node_modules" ]]; then
-    echo "Installing npm deps in $source_root ..."
-    npm --prefix "$source_root" ci
-  fi
+  # Always ci: a present but stale node_modules (lockfile added deps) makes
+  # vite fail mid-build and leaves stable down after Test in Stable exits first.
+  echo "Installing npm deps in $source_root (npm ci) ..."
+  npm --prefix "$source_root" ci
   echo "Building frontend (web:build) in $source_root ..."
   npm --prefix "$source_root" run web:build
   if [[ ! -f "$embed_rs" ]]; then

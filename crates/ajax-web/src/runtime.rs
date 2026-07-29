@@ -1041,6 +1041,7 @@ where
     };
 
     let seed_history = crate::adapters::terminal_pty::seed_history_from_query(req.uri().query());
+    let client_id = crate::adapters::terminal_pty::client_id_from_query(req.uri().query());
     let on_operator_input = operator_input_sink(&state, plan.qualified_handle.clone());
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
@@ -1053,6 +1054,7 @@ where
             socket,
             plan,
             seed_history,
+            client_id,
             on_operator_input,
         )
         .await;

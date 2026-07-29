@@ -13,6 +13,42 @@ pub enum TaskStatus {
     Unknown,
 }
 
+/// Which of the operator's four questions this task answers. Precedence
+/// mirrors `derive_task_status`: an actionable gate is checked BEFORE the
+/// review boundary, or a card reading "Waiting for approval" files under
+/// review. Lifecycle is read directly so an acknowledged reviewable task
+/// stays in `Review` instead of sinking to `Idle`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AttentionBand {
+    NeedsYou,
+    Review,
+    Active,
+    Idle,
+}
+
+pub fn attention_band(status: &OperatorStatus, lifecycle: LifecycleStatus) -> AttentionBand {
+    if status.status == TaskStatus::Error {
+        return AttentionBand::NeedsYou;
+    }
+    if status.status == TaskStatus::Waiting && status.actionable {
+        return AttentionBand::NeedsYou;
+    }
+    if matches!(
+        lifecycle,
+        LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
+    ) {
+        return AttentionBand::Review;
+    }
+    if status.status == TaskStatus::Running {
+        return AttentionBand::Active;
+    }
+    if status.status == TaskStatus::Waiting {
+        return AttentionBand::Active;
+    }
+    AttentionBand::Idle
+}
+
 impl TaskStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -345,7 +381,9 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_operator_status, TaskStatus, AGENT_PROCESS_ALIVE_KEY};
+    use super::{
+        attention_band, derive_operator_status, AttentionBand, TaskStatus, AGENT_PROCESS_ALIVE_KEY,
+    };
     use crate::{
         lifecycle::{
             mark_active, mark_cleanable, mark_error, mark_mergeable, mark_merged, mark_removed,
@@ -1026,6 +1064,133 @@ mod tests {
             .as_deref()
             .is_some_and(|explanation| explanation.contains("missing")));
         assert!(!detached.has_missing_substrate());
+    }
+
+    #[test]
+    fn error_status_bands_as_needs_you() {
+        let mut task = base_task();
+        mark_error(&mut task).unwrap();
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Error);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::NeedsYou
+        );
+    }
+
+    #[test]
+    fn actionable_waiting_bands_as_needs_you() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.agent_status = AgentRuntimeStatus::Waiting;
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Waiting);
+        assert!(status.actionable);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::NeedsYou
+        );
+    }
+
+    #[test]
+    fn soft_waiting_bands_as_active() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::RateLimited,
+            "rate limited",
+        ));
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Waiting);
+        assert!(!status.actionable);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::Active
+        );
+    }
+
+    #[test]
+    fn acknowledged_reviewable_still_bands_as_review() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        let acknowledged_at = task.last_activity_at + std::time::Duration::from_secs(1);
+        crate::live::acknowledge_attention(&mut task, acknowledged_at);
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Idle);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::Review,
+            "an acknowledged reviewable status sinks to Idle, but the band must read lifecycle and stay Review"
+        );
+    }
+
+    #[test]
+    fn actionable_waiting_outranks_review_boundary() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+        );
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Waiting);
+        assert!(status.actionable);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::NeedsYou,
+            "an actionable approval gate must outrank the review boundary"
+        );
+    }
+
+    #[test]
+    fn running_bands_as_active() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.agent_status = AgentRuntimeStatus::Running;
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Running);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::Active
+        );
+    }
+
+    #[test]
+    fn resting_task_bands_as_idle() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        let observed_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+            observed_at,
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            observed_at + std::time::Duration::from_secs(1),
+        );
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Idle);
+        assert_eq!(
+            attention_band(&status, task.lifecycle_status),
+            AttentionBand::Idle
+        );
     }
 
     #[test]
