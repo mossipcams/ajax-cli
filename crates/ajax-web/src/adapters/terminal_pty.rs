@@ -218,6 +218,11 @@ pub fn destroy_ephemeral_session_commands(ephemeral_session: &str) -> Vec<TmuxCo
     vec![TmuxCommand::new(["kill-session", "-t", ephemeral_session])]
 }
 
+fn should_ignore_setup_failure(command: &TmuxCommand, stderr: &str) -> bool {
+    command.args.first().map(String::as_str) == Some("new-session")
+        && stderr.contains("duplicate session")
+}
+
 fn build_isolated_attach_plan_with_token(
     plan: &TerminalAttachPlan,
     token: &str,
@@ -234,12 +239,13 @@ fn build_isolated_attach_plan_with_token(
     };
     IsolatedAttachPlan {
         setup: vec![
-            // `-A` makes setup idempotent: create the grouped session if absent,
-            // or attach to the existing one (reconnect) without error. `-d` keeps
-            // it detached for the spawned PTY attach below.
+            // Do not use `-A` here: attach-if-exists requires a TTY and breaks
+            // reconnect from `run_tmux_command_blocking`. `-d` creates detached;
+            // an already-present ephemeral session returns "duplicate session",
+            // which setup treats as success.
             TmuxCommand::new([
                 "new-session",
-                "-Ad",
+                "-d",
                 "-s",
                 &ephemeral,
                 "-t",
@@ -610,7 +616,13 @@ pub async fn bridge_task_terminal_socket(
     for command in &isolated.setup {
         let failure = match run_tmux_command_blocking(command) {
             Ok(output) if output.status.success() => continue,
-            Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if should_ignore_setup_failure(command, stderr.trim()) {
+                    continue;
+                }
+                stderr.trim().to_string()
+            }
             Err(error) => error.to_string(),
         };
         send_error_and_close(
@@ -1032,7 +1044,7 @@ mod tests {
                     program: "tmux".to_string(),
                     args: vec![
                         "new-session".to_string(),
-                        "-Ad".to_string(),
+                        "-d".to_string(),
                         "-s".to_string(),
                         ephemeral.to_string(),
                         "-t".to_string(),
@@ -1341,6 +1353,24 @@ mod tests {
     }
 
     #[test]
+    fn setup_ignores_duplicate_session_on_new_session_only() {
+        let new_session = TmuxCommand::new(["new-session", "-d", "-s", "sess", "-t", "parent"]);
+        assert!(should_ignore_setup_failure(
+            &new_session,
+            "duplicate session: sess",
+        ));
+        assert!(!should_ignore_setup_failure(
+            &new_session,
+            "open terminal failed: not a terminal",
+        ));
+        let set_option = TmuxCommand::new(["set-option", "-t", "sess", "status-interval", "5"]);
+        assert!(!should_ignore_setup_failure(
+            &set_option,
+            "duplicate session: sess",
+        ));
+    }
+
+    #[test]
     fn isolated_attach_plan_is_stable_for_same_client_token() {
         let plan = attach_plan("web/fix-login");
 
@@ -1360,7 +1390,7 @@ mod tests {
         assert_eq!(first.setup, second.setup);
         assert!(first.setup.iter().any(|cmd| {
             cmd.args.first().map(String::as_str) == Some("new-session")
-                && cmd.args.iter().any(|arg| arg == "-Ad")
+                && cmd.args.iter().any(|arg| arg == "-d")
         }));
     }
 

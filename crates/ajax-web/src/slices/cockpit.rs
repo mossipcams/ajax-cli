@@ -257,6 +257,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn browser_cockpit_passes_through_acp_status_explanation() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = crate::test_support::fix_login_task();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "Allow edit src/main.rs? Allow · Deny",
+        ));
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&browser_cockpit_json(&context).unwrap()).unwrap();
+        assert_eq!(value["cards"][0]["status"], "waiting");
+        assert_eq!(
+            value["cards"][0]["status_explanation"],
+            "Allow edit src/main.rs? Allow · Deny"
+        );
+
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
+        assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Waiting);
+        assert_eq!(
+            detail.status_explanation.as_deref(),
+            Some("Allow edit src/main.rs? Allow · Deny")
+        );
+    }
+
+    #[test]
     fn browser_cockpit_keeps_removed_tasks_out_of_browser_only_cards() {
         let mut registry = InMemoryRegistry::default();
         let mut task = crate::test_support::task_in("web", "old-task", "Old task");

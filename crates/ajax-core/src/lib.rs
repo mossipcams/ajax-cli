@@ -1,12 +1,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod acp_status;
 pub mod adapters;
-pub mod agent_capability;
-pub mod agent_prompt;
-pub mod agent_status;
 pub mod analysis;
 pub mod attention;
-pub mod canonical_agent_event;
 pub mod commands;
 pub mod config;
 pub mod events;

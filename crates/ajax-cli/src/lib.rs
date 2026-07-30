@@ -1,8 +1,7 @@
-mod agent_event;
-mod agent_event_notify;
-mod agent_hooks;
-mod agent_runtime;
-mod agent_status_cache;
+mod agent_acp;
+mod agent_acp_console;
+mod agent_acp_snapshot;
+mod agent_acp_view;
 mod cli;
 mod cockpit_actions;
 mod cockpit_backend;
@@ -107,16 +106,8 @@ pub fn run_with_args(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    if let Some(("__agent-runtime", subcommand)) = matches.subcommand() {
-        return agent_runtime::run_agent_runtime_command(subcommand);
-    }
-
-    if let Some(("__agent-event", subcommand)) = matches.subcommand() {
-        return agent_event::run_agent_event_command(subcommand);
-    }
-
-    if let Some(("agent-hooks", subcommand)) = matches.subcommand() {
-        return agent_hooks::run_agent_hooks_command(subcommand);
+    if let Some(("__agent-acp", subcommand)) = matches.subcommand() {
+        return agent_acp::run_agent_acp_command(subcommand);
     }
 
     let paths = context_paths_from_matches(&matches)?;
@@ -162,18 +153,8 @@ pub fn run_with_args_to_writer(
         ParsedArgs::Message(message) => return write_command_output(writer, &message),
     };
 
-    if let Some(("__agent-runtime", subcommand)) = matches.subcommand() {
-        let output = agent_runtime::run_agent_runtime_command(subcommand)?;
-        return write_command_output(writer, &output);
-    }
-
-    if let Some(("__agent-event", subcommand)) = matches.subcommand() {
-        let output = agent_event::run_agent_event_command(subcommand)?;
-        return write_command_output(writer, &output);
-    }
-
-    if let Some(("agent-hooks", subcommand)) = matches.subcommand() {
-        let output = agent_hooks::run_agent_hooks_command(subcommand)?;
+    if let Some(("__agent-acp", subcommand)) = matches.subcommand() {
+        let output = agent_acp::run_agent_acp_command(subcommand)?;
         return write_command_output(writer, &output);
     }
 
@@ -478,8 +459,26 @@ pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTask
         .get_one::<String>("agent")
         .cloned()
         .unwrap_or_else(|| "codex".to_string());
+    let terminal = matches
+        .get_one::<String>("terminal")
+        .map(|value| value.as_str())
+        .unwrap_or("acp");
+    let terminal = match terminal {
+        "acp" => commands::AgentTerminalMode::Acp,
+        "native" => commands::AgentTerminalMode::Native,
+        other => {
+            return Err(CliError::CommandFailed(format!(
+                "invalid --terminal value {other}; expected acp or native"
+            )));
+        }
+    };
 
-    Ok(commands::NewTaskRequest { repo, title, agent })
+    Ok(commands::NewTaskRequest {
+        repo,
+        title,
+        agent,
+        terminal,
+    })
 }
 
 pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {

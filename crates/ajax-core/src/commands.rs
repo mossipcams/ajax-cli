@@ -26,7 +26,7 @@ pub use new_task::{
     mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
     mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
     start_provisioning_step_for_command, start_task_identity, task_from_new_request,
-    NewTaskRequest, StartPlanObservation, StartProvisioningStep,
+    AgentTerminalMode, NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use orphan_gc::{
@@ -769,7 +769,9 @@ mod tests {
                     repo: "web".to_string(),
                     title: title.clone(),
                     agent: "codex".to_string(),
-                },
+
+                ..Default::default()
+            },
             )
             .unwrap();
 
@@ -787,19 +789,24 @@ mod tests {
             let handle = worktree_command.args[5]
                 .strip_prefix("ajax/")
                 .expect("generated task branch");
-            let _task_id = format!("web/{handle}");
+            let task_id = format!("web/{handle}");
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
             prop_assert_eq!(send_keys.args[0].as_str(), "send-keys");
             let launch_words = shell_words(&send_keys.args[3]);
             prop_assert_eq!(
-                &launch_words[launch_words.len() - 3..],
+                launch_words.as_slice(),
                 &[
-                    "codex".to_string(),
-                    "--cd".to_string(),
-                    worktree_path,
+                    "ajax-cli".to_string(),
+                    "__agent-acp".to_string(),
+                    "--task-id".to_string(),
+                    task_id,
+                    "--state-root".to_string(),
+                    ".cache/ajax/agent-acp".to_string(),
+                    "codex-acp".to_string(),
                 ]
             );
+            prop_assert!(!send_keys.args[3].contains(&worktree_path));
         }
 
         #[test]
@@ -2063,6 +2070,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "fix logout".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2111,7 +2120,7 @@ mod tests {
         assert_eq!(plan.commands[4].args[2], "ajax-web-fix-logout:task");
         assert_eq!(
             plan.commands[4].args[3],
-            "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
+            "ajax-cli __agent-acp --task-id web/fix-logout --state-root .cache/ajax/agent-acp codex-acp"
         );
     }
 
@@ -2135,6 +2144,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "fix login".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2155,11 +2166,13 @@ mod tests {
         assert_eq!(
             &launch_words[launch_words.len() - 3..],
             &[
-                "codex".to_string(),
-                "--cd".to_string(),
-                "/Users/matt/projects/web app__worktrees/ajax-fix-login".to_string(),
+                "--state-root".to_string(),
+                ".cache/ajax/agent-acp".to_string(),
+                "codex-acp".to_string(),
             ]
         );
+        assert!(!plan.commands[4].args[3]
+            .contains("/Users/matt/projects/web app__worktrees/ajax-fix-login"));
     }
 
     #[test]
@@ -2172,6 +2185,8 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "fix login".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap_err();
@@ -2189,6 +2204,8 @@ mod tests {
                 repo: "api".to_string(),
                 title: "Ship oauth v2!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2215,11 +2232,12 @@ mod tests {
         assert_eq!(
             &launch_words[launch_words.len() - 3..],
             &[
-                "codex".to_string(),
-                "--cd".to_string(),
-                "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2".to_string(),
+                "--state-root".to_string(),
+                ".cache/ajax/agent-acp".to_string(),
+                "codex-acp".to_string(),
             ]
         );
+        assert!(!send_keys.args[3].contains("--cd"));
     }
 
     #[test]
@@ -2236,6 +2254,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2261,6 +2281,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = task_from_new_request(&context, &request).unwrap();
@@ -2284,6 +2306,8 @@ mod tests {
             repo: "web".to_string(),
             title: "!!!".to_string(),
             agent: "claude".to_string(),
+
+            ..Default::default()
         };
 
         let task = task_from_new_request(&context, &request).unwrap();
@@ -2299,6 +2323,8 @@ mod tests {
             repo: "api".to_string(),
             title: "Add cache".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = super::record_new_task(&mut context, &request).unwrap();
@@ -2326,6 +2352,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login!".to_string(),
                 agent: "codex".to_string(),
+
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2335,6 +2363,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
 
         let task = super::record_new_task(&mut context, &request).unwrap();
@@ -2360,6 +2390,8 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+
+            ..Default::default()
         };
         let task = super::record_new_task(&mut context, &request).unwrap();
         let task_id = task.id.clone();

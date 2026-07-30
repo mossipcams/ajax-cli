@@ -203,7 +203,7 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
             task.agent_status,
             AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
         )
-        && !crate::agent_status::is_delegated_waiting_summary(
+        && !crate::live::is_delegated_waiting_summary(
             operator_status.explanation.as_deref().unwrap_or(""),
         )
     {
@@ -217,7 +217,7 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
     }
 
     if let Some(live_status) = task.live_status.as_ref() {
-        if !crate::agent_status::is_delegated_waiting_summary(&live_status.summary) {
+        if !crate::live::is_delegated_waiting_summary(&live_status.summary) {
             if let Some(kind) = annotation_kind_for_live_status(live_status.kind) {
                 push_collapsed_annotation(
                     &mut annotations,
@@ -884,7 +884,7 @@ mod tests {
         let first = super::take_attention_transition_at(&mut task, at(1_016));
         assert_eq!(
             first.as_ref().map(|t| (t.status, t.explanation.as_deref())),
-            Some((TaskStatus::Error, Some("CI failed")))
+            Some((TaskStatus::Error, Some("ci failed")))
         );
 
         crate::live::apply_observation_at(
@@ -1021,7 +1021,7 @@ mod tests {
             &mut task,
             LiveObservation::new(
                 LiveStatusKind::WaitingForInput,
-                crate::agent_status::SUMMARY_WAITING_ON_DELEGATED,
+                crate::live::SUMMARY_WAITING_ON_DELEGATED,
             ),
         );
 
@@ -1030,7 +1030,7 @@ mod tests {
             crate::ui_state::derive_operator_status(&task)
                 .explanation
                 .as_deref(),
-            Some(crate::agent_status::EXPLANATION_WAITING_ON_DELEGATED)
+            Some(crate::live::EXPLANATION_WAITING_ON_DELEGATED)
         );
         assert_eq!(super::take_attention_transition(&mut task), None);
     }
@@ -1042,7 +1042,7 @@ mod tests {
             &mut task,
             LiveObservation::new(
                 LiveStatusKind::WaitingForInput,
-                crate::agent_status::SUMMARY_DELEGATED_STILL_ACTIVE,
+                crate::live::SUMMARY_DELEGATED_STILL_ACTIVE,
             ),
         );
 
@@ -1051,7 +1051,7 @@ mod tests {
             crate::ui_state::derive_operator_status(&task)
                 .explanation
                 .as_deref(),
-            Some(crate::agent_status::EXPLANATION_DELEGATED_STILL_ACTIVE)
+            Some(crate::live::EXPLANATION_DELEGATED_STILL_ACTIVE)
         );
         assert_eq!(super::take_attention_transition(&mut task), None);
     }
@@ -1061,22 +1061,39 @@ mod tests {
         let mut task = active_task("ask");
         crate::live::apply_observation(
             &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+            LiveObservation::new(
+                LiveStatusKind::WaitingForApproval,
+                "Allow edit src/main.rs? Allow · Deny",
+            ),
         );
 
         assert!(task.has_side_flag(SideFlag::NeedsInput));
-        confirm_at(&mut task, 1_000);
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some("Allow edit src/main.rs? Allow · Deny")
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_000)),
+            None
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_015))
+                .map(|t| t.explanation.unwrap_or_default()),
+            Some("Allow edit src/main.rs? Allow · Deny".to_string())
+        );
     }
 
     /// A rate-limited wait is transient and retryable, not actionable operator
-    /// input. It still shows as Waiting/"Rate limited" in the UI but must not
+    /// input. It still shows as Waiting with live detail in the UI but must not
     /// phone-ping or stamp a notify episode.
     #[test]
     fn rate_limited_waiting_does_not_notify() {
         let mut task = active_task("rate-limited");
         crate::live::apply_observation(
             &mut task,
-            LiveObservation::new(LiveStatusKind::RateLimited, "rate limited"),
+            LiveObservation::new(LiveStatusKind::RateLimited, "rate limited · retry in 30s"),
         );
 
         assert_eq!(
@@ -1087,21 +1104,21 @@ mod tests {
             crate::ui_state::derive_operator_status(&task)
                 .explanation
                 .as_deref(),
-            Some("Rate limited")
+            Some("rate limited · retry in 30s")
         );
         assert_eq!(super::take_attention_transition(&mut task), None);
         assert!(task.metadata.is_empty());
     }
 
     /// Turn-settled Done (Cursor stop, Claude/Codex/Pi settle) shows as
-    /// Waiting/"Response ready" in the UI but must not phone-ping or stamp a
+    /// Waiting with plan/usage detail in the UI but must not phone-ping or stamp a
     /// notify episode — same as "Ready for review" / "Rate limited".
     #[test]
     fn response_ready_waiting_does_not_notify() {
         let mut task = active_task("response-ready");
         crate::live::apply_observation(
             &mut task,
-            LiveObservation::new(LiveStatusKind::Done, "done"),
+            LiveObservation::new(LiveStatusKind::Done, "plan 5/5 · 40% context"),
         );
 
         assert_eq!(
@@ -1112,7 +1129,7 @@ mod tests {
             crate::ui_state::derive_operator_status(&task)
                 .explanation
                 .as_deref(),
-            Some("Response ready")
+            Some("plan 5/5 · 40% context")
         );
         assert_eq!(super::take_attention_transition(&mut task), None);
         assert!(task.metadata.is_empty());
@@ -1124,7 +1141,7 @@ mod tests {
 
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "Enter deployment target"),
             at(1_000),
         );
         assert_eq!(
@@ -1134,35 +1151,49 @@ mod tests {
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_016))
                 .map(|t| t.explanation.unwrap_or_default()),
-            Some("Waiting for input".to_string())
+            Some("Enter deployment target".to_string())
         );
 
-        // Same Waiting class, different explanation — no re-fire.
+        // Same Waiting class / detail-only churn — no re-fire.
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+            LiveObservation::new(
+                LiveStatusKind::WaitingForApproval,
+                "Allow edit src/main.rs? Allow · Deny",
+            ),
             at(1_002),
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_002)),
             None
         );
-
-        // Class change Waiting → Error still fires once after a fresh shared dwell
-        // (prior delivery cleared the candidate).
         crate::live::apply_observation_at(
             &mut task,
-            LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
+            LiveObservation::new(
+                LiveStatusKind::WaitingForApproval,
+                "Allow edit src/lib.rs? Allow · Deny",
+            ),
             at(1_003),
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_017)),
+            super::take_attention_transition_at(&mut task, at(1_003)),
+            None
+        );
+
+        // Waiting → Error still fires after dwell and carries failure detail.
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CommandFailed, "ACP transport closed"),
+            at(1_004),
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_018)),
             None
         );
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_032))
+            super::take_attention_transition_at(&mut task, at(1_033))
                 .map(|t| (t.status, t.explanation.unwrap_or_default())),
-            Some((TaskStatus::Error, "Agent blocked".to_string()))
+            Some((TaskStatus::Error, "ACP transport closed".to_string()))
         );
     }
 
@@ -1205,7 +1236,7 @@ mod tests {
             crate::ui_state::derive_operator_status(&task)
                 .explanation
                 .as_deref(),
-            Some("Authentication required")
+            Some("auth required")
         );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_000)),

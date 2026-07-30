@@ -3697,6 +3697,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                terminal: None,
                 request_id: "req-1".to_string(),
             })
         );
