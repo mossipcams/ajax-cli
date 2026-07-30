@@ -359,8 +359,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let (intent, plan) = plan_start_task_operation(&context, request).unwrap();
@@ -401,8 +399,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = FirstCommandFailsRunner::default();
@@ -448,8 +444,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = RecordingQueuedRunner::default();

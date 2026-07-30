@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -16,7 +17,7 @@ use ajax_core::acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation
 use clap::ArgMatches;
 
 use crate::{
-    agent_acp_console::{provider_label_from_program, AgentAcpConsole, ConsoleEvent},
+    agent_acp_console::{AgentAcpConsole, ConsoleEvent},
     agent_acp_snapshot::{read_snapshot, AcpSnapshotPublisher, HEARTBEAT_INTERVAL_MILLIS},
     CliError,
 };
@@ -277,8 +278,7 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
     })?;
 
     runtime.block_on(async move {
-        let provider = provider_label_from_program(&program);
-        let console = AgentAcpConsole::spawn_stdio(provider);
+        let console = AgentAcpConsole::spawn_stdio();
         let agent = AcpAgent::new(AcpAgentConfig::new(&program).args(adapter_args));
         run_session_lifecycle_dispatch(
             acp_v2_enabled_from_env(),
@@ -301,15 +301,16 @@ fn acp_v2_enabled_from_env() -> bool {
     acp_v2_flag_enabled(std::env::var("AJAX_ACP_V2").ok().as_deref())
 }
 
-async fn run_session_lifecycle_dispatch<A>(
+async fn run_session_lifecycle_dispatch<W, A>(
     use_v2: bool,
     agent: A,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    console: AgentAcpConsole,
+    console: AgentAcpConsole<W>,
 ) -> Result<(), CliError>
 where
+    W: Write + Send + 'static,
     A: ConnectTo<Client> + 'static,
 {
     if use_v2 {
@@ -331,14 +332,15 @@ async fn negotiate_v2(agent: impl ConnectTo<Client>) -> Result<(), CliError> {
 }
 
 #[cfg(test)]
-pub(crate) async fn run_session_lifecycle<A>(
+pub(crate) async fn run_session_lifecycle<W, A>(
     agent: A,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    console: AgentAcpConsole,
+    console: AgentAcpConsole<W>,
 ) -> Result<(), CliError>
 where
+    W: Write + Send + 'static,
     A: ConnectTo<Client> + 'static,
 {
     // Existing lifecycle tests exercise the v2 host path explicitly.
@@ -367,12 +369,12 @@ async fn initialize_v2(
     Ok(response.auth_methods)
 }
 
-pub(crate) async fn run_session_lifecycle_v2(
+pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
     agent: impl ConnectTo<Client>,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    mut console: AgentAcpConsole,
+    mut console: AgentAcpConsole<W>,
 ) -> Result<(), CliError> {
     let now = unix_millis();
     let cached_session_id =
@@ -540,12 +542,6 @@ pub(crate) async fn run_session_lifecycle_v2(
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
             }
-            if let Err(error) = console.set_session_id(&session_id) {
-                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-            }
-            if let Err(error) = console.render_ready_prompt() {
-                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-            }
             let mut active_permission = None::<PermissionRequest>;
             let mut active_elicitation = None::<ElicitationRequest>;
             let mut heartbeat =
@@ -640,9 +636,6 @@ pub(crate) async fn run_session_lifecycle_v2(
                                 if let Err(error) = clear_permission_snapshot(&mut fold, &lifecycle, &session_id) {
                                     return Ok(error);
                                 }
-                                if let Err(error) = console.render_input_prompt() {
-                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                                }
                                 if let Err(error) =
                                     handle_console_event(&connection, &session_id, event, &host_fail_tx)
                                 {
@@ -657,9 +650,6 @@ pub(crate) async fn run_session_lifecycle_v2(
                             }
                             if let Err(error) = clear_permission_snapshot(&mut fold, &lifecycle, &session_id) {
                                 return Ok(error);
-                            }
-                            if let Err(error) = console.render_input_prompt() {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
                             }
                             continue;
                         }
@@ -730,19 +720,10 @@ pub(crate) async fn run_session_lifecycle_v2(
                                 }
                             }
                         }
-                        let should_reprompt = matches!(
-                            &event,
-                            ConsoleEvent::PromptLine(_) | ConsoleEvent::Interrupt
-                        );
                         if let Err(error) =
                             handle_console_event(&connection, &session_id, event, &host_fail_tx)
                         {
                             return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                        }
-                        if should_reprompt {
-                            if let Err(error) = console.render_input_prompt() {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                            }
                         }
                     }
                     Some(detail) = host_fail_rx.recv() => {
@@ -1028,12 +1009,12 @@ async fn handle_console_event_v1(
     Ok(())
 }
 
-pub(crate) async fn run_session_lifecycle_v1(
+pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
     agent: impl ConnectTo<Client>,
     task_id: &str,
     state_root: &Path,
     cwd: &Path,
-    mut console: AgentAcpConsole,
+    mut console: AgentAcpConsole<W>,
 ) -> Result<(), CliError> {
     let now = unix_millis();
     let cached_session_id =
@@ -1176,12 +1157,6 @@ pub(crate) async fn run_session_lifecycle_v1(
             if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                 return Ok(SessionEnd::PublishFailed(error));
             }
-            if let Err(error) = console.set_session_id(&session_id) {
-                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-            }
-            if let Err(error) = console.render_ready_prompt() {
-                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-            }
             let mut active_permission = None::<V1PermissionRequest>;
             let mut heartbeat =
                 tokio::time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MILLIS as u64));
@@ -1242,9 +1217,6 @@ pub(crate) async fn run_session_lifecycle_v1(
                                 if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
                                     return Ok(error);
                                 }
-                                if let Err(error) = console.render_input_prompt() {
-                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                                }
                                 if let Err(error) = handle_console_event_v1(
                                     &connection,
                                     &session_id,
@@ -1266,17 +1238,8 @@ pub(crate) async fn run_session_lifecycle_v1(
                             if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
                                 return Ok(error);
                             }
-                            if let Err(error) = console.render_input_prompt() {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                            }
                             continue;
                         }
-                        // After a completed prompt or cancel, re-show `>` even if
-                        // subsequent adapter updates leave the snapshot Running.
-                        let should_reprompt = matches!(
-                            &event,
-                            ConsoleEvent::PromptLine(_) | ConsoleEvent::Interrupt
-                        );
                         if let Err(error) = handle_console_event_v1(
                             &connection,
                             &session_id,
@@ -1287,11 +1250,6 @@ pub(crate) async fn run_session_lifecycle_v1(
                         .await
                         {
                             return Ok(error);
-                        }
-                        if should_reprompt {
-                            if let Err(error) = console.render_input_prompt() {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                            }
                         }
                     }
                     Some(detail) = host_fail_rx.recv() => {
@@ -2804,7 +2762,6 @@ mod tests {
         let lifecycle_root = root.0.clone();
         let lifecycle_cwd = cwd.clone();
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (console, _output) = AgentAcpConsole::new_for_test(events_rx, "Agent");
 
         let lifecycle = tokio::spawn(async move {
             run_session_lifecycle_dispatch(
@@ -2813,7 +2770,7 @@ mod tests {
                 task_id,
                 &lifecycle_root,
                 &lifecycle_cwd,
-                console,
+                AgentAcpConsole::new(events_rx, std::io::sink()),
             )
             .await
         });

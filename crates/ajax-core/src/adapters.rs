@@ -6,7 +6,7 @@ pub mod github;
 pub mod process;
 pub mod tmux;
 
-pub use agent::{agent_acp_launch_spec, agent_launch_spec, AgentLaunch};
+pub use agent::agent_acp_launch_spec;
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
@@ -18,10 +18,11 @@ pub use tmux::TmuxAdapter;
 
 #[cfg(test)]
 mod tests {
-    use super::{command, process};
     use super::{
-        CommandMode, CommandRunner, CommandSpec, GitAdapter, RecordingCommandRunner, TmuxAdapter,
+        agent_acp_launch_spec, CommandMode, CommandRunner, CommandSpec, GitAdapter,
+        RecordingCommandRunner, TmuxAdapter,
     };
+    use super::{command, process};
     use crate::models::{TaskWindowStatus, TmuxStatus};
     use proptest::prelude::*;
     use std::path::Path;
@@ -481,31 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_launch_spec_maps_native_adapters() {
-        use super::{agent_launch_spec, AgentLaunch};
-        use crate::models::AgentClient;
-
-        let launch = AgentLaunch {
-            worktree_path: "/tmp/worktree".to_string(),
-            prompt: String::new(),
-        };
-        assert_eq!(
-            agent_launch_spec("codex", AgentClient::Codex, &launch),
-            CommandSpec::new("codex", ["--cd", "/tmp/worktree"])
-        );
-        assert_eq!(
-            agent_launch_spec("claude", AgentClient::Claude, &launch),
-            CommandSpec::new("claude", ["--dangerously-skip-permissions"])
-        );
-        assert_eq!(
-            agent_launch_spec("cursor-agent", AgentClient::Cursor, &launch),
-            CommandSpec::new("cursor-agent", [])
-        );
-    }
-
-    #[test]
     fn agent_acp_launch_maps_fixed_adapters_and_other_passthrough() {
-        use super::agent_acp_launch_spec;
         use crate::models::AgentClient;
         use std::path::Path;
 

@@ -1,7 +1,6 @@
 mod agent_acp;
 mod agent_acp_console;
 mod agent_acp_snapshot;
-mod agent_acp_view;
 mod cli;
 mod cockpit_actions;
 mod cockpit_backend;
@@ -459,26 +458,8 @@ pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTask
         .get_one::<String>("agent")
         .cloned()
         .unwrap_or_else(|| "codex".to_string());
-    let terminal = matches
-        .get_one::<String>("terminal")
-        .map(|value| value.as_str())
-        .unwrap_or("acp");
-    let terminal = match terminal {
-        "acp" => commands::AgentTerminalMode::Acp,
-        "native" => commands::AgentTerminalMode::Native,
-        other => {
-            return Err(CliError::CommandFailed(format!(
-                "invalid --terminal value {other}; expected acp or native"
-            )));
-        }
-    };
 
-    Ok(commands::NewTaskRequest {
-        repo,
-        title,
-        agent,
-        terminal,
-    })
+    Ok(commands::NewTaskRequest { repo, title, agent })
 }
 
 pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {

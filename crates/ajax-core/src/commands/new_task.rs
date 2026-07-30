@@ -1,8 +1,6 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
-    adapters::{
-        agent_acp_launch_spec, agent_launch_spec, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter,
-    },
+    adapters::{agent_acp_launch_spec, CommandSpec, GitAdapter, TmuxAdapter},
     config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
@@ -21,36 +19,11 @@ const HUSKY_GUARD: &str =
 pub const DEFAULT_TASK_WINDOW_NAME: &str = "task";
 pub const ORIGIN_FETCH_FRESH_FOR: Duration = Duration::from_secs(60);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
-pub enum AgentTerminalMode {
-    #[default]
-    Acp,
-    Native,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
-    pub terminal: AgentTerminalMode,
-}
-
-impl Default for NewTaskRequest {
-    fn default() -> Self {
-        Self {
-            repo: String::new(),
-            title: String::new(),
-            agent: String::new(),
-            terminal: AgentTerminalMode::Acp,
-        }
-    }
-}
-
-impl NewTaskRequest {
-    pub fn terminal_mode(&self) -> AgentTerminalMode {
-        self.terminal
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,22 +125,12 @@ pub fn new_task_plan_with_observation<R: Registry>(
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);
-    let launch = match request.terminal_mode() {
-        AgentTerminalMode::Acp => agent_acp_launch_spec(
-            &qualified_handle,
-            &context.runtime_paths.cache_dir.join("agent-acp"),
-            &request.agent,
-            selected_agent,
-        ),
-        AgentTerminalMode::Native => agent_launch_spec(
-            native_agent_program(&request.agent, selected_agent),
-            selected_agent,
-            &AgentLaunch {
-                worktree_path: worktree_path_string.clone(),
-                prompt: String::new(),
-            },
-        ),
-    };
+    let launch = agent_acp_launch_spec(
+        &qualified_handle,
+        &context.runtime_paths.cache_dir.join("agent-acp"),
+        &request.agent,
+        selected_agent,
+    );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     if observation
@@ -554,16 +517,6 @@ fn slugify_title(title: &str) -> String {
     }
 }
 
-fn native_agent_program(agent: &str, client: AgentClient) -> String {
-    match client {
-        AgentClient::Cursor => "cursor-agent".to_string(),
-        AgentClient::Codex => "codex".to_string(),
-        AgentClient::Claude => "claude".to_string(),
-        AgentClient::Pi => "pi".to_string(),
-        AgentClient::Other => agent.to_string(),
-    }
-}
-
 fn agent_from_name(name: &str) -> AgentClient {
     match name.to_ascii_lowercase().as_str() {
         "claude" => AgentClient::Claude,
@@ -588,8 +541,8 @@ mod tests {
     use super::{
         is_git_worktree_add_command, is_task_window_new_session_command,
         mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
-        record_new_task, task_from_new_request, AgentTerminalMode, NewTaskRequest,
-        StartPlanObservation, StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
+        record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
+        StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
     };
     use crate::{
         adapters::{CommandSpec, GitAdapter},
@@ -648,8 +601,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "custom-agent-cli".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -664,8 +615,6 @@ mod tests {
                     repo: "web".to_string(),
                     title: "Fix login".to_string(),
                     agent: "custom-agent-cli".to_string(),
-
-                    ..Default::default()
                 }
             )
             .unwrap()
@@ -693,8 +642,6 @@ mod tests {
                     repo: repo.to_string(),
                     title: "Fix login".to_string(),
                     agent: "codex".to_string(),
-
-                    ..Default::default()
                 },
             )
             .unwrap_err();
@@ -708,44 +655,6 @@ mod tests {
     }
 
     #[test]
-    fn new_task_plan_cursor_native_mode_launches_interactive_cursor_agent() {
-        let context = context();
-        let plan = new_task_plan(
-            &context,
-            NewTaskRequest {
-                repo: "web".to_string(),
-                title: "Fix login".to_string(),
-                agent: "cursor".to_string(),
-                terminal: AgentTerminalMode::Native,
-            },
-        )
-        .unwrap();
-
-        let launch = agent_send_keys_line(&plan);
-        assert_eq!(launch, "cursor-agent");
-        assert!(!launch.contains("__agent-acp"));
-        assert!(!launch.contains(" acp"));
-    }
-
-    #[test]
-    fn new_task_plan_codex_native_mode_uses_cd_flag() {
-        let context = context();
-        let plan = new_task_plan(
-            &context,
-            NewTaskRequest {
-                repo: "web".to_string(),
-                title: "Fix login".to_string(),
-                agent: "codex".to_string(),
-                terminal: AgentTerminalMode::Native,
-            },
-        )
-        .unwrap();
-
-        let launch = agent_send_keys_line(&plan);
-        assert_eq!(launch, "codex --cd /repo/web__worktrees/ajax-fix-login");
-    }
-
-    #[test]
     fn new_task_plan_claude_agent_command_omits_cd_flag_and_skips_permissions() {
         let context = context();
         let plan = new_task_plan(
@@ -754,8 +663,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "claude".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -776,8 +683,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "cursor".to_string(),
-
-            ..Default::default()
         };
         let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -801,8 +706,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "pi".to_string(),
-
-            ..Default::default()
         };
         let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -836,8 +739,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -857,8 +758,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -879,8 +778,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -909,8 +806,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             },
         )
         .unwrap();
@@ -937,8 +832,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let plan = new_task_plan(&context, request).unwrap();
@@ -967,8 +860,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let observation = StartPlanObservation {
             origin_fetch_age: Some(Duration::from_secs(30)),
@@ -1001,8 +892,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let observation = StartPlanObservation {
             origin_fetch_age: Some(Duration::from_secs(120)),
@@ -1026,8 +915,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let observation = StartPlanObservation {
             origin_fetch_age: None,
@@ -1059,8 +946,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let plan = new_task_plan(&context, request).unwrap();
@@ -1091,8 +976,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let plan = new_task_plan(&context, request).unwrap();
@@ -1118,8 +1001,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let plan = new_task_plan(&context, request).unwrap();
@@ -1155,8 +1036,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let plan = new_task_plan(&context, request.clone()).unwrap();
@@ -1187,8 +1066,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
         let task = record_new_task(&mut context, &request).unwrap();
         let task_id = task.id.clone();
@@ -1286,8 +1163,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let error = new_task_plan(&context, request).unwrap_err();
@@ -1315,8 +1190,6 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
-
-            ..Default::default()
         };
 
         let error = new_task_plan_with_observation(&context, request, &observation).unwrap_err();
@@ -1348,8 +1221,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             };
 
             let error = new_task_plan(&context, request).unwrap_err();
@@ -1383,8 +1254,6 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-
-                ..Default::default()
             };
 
             let error = new_task_plan(&context, request).unwrap_err();
