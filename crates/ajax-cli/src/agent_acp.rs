@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -10,7 +9,7 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::{v1, v2, MaybeUndefined, ProtocolVersion},
+    schema::{v2, MaybeUndefined, ProtocolVersion},
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, ErrorCode,
 };
 use ajax_core::acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation, AcpStopReason};
@@ -264,9 +263,7 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
         .get_many::<String>("agent-args")
         .map(|values| values.cloned().collect::<Vec<_>>())
         .unwrap_or_default();
-    let task_id = task_id.to_string();
-    let program = program.clone();
-    let adapter_args = adapter_args.clone();
+    let agent = AcpAgent::new(AcpAgentConfig::new(program).args(adapter_args));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -277,47 +274,11 @@ pub(crate) fn run_agent_acp_command(matches: &ArgMatches) -> Result<String, CliE
         ))
     })?;
 
-    runtime.block_on(async move {
+    runtime.block_on(async {
         let console = AgentAcpConsole::spawn_stdio();
-        let agent = AcpAgent::new(AcpAgentConfig::new(&program).args(adapter_args));
-        run_session_lifecycle_dispatch(
-            acp_v2_enabled_from_env(),
-            agent,
-            &task_id,
-            &state_root,
-            &cwd,
-            console,
-        )
-        .await
+        run_session_lifecycle(agent, task_id, &state_root, &cwd, console).await
     })?;
     Ok(String::new())
-}
-
-fn acp_v2_flag_enabled(value: Option<&str>) -> bool {
-    value.is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-}
-
-fn acp_v2_enabled_from_env() -> bool {
-    acp_v2_flag_enabled(std::env::var("AJAX_ACP_V2").ok().as_deref())
-}
-
-async fn run_session_lifecycle_dispatch<W, A>(
-    use_v2: bool,
-    agent: A,
-    task_id: &str,
-    state_root: &Path,
-    cwd: &Path,
-    console: AgentAcpConsole<W>,
-) -> Result<(), CliError>
-where
-    W: Write + Send + 'static,
-    A: ConnectTo<Client> + 'static,
-{
-    if use_v2 {
-        run_session_lifecycle_v2(agent, task_id, state_root, cwd, console).await
-    } else {
-        run_session_lifecycle_v1(agent, task_id, state_root, cwd, console).await
-    }
 }
 
 #[cfg(test)]
@@ -329,22 +290,6 @@ async fn negotiate_v2(agent: impl ConnectTo<Client>) -> Result<(), CliError> {
         })
         .await
         .map_err(acp_initialization_error)
-}
-
-#[cfg(test)]
-pub(crate) async fn run_session_lifecycle<W, A>(
-    agent: A,
-    task_id: &str,
-    state_root: &Path,
-    cwd: &Path,
-    console: AgentAcpConsole<W>,
-) -> Result<(), CliError>
-where
-    W: Write + Send + 'static,
-    A: ConnectTo<Client> + 'static,
-{
-    // Existing lifecycle tests exercise the v2 host path explicitly.
-    run_session_lifecycle_dispatch(true, agent, task_id, state_root, cwd, console).await
 }
 
 async fn initialize_v2(
@@ -369,7 +314,7 @@ async fn initialize_v2(
     Ok(response.auth_methods)
 }
 
-pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
+pub(crate) async fn run_session_lifecycle<W: std::io::Write>(
     agent: impl ConnectTo<Client>,
     task_id: &str,
     state_root: &Path,
@@ -477,8 +422,7 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                             .iter()
                             .map(|method| method.name.as_str())
                             .collect::<Vec<_>>();
-                        if let Err(error) = console.render_authentication_prompt(&method_names)
-                        {
+                        if let Err(error) = console.render_authentication_prompt(&method_names) {
                             return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
                         }
 
@@ -500,7 +444,8 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                                 let Some(index) =
                                     auth_method_index_for_line(&line, agent_methods.len())
                                 else {
-                                    if let Err(error) = console.render_authentication_validation_error()
+                                    if let Err(error) =
+                                        console.render_authentication_validation_error()
                                     {
                                         return Ok(SessionEnd::HostFailed(host_failure_detail(
                                             error,
@@ -555,8 +500,7 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                             continue;
                         }
                         fold.apply_update(&notification.update);
-                        if let Err(error) = console.render_update(&notification.update)
-                        {
+                        if let Err(error) = console.render_update(&notification.update) {
                             return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
                         }
                         if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
@@ -576,8 +520,7 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                         if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
                             return Ok(SessionEnd::PublishFailed(error));
                         }
-                        if let Err(error) = console.render_permission_prompt(&permission.request)
-                        {
+                        if let Err(error) = console.render_permission_prompt(&permission.request) {
                             return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
                         }
                         active_permission = Some(permission);
@@ -708,7 +651,8 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
                                         continue;
                                     }
                                     Err(detail) => {
-                                        if let Err(error) = console.render_elicitation_validation_error(&detail)
+                                        if let Err(error) =
+                                            console.render_elicitation_validation_error(&detail)
                                         {
                                             return Ok(SessionEnd::HostFailed(
                                                 host_failure_detail(error),
@@ -751,532 +695,6 @@ pub(crate) async fn run_session_lifecycle_v2<W: Write + Send + 'static>(
         Ok(SessionEnd::PublishFailed(error)) => return Err(error),
         Ok(SessionEnd::HostFailed(detail)) => detail,
         Err(error) => format!("ACP v2 session failed: {error}"),
-    };
-    publish_failure(&failure_lifecycle, &detail)?;
-    Err(CliError::CommandFailed(detail))
-}
-
-struct SessionFoldV1 {
-    state: AcpSessionState,
-    tools: HashMap<v1::ToolCallId, String>,
-    tool_order: Vec<v1::ToolCallId>,
-    pending_permission: Option<v1::RequestPermissionRequest>,
-}
-
-struct V1PermissionRequest {
-    request: v1::RequestPermissionRequest,
-    responder: agent_client_protocol::Responder<v1::RequestPermissionResponse>,
-}
-
-impl Default for SessionFoldV1 {
-    fn default() -> Self {
-        Self {
-            state: AcpSessionState::Connecting,
-            tools: HashMap::new(),
-            tool_order: Vec::new(),
-            pending_permission: None,
-        }
-    }
-}
-
-impl SessionFoldV1 {
-    fn set_state(&mut self, state: AcpSessionState) {
-        self.state = state;
-    }
-
-    fn permission_detail(&self) -> Option<String> {
-        let request = self.pending_permission.as_ref()?;
-        let title = request
-            .tool_call
-            .fields
-            .title
-            .as_deref()
-            .or_else(|| {
-                self.tools
-                    .get(&request.tool_call.tool_call_id)
-                    .map(String::as_str)
-            })
-            .filter(|title| !title.is_empty())
-            .unwrap_or("Permission required");
-        let mut detail = title.to_owned();
-        for (index, option) in request.options.iter().enumerate() {
-            detail.push_str(&format!(" · {}. {}", index + 1, option.name));
-        }
-        Some(detail)
-    }
-
-    fn apply_update(&mut self, update: &v1::SessionUpdate) {
-        match update {
-            v1::SessionUpdate::ToolCall(tool) => {
-                let id = tool.tool_call_id.clone();
-                self.tools.insert(id.clone(), tool.title.clone());
-                self.tool_order.retain(|existing| existing != &id);
-                self.tool_order.push(id);
-                self.state = AcpSessionState::Running;
-            }
-            v1::SessionUpdate::ToolCallUpdate(update) => {
-                let id = update.tool_call_id.clone();
-                if let Some(title) = &update.fields.title {
-                    self.tools.insert(id.clone(), title.clone());
-                }
-                self.tool_order.retain(|existing| existing != &id);
-                self.tool_order.push(id);
-                self.state = AcpSessionState::Running;
-            }
-            v1::SessionUpdate::AgentMessageChunk(_) => {
-                self.state = AcpSessionState::Running;
-            }
-            _ => {}
-        }
-    }
-
-    fn observation(&self) -> AcpStatusObservation {
-        if self.pending_permission.is_some() {
-            return AcpStatusObservation {
-                state: AcpSessionState::RequiresAction(AcpActionKind::Permission),
-                detail: self.permission_detail(),
-            };
-        }
-
-        let tool = self.tool_order.iter().rev().find_map(|id| {
-            let title = self.tools.get(id)?;
-            Some(title.clone())
-        });
-        AcpStatusObservation {
-            state: self.state.clone(),
-            detail: tool,
-        }
-    }
-}
-
-async fn initialize_v1(
-    connection: &ConnectionTo<Agent>,
-) -> agent_client_protocol::Result<Vec<v1::AuthMethod>> {
-    let response = connection
-        .send_request(v1::InitializeRequest::new(ProtocolVersion::V1).client_info(
-            v1::Implementation::new("ajax-cli", env!("CARGO_PKG_VERSION")),
-        ))
-        .block_task()
-        .await?;
-    if response.protocol_version != ProtocolVersion::V1 {
-        return Err(agent_client_protocol::Error::internal_error()
-            .data("peer did not confirm ACP protocol version 1"));
-    }
-    Ok(response.auth_methods)
-}
-
-async fn start_session_v1(
-    connection: &ConnectionTo<Agent>,
-    cached_session_id: &Option<String>,
-    cwd: &Path,
-) -> Result<String, agent_client_protocol::Error> {
-    if let Some(session_id) = cached_session_id {
-        connection
-            .send_request(v1::LoadSessionRequest::new(
-                session_id.clone(),
-                cwd.to_path_buf(),
-            ))
-            .block_task()
-            .await?;
-        Ok(session_id.clone())
-    } else {
-        Ok(connection
-            .send_request(v1::NewSessionRequest::new(cwd.to_path_buf()))
-            .block_task()
-            .await?
-            .session_id
-            .0
-            .to_string())
-    }
-}
-
-fn supported_v1_agent_auth_methods(methods: &[v1::AuthMethod]) -> Vec<v1::AuthMethodAgent> {
-    methods
-        .iter()
-        .filter_map(|method| match method {
-            v1::AuthMethod::Agent(agent) => Some(agent.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn v1_authentication_detail(methods: &[v1::AuthMethodAgent]) -> Option<String> {
-    if methods.is_empty() {
-        return None;
-    }
-    Some(
-        methods
-            .iter()
-            .enumerate()
-            .map(|(index, method)| format!("{}. {}", index + 1, method.name))
-            .collect::<Vec<_>>()
-            .join(" · "),
-    )
-}
-
-fn map_v1_stop_reason(reason: v1::StopReason) -> AcpStopReason {
-    match reason {
-        v1::StopReason::EndTurn => AcpStopReason::EndTurn,
-        v1::StopReason::Cancelled => AcpStopReason::Cancelled,
-        v1::StopReason::MaxTokens => AcpStopReason::MaxTokens,
-        v1::StopReason::MaxTurnRequests => AcpStopReason::MaxTurnRequests,
-        v1::StopReason::Refusal => AcpStopReason::Refusal,
-        reason => AcpStopReason::Other(format!("{reason:?}")),
-    }
-}
-
-fn permission_outcome_for_line_v1(
-    event: &ConsoleEvent,
-    options: &[v1::PermissionOption],
-) -> v1::RequestPermissionOutcome {
-    let ConsoleEvent::PromptLine(line) = event else {
-        return v1::RequestPermissionOutcome::Cancelled;
-    };
-    let Ok(choice) = line.trim().parse::<usize>() else {
-        return v1::RequestPermissionOutcome::Cancelled;
-    };
-    if choice == 0 || choice > options.len() {
-        return v1::RequestPermissionOutcome::Cancelled;
-    }
-    v1::RequestPermissionOutcome::Selected(v1::SelectedPermissionOutcome::new(
-        options[choice - 1].option_id.clone(),
-    ))
-}
-
-fn respond_permission_outcome_v1(
-    responder: agent_client_protocol::Responder<v1::RequestPermissionResponse>,
-    outcome: v1::RequestPermissionOutcome,
-) -> Result<(), CliError> {
-    responder
-        .respond(v1::RequestPermissionResponse::new(outcome))
-        .map_err(acp_initialization_error)
-}
-
-fn clear_permission_snapshot_v1(
-    fold: &mut SessionFoldV1,
-    lifecycle: &Mutex<SessionLifecycleState>,
-    session_id: &str,
-) -> Result<(), SessionEnd> {
-    fold.pending_permission = None;
-    publish(lifecycle, session_id, fold.observation()).map_err(SessionEnd::PublishFailed)
-}
-
-async fn handle_console_event_v1(
-    connection: &ConnectionTo<Agent>,
-    session_id: &str,
-    event: ConsoleEvent,
-    fold: &mut SessionFoldV1,
-    lifecycle: &Mutex<SessionLifecycleState>,
-) -> Result<(), SessionEnd> {
-    match event {
-        ConsoleEvent::PromptLine(line) => {
-            match connection
-                .send_request(v1::PromptRequest::new(
-                    session_id.to_owned(),
-                    vec![v1::ContentBlock::Text(v1::TextContent::new(line))],
-                ))
-                .block_task()
-                .await
-            {
-                Ok(response) => {
-                    fold.set_state(AcpSessionState::Idle(Some(map_v1_stop_reason(
-                        response.stop_reason,
-                    ))));
-                    publish(lifecycle, session_id, fold.observation())
-                        .map_err(SessionEnd::PublishFailed)?;
-                }
-                Err(_) => {
-                    return Err(SessionEnd::HostFailed(acp_prompt_failure_detail()));
-                }
-            }
-        }
-        ConsoleEvent::Interrupt => {
-            connection
-                .send_notification(v1::CancelNotification::new(session_id.to_owned()))
-                .map_err(|error| {
-                    SessionEnd::HostFailed(acp_initialization_error(error).to_string())
-                })?;
-            fold.set_state(AcpSessionState::Idle(Some(AcpStopReason::Cancelled)));
-            publish(lifecycle, session_id, fold.observation())
-                .map_err(SessionEnd::PublishFailed)?;
-        }
-        ConsoleEvent::InputError(detail) => {
-            return Err(SessionEnd::HostFailed(host_failure_detail(
-                CliError::CommandFailed(format!("ACP console input failed: {detail}")),
-            )));
-        }
-    }
-    Ok(())
-}
-
-pub(crate) async fn run_session_lifecycle_v1<W: Write + Send + 'static>(
-    agent: impl ConnectTo<Client>,
-    task_id: &str,
-    state_root: &Path,
-    cwd: &Path,
-    mut console: AgentAcpConsole<W>,
-) -> Result<(), CliError> {
-    let now = unix_millis();
-    let cached_session_id =
-        read_snapshot(state_root, task_id, now)?.and_then(|snapshot| snapshot.session_id);
-    let lifecycle = Arc::new(Mutex::new(SessionLifecycleState {
-        publisher: AcpSnapshotPublisher::claim(
-            state_root,
-            task_id,
-            &format!(
-                "{}-{}-{}",
-                std::process::id(),
-                now,
-                GENERATION_SUFFIX.fetch_add(1, Ordering::Relaxed)
-            ),
-            cached_session_id.clone(),
-            AcpStatusObservation {
-                state: AcpSessionState::Connecting,
-                detail: None,
-            },
-            now,
-        )?,
-        session_id: cached_session_id.clone(),
-    }));
-    let failure_lifecycle = Arc::clone(&lifecycle);
-    let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (_host_fail_tx, mut host_fail_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let (permission_tx, mut permission_rx) =
-        tokio::sync::mpsc::unbounded_channel::<V1PermissionRequest>();
-
-    let result = Client
-        .builder()
-        .on_receive_notification(
-            async move |notification: v1::SessionNotification, _connection| {
-                let _ = updates_tx.send(notification);
-                Ok(())
-            },
-            agent_client_protocol::on_receive_notification!(),
-        )
-        .on_receive_request(
-            {
-                let permission_tx = permission_tx.clone();
-                async move |request: v1::RequestPermissionRequest, responder, _connection| {
-                    let _ = permission_tx.send(V1PermissionRequest { request, responder });
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .connect_with(agent, async move |connection| {
-            let auth_methods = initialize_v1(&connection).await?;
-
-            let session_id = match start_session_v1(&connection, &cached_session_id, cwd).await {
-                Ok(session_id) => session_id,
-                Err(error) if is_auth_required(&error) => {
-                    let agent_methods = supported_v1_agent_auth_methods(&auth_methods);
-                    if agent_methods.is_empty() {
-                        return Ok(SessionEnd::HostFailed(
-                            AUTHENTICATION_UNSUPPORTED.to_owned(),
-                        ));
-                    }
-
-                    loop {
-                        if let Err(error) = publish_pre_session(
-                            &lifecycle,
-                            AcpStatusObservation {
-                                state: AcpSessionState::RequiresAction(
-                                    AcpActionKind::Authentication,
-                                ),
-                                detail: v1_authentication_detail(&agent_methods),
-                            },
-                        ) {
-                            return Ok(SessionEnd::PublishFailed(error));
-                        }
-                        let method_names = agent_methods
-                            .iter()
-                            .map(|method| method.name.as_str())
-                            .collect::<Vec<_>>();
-                        if let Err(error) = console.render_authentication_prompt(&method_names)
-                        {
-                            return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                        }
-
-                        let event = match console.next_event().await {
-                            Some(event) => event,
-                            None => {
-                                return Ok(SessionEnd::HostFailed(
-                                    AUTHENTICATION_CANCELLED.to_owned(),
-                                ));
-                            }
-                        };
-                        match event {
-                            ConsoleEvent::Interrupt | ConsoleEvent::InputError(_) => {
-                                return Ok(SessionEnd::HostFailed(
-                                    AUTHENTICATION_CANCELLED.to_owned(),
-                                ));
-                            }
-                            ConsoleEvent::PromptLine(line) => {
-                                let Some(index) =
-                                    auth_method_index_for_line(&line, agent_methods.len())
-                                else {
-                                    if let Err(error) = console.render_authentication_validation_error()
-                                    {
-                                        return Ok(SessionEnd::HostFailed(host_failure_detail(
-                                            error,
-                                        )));
-                                    }
-                                    continue;
-                                };
-                                if connection
-                                    .send_request(v1::AuthenticateRequest::new(
-                                        agent_methods[index].id.clone(),
-                                    ))
-                                    .block_task()
-                                    .await
-                                    .is_err()
-                                {
-                                    return Ok(SessionEnd::HostFailed(
-                                        AUTHENTICATION_LOGIN_FAILED.to_owned(),
-                                    ));
-                                }
-                                break;
-                            }
-                        }
-                    }
-
-                    match start_session_v1(&connection, &cached_session_id, cwd).await {
-                        Ok(session_id) => session_id,
-                        Err(_) => {
-                            return Ok(SessionEnd::HostFailed(
-                                AUTHENTICATION_START_FAILED.to_owned(),
-                            ));
-                        }
-                    }
-                }
-                Err(error) => return Err(error),
-            };
-
-            let mut fold = SessionFoldV1::default();
-            fold.set_state(AcpSessionState::Running);
-            if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
-                return Ok(SessionEnd::PublishFailed(error));
-            }
-            let mut active_permission = None::<V1PermissionRequest>;
-            let mut heartbeat =
-                tokio::time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MILLIS as u64));
-
-            loop {
-                tokio::select! {
-                    biased;
-                    Some(notification) = updates_rx.recv() => {
-                        if notification.session_id.0.as_ref() != session_id {
-                            continue;
-                        }
-                        fold.apply_update(&notification.update);
-                        if let Err(error) = console.render_update_v1(&notification.update)
-                        {
-                            return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                        }
-                        if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
-                            return Ok(SessionEnd::PublishFailed(error));
-                        }
-                    }
-                    Some(permission) = permission_rx.recv(), if active_permission.is_none() => {
-                        if permission.request.session_id.0.as_ref() != session_id {
-                            let _ = permission.responder.respond(
-                                v1::RequestPermissionResponse::new(
-                                    v1::RequestPermissionOutcome::Cancelled,
-                                ),
-                            );
-                            continue;
-                        }
-                        fold.pending_permission = Some(permission.request.clone());
-                        if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
-                            return Ok(SessionEnd::PublishFailed(error));
-                        }
-                        if let Err(error) = console.render_permission_prompt_v1(&permission.request)
-                        {
-                            return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                        }
-                        active_permission = Some(permission);
-                    }
-                    Some(event) = console.next_event() => {
-                        if let Some(active) = active_permission.take() {
-                            let outcome =
-                                permission_outcome_for_line_v1(&event, &active.request.options);
-                            if let ConsoleEvent::InputError(detail) = &event {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(
-                                    CliError::CommandFailed(format!(
-                                        "ACP console input failed: {detail}"
-                                    )),
-                                )));
-                            }
-                            if matches!(event, ConsoleEvent::Interrupt) {
-                                if let Err(error) = respond_permission_outcome_v1(
-                                    active.responder,
-                                    v1::RequestPermissionOutcome::Cancelled,
-                                ) {
-                                    return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                                }
-                                if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
-                                    return Ok(error);
-                                }
-                                if let Err(error) = handle_console_event_v1(
-                                    &connection,
-                                    &session_id,
-                                    event,
-                                    &mut fold,
-                                    &lifecycle,
-                                )
-                                .await
-                                {
-                                    return Ok(error);
-                                }
-                                continue;
-                            }
-                            if let Err(error) =
-                                respond_permission_outcome_v1(active.responder, outcome)
-                            {
-                                return Ok(SessionEnd::HostFailed(host_failure_detail(error)));
-                            }
-                            if let Err(error) = clear_permission_snapshot_v1(&mut fold, &lifecycle, &session_id) {
-                                return Ok(error);
-                            }
-                            continue;
-                        }
-                        if let Err(error) = handle_console_event_v1(
-                            &connection,
-                            &session_id,
-                            event,
-                            &mut fold,
-                            &lifecycle,
-                        )
-                        .await
-                        {
-                            return Ok(error);
-                        }
-                    }
-                    Some(detail) = host_fail_rx.recv() => {
-                        return Ok(SessionEnd::HostFailed(detail));
-                    }
-                    _ = heartbeat.tick() => {
-                        if let Err(error) = publish(&lifecycle, &session_id, fold.observation()) {
-                            return Ok(SessionEnd::PublishFailed(error));
-                        }
-                    }
-                    () = connection.incoming_closed() => {
-                        if matches!(fold.observation().state, AcpSessionState::Idle(_)) {
-                            return Ok(SessionEnd::Graceful);
-                        }
-                        return Ok(SessionEnd::UnexpectedEof);
-                    }
-                }
-            }
-        })
-        .await;
-
-    let detail = match result {
-        Ok(SessionEnd::Graceful) => return Ok(()),
-        Ok(SessionEnd::UnexpectedEof) => "ACP adapter exited unexpectedly".to_owned(),
-        Ok(SessionEnd::PublishFailed(error)) => return Err(error),
-        Ok(SessionEnd::HostFailed(detail)) => detail,
-        Err(error) => format!("ACP v1 session failed: {error}"),
     };
     publish_failure(&failure_lifecycle, &detail)?;
     Err(CliError::CommandFailed(detail))
@@ -1742,8 +1160,8 @@ mod tests {
     };
 
     use super::{
-        acp_v2_flag_enabled, negotiate_v2, read_snapshot, run_session_lifecycle,
-        run_session_lifecycle_dispatch, unix_millis, AcpSnapshotPublisher, SessionFold,
+        negotiate_v2, read_snapshot, run_session_lifecycle, unix_millis, AcpSnapshotPublisher,
+        SessionFold,
     };
     use crate::agent_acp_console::AgentAcpConsole;
 
@@ -1767,27 +1185,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
-    }
-
-    async fn wait_for_lifecycle_snapshot<F>(state_root: &Path, task_id: &str, mut matches: F)
-    where
-        F: FnMut(&AcpRuntimeSnapshot) -> bool,
-    {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if let Some(snapshot) = read_snapshot(state_root, task_id, unix_millis())
-                    .ok()
-                    .flatten()
-                {
-                    if matches(&snapshot) {
-                        break;
-                    }
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("expected lifecycle snapshot was not published");
     }
 
     #[derive(Debug, PartialEq)]
@@ -2709,111 +2106,26 @@ mod tests {
             .expect("v2 negotiation should succeed");
     }
 
-    fn v1_only_test_agent(session_id: &'static str) -> impl ConnectTo<Client> + 'static {
-        Agent
-            .builder()
-            .on_receive_request(
-                async |request: v1::InitializeRequest, responder, _cx| {
-                    assert_eq!(request.protocol_version, ProtocolVersion::V1);
-                    responder.respond(v1::InitializeResponse::new(request.protocol_version))
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |_request: v1::NewSessionRequest,
-                            responder: agent_client_protocol::Responder<v1::NewSessionResponse>,
-                            _cx| {
-                    responder.respond(v1::NewSessionResponse::new(session_id))
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |request: v1::PromptRequest,
-                            responder: agent_client_protocol::Responder<v1::PromptResponse>,
-                            _cx| {
-                    assert_eq!(request.session_id.0.as_ref(), session_id);
-                    responder.respond(v1::PromptResponse::new(v1::StopReason::EndTurn))
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-    }
-
     #[test]
-    fn acp_v2_flag_defaults_off_and_accepts_truthy() {
-        assert!(!acp_v2_flag_enabled(None));
-        assert!(!acp_v2_flag_enabled(Some("")));
-        assert!(!acp_v2_flag_enabled(Some("0")));
-        assert!(!acp_v2_flag_enabled(Some("false")));
-        assert!(!acp_v2_flag_enabled(Some("no")));
-        assert!(acp_v2_flag_enabled(Some("1")));
-        assert!(acp_v2_flag_enabled(Some("true")));
-        assert!(acp_v2_flag_enabled(Some("TRUE")));
-        assert!(acp_v2_flag_enabled(Some("yes")));
-        assert!(acp_v2_flag_enabled(Some("Yes")));
-    }
+    fn negotiation_rejects_v1() {
+        let agent = Agent.builder().on_receive_request(
+            async |request: v1::InitializeRequest, responder, _cx| {
+                responder.respond(v1::InitializeResponse::new(request.protocol_version))
+            },
+            agent_client_protocol::on_receive_request!(),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn default_dispatch_uses_v1() {
-        let root = LifecycleTempRoot::new();
-        let task_id = "repo/v1-default";
-        let cwd = root.0.join("v1-default-worktree");
-        std::fs::create_dir_all(&cwd).expect("create v1 default cwd");
-        let session_id = "v1-default-session";
-        let lifecycle_root = root.0.clone();
-        let lifecycle_cwd = cwd.clone();
-        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let lifecycle = tokio::spawn(async move {
-            run_session_lifecycle_dispatch(
-                false,
-                v1_only_test_agent(session_id),
-                task_id,
-                &lifecycle_root,
-                &lifecycle_cwd,
-                AgentAcpConsole::new(events_rx, std::io::sink()),
-            )
-            .await
-        });
-
-        wait_for_lifecycle_snapshot(&root.0, task_id, |snapshot| {
-            matches!(snapshot.observation.state, AcpSessionState::Running)
-        })
-        .await;
-        events_tx
-            .send(crate::agent_acp_console::ConsoleEvent::PromptLine(
-                "hello v1 default".to_owned(),
-            ))
-            .expect("prompt event");
-        wait_for_lifecycle_snapshot(&root.0, task_id, |snapshot| {
-            matches!(
-                snapshot.observation.state,
-                AcpSessionState::Idle(Some(AcpStopReason::EndTurn))
-            )
-        })
-        .await;
-
-        // Host stays up until the adapter connection closes; snapshot Idle is the contract.
-        lifecycle.abort();
-        let _ = lifecycle.await;
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn v2_flag_rejects_v1_peer() {
-        let agent = Agent
-            .protocol_router()
-            .with_v1(Agent.builder().on_receive_request(
-                async |request: v1::InitializeRequest, responder, _cx| {
-                    responder.respond(v1::InitializeResponse::new(request.protocol_version))
-                },
-                agent_client_protocol::on_receive_request!(),
-            ));
-        let error = negotiate_v2(agent)
-            .await
-            .expect_err("v2 path against v1 peer must fail closed");
-        let message = error.to_string();
+        let error = runtime
+            .block_on(negotiate_v2(agent))
+            .expect_err("v1-only peers must be rejected");
         assert!(
-            message.contains("protocol version") || message.contains("negotiated"),
-            "unexpected error: {message}"
+            error.to_string().contains("ACP v2")
+                || error.to_string().contains("protocol version 2"),
+            "{error}"
         );
     }
 }
