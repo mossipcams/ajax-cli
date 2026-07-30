@@ -382,6 +382,27 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         }
 
         if projection.phase == crate::agent_status::ParentPhase::Unknown {
+            if crate::pane_fallback::profile_allows_any_pane_wait_fallback(
+                task_snapshot.selected_agent,
+            ) {
+                let capture_command =
+                    tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
+                if let Ok(output) = runner.run(&capture_command) {
+                    if output.status_code == 0 {
+                        if let Some(observation) = crate::pane_fallback::maybe_pane_wait(
+                            task_snapshot.selected_agent,
+                            &output.stdout,
+                        ) {
+                            if let Some(task) = context.registry.get_task_mut(&task_id) {
+                                let previous = task.clone();
+                                live::apply_observation_at(task, observation, now);
+                                refresh_cached_annotations(task);
+                                changed |= *task != previous;
+                            }
+                        }
+                    }
+                }
+            }
             continue;
         }
         let observation = projection.live.clone();
@@ -2063,6 +2084,90 @@ mod tests {
             0,
             "refresh should reuse the initial list_tasks snapshot, got {} get_task calls",
             context.registry.get_task_calls()
+        );
+    }
+
+    const CLAUDE_PERMISSION_MENU: &str =
+        "Do you want to proceed?\n\n❯ 1. Yes\n  2. No\n\nEsc to cancel";
+
+    #[derive(Default)]
+    struct PermissionMenuRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for PermissionMenuRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => CLAUDE_PERMISSION_MENU,
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn pane_wait_observed_only_when_no_lifecycle_evidence() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Other;
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+            alive: true,
+            observed_at: SystemTime::now(),
+        });
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let capture_panes = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+            })
+            .count();
+        assert_eq!(
+            capture_panes, 1,
+            "expected exactly one capture-pane, got {:?}",
+            runner.commands
+        );
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn pane_evidence_never_overrides_lifecycle_observation() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let capture_panes = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+            })
+            .count();
+        assert_eq!(capture_panes, 0);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
         );
     }
 

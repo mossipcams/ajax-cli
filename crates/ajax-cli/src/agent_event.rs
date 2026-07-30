@@ -106,10 +106,34 @@ pub(crate) fn translate_native_event(
 ) -> Option<CanonicalAgentEvent> {
     match (client, event) {
         ("claude", "UserPromptSubmit") => Some(turn_started()),
-        ("claude", "PreToolUse") => Some(activity_started(payload)),
-        ("claude", "PostToolUse") => Some(activity_finished(payload)),
+        ("claude", "PreToolUse") => {
+            if claude_tool_name(payload) == "AskUserQuestion" {
+                Some(attention_requested(AttentionReason::Question))
+            } else {
+                Some(activity_started(payload))
+            }
+        }
+        ("claude", "PostToolUse") => {
+            if claude_tool_name(payload) == "AskUserQuestion" {
+                Some(attention_cleared())
+            } else {
+                Some(activity_finished(payload))
+            }
+        }
         ("claude", "Notification") => Some(claude_notification(payload)),
+        ("claude", "Notification:permission_prompt") => {
+            Some(attention_requested(AttentionReason::Permission))
+        }
+        ("claude", "Notification:elicitation_dialog")
+        | ("claude", "Notification:agent_needs_input") => {
+            Some(attention_requested(AttentionReason::Question))
+        }
+        ("claude", "Notification:idle_prompt") | ("claude", "Notification:agent_completed") => {
+            Some(turn_settled(TurnOutcome::Completed))
+        }
         ("claude", "Stop") => Some(claude_stop(payload)),
+        // Rate-limit / API-error turn ends are not task failures; Failed would project Error.
+        ("claude", "StopFailure") => Some(turn_settled(TurnOutcome::Interrupted)),
         ("claude", "SessionStart") => Some(session_opened()),
         ("claude", "SessionEnd") => Some(session_closed()),
         ("codex", "UserPromptSubmit") => Some(turn_started()),
@@ -122,6 +146,9 @@ pub(crate) fn translate_native_event(
         ("cursor", "beforeSubmitPrompt") => Some(turn_started()),
         ("cursor", "preToolUse") => Some(activity_started(payload)),
         ("cursor", "postToolUse") => Some(activity_finished(payload)),
+        ("cursor", "postToolUseFailure") => Some(activity_finished(payload)),
+        ("cursor", "subagentStart") => Some(child_started()),
+        ("cursor", "subagentStop") => Some(child_settled()),
         ("cursor", "stop") => Some(cursor_stop(payload)),
         ("cursor", "sessionStart") => Some(session_opened()),
         ("cursor", "sessionEnd") => Some(session_closed()),
@@ -165,6 +192,27 @@ fn attention_requested(reason: AttentionReason) -> CanonicalAgentEvent {
     }
 }
 
+fn attention_cleared() -> CanonicalAgentEvent {
+    CanonicalAgentEvent {
+        kind: CanonicalEventKind::AttentionCleared,
+        detail: None,
+    }
+}
+
+fn child_started() -> CanonicalAgentEvent {
+    CanonicalAgentEvent {
+        kind: CanonicalEventKind::ChildStarted,
+        detail: None,
+    }
+}
+
+fn child_settled() -> CanonicalAgentEvent {
+    CanonicalAgentEvent {
+        kind: CanonicalEventKind::ChildSettled,
+        detail: None,
+    }
+}
+
 fn turn_settled(outcome: TurnOutcome) -> CanonicalAgentEvent {
     CanonicalAgentEvent {
         kind: CanonicalEventKind::TurnSettled,
@@ -184,6 +232,13 @@ fn session_closed() -> CanonicalAgentEvent {
         kind: CanonicalEventKind::SessionClosed,
         detail: None,
     }
+}
+
+fn claude_tool_name(payload: &serde_json::Value) -> &str {
+    payload
+        .get("tool_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
 }
 
 fn claude_notification(payload: &serde_json::Value) -> CanonicalAgentEvent {
@@ -553,14 +608,127 @@ mod tests {
                 attention: AttentionReason::Permission
             })
         );
-        let idle = serde_json::json!({"message": "waiting for your input"});
+        // Bare Notification arm fallback unchanged for permission-shaped messages.
+        let permission_shaped = serde_json::json!({
+            "message": "Claude needs your permission to run Bash"
+        });
         assert_eq!(
-            translate_native_event("claude", "Notification", &idle)
+            translate_native_event("claude", "Notification", &permission_shaped)
                 .and_then(|canonical| canonical.detail),
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Permission
+            })
+        );
+    }
+
+    #[test]
+    fn claude_ask_user_question_pretooluse_requests_attention() {
+        let ask = serde_json::json!({"tool_name": "AskUserQuestion"});
+        let canonical = translate_native_event("claude", "PreToolUse", &ask).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+        assert_eq!(
+            canonical.detail,
             Some(CanonicalEventDetail::Attention {
                 attention: AttentionReason::Question
             })
         );
+
+        let bash = serde_json::json!({"tool_name": "Bash"});
+        let canonical = translate_native_event("claude", "PreToolUse", &bash).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::ActivityStarted);
+    }
+
+    #[test]
+    fn claude_ask_user_question_posttooluse_clears_attention() {
+        let ask = serde_json::json!({"tool_name": "AskUserQuestion"});
+        let canonical = translate_native_event("claude", "PostToolUse", &ask).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::AttentionCleared);
+        assert_eq!(canonical.detail, None);
+
+        let bash = serde_json::json!({"tool_name": "Bash"});
+        let canonical = translate_native_event("claude", "PostToolUse", &bash).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::ActivityFinished);
+    }
+
+    #[test]
+    fn claude_notification_matcher_selects_phase() {
+        let payload = serde_json::json!({});
+        let permission =
+            translate_native_event("claude", "Notification:permission_prompt", &payload).unwrap();
+        assert_eq!(permission.kind, CanonicalEventKind::AttentionRequested);
+        assert_eq!(
+            permission.detail,
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Permission
+            })
+        );
+
+        for event in [
+            "Notification:elicitation_dialog",
+            "Notification:agent_needs_input",
+        ] {
+            let canonical = translate_native_event("claude", event, &payload).unwrap();
+            assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+            assert_eq!(
+                canonical.detail,
+                Some(CanonicalEventDetail::Attention {
+                    attention: AttentionReason::Question
+                })
+            );
+        }
+
+        for event in ["Notification:idle_prompt", "Notification:agent_completed"] {
+            let canonical = translate_native_event("claude", event, &payload).unwrap();
+            assert_eq!(canonical.kind, CanonicalEventKind::TurnSettled);
+            assert_eq!(
+                canonical.detail,
+                Some(CanonicalEventDetail::Outcome {
+                    outcome: TurnOutcome::Completed
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn claude_stop_failure_settles_without_error() {
+        let canonical =
+            translate_native_event("claude", "StopFailure", &serde_json::json!({})).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::TurnSettled);
+        assert_eq!(
+            canonical.detail,
+            Some(CanonicalEventDetail::Outcome {
+                outcome: TurnOutcome::Interrupted
+            })
+        );
+        assert_ne!(
+            canonical.detail,
+            Some(CanonicalEventDetail::Outcome {
+                outcome: TurnOutcome::Failed
+            }),
+            "Failed would project to TaskStatus::Error"
+        );
+    }
+
+    #[test]
+    fn cursor_post_tool_use_failure_finishes_activity() {
+        let payload = serde_json::json!({"tool_call_id": "t1"});
+        let canonical = translate_native_event("cursor", "postToolUseFailure", &payload).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::ActivityFinished);
+        assert_eq!(
+            canonical.detail,
+            Some(CanonicalEventDetail::Activity {
+                activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+                activity_id: Some("t1".to_string()),
+            })
+        );
+
+        let subagent_start =
+            translate_native_event("cursor", "subagentStart", &serde_json::json!({})).unwrap();
+        assert_eq!(subagent_start.kind, CanonicalEventKind::ChildStarted);
+
+        let subagent_stop =
+            translate_native_event("cursor", "subagentStop", &serde_json::json!({})).unwrap();
+        assert_eq!(subagent_stop.kind, CanonicalEventKind::ChildSettled);
     }
 
     #[test]
@@ -619,7 +787,6 @@ mod tests {
 
     #[test]
     fn translate_ignores_unknown_events() {
-        assert_eq!(kind("cursor", "subagentStop", &serde_json::json!({})), None);
         assert_eq!(kind("nope", "stop", &serde_json::json!({})), None);
     }
 

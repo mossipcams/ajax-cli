@@ -41,15 +41,35 @@ fn install_claude_hooks(home: &Path) -> Result<&'static str, CliError> {
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
-        "Notification",
         "Stop",
+        "StopFailure",
         "SessionStart",
         "SessionEnd",
     ];
+    // Every matcher here must have a `translate_native_event` arm; an installed
+    // hook with no arm spawns `__agent-event` per notification and drops it.
+    // `auth_success` is deliberately absent: it carries no status Ajax projects.
+    let notification_matchers = [
+        "permission_prompt",
+        "idle_prompt",
+        "elicitation_dialog",
+        "agent_needs_input",
+        "agent_completed",
+    ];
     let mut changed = false;
+    let legacy_notification_command = hook_command("claude", "Notification");
+    if purge_legacy_hook_command(&mut root, "Notification", &legacy_notification_command) {
+        changed = true;
+    }
     for event in events {
         let command = hook_command("claude", event);
         if merge_hook_entries(&mut root, event, &command) {
+            changed = true;
+        }
+    }
+    for matcher in notification_matchers {
+        let command = hook_command_matched("claude", "Notification", matcher);
+        if merge_matched_hook_entries(&mut root, "Notification", matcher, &command) {
             changed = true;
         }
     }
@@ -101,6 +121,9 @@ fn install_cursor_hooks(home: &Path) -> Result<&'static str, CliError> {
         "beforeSubmitPrompt",
         "preToolUse",
         "postToolUse",
+        "postToolUseFailure",
+        "subagentStart",
+        "subagentStop",
         "stop",
         "sessionStart",
         "sessionEnd",
@@ -143,6 +166,10 @@ fn install_pi_extension(home: &Path) -> Result<&'static str, CliError> {
 
 fn hook_command(client: &str, event: &str) -> String {
     format!("{AGENT_EVENT_MARKER} --client {client} --event {event}")
+}
+
+fn hook_command_matched(client: &str, event: &str, matcher: &str) -> String {
+    format!("{AGENT_EVENT_MARKER} --client {client} --event {event}:{matcher}")
 }
 
 fn pi_extension_source() -> &'static str {
@@ -221,6 +248,61 @@ fn merge_hook_entries(root: &mut Value, event: &str, command: &str) -> bool {
     true
 }
 
+fn merge_matched_hook_entries(root: &mut Value, event: &str, matcher: &str, command: &str) -> bool {
+    let object = root.as_object_mut().expect("root json object");
+    if !object.contains_key("hooks") {
+        object.insert("hooks".to_string(), Value::Object(Map::new()));
+    }
+    let hooks = object
+        .get_mut("hooks")
+        .and_then(Value::as_object_mut)
+        .expect("hooks object");
+    if !hooks.contains_key(event) {
+        hooks.insert(event.to_string(), Value::Array(Vec::new()));
+    }
+    let entries = hooks
+        .get_mut(event)
+        .and_then(Value::as_array_mut)
+        .expect("event hook array");
+    if hook_command_present(entries, command) {
+        return false;
+    }
+    entries.push(serde_json::json!({
+        "matcher": matcher,
+        "hooks": [
+            {
+                "type": "command",
+                "command": command
+            }
+        ]
+    }));
+    true
+}
+
+fn purge_legacy_hook_command(root: &mut Value, event: &str, command: &str) -> bool {
+    let object = root.as_object_mut().expect("root json object");
+    let Some(hooks) = object.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let before = entries.len();
+    entries.retain(|entry| {
+        !entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| {
+                hooks.iter().any(|hook| {
+                    hook.get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|existing| existing == command)
+                })
+            })
+    });
+    entries.len() < before
+}
+
 fn merge_cursor_hook_entry(root: &mut Value, event: &str, command: &str) -> bool {
     ensure_cursor_version(root);
     let object = root.as_object_mut().expect("root json object");
@@ -295,10 +377,20 @@ mod tests {
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
-            "Notification",
             "Stop",
+            "StopFailure",
             "SessionStart",
             "SessionEnd",
+        ]
+    }
+
+    fn claude_notification_matchers() -> [&'static str; 5] {
+        [
+            "permission_prompt",
+            "idle_prompt",
+            "elicitation_dialog",
+            "agent_needs_input",
+            "agent_completed",
         ]
     }
 
@@ -314,11 +406,14 @@ mod tests {
         ]
     }
 
-    fn cursor_events() -> [&'static str; 6] {
+    fn cursor_events() -> [&'static str; 9] {
         [
             "beforeSubmitPrompt",
             "preToolUse",
             "postToolUse",
+            "postToolUseFailure",
+            "subagentStart",
+            "subagentStop",
             "stop",
             "sessionStart",
             "sessionEnd",
@@ -343,6 +438,22 @@ mod tests {
             assert!(
                 command.starts_with(AGENT_EVENT_MARKER),
                 "claude hook command must include marker"
+            );
+        }
+        for matcher in claude_notification_matchers() {
+            let command =
+                format!("{AGENT_EVENT_MARKER} --client claude --event Notification:{matcher}");
+            let entries = settings["hooks"]["Notification"].as_array().unwrap();
+            assert!(
+                entries.iter().any(|entry| {
+                    entry.get("matcher") == Some(&serde_json::Value::String(matcher.to_string()))
+                        && entry["hooks"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|hook| hook["command"] == command)
+                }),
+                "missing matched claude Notification hook for {matcher}"
             );
         }
     }
@@ -477,6 +588,122 @@ mod tests {
         assert!(post_tool_use
             .iter()
             .any(|entry| entry["hooks"][0]["command"] == ajax_command));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn claude_install_writes_matched_notification_hooks() {
+        let home = temp_home("claude-matched-notifications");
+        fs::create_dir_all(&home).unwrap();
+
+        install_agent_hooks(&home).unwrap();
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(home.join(".claude/settings.json")).unwrap())
+                .unwrap();
+        let notification_types = [
+            "permission_prompt",
+            "idle_prompt",
+            "elicitation_dialog",
+            "agent_needs_input",
+            "agent_completed",
+        ];
+        for matcher in notification_types {
+            let command =
+                format!("{AGENT_EVENT_MARKER} --client claude --event Notification:{matcher}");
+            let entries = settings["hooks"]["Notification"]
+                .as_array()
+                .unwrap_or_else(|| panic!("missing Notification hooks array"));
+            let matched = entries.iter().any(|entry| {
+                entry["hooks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|hook| hook["command"] == command && hook.get("matcher").is_none())
+                    && entry.get("matcher") == Some(&serde_json::Value::String(matcher.to_string()))
+            });
+            assert!(matched, "missing matched Notification hook for {matcher}");
+        }
+
+        let stop_failure_command = hook_command("claude", "StopFailure");
+        let stop_failure_entries = settings["hooks"]["StopFailure"].as_array().unwrap();
+        assert!(stop_failure_entries.iter().any(|entry| entry["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hook| hook["command"] == stop_failure_command)));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn claude_install_purges_legacy_unmatched_notification() {
+        let home = temp_home("claude-purge-legacy");
+        let claude_dir = home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let legacy_command = format!("{AGENT_EVENT_MARKER} --client claude --event Notification");
+        fs::write(
+            claude_dir.join("settings.json"),
+            format!(
+                r#"{{
+  "hooks": {{
+    "Notification": [
+      {{
+        "hooks": [
+          {{
+            "type": "command",
+            "command": "{legacy_command}"
+          }}
+        ]
+      }}
+    ]
+  }}
+}}"#
+            ),
+        )
+        .unwrap();
+
+        install_agent_hooks(&home).unwrap();
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
+        let entries = settings["hooks"]["Notification"].as_array().unwrap();
+        assert!(
+            !entries.iter().any(|entry| entry["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|hook| hook["command"] == legacy_command)),
+            "legacy unmatched Notification hook must be purged"
+        );
+        assert!(
+            entries.iter().any(|entry| entry.get("matcher").is_some()),
+            "matched Notification hooks must exist after upgrade"
+        );
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cursor_install_writes_failure_and_subagent_events() {
+        let home = temp_home("cursor-failure-subagent");
+        fs::create_dir_all(&home).unwrap();
+
+        install_agent_hooks(&home).unwrap();
+
+        let hooks: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(home.join(".cursor/hooks.json")).unwrap())
+                .unwrap();
+        for event in ["postToolUseFailure", "subagentStart", "subagentStop"] {
+            let command = hook_command("cursor", event);
+            let entries = hooks["hooks"][event].as_array().unwrap();
+            assert!(
+                entries.iter().any(|entry| entry["command"] == command),
+                "missing cursor hook for {event}"
+            );
+        }
 
         fs::remove_dir_all(home).unwrap();
     }

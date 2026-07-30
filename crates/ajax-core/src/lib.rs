@@ -17,6 +17,7 @@ pub mod logging;
 pub mod models;
 pub mod operation;
 pub mod output;
+pub mod pane_fallback;
 pub mod policy;
 pub mod recommended;
 pub mod registry;
