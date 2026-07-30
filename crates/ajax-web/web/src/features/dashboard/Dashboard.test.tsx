@@ -1,334 +1,422 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import Dashboard from "./Dashboard";
-import type { BrowserCockpitView } from "@/shared/lib/types";
+import type {
+  AttentionBand,
+  BrowserCockpitView,
+  BrowserTaskCard,
+  TaskStatus,
+} from "@/shared/lib/types";
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
-);
+const here = dirname(fileURLToPath(import.meta.url));
+const COCKPIT_CONTRACT = JSON.parse(
+  readFileSync(join(here, "../../fixtures/cockpit.json"), "utf8"),
+) as BrowserCockpitView;
 
-const NOW_SECS = Math.floor(Date.now() / 1000);
+afterEach(() => vi.restoreAllMocks());
 
-const cockpit: BrowserCockpitView = {
-  backend: { authority: "host-native", control_enabled: true },
-  repos: {
-    repos: [
-      { name: "web", attention_items: 2 },
-      { name: "api", attention_items: 0 },
+const nowSecs = () => Math.floor(Date.now() / 1000);
+
+function card(overrides: Partial<BrowserTaskCard> = {}): BrowserTaskCard {
+  const handle = overrides.qualified_handle ?? "web/fix-login";
+  return {
+    id: handle,
+    qualified_handle: handle,
+    repo: handle.split("/")[0],
+    title: "Fix login",
+    status: "waiting" as TaskStatus,
+    status_explanation: "Waiting for approval",
+    attention: "needs-you" as AttentionBand,
+    last_activity_unix_secs: nowSecs() - 30,
+    actions: [
+      { action: "review", label: "Review", destructive: false, confirmation_required: false },
     ],
-  },
-  cards: [
-    {
-      id: "web/a",
-      qualified_handle: "web/a",
-      repo: "web",
-      title: "A",
-      status: "error",
-      attention: "needs-you",
-      status_explanation: "CI failed",
-      last_activity_unix_secs: NOW_SECS - 60,
-      actions: [
-        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-        { action: "fix-ci", label: "Fix CI", destructive: false, confirmation_required: false },
-        { action: "repair", label: "Repair", destructive: false, confirmation_required: false },
-        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-      ],
-    },
-    {
-      id: "web/b",
-      qualified_handle: "web/b",
-      repo: "web",
-      title: "B",
-      status: "running",
-      attention: "active",
-      status_explanation: "Agent working",
-      last_activity_unix_secs: NOW_SECS - 300,
-      actions: [
-        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-      ],
-    },
-    {
-      id: "web/r",
-      qualified_handle: "web/r",
-      repo: "web",
-      title: "R",
-      status: "idle",
-      attention: "review",
-      last_activity_unix_secs: NOW_SECS - 120,
-      actions: [
-        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-        { action: "review", label: "Review", destructive: false, confirmation_required: false },
-        { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
-        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-      ],
-    },
-    {
-      id: "api/c",
-      qualified_handle: "api/c",
-      repo: "api",
-      title: "C",
-      status: "idle",
-      attention: "idle",
-      last_activity_unix_secs: 0,
-      actions: [],
-    },
-  ],
-};
+    ...overrides,
+  };
+}
 
-const rowFor = (handle: string) => screen.getByRole("button", { name: new RegExp(handle) });
-const rowEl = (handle: string) => screen.getByTestId(`task-row-${handle}`);
+function cockpit(overrides: Partial<BrowserCockpitView> = {}): BrowserCockpitView {
+  return {
+    backend: { authority: "host-native", control_enabled: true, warning: null },
+    repos: { repos: [{ name: "web", path: "/repo/web" }] },
+    cards: [card()],
+    inbox: { items: [] },
+    ...overrides,
+  };
+}
 
-describe("Dashboard", () => {
-  // ---- the point of the rebuild: one tap runs anything a task offers -------
+function renderDashboard(view: BrowserCockpitView, props: Record<string, unknown> = {}) {
+  return render(<Dashboard cockpit={view} connection="connected" {...props} />);
+}
 
-  it("gives every safe action its own button on the row", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const row = rowEl("web/r");
-    expect(within(row).getByRole("button", { name: "Review" })).toHaveAttribute(
-      "data-action",
-      "review",
+const rowHandles = () =>
+  screen.queryAllByTestId(/^task-row-/).map((row) => row.getAttribute("data-handle"));
+
+const rail = () => screen.getByTestId("task-rail");
+
+describe("Dashboard — the roster", () => {
+  it("renders one line per task, ordered needs-you, running, ready, recent", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "a/idle", attention: "idle", status: "idle" }),
+          card({ qualified_handle: "b/review", attention: "review" }),
+          card({ qualified_handle: "c/active", attention: "active", status: "running" }),
+          card({ qualified_handle: "d/needs", attention: "needs-you" }),
+        ],
+      }),
     );
-    expect(within(row).getByRole("button", { name: "Ship" })).toHaveAttribute(
-      "data-action",
-      "ship",
+
+    expect(rowHandles()).toEqual(["d/needs", "c/active", "b/review", "a/idle"]);
+  });
+
+  it("divides bands with a labelled rule carrying its count", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "d/needs" }),
+          card({ qualified_handle: "e/needs-too" }),
+          card({ qualified_handle: "c/active", attention: "active", status: "running" }),
+        ],
+      }),
+    );
+
+    const rules = screen.getAllByTestId(/^band-rule-/);
+    expect(rules.map((rule) => rule.textContent)).toEqual(["Needs you2", "Running1"]);
+    expect(rules.map((rule) => rule.dataset.testid)).toEqual([
+      "band-rule-needs-you",
+      "band-rule-active",
+    ]);
+  });
+
+  it("carries the fleet's shape as words in the head, never a gauge", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "d/needs" }),
+          card({ qualified_handle: "c/active", attention: "active", status: "running" }),
+        ],
+      }),
+    );
+
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("tasks")).toBeInTheDocument();
+    expect(screen.getByText("1 needs you · 1 running")).toBeInTheDocument();
+  });
+
+  it("keeps the row itself terse — the title belongs to the rail", () => {
+    renderDashboard(cockpit());
+
+    const row = screen.getByTestId("task-row-web/fix-login");
+    expect(row).toHaveTextContent("web/fix-login");
+    expect(within(row).queryByText("Fix login")).not.toBeInTheDocument();
+    // A screen reader still gets band and state from the row itself.
+    expect(row).toHaveAttribute(
+      "aria-label",
+      "web/fix-login. Needs you. Waiting for approval",
     );
   });
 
-  it("hides nothing behind a gesture — a multi-action row shows all of them", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const dispatched = within(rowEl("web/a"))
-      .getAllByRole("button")
-      .map((button) => button.getAttribute("data-action"))
-      .filter(Boolean);
-    expect(dispatched).toEqual(["fix-ci", "repair"]);
-  });
-
-  it("never offers Drop on the dashboard", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(screen.queryByRole("button", { name: "Drop" })).toBeNull();
-    const destructive = screen
-      .getAllByRole("button")
-      .filter((button) => button.dataset.destructive === "true");
-    expect(destructive).toEqual([]);
-  });
-
-  it("never offers Resume — opening the task already dispatches it", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
-  });
-
-  it("primary action is full-width on the row", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const actions = within(rowEl("web/a")).getByTestId("task-row-actions");
-    const layout = within(actions).getByTestId("action-row");
-    expect(layout).toHaveAttribute("data-layout", "primary-key");
-
-    const primarySlot = within(actions).getByTestId("action-primary-slot");
-    const fixCi = within(primarySlot).getByRole("button", { name: "Fix CI" });
-    expect(fixCi).toHaveClass("primary");
-    expect(fixCi).toHaveAttribute("data-action", "fix-ci");
-
-    const secondary = within(actions).getByTestId("task-row-actions-secondary");
-    const repair = within(secondary).getByRole("button", { name: "Repair" });
-    expect(repair).toHaveAttribute("data-action", "repair");
-    expect(repair).not.toHaveClass("primary");
-
-    const actionButtons = within(actions)
-      .getAllByRole("button")
-      .map((button) => button.getAttribute("data-action"));
-    expect(actionButtons).toEqual(["fix-ci", "repair"]);
-  });
-
-  it("renders no secondary row when only one safe action exists", () => {
-    const oneAction: BrowserCockpitView = {
-      ...cockpit,
-      cards: [
-        {
-          id: "web/solo",
-          qualified_handle: "web/solo",
-          repo: "web",
-          title: "Solo",
-          status: "idle",
-          attention: "review",
-          last_activity_unix_secs: NOW_SECS - 120,
-          actions: [
-            { action: "review", label: "Review", destructive: false, confirmation_required: false },
-            { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-          ],
-        },
-      ],
-    };
-    render(<Dashboard cockpit={oneAction} connection="connected" />);
-    const actions = within(rowEl("web/solo")).getByTestId("task-row-actions");
-    expect(within(actions).queryByTestId("task-row-actions-secondary")).toBeNull();
-    expect(within(actions).getByRole("button", { name: "Review" })).toHaveClass("primary");
-  });
-
-  it("renders no action line for a row with nothing safe to run", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(within(rowEl("api/c")).queryByTestId("task-row-actions")).toBeNull();
-  });
-
-  it("opens the task when the row's text block is tapped", () => {
+  it("selects rather than navigates when a row is tapped", () => {
     const onOpenTask = vi.fn();
-    render(<Dashboard cockpit={cockpit} connection="connected" onOpenTask={onOpenTask} />);
-    fireEvent.click(rowFor("api/c"));
-    expect(onOpenTask).toHaveBeenCalledWith("api/c");
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "d/needs" }),
+          card({ qualified_handle: "c/active", attention: "active", status: "running" }),
+        ],
+      }),
+      { onOpenTask },
+    );
+
+    fireEvent.click(screen.getByTestId("task-row-c/active"));
+
+    expect(onOpenTask).not.toHaveBeenCalled();
+    expect(rail()).toHaveAttribute("data-handle", "c/active");
+    expect(screen.getByTestId("task-row-c/active")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByTestId("task-row-d/needs")).not.toHaveAttribute("aria-current");
   });
 
-  // ---- server-owned grouping (ported contracts) ----------------------------
+  it("stops the running glyph pulsing once a task has gone silent", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({
+            status: "running",
+            status_explanation: "Agent working",
+            attention: "active",
+            last_activity_unix_secs: nowSecs() - 600,
+          }),
+        ],
+      }),
+    );
 
-  it("groups by attention band in operator order with idle in a disclosure", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    const label = { selector: ".task-band-label" } as const;
-    const headings = within(tasks)
-      .getAllByText(/^(Needs attention|Running now|Ready for action|Recent)$/, label)
-      .map((node) => node.textContent);
-    expect(headings).toEqual(["Needs attention", "Running now", "Ready for action", "Recent"]);
-
-    const idle = within(tasks).getByRole("group");
-    expect(idle).toHaveAttribute("open");
-    expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
-    expect(within(idle).queryByRole("button", { name: /web\/a/ })).toBeNull();
+    expect(screen.getByTestId("task-row-web/fix-login")).toHaveClass("is-quiet");
+    expect(within(rail()).getByText(/Stale 10m — no output/)).toBeInTheDocument();
+    expect(within(rail()).queryByText("Agent working")).not.toBeInTheDocument();
   });
+});
 
-  it("takes group membership from attention, never from status", () => {
-    const reviewable: BrowserCockpitView = {
-      ...cockpit,
-      cards: [
-        {
-          id: "web/x",
-          qualified_handle: "web/x",
-          repo: "web",
-          title: "X",
-          // idle status, review band — the band must win.
-          status: "idle",
-          attention: "review",
-          last_activity_unix_secs: 0,
-          actions: [
-            { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
+describe("Dashboard — the rail", () => {
+  it("opens on the host's leading inbox entry, not the first row", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "d/needs", title: "Needs me" }),
+          card({ qualified_handle: "web/fix-login", title: "Fix login" }),
+        ],
+        // Rust sorts inbox by severity in projection.rs; the browser reads that
+        // order and never ranks severity itself.
+        inbox: {
+          items: [
+            { task_handle: "web/fix-login", severity: 1 },
+            { task_handle: "d/needs", severity: 4 },
           ],
         },
-      ],
-    };
-    render(<Dashboard cockpit={reviewable} connection="connected" />);
-    expect(
-      screen.getByText("Ready for action", { selector: ".task-band-label" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Recent", { selector: ".task-band-label" })).toBeNull();
+      }),
+    );
+
+    expect(rail()).toHaveAttribute("data-handle", "web/fix-login");
+    expect(within(rail()).getByText("Fix login")).toBeInTheDocument();
+    expect(within(rail()).getByText("Waiting for approval")).toBeInTheDocument();
   });
 
-  // ---- row content --------------------------------------------------------
+  it("falls back to the first row when the host projects no inbox", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "c/active", attention: "active", status: "running" }),
+          card({ qualified_handle: "d/needs" }),
+        ],
+      }),
+    );
 
-  it("leads with the title and carries the handle and explanation below it", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const row = rowFor("web/b");
-    expect(within(row).getByText("B")).toHaveClass("task-row-title");
-    expect(within(row).getByText("web/b")).toHaveClass("task-row-handle");
+    expect(rail()).toHaveAttribute("data-handle", "d/needs");
   });
 
-  it("shows relative last-activity time and omits it when unset", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(rowFor("web/b")).toHaveTextContent("5m ago");
-    expect(rowFor("api/c")).not.toHaveTextContent("ago");
-  });
+  it("returns to the host's answer when the pinned task leaves the view", () => {
+    const both = cockpit({
+      cards: [card({ qualified_handle: "d/needs" }), card({ qualified_handle: "web/fix-login" })],
+    });
+    const { rerender } = renderDashboard(both);
 
-  it("flags a running task that has gone quiet past the threshold as stale", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(within(rowFor("web/b")).getByText(/Stale 5m — no output/)).toBeInTheDocument();
-  });
+    fireEvent.click(screen.getByTestId("task-row-web/fix-login"));
+    expect(rail()).toHaveAttribute("data-handle", "web/fix-login");
 
-  it("always says what a task is doing, falling back to the status word", () => {
-    // web/r carries no status_explanation; the row must still read as something.
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    expect(within(rowFor("web/r")).getByText("Idle")).toHaveClass("task-row-note");
-    expect(within(rowFor("web/a")).getByText("CI failed")).toHaveClass("task-row-note");
-  });
-
-  // ---- project scope ------------------------------------------------------
-
-  it("offers project pills, marks the active one, and reports selection", () => {
-    const onSelectProject = vi.fn();
-    render(<Dashboard
-        cockpit={cockpit}
+    // The next poll drops that task (a Drop landed elsewhere).
+    rerender(
+      <Dashboard
+        cockpit={{ ...both, cards: [card({ qualified_handle: "d/needs" })] }}
         connection="connected"
-        selectedProject="api"
-        onSelectProject={onSelectProject}
-      />);
-    expect(screen.getByRole("button", { name: "api" })).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("button", { name: "All" })).not.toHaveAttribute("aria-current");
-    fireEvent.click(screen.getByRole("button", { name: "web — has a fault" }));
-    expect(onSelectProject).toHaveBeenCalledWith("web");
+      />,
+    );
+
+    expect(rail()).toHaveAttribute("data-handle", "d/needs");
   });
 
-  it("filters by the selected project", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" selectedProject="api" />);
-    expect(rowFor("api/c")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /web\/b/ })).toBeNull();
+  it("carries every safe action, and never Drop or Resume", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({
+            actions: [
+              {
+                action: "resume",
+                label: "Resume",
+                destructive: false,
+                confirmation_required: false,
+              },
+              { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
+              {
+                action: "review",
+                label: "Review",
+                destructive: false,
+                confirmation_required: false,
+              },
+              { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(within(rail()).getByRole("button", { name: "Ship" })).toBeInTheDocument();
+    expect(within(rail()).getByRole("button", { name: "Review" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("empty state points at the new-task CTA", () => {
-    const docsCockpit: BrowserCockpitView = {
-      ...cockpit,
-      repos: { repos: [...cockpit.repos.repos, { name: "docs" }] },
-    };
-    render(<Dashboard cockpit={docsCockpit} connection="connected" selectedProject="docs" />);
-    expect(screen.getByText("No tasks in docs yet — start one below.")).toBeInTheDocument();
+  it("says so when the host offers no safe action from here", () => {
+    renderDashboard(cockpit({ cards: [card({ actions: [] })] }));
 
-    const emptyCockpit: BrowserCockpitView = { ...cockpit, cards: [] };
-    render(<Dashboard cockpit={emptyCockpit} connection="connected" />);
-    expect(screen.getByText("All quiet — start a new task below.")).toBeInTheDocument();
+    expect(within(rail()).getByText(/No safe action from here/)).toBeInTheDocument();
+    expect(screen.queryByTestId("rail-actions")).not.toBeInTheDocument();
   });
 
-  // ---- the surrounding operational picture --------------------------------
+  it("opens the task from the rail, deliberately", () => {
+    const onOpenTask = vi.fn();
+    renderDashboard(cockpit(), { onOpenTask });
 
-  it("closes the page with repositories and system status", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" />);
-    const regions = screen
-      .getAllByRole("region")
-      .map((region) => region.getAttribute("aria-label"));
-    expect(regions).toEqual(["Tasks", "Repositories", "System status"]);
+    fireEvent.click(within(rail()).getByRole("button", { name: /Open/ }));
+
+    expect(onOpenTask).toHaveBeenCalledWith("web/fix-login");
   });
 
-  it("scopes the repository section to the repo route", () => {
-    render(<Dashboard cockpit={cockpit} connection="connected" selectedProject="api" />);
-    const repos = screen.getByRole("region", { name: "Repositories" });
-    expect(within(repos).getByRole("button", { name: /^api/ })).toBeInTheDocument();
-    expect(within(repos).queryByRole("button", { name: /^web/ })).toBeNull();
+  it("reserves exactly the rail's height at the roster's tail", () => {
+    renderDashboard(cockpit());
+
+    // jsdom reports offsetHeight 0, so the component keeps its fallback rather
+    // than collapsing the clearance and letting the rail cover the last row.
+    expect(screen.getByTestId("rail-clearance").style.height).toBe("148px");
+  });
+});
+
+describe("Dashboard — scoping", () => {
+  it("routes repo selection through the native picker", () => {
+    const onSelectProject = vi.fn();
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "web/fix-login" }),
+          card({ qualified_handle: "api/add-auth" }),
+        ],
+        repos: { repos: [{ name: "web" }, { name: "api" }] },
+      }),
+      { onSelectProject },
+    );
+
+    fireEvent.change(screen.getByTestId("repo-select"), { target: { value: "api" } });
+    expect(onSelectProject).toHaveBeenCalledWith("api");
+
+    fireEvent.change(screen.getByTestId("repo-select"), { target: { value: "" } });
+    expect(onSelectProject).toHaveBeenLastCalledWith(null);
   });
 
-  it("shows the whole fleet's size in system status, not the filtered slice", () => {
-    render(<Dashboard cockpit={cockpit} connection="reconnecting" selectedProject="api" />);
-    expect(screen.getByTestId("system-link")).toHaveTextContent("Reconnecting");
-    const system = screen.getByRole("region", { name: "System status" });
-    expect(within(system).getByText(String(cockpit.cards.length))).toBeInTheDocument();
+  it("shows only the selected repo's tasks", () => {
+    renderDashboard(
+      cockpit({
+        cards: [
+          card({ qualified_handle: "web/fix-login" }),
+          card({ qualified_handle: "api/add-auth" }),
+        ],
+      }),
+      { selectedProject: "api" },
+    );
+
+    expect(rowHandles()).toEqual(["api/add-auth"]);
+    expect(rail()).toHaveAttribute("data-handle", "api/add-auth");
   });
 
-  it("keeps both panels when there are no tasks to show", () => {
-    render(<Dashboard cockpit={{ ...cockpit, cards: [] }} connection="connected" />);
-    expect(screen.getByText("All quiet — start a new task below.")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Repositories" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "System status" })).toBeInTheDocument();
+  it("invites a first task when the fleet is empty, with no rail to act on", () => {
+    renderDashboard(cockpit({ cards: [] }));
+
+    expect(screen.getByText(/All quiet — start a task with New/)).toBeInTheDocument();
+    expect(screen.queryByTestId("task-rail")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("roster")).not.toBeInTheDocument();
   });
 
-  // ---- styling contracts --------------------------------------------------
+  it("scopes the empty state to the selected repo", () => {
+    renderDashboard(cockpit({ cards: [] }), { selectedProject: "web" });
 
-  it("uses accent for the active project pill and danger for the fault dot", () => {
-    const activePillRule =
-      stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
-    const faultDotRule = stylesSource.match(/\.pill-fault-dot\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(screen.getByText(/No tasks in web/)).toBeInTheDocument();
+  });
+});
 
-    expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
-    expect(activePillRule).not.toMatch(/var\(--warn/);
-    expect(faultDotRule).toMatch(/var\(--danger\)/);
+describe("Dashboard — system footer", () => {
+  it("stays closed and reports authority and control, with link state as a dot", () => {
+    renderDashboard(cockpit());
+
+    const footer = screen.getByTestId("fleet-footer");
+    expect(footer).not.toHaveAttribute("open");
+    expect(within(footer).getAllByText("host-native").length).toBeGreaterThan(0);
+    expect(within(footer).getByText("enabled")).toBeInTheDocument();
+    // Link state belongs to the header's ConnectionStatus; the footer only tints
+    // its dot, so the word is never printed twice on one screen.
+    expect(screen.getByTestId("fleet-link-dot")).toHaveAttribute("data-live", "true");
+    expect(within(footer).queryByText("connected")).toBeNull();
   });
 
-  it("keeps row action labels on one line so a tap target never reflows", () => {
-    expect(stylesSource).toMatch(/\.task-row-actions\s+\.action[\s\S]*?white-space:\s*nowrap/);
+  it("leaves the dot untinted when the link is not connected", () => {
+    renderDashboard(cockpit(), { connection: "reconnecting" });
+
+    expect(screen.getByTestId("fleet-link-dot")).toHaveAttribute("data-live", "false");
+  });
+
+  it("surfaces the backend warning the server projected", () => {
+    renderDashboard(
+      cockpit({
+        backend: {
+          authority: "host-native",
+          control_enabled: false,
+          warning: "runtime probe failed",
+        },
+      }),
+    );
+
+    const footer = screen.getByTestId("fleet-footer");
+    expect(within(footer).getByText("runtime probe failed")).toBeInTheDocument();
+    expect(within(footer).getByText("read-only")).toBeInTheDocument();
+  });
+
+  it("renders each repo's server-projected counts, and 'quiet' when all are zero", () => {
+    renderDashboard(
+      cockpit({
+        repos: {
+          repos: [
+            {
+              name: "web",
+              path: "/repo/web",
+              active_tasks: 2,
+              attention_items: 1,
+              reviewable_tasks: 0,
+              cleanable_tasks: 3,
+            },
+            { name: "api", path: "/repo/api", active_tasks: 0, attention_items: 0 },
+          ],
+        },
+      }),
+    );
+
+    const web = within(screen.getByTestId("repo-line-web"));
+    expect(web.getByText("2 active")).toBeInTheDocument();
+    expect(web.getByText("1 needs you")).toBeInTheDocument();
+    expect(web.getByText("3 cleanable")).toBeInTheDocument();
+    expect(web.queryByText(/ready/)).toBeNull();
+    expect(within(screen.getByTestId("repo-line-api")).getByText("quiet")).toBeInTheDocument();
+  });
+
+  it("collapses to the selected repo on a repo route", () => {
+    renderDashboard(cockpit({ repos: { repos: [{ name: "web" }, { name: "api" }] } }), {
+      selectedProject: "web",
+    });
+
+    expect(screen.getByTestId("repo-line-web")).toBeInTheDocument();
+    expect(screen.queryByTestId("repo-line-api")).not.toBeInTheDocument();
+  });
+
+  it("hands diagnostics to the settings route", () => {
+    const onOpenSettings = vi.fn();
+    renderDashboard(cockpit(), { onOpenSettings });
+
+    fireEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+
+    expect(onOpenSettings).toHaveBeenCalled();
+  });
+});
+
+describe("Dashboard — Rust contract fixture", () => {
+  // The committed fixture is asserted byte-for-byte against production
+  // serialization in slices/cockpit.rs, so this renders what the server sends.
+  it("renders the committed cockpit projection", () => {
+    renderDashboard(COCKPIT_CONTRACT);
+
+    expect(rowHandles()).toEqual(["web/fix-login"]);
+    expect(rail()).toHaveAttribute("data-handle", "web/fix-login");
+    expect(within(rail()).getByText("Waiting for approval")).toBeInTheDocument();
+    expect(within(rail()).getByRole("button", { name: "Ship" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
   });
 });

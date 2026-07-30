@@ -5,7 +5,10 @@
 // smoke.test.ts) so tests run without a live Rust server.
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { mockFetch } from "./fixtures";
+import {
+  mockFetch,
+  rosterRow,
+} from "./fixtures";
 
 // Resisted pull distance is raw drag × 0.5; threshold is 64px resisted.
 const PULL_RAW_DELTA_PX = 140;
@@ -103,7 +106,7 @@ test("update banner appears on version change and reloads on tap", async ({
   await installStatefulVersionMock(page);
   await page.goto("/app.html");
 
-  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const banner = page.locator("button.update-banner");
   // Boot resume + the 30s dashboard poll both call checkVersion; allow either path.
@@ -126,7 +129,7 @@ test("pull-to-refresh past threshold reloads the cockpit", async ({
   await installCockpitCallCounter(page);
   await page.goto("/app.html");
 
-  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const outlet = page.locator('[data-testid="outlet-dashboard"]');
   await expect(outlet).toBeVisible();
