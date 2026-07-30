@@ -337,6 +337,12 @@ export async function terminalInputFrames(page: Page): Promise<TerminalInputFram
   );
 }
 
+/** A roster row by handle. The dashboard names the same handle in the row and in
+ * the action rail, so a bare getByText("repo/task") matches twice; every load
+ * wait goes through this locator instead. */
+export const rosterRow = (page: Page, handle: string) =>
+  page.getByTestId(`task-row-${handle}`);
+
 export const terminalSurface = (page: Page) =>
   page.locator("[data-testid='task-terminal-panel']");
 

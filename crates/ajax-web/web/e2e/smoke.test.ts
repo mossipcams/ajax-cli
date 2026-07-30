@@ -5,33 +5,37 @@
 // confirmation (single-tap vs two-tap) flows in a real browser.
 
 import { test, expect } from "@playwright/test";
-import { mockFetch } from "./fixtures";
+import {
+  mockFetch,
+  rosterRow,
+} from "./fixtures";
 
 // ---- tests ---------------------------------------------------------------
 
-// Task list rows show `qualified_handle`, not `title`. Inbox cards also show
-// `status_explanation`. Use handles as stable selectors.
+// Rows and the Next card both show `qualified_handle`, not `title`, so handles
+// are the stable selectors. The highest-severity inbox task renders as the Next
+// card rather than a queue row.
 
 test("dashboard renders tasks from cockpit fixture", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
 
   // Inbox card shows the handle and status_explanation
-  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
   // Calm group shows api/add-auth handle in a task row
-  await expect(page.getByText("api/add-auth")).toBeVisible();
+  await expect(rosterRow(page, "api/add-auth")).toBeVisible();
 });
 
 test("project filter shows only matching repo tasks", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
 
-  // Click the "web" project pill
-  await page.locator("button.project-pill").filter({ hasText: "web" }).first().click();
+  // Pick "web" in the native repo picker (v2 replaced the pill row with a select)
+  await page.getByTestId("repo-select").selectOption("web");
 
-  await expect(page.getByText("web/fix-login")).toBeVisible();
-  await expect(page.getByText("api/add-auth")).not.toBeVisible();
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible();
+  await expect(rosterRow(page, "api/add-auth")).not.toBeVisible();
 });
 
 test("task detail renders server status and actions", async ({ page }, testInfo) => {

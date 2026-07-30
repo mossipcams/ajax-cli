@@ -5,22 +5,23 @@
 
 import { test, expect } from "@playwright/test";
 import {
+  closeLatestTerminalSocket,
+  dispatchViewportEvents,
+  emitLatestTerminalOutput,
+  failLatestTerminalSocket,
   mockFetch,
   mockTerminalWebSocket,
-  terminalSurface,
-  terminalInteractionSurface,
-  terminalToolbar,
+  openLatestTerminalSocket,
+  rosterRow,
+  syntheticOutwardPinchOnInteractionSurface,
   terminalInputFrames,
+  terminalInteractionSurface,
   terminalResizeFrames,
   terminalSocketSummaries,
-  openLatestTerminalSocket,
-  closeLatestTerminalSocket,
-  failLatestTerminalSocket,
-  emitLatestTerminalOutput,
-  waitForTerminalSocket,
-  dispatchViewportEvents,
-  syntheticOutwardPinchOnInteractionSurface,
+  terminalSurface,
+  terminalToolbar,
   type ViewportEventKind,
+  waitForTerminalSocket,
 } from "./fixtures";
 
 const OPEN = 1;
@@ -487,7 +488,7 @@ test("navigation away closes the active socket and removes the surface", async (
   await waitForTerminalSocket(page);
 
   await page.locator(".bottom-nav [data-bottom-route='#/']").click();
-  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await expect(surface).not.toBeVisible();
   await expect.poll(async () => activeTaskSocketCount(page)).toBe(0);
