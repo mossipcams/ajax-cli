@@ -821,14 +821,11 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:task ajax-cli __agent-acp --task-id web/fix-login --state-root {} codex-acp Enter",
-            sandbox.root.join("cache/agent-acp").display(),
+            "tmux send-keys -t ajax-web-fix-login:task ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            sandbox.root.join("cache/agent-runtime").display(),
+            worktree.display(),
         )),
-        "fake tmux log should include ACP agent launch:\n{log}"
-    );
-    assert!(
-        !log.contains("codex --cd") && !log.contains("--dangerously-skip-permissions"),
-        "smoke launch must not emit native agent/worktree launch flags:\n{log}"
+        "fake tmux log should include agent launch:\n{log}"
     );
 }
 

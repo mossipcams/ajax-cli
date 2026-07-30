@@ -206,9 +206,10 @@ printf 'fake codex'
         self.fake_lifecycle_log()
     }
 
-    /// Write fresh-looking legacy agent-events JSONL and agent-runtime
-    /// snapshots that runtime refresh must ignore (ACP snapshots only).
-    fn write_legacy_status_cache(&self, task_id: &str, value: &str) {
+    /// Seed native hook-derived status for a task by writing the canonical
+    /// JSONL event log and the launch-wrapper runtime snapshot the refresh
+    /// reads (there is no legacy `~/.cache/tmux-agent-status` path anymore).
+    fn write_hook_status(&self, task_id: &str, value: &str) {
         let stem = task_id.replace('/', "__");
         let cache = self.root.join(".cache/ajax");
         let events_dir = cache.join("agent-events");
@@ -409,7 +410,7 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn legacy_agent_status_cache_cannot_affect_live_cockpit() {
+fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
     let home = IsolatedAjaxHome::new("cockpit-live-status");
     let repo_path = home.create_managed_repo("web");
     home.write_config(&format!(
@@ -436,7 +437,7 @@ fn legacy_agent_status_cache_cannot_affect_live_cockpit() {
         )
     });
     home.seed_risky_reviewable_task("web", &repo_path);
-    home.write_legacy_status_cache("web/fix-login", "ask");
+    home.write_hook_status("web/fix-login", "ask");
     home.install_fake_live_status_tools("ajax-web-fix-login", &worktree_path);
 
     let output = home.ajax_with_fake_tools(["cockpit", "--json"]);
@@ -449,15 +450,18 @@ fn legacy_agent_status_cache_cannot_affect_live_cockpit() {
     assert_eq!(stderr(&output), "");
     let body: Value =
         serde_json::from_str(&stdout(&output)).expect("ajax cockpit --json should emit valid JSON");
-    assert_eq!(body["tasks"]["tasks"][0]["live_status"], Value::Null);
+    assert_eq!(
+        body["tasks"]["tasks"][0]["live_status"]["summary"],
+        "waiting for approval"
+    );
     assert!(body["inbox"]["items"]
         .as_array()
         .unwrap()
         .iter()
-        .all(|item| {
+        .any(|item| {
             item["reason"]
                 .as_str()
-                .is_none_or(|reason| reason != "waiting_for_approval")
+                .is_some_and(|reason| reason == "waiting_for_approval")
         }));
 }
 
@@ -618,14 +622,10 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         worktree = worktree.display()
     )));
     assert!(lifecycle_log.contains(&format!(
-        "args=send-keys -t ajax-web-fix-login:task ajax-cli __agent-acp --task-id web/fix-login --state-root {state_root} codex-acp Enter",
-        state_root = home.root.join(".cache/ajax/agent-acp").display(),
+        "args=send-keys -t ajax-web-fix-login:task ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
+        state_root = home.root.join(".cache/ajax/agent-runtime").display(),
+        worktree = worktree.display()
     )));
-    assert!(
-        !lifecycle_log.contains("codex --cd")
-            && !lifecycle_log.contains("--dangerously-skip-permissions"),
-        "ajax start must not emit native agent/worktree launch flags:\n{lifecycle_log}"
-    );
     assert!(
         !lifecycle_log.contains("'Fix Login!'"),
         "ajax start should not send the task title as the initial agent prompt:\n{lifecycle_log}"

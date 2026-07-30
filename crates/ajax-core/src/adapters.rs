@@ -6,7 +6,7 @@ pub mod github;
 pub mod process;
 pub mod tmux;
 
-pub use agent::agent_acp_launch_spec;
+pub use agent::{agent_launch_spec, AgentLaunch};
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
@@ -19,7 +19,7 @@ pub use tmux::TmuxAdapter;
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_acp_launch_spec, CommandMode, CommandRunner, CommandSpec, GitAdapter,
+        agent_launch_spec, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
         RecordingCommandRunner, TmuxAdapter,
     };
     use super::{command, process};
@@ -482,95 +482,59 @@ mod tests {
     }
 
     #[test]
-    fn agent_acp_launch_maps_fixed_adapters_and_other_passthrough() {
-        use crate::models::AgentClient;
-        use std::path::Path;
+    fn agent_adapter_builds_launch_command() {
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: "fix login".to_string(),
+        };
 
-        let root = Path::new("/cache/agent-acp");
-        let cases = [
-            (
-                AgentClient::Codex,
-                "codex",
-                CommandSpec::new(
-                    "ajax-cli",
-                    [
-                        "__agent-acp",
-                        "--task-id",
-                        "web/fix-login",
-                        "--state-root",
-                        "/cache/agent-acp",
-                        "codex-acp",
-                    ],
-                ),
-            ),
-            (
-                AgentClient::Claude,
-                "claude",
-                CommandSpec::new(
-                    "ajax-cli",
-                    [
-                        "__agent-acp",
-                        "--task-id",
-                        "web/fix-login",
-                        "--state-root",
-                        "/cache/agent-acp",
-                        "claude-agent-acp",
-                    ],
-                ),
-            ),
-            (
-                AgentClient::Cursor,
-                "cursor",
-                CommandSpec::new(
-                    "ajax-cli",
-                    [
-                        "__agent-acp",
-                        "--task-id",
-                        "web/fix-login",
-                        "--state-root",
-                        "/cache/agent-acp",
-                        "cursor-agent",
-                        "acp",
-                    ],
-                ),
-            ),
-            (
-                AgentClient::Pi,
-                "pi",
-                CommandSpec::new(
-                    "ajax-cli",
-                    [
-                        "__agent-acp",
-                        "--task-id",
-                        "web/fix-login",
-                        "--state-root",
-                        "/cache/agent-acp",
-                        "pi-acp",
-                    ],
-                ),
-            ),
-            (
-                AgentClient::Other,
-                "custom-agent-cli",
-                CommandSpec::new(
-                    "ajax-cli",
-                    [
-                        "__agent-acp",
-                        "--task-id",
-                        "web/fix-login",
-                        "--state-root",
-                        "/cache/agent-acp",
-                        "custom-agent-cli",
-                    ],
-                ),
-            ),
-        ];
-        for (client, program, expected) in cases {
-            assert_eq!(
-                agent_acp_launch_spec("web/fix-login", root, program, client),
-                expected
-            );
-        }
+        assert_eq!(
+            agent_launch_spec("codex", crate::models::AgentClient::Codex, &launch),
+            CommandSpec::new("codex", ["--cd", "/tmp/worktree", "fix login"])
+        );
+    }
+
+    #[test]
+    fn agent_adapter_omits_blank_launch_prompt() {
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: String::new(),
+        };
+
+        assert_eq!(
+            agent_launch_spec("codex", crate::models::AgentClient::Codex, &launch),
+            CommandSpec::new("codex", ["--cd", "/tmp/worktree"])
+        );
+    }
+
+    #[test]
+    fn agent_adapter_claude_launch_omits_cd_flag_and_skips_permissions() {
+        use crate::models::AgentClient;
+
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: String::new(),
+        };
+
+        assert_eq!(
+            agent_launch_spec("claude", AgentClient::Claude, &launch),
+            CommandSpec::new("claude", ["--dangerously-skip-permissions"])
+        );
+    }
+
+    #[test]
+    fn agent_adapter_cursor_launch_uses_agent_subcommand() {
+        use crate::models::AgentClient;
+
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: "fix login".to_string(),
+        };
+
+        assert_eq!(
+            agent_launch_spec("cursor", AgentClient::Cursor, &launch),
+            CommandSpec::new("cursor", ["agent", "fix login"])
+        );
     }
 
     #[test]

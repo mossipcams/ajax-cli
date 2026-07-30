@@ -179,6 +179,9 @@ pub(crate) fn serve_mobile_web_with_paths(
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
+    let _ = crate::agent_event_notify::start_agent_event_notify_listener(
+        context.runtime_paths.cache_dir.join("agent-events"),
+    );
     ajax_core::logging::init_to_logs_dir(&context.runtime_paths.logs_dir);
     let state = runtime::WebAppState::load_or_create(
         context.clone(),
@@ -194,22 +197,11 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     tier: RefreshTier,
-) -> Result<bool, CliError> {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    let statuses = crate::agent_acp_snapshot::collect_statuses(
-        &context.runtime_paths.cache_dir.join("agent-acp"),
-        &task_ids,
-        SystemTime::now(),
-    )?;
-    ajax_core::runtime_refresh::refresh_runtime_context_with_acp_statuses(
-        context, runner, &statuses, tier,
-    )
-    .map_err(command_error)
+) -> Result<bool, ajax_core::commands::CommandError> {
+    let source = crate::agent_status_cache::AgentStatusFiles::from_runtime_cache(
+        &context.runtime_paths.cache_dir,
+    );
+    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &source, tier)
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
@@ -239,8 +231,9 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         deliver_notifications: bool,
     ) -> Result<bool, WebError> {
         let reloaded = self.reload_context_if_stale(context)?;
-        let state_changed =
-            refresh_runtime_context_for_web(context, runner, tier).map_err(web_error_from_cli)?;
+        let state_changed = refresh_runtime_context_for_web(context, runner, tier)
+            .map_err(command_error)
+            .map_err(web_error_from_cli)?;
         let notified = if deliver_notifications {
             crate::notify::notify_attention_transitions(context, runner)
         } else {
@@ -447,8 +440,8 @@ fn action_failure_from_cli(error: CliError) -> ActionFailure {
 #[cfg(test)]
 mod tests {
     use super::{cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths};
+    use ajax_core::runtime_refresh::RefreshTier;
     use ajax_core::{
-        acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation},
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
         config::{Config, ManagedRepo},
@@ -456,7 +449,6 @@ mod tests {
             AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry, SqliteRegistryStore},
-        runtime_refresh::RefreshTier,
     };
     use ajax_web::runtime::{self, RuntimeBridge};
     use axum::{body::Body, http::Request as AxumRequest};
@@ -632,27 +624,75 @@ mod tests {
         assert!(body["cockpit"].is_object());
     }
 
-    fn write_acp_snapshot(cache_dir: &std::path::Path, task_id: &str, state: AcpSessionState) {
+    fn write_agent_status_event(cache_dir: &std::path::Path, task_id: &str, value: &str) {
+        use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
+
+        let events_dir = cache_dir.join("agent-events");
+        let runtime_dir = cache_dir.join("agent-runtime");
+        std::fs::create_dir_all(&events_dir).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
         let now_millis = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        crate::agent_acp_snapshot::AcpSnapshotPublisher::claim(
-            &cache_dir.join("agent-acp"),
-            task_id,
-            "test-generation",
-            None,
-            AcpStatusObservation {
-                state,
-                detail: None,
-            },
-            now_millis,
+        let stem = task_file_stem(task_id);
+
+        let state = match value {
+            "done" => AgentRuntimeState::ExitedSuccess,
+            "failed" => AgentRuntimeState::ExitedFailure,
+            _ => AgentRuntimeState::Running,
+        };
+        let snapshot = AgentRuntimeSnapshot {
+            task_id: task_id.to_string(),
+            state,
+            observed_at_unix_millis: now_millis,
+            pid: Some(1),
+            exit_code: None,
+            message: None,
+        };
+        std::fs::write(
+            runtime_dir.join(format!("{stem}.json")),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let (kind, detail) = match value {
+            "ask" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "permission"}}),
+            ),
+            "wait" => (
+                "attention_requested",
+                serde_json::json!({"attention": {"attention": "question"}}),
+            ),
+            "done" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "completed"}}),
+            ),
+            "failed" => (
+                "turn_settled",
+                serde_json::json!({"outcome": {"outcome": "failed"}}),
+            ),
+            _ => ("turn_started", serde_json::Value::Null),
+        };
+        let mut envelope = serde_json::json!({
+            "schema_version": 1,
+            "kind": kind,
+            "received_at_unix_millis": now_millis,
+            "occurred_at_unix_millis": now_millis,
+        });
+        if !detail.is_null() {
+            envelope["detail"] = detail;
+        }
+        std::fs::write(
+            events_dir.join(format!("{stem}.jsonl")),
+            format!("{}\n", serde_json::to_string(&envelope).unwrap()),
         )
         .unwrap();
     }
 
     #[test]
-    fn cockpit_api_refreshes_live_task_status_from_acp() {
+    fn cockpit_api_refreshes_live_task_status_before_rendering() {
         let cache_dir = std::env::temp_dir().join(format!(
             "ajax-web-api-cache-{}-{}",
             std::process::id(),
@@ -661,7 +701,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        write_acp_snapshot(&cache_dir, "web/fix-login", AcpSessionState::Running);
+        write_agent_status_event(&cache_dir, "web/fix-login", "working");
         let mut context = reviewable_context();
         context.runtime_paths.cache_dir = cache_dir.clone();
         let task = context
@@ -685,7 +725,7 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["status"], "running");
-        assert_eq!(body["cards"][0]["status_explanation"], "Agent running");
+        assert_eq!(body["cards"][0]["status_explanation"], "Agent working");
         assert!(body["cards"][0]["actions"].is_array());
         for legacy in ["ui_state", "status_label", "live_summary", "action_states"] {
             assert!(
@@ -702,11 +742,7 @@ mod tests {
         let mut paths =
             super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
         paths.runtime_paths.cache_dir = root.join("cache");
-        write_acp_snapshot(
-            &paths.runtime_paths.cache_dir,
-            "web/fix-login",
-            AcpSessionState::Running,
-        );
+        write_agent_status_event(&paths.runtime_paths.cache_dir, "web/fix-login", "working");
         let mut saved_context = reviewable_context();
         let task = saved_context
             .registry
@@ -750,7 +786,7 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["status"], "running");
-        assert_eq!(body["cards"][0]["status_explanation"], "Agent running");
+        assert_eq!(body["cards"][0]["status_explanation"], "Agent working");
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -864,11 +900,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        write_acp_snapshot(
-            &cache_dir,
-            "web/fix-login",
-            AcpSessionState::RequiresAction(AcpActionKind::Input),
-        );
+        write_agent_status_event(&cache_dir, "web/fix-login", "wait");
 
         let mut context = reviewable_context();
         context.runtime_paths.cache_dir = cache_dir.clone();

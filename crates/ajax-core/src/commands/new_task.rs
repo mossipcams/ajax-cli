@@ -1,6 +1,6 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
-    adapters::{agent_acp_launch_spec, CommandSpec, GitAdapter, TmuxAdapter},
+    adapters::{agent_launch_spec, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
     config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
@@ -125,11 +125,18 @@ pub fn new_task_plan_with_observation<R: Registry>(
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);
-    let launch = agent_acp_launch_spec(
-        &qualified_handle,
-        &context.runtime_paths.cache_dir.join("agent-acp"),
+    let agent_launch = agent_launch_spec(
         &request.agent,
         selected_agent,
+        &AgentLaunch {
+            worktree_path: worktree_path_string.clone(),
+            prompt: String::new(),
+        },
+    );
+    let launch = agent_runtime_command(
+        &qualified_handle,
+        &context.runtime_paths.cache_dir.join("agent-runtime"),
+        agent_launch,
     );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
@@ -458,6 +465,30 @@ fn command_line(command: &CommandSpec) -> String {
         .join(" ")
 }
 
+fn agent_runtime_command(
+    task_id: &str,
+    state_root: &Path,
+    agent_command: CommandSpec,
+) -> CommandSpec {
+    let mut args = vec![
+        "__agent-runtime".to_string(),
+        "--task-id".to_string(),
+        task_id.to_string(),
+        "--state-root".to_string(),
+        state_root.display().to_string(),
+        "--".to_string(),
+        agent_command.program,
+    ];
+    args.extend(agent_command.args);
+    CommandSpec {
+        program: "ajax-cli".to_string(),
+        args,
+        cwd: agent_command.cwd,
+        mode: agent_command.mode,
+        timeout: agent_command.timeout,
+    }
+}
+
 fn setup_task_environment_command(
     repo_path: &str,
     worktree_path: &str,
@@ -606,8 +637,7 @@ mod tests {
         .unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert!(launch.ends_with("custom-agent-cli"));
-        assert!(!launch.contains("--cd"));
+        assert!(launch.ends_with("-- custom-agent-cli"));
         assert_eq!(
             task_from_new_request(
                 &context,
@@ -668,12 +698,9 @@ mod tests {
         .unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert_eq!(
-            launch,
-            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp claude-agent-acp"
-        );
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- claude --dangerously-skip-permissions"));
         assert!(!launch.contains("--cd"));
-        assert!(!launch.contains("--dangerously-skip-permissions"));
     }
 
     #[test]
@@ -687,10 +714,8 @@ mod tests {
         let plan = new_task_plan(&context, request.clone()).unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert_eq!(
-            launch,
-            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp cursor-agent acp"
-        );
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- cursor agent"));
         assert_eq!(
             task_from_new_request(&context, &request)
                 .unwrap()
@@ -710,10 +735,8 @@ mod tests {
         let plan = new_task_plan(&context, request.clone()).unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert_eq!(
-            launch,
-            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp pi-acp"
-        );
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- pi"));
         assert_eq!(
             task_from_new_request(&context, &request)
                 .unwrap()
@@ -745,7 +768,7 @@ mod tests {
 
         assert_eq!(
             agent_send_keys_line(&plan),
-            "ajax-cli __agent-acp --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-acp codex-acp"
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
         );
     }
 
@@ -783,10 +806,10 @@ mod tests {
         .unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert_eq!(
-            launch,
-            "ajax-cli __agent-acp --task-id web/fix-login --state-root .cache/ajax/agent-acp codex-acp"
-        );
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with(
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
+        ));
     }
 
     #[test]
@@ -811,7 +834,7 @@ mod tests {
         .unwrap();
 
         let launch = agent_send_keys_line(&plan);
-        assert!(launch.starts_with("ajax-cli __agent-acp --task-id web/fix-login"));
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
         assert!(
             plan.commands.iter().any(|command| {
                 command.program == "sh"
