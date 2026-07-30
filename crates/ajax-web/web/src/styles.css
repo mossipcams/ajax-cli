@@ -216,27 +216,6 @@ header .bar h1 {
   text-overflow: ellipsis;
 }
 
-.settings-link {
-  flex: none;
-  background: transparent;
-  border: 1px solid var(--rule-strong);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  transition: border-color 140ms ease, color 140ms ease;
-}
-
-.settings-link:hover,
-.settings-link:focus-visible {
-  border-color: var(--ink-soft);
-  color: var(--ink);
-  outline: none;
-}
-
 .live-dot {
   flex: none;
   width: 8px;
@@ -711,7 +690,7 @@ header .bar h1 {
   }
 }
 
-/* EMPTY STATE (App + TaskList) -------------------------------------------- */
+/* EMPTY STATE (App + Dashboard) ------------------------------------------- */
 .empty {
   margin: 72px 0;
   text-align: center;
@@ -722,7 +701,7 @@ header .bar h1 {
   text-transform: uppercase;
 }
 
-/* STATUS DOT (TaskList + TaskCard) ---------------------------------------- */
+/* STATUS DOT (Dashboard + TaskDetail) ------------------------------------- */
 .status-dot {
   flex: none;
   width: 9px;
@@ -735,7 +714,13 @@ header .bar h1 {
   animation: pulse 2.2s ease-in-out infinite;
 }
 
-/* ACTION BUTTONS (ActionBar + TaskCard "Open") ---------------------------- */
+/* ACTION BUTTONS (ActionBar) ---------------------------------------------- */
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .action {
   flex: 0 0 auto;
   background: transparent;
@@ -1013,8 +998,6 @@ header .bar h1 {
   align-items: center;
   gap: 6px;
   margin: 4px 0 14px;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
 
 .project-pill {
