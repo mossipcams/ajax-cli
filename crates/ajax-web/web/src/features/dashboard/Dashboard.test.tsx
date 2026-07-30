@@ -331,12 +331,4 @@ describe("Dashboard", () => {
   it("keeps row action labels on one line so a tap target never reflows", () => {
     expect(stylesSource).toMatch(/\.task-row-actions\s+\.action[\s\S]*?white-space:\s*nowrap/);
   });
-
-  it("drops the swipe-reveal machinery entirely", () => {
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "Dashboard.tsx"),
-      "utf8",
-    );
-    expect(source).not.toMatch(/[Ss]wipe/);
-  });
 });

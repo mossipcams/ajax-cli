@@ -231,12 +231,12 @@ export default function Dashboard({
             // accessibility tree. Flip the default only with the row queries in
             // Dashboard.test.tsx.
             return band === "idle" ? (
-              <details key={band} className="task-band idle-band" data-tier={band} open>
+              <details key={band} className="task-band idle-band" open>
                 <summary className="task-band-title">{title}</summary>
                 <div className="task-list">{banded}</div>
               </details>
             ) : (
-              <section key={band} className="task-band" data-tier={band}>
+              <section key={band} className="task-band">
                 <div className="task-band-title">{title}</div>
                 <div className="task-list">{banded}</div>
               </section>

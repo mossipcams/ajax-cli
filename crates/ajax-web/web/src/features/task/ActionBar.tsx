@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
 import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "@/shared/lib/polling";
 import { postOperation, requestId } from "@/shared/lib/api";
@@ -24,12 +24,6 @@ interface Props {
 }
 
 const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
-
-const actionRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "8px",
-};
 
 function actionClassName(
   action: WebAction,
@@ -227,7 +221,7 @@ export default function ActionBar({
   }
 
   return (
-    <div className="action-row" style={actionRowStyle}>
+    <div className="action-row">
       {actions.map((action, index) => (
         <ActionButton key={action.action} {...buttonProps(action, index)} />
       ))}
