@@ -30,23 +30,20 @@ import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 
 /*
-  THESIS: the fleet is one roster, read in a single viewport — this refuses the
-  card-per-task list, where three tasks fill a phone and the fourth is a scroll.
-  OWN-WORLD: Ajax Cockpit unchanged — Soft Charcoal steps, hairline rules, mono
-  handles, the CLI's own status glyphs (▸ ? ! ✓ ·) painted with --tone, Soft
-  Steel Blue primary, amber remediation.
-  STORY: the operator lands with the task that needs them already selected, sees
-  the whole fleet's shape above it, and runs the intent from a rail that never
-  moves.
-  FIRST VIEWPORT: a head carrying the fleet count, its shape in words and the
-  repo picker (the shape drops to its own line under 430px), then one-line rows
-  divided by labelled band rules, then the action rail fixed above the bottom
-  nav — selected handle, age, Open, title, note, and every safe action with the
-  intent filled. Amended after the finish review moved Open beside the title.
-  FORM: grounded candidate 6 of 6, the command roster, staged as the Shaker peg
-  rail: the centre stays emptied for the work and every tool hangs at one
-  ordained height. Seed cf0a0deb; staging challenger
-  working-surfaces-shaker-meeting-room.
+  THESIS: one armed channel owns the next safe intent in the thumb zone — this
+  refuses both the card-per-task scroll and the dense CLI peg-rail drawer.
+  OWN-WORLD: Ajax Cockpit unchanged — Soft Charcoal paper steps, hairline rules,
+  mono handles as data, Soft Steel Blue primary, amber remediation.
+  STORY: the operator lands with the host's lead task already armed, scans the
+  fleet as thin traces above, and fires the intent with a thumb resting above
+  the iOS bottom nav / home indicator.
+  FIRST VIEWPORT: head (count · fleet words · repo select), band-tagged channel
+  traces (glyph · handle · age), then a raised armed-channel card docked above
+  the bottom nav — handle · age · Open, title, tone note, full-bleed primary +
+  secondaries. Only filled pill on the page.
+  FORM: grounded candidate 6 of 7 (channel focus), seed a355aa15; oscilloscope
+  staging dressed in Ajax (one screen, many channels; switch to arm). iOS PWA
+  dock: Comp A card language + bottom thumb placement.
   FINISH: unreviewed and undocumented is unfinished; this build ends with the
   finish review, the verdict, and DESIGN.md.
 */
@@ -85,11 +82,12 @@ const GLYPH: Record<TaskStatus, string> = {
   unknown: "·",
 };
 
-/** Fallback rail height before the observer measures the real one. */
-const RAIL_HEIGHT_FALLBACK = 148;
+/** Fallback dock height before the observer measures the real armed card.
+ * Tall enough for title + note + primary + one full-width secondary. */
+const RAIL_HEIGHT_FALLBACK = 240;
 
-/** Every action the rail may run: Rust's list minus resume/open (opening a task
- * already resumes it) minus destructive (Drop lives on task detail only). */
+/** Every action the armed channel may run: Rust's list minus resume/open
+ * (opening a task already resumes it) minus destructive (Drop on task detail). */
 function safeActions(card: BrowserTaskCard): WebAction[] {
   return visibleTaskActions(card.actions).filter((action) => !action.destructive);
 }
@@ -158,9 +156,9 @@ function RosterRow({
   );
 }
 
-/** The peg rail: one ordained height, every tool for the selected task on it,
- * nothing in the emptied centre above. */
-function TaskRail({
+/** Armed channel: raised card docked in the iOS thumb zone above the bottom
+ * nav. Traces above stay quiet; this card owns the only filled pill. */
+function ArmedChannel({
   card,
   nowSecs,
   railRef,
@@ -186,41 +184,34 @@ function TaskRail({
       className={`task-rail tone-${quiet ? "waiting" : meta.tone}`}
       data-testid="task-rail"
       data-handle={card.qualified_handle}
-      aria-label={`Selected task ${card.qualified_handle}`}
+      aria-label={`Armed channel ${card.qualified_handle}`}
       ref={railRef}
     >
-      {/* The member crosses the whole room; the tools on it keep the shell's
-          measure. Keyed so a new selection lifts and re-hangs once — and so a
-          stale confirm/undo state never carries to another task. */}
+      {/* Keyed so a new arm settles once and confirm/undo state never carries. */}
       <div className="rail-inner" key={card.qualified_handle}>
-        <div className="rail-text">
-          <div className="rail-head">
-            <span className="rail-handle">{card.qualified_handle}</span>
-            <span className="rail-age">{relativeTime(card.last_activity_unix_secs, nowSecs)}</span>
-          </div>
-
-          <p className="rail-title">{card.title || card.qualified_handle}</p>
-          {/* Only the state line announces itself: a live region on the whole
-              rail re-read the handle, title and every action label on every
-              poll. */}
-          <p className="rail-note" aria-live="polite">
-            {statusLine(card, nowSecs)}
-          </p>
+        <div className="rail-head">
+          <span className="rail-handle">{card.qualified_handle}</span>
+          <span className="rail-age">{relativeTime(card.last_activity_unix_secs, nowSecs)}</span>
+          <button
+            type="button"
+            className="rail-open"
+            onClick={() => onOpenTask?.(card.qualified_handle)}
+          >
+            Open<span aria-hidden="true"> ›</span>
+          </button>
         </div>
 
-        {/* Sits beside the text block, not above it: a 44px control stacked on
-            its own line cost the roster a whole task. */}
-        <button
-          type="button"
-          className="rail-open"
-          onClick={() => onOpenTask?.(card.qualified_handle)}
-        >
-          Open<span aria-hidden="true"> ›</span>
-        </button>
+        <p className="rail-title">{card.title || card.qualified_handle}</p>
+        {/* Only the state line is live: re-reading handle/actions on every poll
+            would drown the operator. */}
+        <p className="rail-note" aria-live="polite">
+          {statusLine(card, nowSecs)}
+        </p>
 
         {actions.length > 0 ? (
           <div className="rail-actions" data-testid="rail-actions">
             <ActionBar
+              layout="primary-key"
               actions={actions}
               handle={card.qualified_handle}
               onCockpit={onCockpit}
@@ -515,7 +506,7 @@ export default function Dashboard({
             style={{ height: `${railHeight}px` }}
             aria-hidden="true"
           />
-          <TaskRail
+          <ArmedChannel
             card={selected}
             nowSecs={nowSecs}
             railRef={measureRail}

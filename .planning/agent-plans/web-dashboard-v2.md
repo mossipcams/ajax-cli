@@ -185,3 +185,44 @@ structure re-derived from the task.
   the rail top, not just the nav.
 - Finish review + verdict and the documenter's DESIGN.md pass: see the final
   response.
+
+---
+
+## Round 3 — v4 iOS-docked armed channel, restored (2026-07-30)
+
+Uncommitted v4 work (Dashboard.tsx rework to `ArmedChannel` + primary-key
+`ActionBar`, matching CSS, docs, and tests) was lost from the worktree before
+it landed on a PR. `Dashboard.tsx` had already been re-applied when this round
+started; this round restored the rest of v4 from the surviving code and specs
+so the change is coherent again for review.
+
+**Delegation decision:** `Delegation decision: not delegated because this is a
+visual-iteration restoration tied directly to already-written v4 component
+code (CSS values, test assertions, and doc language all had to match the
+specific markup/classes in the restored `Dashboard.tsx`) — the same exception
+AGENTS.md §Delegation and the Round 2 entry above record for this surface.`
+
+### Restored in this round
+- `styles.css` — DASHBOARD block rewritten for channel traces + the docked
+  armed channel (opaque `--paper` floor, `.rail-inner` card carries the
+  border/radius/shadow, `--text-display` title, primary-key column layout with
+  full-width primary + secondaries); bottom-nav current-page treatment
+  softened to an underline so it does not compete with the dock; `.fleet-footer`
+  given bottom margin to clear the dock.
+- `Dashboard.test.tsx` — clearance assertion updated to the new
+  `RAIL_HEIGHT_FALLBACK` (240px).
+- `e2e/visual.test.ts` — rail assertions retargeted from the outer dock's
+  border to `.rail-inner`'s card border/radius, plus a `[data-layout=
+  "primary-key"]` count check; fixed position, opaque background, and primary
+  accent fill assertions kept.
+- `DESIGN.md` — overview paragraph, Key Characteristics bullet, reading order,
+  Flat-By-Default exception, and the Signature section renamed from "Next card
+  + band-tagged queue" to "Armed channel + band-tagged traces"; the "Which
+  task" inbox rule kept verbatim.
+- `.impeccable/surfaces/ajax-web-web-src-features-dashboard-dashboard-tsx.md`
+  rewritten for v4 (same frontmatter shape as v2/v3).
+
+### Validation
+- Not run as part of this restoration pass; re-run the full v2/v3 validation
+  suite (`npm run web:test -- --run`, `web:check`, `web:lint`, `web:sg`,
+  `CI=1 npm run web:smoke`) before shipping a PR.
