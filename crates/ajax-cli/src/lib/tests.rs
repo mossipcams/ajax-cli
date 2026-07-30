@@ -4,7 +4,6 @@ use super::{
     run_with_context_paths_and_runner, CliContextPaths, CliError,
 };
 use ajax_core::{
-    acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation, AcpStopReason},
     adapters::{
         CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
         RecordingCommandRunner,
@@ -184,7 +183,11 @@ fn execution_dispatch_module_routes_mutating_commands() {
             "/Users/matt/projects/web__worktrees/ajax-fix-logout",
             None,
         ),
-        expected_task_launch_command("ajax-web-fix-logout", "web/fix-logout"),
+        expected_task_launch_command(
+            "ajax-web-fix-logout",
+            "web/fix-logout",
+            "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+        ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-logout:task"]),
         expected_new_task_open_command("ajax-web-fix-logout"),
     ]);
@@ -554,39 +557,73 @@ fn test_agent_cache_directory(label: &str) -> PathBuf {
     ))
 }
 
-fn write_acp_snapshot(
-    cache_dir: &Path,
-    task_id: &str,
-    state: AcpSessionState,
-    observed_at_unix_millis: u128,
-) {
-    crate::agent_acp_snapshot::AcpSnapshotPublisher::claim(
-        &cache_dir.join("agent-acp"),
-        task_id,
-        "test-generation",
-        None,
-        AcpStatusObservation {
-            state,
-            detail: None,
-        },
-        observed_at_unix_millis,
-    )
-    .unwrap();
-}
+fn write_agent_status_event(cache_dir: &Path, task_id: &str, value: &str) {
+    use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
 
-fn write_acp_status(cache_dir: &Path, task_id: &str, value: &str) {
-    let state = match value {
-        "ask" => AcpSessionState::RequiresAction(AcpActionKind::Permission),
-        "wait" => AcpSessionState::RequiresAction(AcpActionKind::Input),
-        "done" => AcpSessionState::Idle(Some(AcpStopReason::EndTurn)),
-        "failed" => AcpSessionState::Failed,
-        _ => AcpSessionState::Running,
-    };
+    let events_dir = cache_dir.join("agent-events");
+    let runtime_dir = cache_dir.join("agent-runtime");
+    std::fs::create_dir_all(&events_dir).unwrap();
+    std::fs::create_dir_all(&runtime_dir).unwrap();
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    write_acp_snapshot(cache_dir, task_id, state, now_millis);
+    let stem = task_file_stem(task_id);
+
+    // Wrapper runtime snapshot: alive for non-terminal, exited for terminal.
+    let state = match value {
+        "done" => AgentRuntimeState::ExitedSuccess,
+        "failed" => AgentRuntimeState::ExitedFailure,
+        _ => AgentRuntimeState::Running,
+    };
+    let snapshot = AgentRuntimeSnapshot {
+        task_id: task_id.to_string(),
+        state,
+        observed_at_unix_millis: now_millis,
+        pid: Some(1),
+        exit_code: None,
+        message: None,
+    };
+    std::fs::write(
+        runtime_dir.join(format!("{stem}.json")),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+
+    // Canonical JSONL envelope for the native lifecycle event.
+    let (kind, detail) = match value {
+        "ask" => (
+            "attention_requested",
+            serde_json::json!({"attention": {"attention": "permission"}}),
+        ),
+        "wait" => (
+            "attention_requested",
+            serde_json::json!({"attention": {"attention": "question"}}),
+        ),
+        "done" => (
+            "turn_settled",
+            serde_json::json!({"outcome": {"outcome": "completed"}}),
+        ),
+        "failed" => (
+            "turn_settled",
+            serde_json::json!({"outcome": {"outcome": "failed"}}),
+        ),
+        _ => ("turn_started", serde_json::Value::Null),
+    };
+    let mut envelope = serde_json::json!({
+        "schema_version": 1,
+        "kind": kind,
+        "received_at_unix_millis": now_millis,
+        "occurred_at_unix_millis": now_millis,
+    });
+    if !detail.is_null() {
+        envelope["detail"] = detail;
+    }
+    std::fs::write(
+        events_dir.join(format!("{stem}.jsonl")),
+        format!("{}\n", serde_json::to_string(&envelope).unwrap()),
+    )
+    .unwrap();
 }
 
 fn prepare_active_task_agent_status(
@@ -596,7 +633,7 @@ fn prepare_active_task_agent_status(
 ) -> PathBuf {
     let cache_dir = test_agent_cache_directory(value);
     context.runtime_paths.cache_dir = cache_dir.clone();
-    write_acp_status(&cache_dir, task_id, value);
+    write_agent_status_event(&cache_dir, task_id, value);
     let task = context
         .registry
         .get_task_mut(&TaskId::new(task_id))
@@ -650,7 +687,7 @@ impl AgentStatusMutatingRunner {
     }
 
     fn update_agent_status(&self, value: &str) {
-        write_acp_status(&self.cache_dir, &self.task_id, value);
+        write_agent_status_event(&self.cache_dir, &self.task_id, value);
     }
 }
 
@@ -789,7 +826,7 @@ fn run_start_with_attach_mode(
         .map(|rendered| rendered.output)
 }
 
-fn expected_task_launch_command(session: &str, task_id: &str) -> CommandSpec {
+fn expected_task_launch_command(session: &str, task_id: &str, worktree_path: &str) -> CommandSpec {
     CommandSpec {
         program: "tmux".to_string(),
         args: vec![
@@ -797,7 +834,7 @@ fn expected_task_launch_command(session: &str, task_id: &str) -> CommandSpec {
             "-t".to_string(),
             format!("{session}:task"),
             format!(
-                "ajax-cli __agent-acp --task-id {task_id} --state-root .cache/ajax/agent-acp codex-acp"
+                "ajax-cli __agent-runtime --task-id {task_id} --state-root .cache/ajax/agent-runtime -- codex --cd {worktree_path}"
             ),
             "Enter".to_string(),
         ],
@@ -1356,7 +1393,7 @@ fn cockpit_json_refreshes_live_status_from_tmux() {
     );
     assert_eq!(
         parsed["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Approval required"
+        "waiting for approval"
     );
     assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
     let mut expected = tmux_live_commands();
@@ -1389,7 +1426,7 @@ fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
 
     assert_eq!(
         parsed["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Agent running"
+        "agent running"
     );
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -1427,11 +1464,11 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
     let second: serde_json::Value = serde_json::from_str(frames[1]).unwrap();
     assert_eq!(
         first["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Approval required"
+        "waiting for approval"
     );
     assert_eq!(
         second["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Input required"
+        "waiting for input"
     );
     assert!(runner.inner.commands.len() >= 4);
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -1474,11 +1511,11 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
     let second: serde_json::Value = serde_json::from_str(frames[1]).unwrap();
     assert_eq!(
         first["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Approval required"
+        "waiting for approval"
     );
     assert_eq!(
         second["tasks"]["tasks"][0]["live_status"]["summary"],
-        "Input required"
+        "waiting for input"
     );
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -1500,7 +1537,7 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
         output
             .lines()
             .find(|line| line.starts_with("web/fix-login")),
-        Some("web/fix-login\tRunning - Agent running\tFix login")
+        Some("web/fix-login\tRunning - Agent working\tFix login")
     );
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
@@ -1521,7 +1558,7 @@ fn status_command_refreshes_live_state_from_tmux() {
         output
             .lines()
             .find(|line| line.starts_with("web/fix-login")),
-        Some("web/fix-login\tWaiting - Approval required\tFix login")
+        Some("web/fix-login\tWaiting - Waiting for approval\tFix login")
     );
     assert!(context
         .registry
@@ -1548,7 +1585,7 @@ fn status_command_renders_json_from_refreshed_live_state() {
     assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
     assert_eq!(
         parsed["tasks"][0]["live_status"]["summary"],
-        "Agent running"
+        "agent running"
     );
     let mut expected = tmux_live_commands();
     expected.push(expected_ci_probe_command());
@@ -1593,7 +1630,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
         };
 
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
-        assert_eq!(task_json[0]["live_status"]["summary"], "Agent running");
+        assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
         let mut expected = tmux_probe_and_orphan_scan_commands();
         expected.push(expected_ci_probe_command());
         assert_eq!(runner.commands, expected, "{command:?}");
@@ -1810,7 +1847,7 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     assert!(state_changed);
     assert_eq!(
         snapshot.cards[0].status_explanation.as_deref(),
-        Some("Approval required")
+        Some("Waiting for approval")
     );
     assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
     let mut expected = tmux_live_commands();
@@ -1907,7 +1944,7 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
         task.live_status
             .as_ref()
             .map(|status| status.summary.as_str()),
-        Some("Agent running")
+        Some("agent running")
     );
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -1946,8 +1983,8 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
     let mut context = two_active_tasks_context();
     let cache_dir = test_agent_cache_directory("two-active");
     context.runtime_paths.cache_dir = cache_dir.clone();
-    write_acp_status(&cache_dir, "task-1", "working");
-    write_acp_status(&cache_dir, "task-2", "ask");
+    write_agent_status_event(&cache_dir, "task-1", "working");
+    write_agent_status_event(&cache_dir, "task-2", "ask");
     let mut runner = QueuedRunner::new(vec![
         output(0, "ajax-web-fix-login\najax-web-fix-sidebar\n"),
         output(
@@ -3565,7 +3602,11 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             None,
         ),
-        expected_task_launch_command("ajax-web-fix-login", "web/fix-login"),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+        ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
@@ -3653,7 +3694,11 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             Some("npm ci"),
         ),
-        expected_task_launch_command("ajax-web-fix-login", "web/fix-login"),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+        ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
@@ -3984,7 +4029,11 @@ fn new_execute_allows_reusing_removed_task_handle() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             None,
         ),
-        expected_task_launch_command("ajax-web-fix-login", "web/fix-login"),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+        ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
@@ -6390,7 +6439,11 @@ fn pending_new_task_action_runs_after_title_is_collected() {
             "/Users/matt/projects/api__worktrees/ajax-fix-login",
             None,
         ),
-        expected_task_launch_command("ajax-api-fix-login", "api/fix-login"),
+        expected_task_launch_command(
+            "ajax-api-fix-login",
+            "api/fix-login",
+            "/Users/matt/projects/api__worktrees/ajax-fix-login",
+        ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-api-fix-login:task"]),
         expected_new_task_open_command("ajax-api-fix-login"),
     ]);
@@ -8451,7 +8504,44 @@ fn removed_reconcile_command_does_not_touch_registry_snapshot() {
     );
 }
 
-fn acp_snapshot_directory(label: &str) -> PathBuf {
+#[test]
+fn agent_runtime_command_runs_without_loading_ajax_context() {
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-agent-runtime-command-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    let output = super::run_with_args([
+        "ajax",
+        "--config",
+        "/definitely/missing/ajax-config.toml",
+        "__agent-runtime",
+        "--task-id",
+        "web/fix-login",
+        "--state-root",
+        directory.to_str().unwrap(),
+        "--",
+        "/bin/sh",
+        "-c",
+        "exit 0",
+    ])
+    .unwrap();
+
+    assert_eq!(output, "");
+    let latest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("web__fix-login.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(latest["state"], "exited_success");
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn runtime_snapshot_directory(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "ajax-cli-runtime-snapshot-{}-{}-{label}",
         std::process::id(),
@@ -8460,6 +8550,24 @@ fn acp_snapshot_directory(label: &str) -> PathBuf {
             .unwrap()
             .as_nanos()
     ))
+}
+
+fn write_runtime_snapshot(cache_dir: &Path, state: &str, observed_at_unix_millis: u128) {
+    let runtime_dir = cache_dir.join("agent-runtime");
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    std::fs::write(
+        runtime_dir.join("task-1.json"),
+        serde_json::json!({
+            "task_id": "task-1",
+            "state": state,
+            "observed_at_unix_millis": observed_at_unix_millis,
+            "pid": 42,
+            "exit_code": if state == "exited_failure" { Some(9) } else { None::<i32> },
+            "message": null
+        })
+        .to_string(),
+    )
+    .unwrap();
 }
 
 fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> {
@@ -8477,21 +8585,22 @@ fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> 
 }
 
 #[test]
-fn cockpit_refresh_marks_agent_running_from_fresh_acp_snapshot() {
-    let directory = acp_snapshot_directory("running");
+fn cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone() {
+    let directory = runtime_snapshot_directory("running-liveness");
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    write_acp_snapshot(&directory, "task-1", AcpSessionState::Running, now_millis);
+    write_runtime_snapshot(&directory, "running", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs());
 
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
 
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-    assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
-    assert_eq!(
+    // Wrapper "running" is process liveness only; idle pane has no activity.
+    assert_ne!(task.agent_status, AgentRuntimeStatus::Running);
+    assert_ne!(
         task.live_status.as_ref().map(|status| status.kind),
         Some(LiveStatusKind::AgentRunning)
     );
@@ -8501,13 +8610,13 @@ fn cockpit_refresh_marks_agent_running_from_fresh_acp_snapshot() {
 }
 
 #[test]
-fn cockpit_refresh_marks_acp_failure_instead_of_unknown() {
-    let directory = acp_snapshot_directory("failed");
+fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
+    let directory = runtime_snapshot_directory("failed");
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    write_acp_snapshot(&directory, "task-1", AcpSessionState::Failed, now_millis);
+    write_runtime_snapshot(&directory, "exited_failure", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs());
 
@@ -8525,18 +8634,13 @@ fn cockpit_refresh_marks_acp_failure_instead_of_unknown() {
 }
 
 #[test]
-fn cockpit_refresh_promotes_acp_end_turn_to_reviewable() {
-    let directory = acp_snapshot_directory("completed");
+fn cockpit_refresh_promotes_wrapper_completion_to_reviewable() {
+    let directory = runtime_snapshot_directory("completed");
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    write_acp_snapshot(
-        &directory,
-        "task-1",
-        AcpSessionState::Idle(Some(AcpStopReason::EndTurn)),
-        now_millis,
-    );
+    write_runtime_snapshot(&directory, "exited_success", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs());
 
@@ -8550,9 +8654,9 @@ fn cockpit_refresh_promotes_acp_end_turn_to_reviewable() {
 }
 
 #[test]
-fn stale_acp_running_snapshot_cannot_keep_task_running() {
-    let directory = acp_snapshot_directory("stale");
-    write_acp_snapshot(&directory, "task-1", AcpSessionState::Running, 1);
+fn stale_wrapper_running_snapshot_cannot_keep_task_running() {
+    let directory = runtime_snapshot_directory("stale");
+    write_runtime_snapshot(&directory, "running", 1);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs());
 
@@ -8564,7 +8668,8 @@ fn stale_acp_running_snapshot_cannot_keep_task_running() {
         task.live_status.as_ref().map(|status| status.kind),
         Some(LiveStatusKind::AgentRunning)
     );
-    // A stale ACP snapshot is ignored without fabricating a probe failure.
+    // A stale wrapper-running snapshot is no longer a probe failure; core falls
+    // through to a successful agent-aware pane observation instead.
     assert_ne!(
         task.runtime_projection.observation_error.as_deref(),
         Some("agent status stale")
@@ -8587,7 +8692,7 @@ fn tmux_probe_failure_renders_unavailable_without_marking_session_missing() {
         }
     }
 
-    let directory = acp_snapshot_directory("tmux-failed");
+    let directory = runtime_snapshot_directory("tmux-failed");
     let mut context = active_runtime_context(&directory);
     context
         .registry

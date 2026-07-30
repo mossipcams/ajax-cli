@@ -29,14 +29,7 @@ pub fn build_cli() -> Command {
                 .about("Create a new task environment")
                 .arg(Arg::new("repo").long("repo").value_name("REPO"))
                 .arg(Arg::new("title").long("title").value_name("TITLE"))
-                .arg(Arg::new("agent").long("agent").value_name("AGENT"))
-                .arg(
-                    Arg::new("terminal")
-                        .long("terminal")
-                        .value_name("MODE")
-                        .default_value("acp")
-                        .help("Agent terminal mode: acp (default) or native"),
-                ),
+                .arg(Arg::new("agent").long("agent").value_name("AGENT")),
         )
         .subcommand(executable_command(task_command("resume")))
         .subcommand(executable_command(task_command("repair")))
@@ -65,7 +58,9 @@ pub fn build_cli() -> Command {
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
-        .subcommand(agent_acp_command())
+        .subcommand(agent_runtime_command())
+        .subcommand(agent_event_command())
+        .subcommand(agent_hooks_command())
         .subcommand(web_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
@@ -150,8 +145,33 @@ fn supervise_command() -> Command {
         )
 }
 
-fn agent_acp_command() -> Command {
-    Command::new("__agent-acp")
+fn agent_hooks_command() -> Command {
+    Command::new("agent-hooks")
+        .about("Manage agent status hooks for supported clients")
+        .subcommand(
+            Command::new("install").about("Install agent status hooks for supported clients"),
+        )
+}
+
+fn agent_event_command() -> Command {
+    Command::new("__agent-event")
+        .hide(true)
+        .arg(
+            Arg::new("client")
+                .long("client")
+                .value_name("CLIENT")
+                .required(true),
+        )
+        .arg(
+            Arg::new("event")
+                .long("event")
+                .value_name("EVENT")
+                .required(true),
+        )
+}
+
+fn agent_runtime_command() -> Command {
+    Command::new("__agent-runtime")
         .hide(true)
         .arg(
             Arg::new("task-id")
@@ -260,19 +280,7 @@ fn json_command(name: &'static str) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use clap::error::ErrorKind;
-
-    use super::{build_cli, parse_args, ParsedArgs};
-
-    #[test]
-    fn legacy_agent_commands_are_unavailable() {
-        for command in ["agent-hooks", "__agent-event", "__agent-runtime"] {
-            let err = build_cli()
-                .try_get_matches_from(["ajax-cli", command])
-                .expect_err("legacy command must be unavailable");
-            assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
-        }
-    }
+    use super::{parse_args, ParsedArgs};
 
     #[test]
     fn global_profile_is_accepted_before_runtime_subcommand() {
