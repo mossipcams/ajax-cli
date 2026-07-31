@@ -445,6 +445,41 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 });
 
+describe("TaskTerminal native paste", () => {
+  it("owns helper-textarea paste in capture phase and routes through readPasteText", () => {
+    expect(taskTerminalSource).toMatch(
+      /import\s*\{[^}]*readPasteText[^}]*\}\s*from\s*["']@\/shared\/lib\/clipboard["']/,
+    );
+
+    const pasteHandler = extractBlock(
+      taskTerminalSource,
+      /const onTextareaPaste\s*=\s*\(event:\s*ClipboardEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(pasteHandler).toMatch(/event\.preventDefault\s*\(\s*\)/);
+    expect(pasteHandler).toMatch(/event\.stopImmediatePropagation\s*\(\s*\)/);
+    expect(pasteHandler).toMatch(/readPasteText\(event\.clipboardData\)/);
+    expect(pasteHandler).toMatch(/pasteThroughTerm\(text\)/);
+    expect(pasteHandler).toMatch(/seedTermSentinel\(\)/);
+
+    expect(taskTerminalSource).toMatch(
+      /addEventListener\("paste",\s*onPaste,\s*\{\s*capture:\s*true\s*\}\)/,
+    );
+
+    const cleanup = extractBlock(
+      taskTerminalSource,
+      /return \(\) => \{\n {6}disposed = true/,
+      /\n {4}\};\n {2}\}, \[handle\]\);/,
+    );
+    expect(cleanup).toMatch(/removeEventListener\("paste",\s*onPaste,\s*\{\s*capture:\s*true\s*\}\)/);
+
+    const registeredPaste =
+      taskTerminalSource.match(/addEventListener\("paste",\s*(\w+)/)?.[1] ?? "add-missing";
+    expect(registeredPaste).toBe("onPaste");
+    expect(taskTerminalSource).toMatch(/const onPaste\s*=\s*useEffectEvent\(/);
+  });
+});
+
 describe("TaskTerminal seeded history reveal", () => {
   it("hides the interaction surface until seeded output goes quiet, then snaps", () => {
     const seedPendingCss =
