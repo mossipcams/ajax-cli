@@ -3,8 +3,8 @@ import {
   navigateSwipeStart,
   navigateSwipeMove,
   navigateSwipeEnd,
+  navigateSwipeTranslateX,
   NAVIGATE_SWIPE_TRIGGER,
-  isTerminalGestureTarget,
   isDiffPanGestureTarget,
 } from "./navigateSwipe";
 
@@ -15,10 +15,11 @@ describe("navigate swipe", () => {
     expect(navigateSwipeEnd(state)).toBe("none");
   });
 
-  it("fires left past the trigger", () => {
+  it("fires left past the trigger and exposes translate", () => {
     const state = navigateSwipeMove(navigateSwipeStart(), -(NAVIGATE_SWIPE_TRIGGER + 1), 0);
     expect(state.engaged).toBe(true);
     expect(navigateSwipeEnd(state)).toBe("left");
+    expect(navigateSwipeTranslateX(state)).toBeLessThan(0);
   });
 
   it("fires right past the trigger", () => {
@@ -30,19 +31,6 @@ describe("navigate swipe", () => {
     const state = navigateSwipeMove(navigateSwipeStart(), -(NAVIGATE_SWIPE_TRIGGER - 1), 0);
     expect(state.engaged).toBe(true);
     expect(navigateSwipeEnd(state)).toBe("none");
-  });
-});
-
-describe("isTerminalGestureTarget", () => {
-  it("detects terminal surfaces", () => {
-    const panel = document.createElement("div");
-    panel.setAttribute("data-testid", "task-terminal-panel");
-    const child = document.createElement("span");
-    panel.appendChild(child);
-    document.body.appendChild(panel);
-    expect(isTerminalGestureTarget(child)).toBe(true);
-    expect(isTerminalGestureTarget(document.body)).toBe(false);
-    panel.remove();
   });
 });
 

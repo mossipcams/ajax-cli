@@ -3,7 +3,6 @@ import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api
 import type { DiffFileView, PullRequestView, TaskDiffView } from "@/shared/lib/types";
 import {
   isDiffPanGestureTarget,
-  isTerminalGestureTarget,
   navigateSwipeEnd,
   navigateSwipeMove,
   navigateSwipeStart,
@@ -81,7 +80,13 @@ export default function DiffReview({
 
     async function load() {
       try {
-        const prs = await fetchTaskPullRequests(handle);
+        let prs: Awaited<ReturnType<typeof fetchTaskPullRequests>> = [];
+        try {
+          prs = await fetchTaskPullRequests(handle);
+        } catch {
+          // Soft-fail: still try a local/selected diff projection.
+          prs = [];
+        }
         const pr = selectedPr ?? prs[0]?.number;
         const diff = await fetchTaskDiff(
           handle,
@@ -112,7 +117,7 @@ export default function DiffReview({
   }, [state, selectedPath]);
 
   function onTouchStart(event: TouchEvent) {
-    if (isTerminalGestureTarget(event.target) || isDiffPanGestureTarget(event.target)) {
+    if (isDiffPanGestureTarget(event.target)) {
       touchRef.current.tracking = false;
       return;
     }

@@ -77,6 +77,13 @@ impl GithubChecksAdapter {
             Err(error) => return Err(error.to_string()),
             Ok(output) => output,
         };
+        if output.status_code != 0 {
+            return Err(if output.stderr.is_empty() {
+                format!("gh pr list failed with status {}", output.status_code)
+            } else {
+                output.stderr.clone()
+            });
+        }
 
         let rows: Vec<PrListRow> = serde_json::from_str(&output.stdout)
             .map_err(|error| format!("unparsable gh pr list output: {error}"))?;
@@ -92,7 +99,9 @@ impl GithubChecksAdapter {
 
     pub fn local_diff(&self, worktree_path: &str, base_branch: &str) -> CommandSpec {
         let range = format!("{base_branch}...HEAD");
-        CommandSpec::new("git", ["diff", &range]).with_cwd(worktree_path)
+        CommandSpec::new("git", ["diff", &range])
+            .with_cwd(worktree_path)
+            .with_timeout(GH_PR_CHECKS_TIMEOUT)
     }
 }
 
@@ -505,6 +514,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_pr_list_nonzero_status_is_error() {
+        let result = Ok(ok_output(1, "", "gh: Not logged into any GitHub hosts"));
+
+        let error = GithubChecksAdapter::parse_pr_list(&result).expect_err("nonzero should err");
+
+        assert!(error.contains("Not logged into"));
+    }
+
+    #[test]
     fn parse_pr_list_empty_array_is_ok_not_error() {
         let result = Ok(ok_output(0, "[]", ""));
 
@@ -535,7 +553,9 @@ mod tests {
 
         assert_eq!(
             spec,
-            CommandSpec::new("git", ["diff", "main...HEAD"]).with_cwd("/worktrees/ajax-fix-login")
+            CommandSpec::new("git", ["diff", "main...HEAD"])
+                .with_cwd("/worktrees/ajax-fix-login")
+                .with_timeout(GH_PR_CHECKS_TIMEOUT)
         );
     }
 }
