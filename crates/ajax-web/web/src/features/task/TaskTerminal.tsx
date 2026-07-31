@@ -29,9 +29,10 @@ import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
  * Floor is the bridge's 16ms output batch (TERMINAL_OUTPUT_FLUSH_MS) plus link
- * jitter; this is ~7 batches, enough to bridge seed → attach repaint.
+ * jitter; ~3 batches is enough to bridge seed → attach repaint without sitting
+ * on a blank plate.
  */
-const SEED_REVEAL_QUIET_MS = 120;
+const SEED_REVEAL_QUIET_MS = 48;
 /** Hard cap so a pane streaming nonstop still reveals. */
 const SEED_REVEAL_MAX_MS = 2000;
 
@@ -693,17 +694,12 @@ export default function TaskTerminal({ handle }: Props) {
     const revealSeed = () => {
       clearSeedPendingRevealTimer();
       if (!isActive() || !isSeedPending()) return;
-      // Only snap to the CLI input if the user has not scrolled up during the
-      // pending window. If they scrolled away to read scrollback, reveal in
-      // place — forcing them back to the bottom would fight that intent and
-      // detach the "New output" affordance.
-      if (scrollSync.isFollowingLive()) {
-        scrollSync.setSyncingScroll(true);
-        termRef.current?.scrollToBottom();
-        scrollSync.scrollInteractionToBottom();
-        scrollSync.setSyncingScroll(false);
-        scrollSync.refreshFollow();
-      }
+      scrollSync.setFollowLive(true);
+      scrollSync.setSyncingScroll(true);
+      termRef.current?.scrollToBottom();
+      scrollSync.scrollInteractionToBottom();
+      scrollSync.setSyncingScroll(false);
+      scrollSync.refreshFollow();
       interactionEl.classList.remove("is-seed-pending");
     };
 
@@ -1244,6 +1240,9 @@ export default function TaskTerminal({ handle }: Props) {
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
           termRef.current?.write(text, () => {
+            if (isSeedPending()) {
+              scrollSync.setFollowLive(true);
+            }
             scrollSync.applyOutput();
             deferSeedReveal();
           });

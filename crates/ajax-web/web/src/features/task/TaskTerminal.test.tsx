@@ -476,12 +476,22 @@ describe("TaskTerminal seeded history reveal", () => {
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
-    expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
+    expect(onOutputBody).toMatch(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{\s*\n\s*scrollSync\.setFollowLive\(true\)/);
+    const applyOutputIndex = onOutputBody.indexOf("scrollSync.applyOutput()");
+    const forceFollowIndex = onOutputBody.indexOf("scrollSync.setFollowLive(true)");
+    expect(forceFollowIndex).toBeGreaterThan(-1);
+    expect(applyOutputIndex).toBeGreaterThan(forceFollowIndex);
     expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
 
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(revealBody).not.toMatch(/isFollowingLive\(\)/);
+    expect(revealBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
+    const revealFollowIndex = revealBody.indexOf("scrollSync.setFollowLive(true)");
+    const revealSnapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
+    expect(revealFollowIndex).toBeGreaterThan(-1);
+    expect(revealSnapIndex).toBeGreaterThan(revealFollowIndex);
     expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
     expect(revealBody).toMatch(/scrollToBottom\(\)/);
     expect(revealBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
