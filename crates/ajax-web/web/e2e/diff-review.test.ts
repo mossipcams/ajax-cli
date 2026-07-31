@@ -52,6 +52,7 @@ test("task detail long-press swipe-right opens Diff Review chrome", async ({ pag
   await expect(page.getByTestId("outlet-diff")).toBeVisible();
   await expect(page.getByTestId("diff-review")).toBeVisible();
   await expect(page.getByTestId("diff-pr-strip")).toBeVisible();
-  await expect(page.getByTestId("diff-file-list")).toBeVisible();
+  // Signal files auto-open into the hunk viewer (file list is the empty/noise-only path).
+  await expect(page.getByTestId("diff-hunk-viewer")).toBeVisible();
   await expect(page.getByTestId("diff-source")).toHaveText(/pr:12/);
 });
