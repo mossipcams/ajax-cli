@@ -3,8 +3,6 @@ import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api
 import type { DiffFileView, PullRequestView, TaskDiffView } from "@/shared/lib/types";
 import {
   isDiffPanGestureTarget,
-  NAVIGATE_LONG_PRESS_MS,
-  NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX,
   navigateSwipeEnd,
   navigateSwipeMove,
   navigateSwipeStart,
@@ -123,13 +121,12 @@ export default function DiffReview({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [noiseExpanded, setNoiseExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
   const touchRef = useRef({
     x: 0,
     y: 0,
     tracking: false,
-    startedAt: 0,
-    armingCancelled: false,
-    armed: false,
     swipe: navigateSwipeStart(),
   });
 
@@ -203,9 +200,6 @@ export default function DiffReview({
       x: touch.clientX,
       y: touch.clientY,
       tracking: true,
-      startedAt: Date.now(),
-      armingCancelled: false,
-      armed: false,
       swipe: navigateSwipeStart(),
     };
   }
@@ -216,27 +210,14 @@ export default function DiffReview({
     if (!touch) return;
     const dx = touch.clientX - touchRef.current.x;
     const dy = touch.clientY - touchRef.current.y;
-    const press = touchRef.current;
-    if (!press.armed) {
-      if (press.armingCancelled) return;
-      const movedPx = Math.max(Math.abs(dx), Math.abs(dy));
-      if (Date.now() - press.startedAt < NAVIGATE_LONG_PRESS_MS) {
-        if (movedPx > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX) {
-          press.armingCancelled = true;
-        }
-        return;
-      }
-      press.armed = true;
-    }
     touchRef.current.swipe = navigateSwipeMove(touchRef.current.swipe, dx, dy);
   }
 
   function onTouchEnd() {
     if (!touchRef.current.tracking) return;
-    const armed = touchRef.current.armed;
     const direction = navigateSwipeEnd(touchRef.current.swipe);
     touchRef.current.tracking = false;
-    if (armed && direction === "left") onBack?.();
+    if (direction === "left") onBackRef.current?.();
   }
 
   const heading = title || handle;

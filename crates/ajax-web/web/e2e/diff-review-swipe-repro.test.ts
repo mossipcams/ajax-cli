@@ -1,11 +1,9 @@
-// Mobile-webkit simulator: characterize Diff Review entry gestures after
-// reverting the #718 "fix" so we know what fails before changing code again.
+// Mobile-webkit: plain swipe-right opens Diff; swipe-left does not.
 //
 //   npm run web:smoke -- e2e/diff-review-swipe-repro.test.ts
 
 import { test, expect, type Locator } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket } from "./fixtures";
-import { NAVIGATE_LONG_PRESS_MS } from "../src/shared/gestures/navigateSwipe";
 
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(async ({}, testInfo) => {
@@ -48,7 +46,7 @@ async function headerPoint(page: import("@playwright/test").Page) {
   };
 }
 
-test("REPRO: quick swipe-right does not open Diff (current behavior)", async ({ page }) => {
+test("swipe-right opens Diff", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
   await mockTerminalWebSocket(page);
@@ -56,42 +54,23 @@ test("REPRO: quick swipe-right does not open Diff (current behavior)", async ({ 
   const { header, x, y } = await headerPoint(page);
 
   await dispatchTouch(header, "touchstart", x, y);
-  await dispatchTouch(header, "touchmove", x + 120, y);
-  await dispatchTouch(header, "touchend", x + 120, y);
-
-  await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
-  await expect(page.getByTestId("task-detail")).toBeVisible();
-});
-
-test("REPRO: finger jitter during hold cancels Diff open", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  const { header, x, y } = await headerPoint(page);
-
-  await dispatchTouch(header, "touchstart", x, y);
-  // > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX (8) during the hold window.
-  await dispatchTouch(header, "touchmove", x + 12, y);
-  await page.waitForTimeout(NAVIGATE_LONG_PRESS_MS + 25);
-  await dispatchTouch(header, "touchmove", x + 120, y);
-  await dispatchTouch(header, "touchend", x + 120, y);
-
-  await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
-  await expect(page.getByTestId("task-detail")).toBeVisible();
-});
-
-test("control: clean long-press then swipe-right opens Diff", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  const { header, x, y } = await headerPoint(page);
-
-  await dispatchTouch(header, "touchstart", x, y);
-  await page.waitForTimeout(NAVIGATE_LONG_PRESS_MS + 25);
   await dispatchTouch(header, "touchmove", x + 120, y);
   await dispatchTouch(header, "touchend", x + 120, y);
 
   await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 5000 });
+});
+
+test("swipe-left does not open Diff", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  const { header, x, y } = await headerPoint(page);
+
+  await dispatchTouch(header, "touchstart", x + 120, y);
+  await dispatchTouch(header, "touchmove", x, y);
+  await dispatchTouch(header, "touchend", x, y);
+
+  await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
+  await expect(page.getByTestId("task-detail")).toBeVisible();
 });
