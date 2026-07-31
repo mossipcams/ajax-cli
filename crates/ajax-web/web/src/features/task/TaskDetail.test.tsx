@@ -186,25 +186,6 @@ describe("TaskDetail", () => {
     }
   });
 
-  it("keeps an in-flight long-press swipe when onOpenDiff identity changes", () => {
-    vi.useFakeTimers();
-    try {
-      const first = vi.fn();
-      const second = vi.fn();
-      const { rerender } = render(<TaskDetail detail={detail()} onOpenDiff={first} />);
-      const root = screen.getByTestId("task-detail");
-      fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
-      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
-      rerender(<TaskDetail detail={detail()} onOpenDiff={second} />);
-      fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
-      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
-      expect(first).not.toHaveBeenCalled();
-      expect(second).toHaveBeenCalledOnce();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("does not own document scroll via ajax-task-open", () => {
     expect(taskDetailSource).not.toMatch(/ajax-task-open/);
     expect(routeScrollSource).toMatch(/data-testid="route-scroll"/);

@@ -39,16 +39,8 @@ export default function TaskDetail({
   const actions = visibleTaskActions(detail.actions);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const originRef = useRef({ x: 0, y: 0 });
-  const lastTouchRef = useRef({ x: 0, y: 0 });
-  const pressRef = useRef({
-    armingCancelled: false,
-    armed: false,
-    armTimer: 0 as ReturnType<typeof setTimeout> | 0,
-  });
+  const pressRef = useRef({ startedAt: 0, armingCancelled: false, armed: false });
   const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
-  // Inline App callbacks change every cockpit poll; keep listeners stable.
-  const onOpenDiffRef = useRef(onOpenDiff);
-  onOpenDiffRef.current = onOpenDiff;
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
 
@@ -61,16 +53,8 @@ export default function TaskDetail({
     const root = rootRef.current;
     if (!root) return;
 
-    const clearArmTimer = () => {
-      if (pressRef.current.armTimer) {
-        clearTimeout(pressRef.current.armTimer);
-        pressRef.current.armTimer = 0;
-      }
-    };
-
     const reset = () => {
-      clearArmTimer();
-      pressRef.current = { armingCancelled: false, armed: false, armTimer: 0 };
+      pressRef.current = { startedAt: 0, armingCancelled: false, armed: false };
       swipeRef.current = navigateSwipeStart();
       setDragX(0);
       setDragging(false);
@@ -79,38 +63,29 @@ export default function TaskDetail({
     const onTouchStart = (event: TouchEvent) => {
       const touch = event.changedTouches[0] ?? event.touches[0];
       if (!touch) return;
-      clearArmTimer();
       originRef.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
-      pressRef.current = { armingCancelled: false, armed: false, armTimer: 0 };
+      pressRef.current = { startedAt: Date.now(), armingCancelled: false, armed: false };
       swipeRef.current = navigateSwipeStart();
       setDragging(false);
       setDragX(0);
-      pressRef.current.armTimer = setTimeout(() => {
-        if (pressRef.current.armingCancelled) return;
-        // Measure the swipe from the hold point, not the original touchstart.
-        originRef.current = { ...lastTouchRef.current };
-        swipeRef.current = navigateSwipeStart();
-        pressRef.current.armed = true;
-        pressRef.current.armTimer = 0;
-      }, NAVIGATE_LONG_PRESS_MS);
     };
 
     const onTouchMove = (event: TouchEvent) => {
       const touch = event.changedTouches[0] ?? event.touches[0];
       if (!touch) return;
-      lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
       const dx = touch.clientX - originRef.current.x;
       const dy = touch.clientY - originRef.current.y;
       const press = pressRef.current;
       if (!press.armed) {
         if (press.armingCancelled) return;
         const movedPx = Math.max(Math.abs(dx), Math.abs(dy));
-        if (movedPx > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX) {
-          press.armingCancelled = true;
-          clearArmTimer();
+        if (Date.now() - press.startedAt < NAVIGATE_LONG_PRESS_MS) {
+          if (movedPx > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX) {
+            press.armingCancelled = true;
+          }
+          return;
         }
-        return;
+        press.armed = true;
       }
       const next = navigateSwipeMove(swipeRef.current, dx, dy);
       swipeRef.current = next;
@@ -125,7 +100,7 @@ export default function TaskDetail({
       const armed = pressRef.current.armed;
       const direction = navigateSwipeEnd(swipeRef.current);
       reset();
-      if (armed && direction === "right") onOpenDiffRef.current?.();
+      if (armed && direction === "right") onOpenDiff?.();
     };
 
     root.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
@@ -133,13 +108,12 @@ export default function TaskDetail({
     root.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
     root.addEventListener("touchcancel", reset, { capture: true, passive: true });
     return () => {
-      clearArmTimer();
       root.removeEventListener("touchstart", onTouchStart, true);
       root.removeEventListener("touchmove", onTouchMove, true);
       root.removeEventListener("touchend", onTouchEnd, true);
       root.removeEventListener("touchcancel", reset, true);
     };
-  }, []);
+  }, [onOpenDiff]);
 
   return (
     <div
