@@ -210,7 +210,9 @@ fn extract_path(path_line: &str) -> Option<String> {
 }
 
 /// Observe live GitHub PRs for the task branch, merge with stored refs, and
-/// optionally persist the merged list back onto the task metadata.
+/// persist the merged list back onto the task metadata when live observation
+/// succeeds. When `gh` is unobservable, return stored refs (possibly empty)
+/// instead of failing — Diff Review can still fall back to a local diff.
 pub fn observe_task_pull_requests(
     task: &mut Task,
     runner: &mut impl CommandRunner,
@@ -220,13 +222,7 @@ pub fn observe_task_pull_requests(
     let command = github.pr_list(&worktree, &task.branch);
     let live = match GithubChecksAdapter::parse_pr_list(&runner.run(&command)) {
         Ok(prs) => prs,
-        Err(reason) => {
-            let stored = stored_pull_requests(task);
-            if stored.is_empty() {
-                return Err(DiffReviewError::Unobservable(reason));
-            }
-            return Ok(stored);
-        }
+        Err(_reason) => return Ok(stored_pull_requests(task)),
     };
     remember_pull_requests(task, &live);
     Ok(stored_pull_requests(task))
@@ -290,11 +286,22 @@ pub fn project_task_diff(
         } else {
             DiffReviewError::Unobservable(error.to_string())
         }
-    })?;
+    });
+    let output = match output {
+        Ok(output) => output,
+        Err(DiffReviewError::Unobservable(_)) if !force_local => {
+            // Hybrid fallback: PR patch unavailable → local base...HEAD.
+            return project_task_diff(task, runner, github, None, true);
+        }
+        Err(error) => return Err(error),
+    };
     if output.status_code != 0 {
         let stderr = output.stderr.to_ascii_lowercase();
         if stderr.contains("could not find") || stderr.contains("no pull requests") {
             return Err(DiffReviewError::PrNotFound(number));
+        }
+        if !force_local {
+            return project_task_diff(task, runner, github, None, true);
         }
         return Err(DiffReviewError::Unobservable(if output.stderr.is_empty() {
             format!("gh pr diff failed with status {}", output.status_code)

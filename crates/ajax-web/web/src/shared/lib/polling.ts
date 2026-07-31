@@ -22,6 +22,8 @@ export const RESTART_TIMEOUT_MS = 30000;
 export const TEST_IN_STABLE_TIMEOUT_MS = 900_000;
 // Bounds stalled LAN/TLS GETs; recovery comes from the existing poll interval.
 export const GET_REQUEST_TIMEOUT_MS = 10000;
+/** Diff Review runs `gh` / `git` which can exceed the default GET budget. */
+export const DIFF_REQUEST_TIMEOUT_MS = 45000;
 
 export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings";
 

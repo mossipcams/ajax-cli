@@ -1,11 +1,12 @@
-import { lazy, Suspense, useRef, type TouchEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { statusMeta } from "@/shared/lib/state";
 import {
-  isTerminalGestureTarget,
   navigateSwipeEnd,
   navigateSwipeMove,
   navigateSwipeStart,
+  navigateSwipeTranslateX,
+  type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
@@ -34,53 +35,77 @@ export default function TaskDetail({
 }: Props) {
   const meta = statusMeta(detail.status);
   const actions = visibleTaskActions(detail.actions);
-  const touchRef = useRef({ x: 0, y: 0, tracking: false, swipe: navigateSwipeStart() });
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const originRef = useRef({ x: 0, y: 0 });
+  const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
 
   const activityLine = (() => {
     const line = detail.agent_activity ?? detail.live_status_summary;
     return line && line !== detail.status_explanation ? line : null;
   })();
 
-  function onTouchStart(event: TouchEvent) {
-    if (isTerminalGestureTarget(event.target)) {
-      touchRef.current.tracking = false;
-      return;
-    }
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    touchRef.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      tracking: true,
-      swipe: navigateSwipeStart(),
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const reset = () => {
+      swipeRef.current = navigateSwipeStart();
+      setDragX(0);
+      setDragging(false);
     };
-  }
 
-  function onTouchMove(event: TouchEvent) {
-    if (!touchRef.current.tracking) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - touchRef.current.x;
-    const dy = touch.clientY - touchRef.current.y;
-    touchRef.current.swipe = navigateSwipeMove(touchRef.current.swipe, dx, dy);
-  }
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.changedTouches[0] ?? event.touches[0];
+      if (!touch) return;
+      originRef.current = { x: touch.clientX, y: touch.clientY };
+      swipeRef.current = navigateSwipeStart();
+      setDragging(false);
+      setDragX(0);
+    };
 
-  function onTouchEnd() {
-    if (!touchRef.current.tracking) return;
-    const direction = navigateSwipeEnd(touchRef.current.swipe);
-    touchRef.current.tracking = false;
-    if (direction === "left") onOpenDiff?.();
-  }
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.changedTouches[0] ?? event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - originRef.current.x;
+      const dy = touch.clientY - originRef.current.y;
+      const next = navigateSwipeMove(swipeRef.current, dx, dy);
+      swipeRef.current = next;
+      if (!next.engaged) return;
+      // Own the gesture once horizontal intent is clear (including over the terminal).
+      if (event.cancelable) event.preventDefault();
+      setDragging(true);
+      setDragX(navigateSwipeTranslateX(next));
+    };
+
+    const onTouchEnd = () => {
+      const direction = navigateSwipeEnd(swipeRef.current);
+      const committedLeft = direction === "left";
+      reset();
+      if (committedLeft) onOpenDiff?.();
+    };
+
+    root.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    root.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+    root.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
+    root.addEventListener("touchcancel", reset, { capture: true, passive: true });
+    return () => {
+      root.removeEventListener("touchstart", onTouchStart, true);
+      root.removeEventListener("touchmove", onTouchMove, true);
+      root.removeEventListener("touchend", onTouchEnd, true);
+      root.removeEventListener("touchcancel", reset, true);
+    };
+  }, [onOpenDiff]);
 
   return (
     <div
-      className="task-detail"
+      ref={rootRef}
+      className={`task-detail${dragging ? " is-diff-swiping" : ""}`}
       data-testid="task-detail"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={() => {
-        touchRef.current.tracking = false;
+      style={{
+        transform: dragX ? `translate3d(${dragX}px, 0, 0)` : undefined,
+        transition: dragging ? "none" : "transform 180ms var(--ease, ease)",
       }}
     >
       <div

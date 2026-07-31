@@ -94,9 +94,22 @@ describe("DiffReview", () => {
   });
 
   it("surfaces load errors", async () => {
-    vi.mocked(api.fetchTaskPullRequests).mockRejectedValue(new api.ApiError("http", "HTTP 502", 502));
+    vi.mocked(api.fetchTaskPullRequests).mockRejectedValue(new api.ApiError("http", "gh down", 502));
+    vi.mocked(api.fetchTaskDiff).mockRejectedValue(new api.ApiError("http", "git failed", 502));
     render(<DiffReview handle="web/fix-login" />);
-    expect(await screen.findByTestId("diff-error")).toHaveTextContent("HTTP 502");
+    expect(await screen.findByTestId("diff-error")).toHaveTextContent("git failed");
+  });
+
+  it("still loads a local diff when PR list fetch fails", async () => {
+    vi.mocked(api.fetchTaskPullRequests).mockRejectedValue(new api.ApiError("http", "gh down", 502));
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
+      source: "local",
+      pr: null,
+      files: [],
+    });
+    render(<DiffReview handle="web/fix-login" />);
+    expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-empty")).toHaveTextContent("No file changes");
   });
 
   it("notifies parent when a PR chip is selected", async () => {

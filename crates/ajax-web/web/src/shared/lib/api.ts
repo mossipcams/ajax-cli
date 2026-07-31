@@ -8,7 +8,7 @@ import {
   assertDetail,
   assertOperationResponse,
 } from "./contracts";
-import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, TEST_IN_STABLE_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS } from "./polling";
+import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, TEST_IN_STABLE_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS, DIFF_REQUEST_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
   BrowserTaskDetail,
@@ -63,11 +63,11 @@ function classifyStatus(status: number): ApiErrorKind {
   return "http";
 }
 
-function getOptions(): RequestInit {
+function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestInit {
   return {
     cache: "no-store",
     credentials: "same-origin",
-    signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   };
 }
 
@@ -150,10 +150,26 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
   }
 }
 
-async function getJson(path: string): Promise<unknown> {
-  const response = await fetchProtectedWithSessionRenewal(path, getOptions());
+async function getJson(path: string, timeoutMs: number = GET_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  const response = await fetchProtectedWithSessionRenewal(path, getOptions(timeoutMs));
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
+  }
+  return readJson(response);
+}
+
+async function getJsonPreferringErrorBody(
+  path: string,
+  timeoutMs: number,
+): Promise<unknown> {
+  const response = await fetchProtectedWithSessionRenewal(path, getOptions(timeoutMs));
+  if (!response.ok) {
+    const payload = await readJson(response);
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
   }
   return readJson(response);
 }
@@ -169,7 +185,10 @@ export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {
 }
 
 export async function fetchTaskPullRequests(handle: string): Promise<PullRequestView[]> {
-  const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}/pull-requests`);
+  const value = await getJsonPreferringErrorBody(
+    `/api/tasks/${encodeURIComponent(handle)}/pull-requests`,
+    DIFF_REQUEST_TIMEOUT_MS,
+  );
   if (
     typeof value !== "object" ||
     value === null ||
@@ -190,7 +209,7 @@ export async function fetchTaskDiff(
   else if (options.pr !== undefined) params.set("pr", String(options.pr));
   const query = params.toString();
   const path = `/api/tasks/${encodeURIComponent(handle)}/diff${query ? `?${query}` : ""}`;
-  const value = await getJson(path);
+  const value = await getJsonPreferringErrorBody(path, DIFF_REQUEST_TIMEOUT_MS);
   if (typeof value !== "object" || value === null || !("files" in value) || !("source" in value)) {
     throw new ApiError("incompatible", "invalid diff payload");
   }

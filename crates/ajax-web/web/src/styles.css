@@ -2286,6 +2286,11 @@ html.keyboard-open .app-viewport {
   transform: rotate(180deg);
 }
 
+.task-detail.is-diff-swiping {
+  will-change: transform;
+  touch-action: pan-y;
+}
+
 /* DIFF REVIEW ------------------------------------------------------------- */
 .diff-review {
   display: flex;

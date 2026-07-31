@@ -123,7 +123,7 @@ describe("TaskDetail", () => {
     expect(onOpenDiff).toHaveBeenCalledOnce();
   });
 
-  it("does not open Diff Review when the swipe begins on the terminal panel", () => {
+  it("opens Diff Review even when the swipe begins on the terminal panel", () => {
     const onOpenDiff = vi.fn();
     render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
@@ -133,7 +133,7 @@ describe("TaskDetail", () => {
     fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 200, clientY: 40 }] });
     fireEvent.touchMove(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
     fireEvent.touchEnd(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    expect(onOpenDiff).not.toHaveBeenCalled();
+    expect(onOpenDiff).toHaveBeenCalledOnce();
   });
 
   it("does not own document scroll via ajax-task-open", () => {

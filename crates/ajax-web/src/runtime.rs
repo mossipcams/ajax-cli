@@ -1016,9 +1016,8 @@ where
         {
             Ok(projection) => {
                 if projection.metadata_changed {
-                    if let Err(error) = bridge.persist_registry_snapshot(context) {
-                        return response_from_web_error(error, None);
-                    }
+                    // Persist is best-effort: never turn a successful projection into a 500.
+                    let _ = bridge.persist_registry_snapshot(context);
                 }
                 json_response(
                     200,
@@ -1076,9 +1075,8 @@ where
         ) {
             Ok(projection) => {
                 if projection.metadata_changed {
-                    if let Err(error) = bridge.persist_registry_snapshot(context) {
-                        return response_from_web_error(error, None);
-                    }
+                    // Persist is best-effort: never turn a successful projection into a 500.
+                    let _ = bridge.persist_registry_snapshot(context);
                 }
                 json_response(200, serde_json::to_value(projection.diff).unwrap_or_default())
             }
