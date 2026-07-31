@@ -28,7 +28,6 @@ const cockpit: BrowserCockpitView = {
       repo: "web",
       title: "A",
       status: "error",
-      attention: "needs-you",
       status_explanation: "CI failed",
       last_activity_unix_secs: NOW_SECS - 60,
       actions: [
@@ -43,25 +42,10 @@ const cockpit: BrowserCockpitView = {
       repo: "web",
       title: "B",
       status: "running",
-      attention: "active",
       status_explanation: "Agent working",
       last_activity_unix_secs: NOW_SECS - 300,
       actions: [
         { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-      ],
-    },
-    {
-      id: "web/r",
-      qualified_handle: "web/r",
-      repo: "web",
-      title: "R",
-      status: "idle",
-      attention: "review",
-      last_activity_unix_secs: NOW_SECS - 120,
-      actions: [
-        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-        { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
-        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
       ],
     },
     {
@@ -70,7 +54,6 @@ const cockpit: BrowserCockpitView = {
       repo: "api",
       title: "C",
       status: "idle",
-      attention: "idle",
       last_activity_unix_secs: 0,
       actions: [],
     },
@@ -86,51 +69,69 @@ describe("TaskList", () => {
     expect(rowC).not.toHaveTextContent("ago");
   });
 
-  it("renders every card as a calm row with attention-band grouping", () => {
+  it("renders every card as a calm row — no inbox section, no inline action", () => {
     render(<TaskList cockpit={cockpit} />);
-    expect(screen.getByText("Needs you", { selector: ".task-band-label" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
     const webARow = screen.getByRole("button", { name: /web\/a/ });
+    expect(webARow).toHaveClass("task-row");
     expect(webARow).not.toHaveClass("is-inbox");
     expect(webARow).not.toHaveClass("is-next");
     expect(webARow).toHaveAttribute("data-handle", "web/a");
     expect(screen.getByText("CI failed")).toBeInTheDocument();
   });
 
-  it("puts the first non-destructive action inline and secondary actions in swipe reveal", () => {
+  it("reveals the first non-resume action behind a row via swipe", () => {
     render(<TaskList cockpit={cockpit} />);
-    // web/a: fix-ci is inline; drop is excluded; no second fix-ci in reveal.
+    // web/a: resume is filtered, so Fix CI is the reveal; Drop stays on detail.
     expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("groups tasks by attention band with idle in the disclosure", () => {
+  it("groups active tasks into health tiers, faults before running, idle in the disclosure", () => {
     render(<TaskList cockpit={cockpit} />);
     const tasks = screen.getByRole("region", { name: "Tasks" });
     const label = { selector: ".task-band-label" } as const;
-    expect(within(tasks).getByText("Needs you", label)).toHaveClass("task-band-label");
-    expect(within(tasks).getByText("Active", label)).toHaveClass("task-band-label");
+    expect(within(tasks).getByText("Faults", label)).toHaveClass("task-band-label");
+    expect(within(tasks).getByText("Running", label)).toHaveClass("task-band-label");
     const tierOrder = within(tasks)
-      .getAllByText(/^(Needs you|Ready to review|Active)$/, label)
+      .getAllByText(/^(Faults|Waiting|Running)$/, label)
       .map((node) => node.textContent);
-    expect(tierOrder).toEqual(["Needs you", "Ready to review", "Active"]);
+    expect(tierOrder).toEqual(["Faults", "Running"]);
 
     const idle = within(tasks).getByRole("group");
     expect(idle).toHaveAttribute("open");
+    // web/a (error) and web/b (running) are active; only api/c is idle.
     expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
     expect(within(idle).queryByRole("button", { name: /web\/a/ })).toBeNull();
     expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
-  it("leads with the task list — no fleet-summary bar above it", () => {
+  it("summarizes the active fleet as a muster bar, idle excluded", () => {
     render(<TaskList cockpit={cockpit} />);
-    expect(screen.queryByRole("group", { name: "Fleet status" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Fleet status" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /1 Error — tap to filter/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /1 Running — tap to filter/ })).toBeInTheDocument();
+    // idle never gets a segment.
+    expect(screen.queryByRole("button", { name: /Idle — tap to filter/ })).toBeNull();
+  });
+
+  it("filters the tiers to one state when a muster segment is tapped", () => {
+    render(<TaskList cockpit={cockpit} />);
+    fireEvent.click(screen.getByRole("button", { name: /1 Error — tap to filter/ }));
+    const tasks = screen.getByRole("region", { name: "Tasks" });
+    expect(within(tasks).getByText("Faults")).toBeInTheDocument();
+    expect(within(tasks).queryByText("Running")).toBeNull();
+    expect(within(tasks).queryByRole("group")).toBeNull(); // idle disclosure hidden while filtered
+    expect(within(tasks).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
+    expect(within(tasks).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
   it("flags a running task that has gone quiet past the threshold", () => {
     // web/b last activity is 5m ago — past the 4m quiet boundary.
     render(<TaskList cockpit={cockpit} />);
     const rowB = screen.getByRole("button", { name: /web\/b/ });
+    expect(rowB).toHaveClass("is-quiet");
     expect(within(rowB).getByText(/Quiet 5m — no output/)).toBeInTheDocument();
   });
 
@@ -191,7 +192,7 @@ describe("TaskList", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("shows an inline control for a row that has one non-destructive action", () => {
+  it("reveals a swipe action behind a row that has actions", () => {
     const withAction: BrowserCockpitView = {
       ...cockpit,
       cards: [
@@ -201,7 +202,6 @@ describe("TaskList", () => {
           repo: "web",
           title: "B",
           status: "idle",
-          attention: "review",
           last_activity_unix_secs: 0,
           actions: [
             { action: "review", label: "Review", destructive: false, confirmation_required: false },
@@ -215,7 +215,7 @@ describe("TaskList", () => {
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
-  it("renders no control at all for a row with nothing to run", () => {
+  it("renders no reveal for a row without non-resume actions", () => {
     const onlyIdle: BrowserCockpitView = {
       ...cockpit,
       cards: [
@@ -225,7 +225,6 @@ describe("TaskList", () => {
           repo: "api",
           title: "C",
           status: "idle",
-          attention: "idle",
           last_activity_unix_secs: 0,
           actions: [],
         },
@@ -233,10 +232,6 @@ describe("TaskList", () => {
     };
     render(<TaskList cockpit={onlyIdle} />);
     expect(screen.getByRole("button", { name: /api\/c/ })).toHaveAttribute("data-handle", "api/c");
-    // The row tap and its chevron already open the task; a button repeating
-    // that would be a third affordance for one action.
-    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Answer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Fix CI" })).not.toBeInTheDocument();
   });
@@ -263,85 +258,5 @@ describe("TaskList", () => {
     expect(stylesSource).toMatch(
       /\.task-row-reveal\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
     );
-  });
-
-  it("groups_render_in_operator_order", () => {
-    render(<TaskList cockpit={cockpit} />);
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    const label = { selector: ".task-band-label" } as const;
-    const headings = within(tasks)
-      .getAllByText(/^(Needs you|Ready to review|Active|Idle)$/, label)
-      .map((node) => node.textContent);
-    expect(headings).toEqual(["Needs you", "Ready to review", "Active", "Idle"]);
-  });
-
-  it("group_membership_comes_from_attention_not_status", () => {
-    const reviewable: BrowserCockpitView = {
-      ...cockpit,
-      cards: [
-        {
-          id: "web/x",
-          qualified_handle: "web/x",
-          repo: "web",
-          title: "X",
-          status: "idle",
-          attention: "review",
-          last_activity_unix_secs: 0,
-          actions: [
-            { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-            { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
-          ],
-        },
-      ],
-    };
-    render(<TaskList cockpit={reviewable} />);
-    expect(screen.getByText("Ready to review", { selector: ".task-band-label" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /web\/x/ })).toBeInTheDocument();
-    expect(screen.queryByText("Idle", { selector: ".task-band-label" })).toBeNull();
-  });
-
-  it("waiting_row_never_offers_drop", () => {
-    const waiting: BrowserCockpitView = {
-      ...cockpit,
-      cards: [
-        {
-          id: "web/w",
-          qualified_handle: "web/w",
-          repo: "web",
-          title: "W",
-          status: "waiting",
-          attention: "needs-you",
-          last_activity_unix_secs: NOW_SECS - 30,
-          actions: [
-            { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
-            { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-          ],
-        },
-      ],
-    };
-    render(<TaskList cockpit={waiting} />);
-    // Drop is never the offered next step on a task that needs an answer, and
-    // answering happens in the terminal — so the row carries no control, just
-    // its own tap. The status line says what it is waiting on.
-    expect(screen.queryByRole("button", { name: "Drop" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Answer" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
-  });
-
-  it("review_row_offers_ship_inline", () => {
-    render(<TaskList cockpit={cockpit} />);
-    const ship = screen.getByRole("button", { name: "Ship" });
-    expect(ship).toHaveAttribute("data-action", "ship");
-    expect(ship).toBeVisible();
-  });
-
-  it("inline_control_is_never_destructive", () => {
-    render(<TaskList cockpit={cockpit} />);
-    expect(screen.queryByRole("button", { name: "Drop" })).toBeNull();
-  });
-
-  it("swipe_reveal_excludes_the_inline_control", () => {
-    render(<TaskList cockpit={cockpit} />);
-    expect(screen.getAllByRole("button", { name: "Fix CI" })).toHaveLength(1);
   });
 });

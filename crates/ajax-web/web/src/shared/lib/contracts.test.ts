@@ -29,7 +29,6 @@ describe("assertCockpit unknown status", () => {
           repo: "x",
           title: "y",
           status: "unknown",
-          attention: "idle",
           last_activity_unix_secs: 0,
           actions: [],
         },
@@ -76,26 +75,7 @@ describe("assertCockpit", () => {
           qualified_handle: "x/y",
           repo: "x",
           status: "idle",
-          attention: "idle",
           actions: [{ label: "no action id" }],
-        },
-      ],
-    };
-    expect(() => assertCockpit(bad)).toThrow(IncompatibleResponseError);
-  });
-
-  it("assert_cockpit_rejects_unknown_attention_band", () => {
-    const bad = {
-      ...valid,
-      cards: [
-        {
-          qualified_handle: "x/y",
-          repo: "x",
-          title: "y",
-          status: "idle",
-          attention: "sideways",
-          last_activity_unix_secs: 0,
-          actions: [],
         },
       ],
     };
@@ -110,7 +90,6 @@ describe("assertCockpit", () => {
           qualified_handle: "x/y",
           repo: "x",
           status: "idle",
-          attention: "idle",
           actions: [
             {
               action: "repair",

@@ -8,7 +8,7 @@
  * decoding; the component only reacts through the event callbacks.
  */
 
-import { createTerminalClientId, openTaskTerminalSocket, renewBrowserSession } from "./api";
+import { openTaskTerminalSocket, renewBrowserSession } from "./api";
 
 export type TerminalConnectionStatus =
   | "connecting"
@@ -56,9 +56,6 @@ export function connectTaskTerminal(
   let disposed = false;
   let status: TerminalConnectionStatus = "connecting";
   let lastDialSeeded = true;
-  // One id for this controller only (reconnects reuse it; a duplicated tab
-  // mounts a new controller and must not inherit another tab's viewport).
-  const clientId = createTerminalClientId();
   // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
   const outputDecoder = new TextDecoder();
   const inputEncoder = new TextEncoder();
@@ -122,43 +119,36 @@ export function connectTaskTerminal(
     return false;
   };
 
-  const onSocketMessage = (event: MessageEvent) => {
+  const onSocketMessage = async (event: MessageEvent) => {
     const raw = event.data;
 
-    // Text frames must be handled synchronously so an error frame sets attachFailed
-    // before a same-turn close handler runs (delay-0 reconnect would otherwise race).
-    if (typeof raw === "string") {
-      if (!handleJsonControlFrame(raw)) {
-        events.onOutput(raw);
+    // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
+    const binaryBytes = await bytesFromBinaryData(raw);
+    if (binaryBytes) {
+      // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
+      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
+        const asText = new TextDecoder().decode(binaryBytes);
+        if (handleJsonControlFrame(asText)) return;
       }
+      events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
       return;
     }
 
-    void (async () => {
-      // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
-      const binaryBytes = await bytesFromBinaryData(raw);
-      if (binaryBytes) {
-        // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
-        if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
-          const asText = new TextDecoder().decode(binaryBytes);
-          if (handleJsonControlFrame(asText)) return;
-        }
-        events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
-        return;
-      }
-
+    if (typeof raw !== "string") {
       events.onOutput(String(raw));
-    })();
+      return;
+    }
+
+    // Text frames: JSON control/error/legacy output, else raw pass-through.
+    if (!handleJsonControlFrame(raw)) {
+      events.onOutput(raw);
+    }
   };
 
   const scheduleReconnect = () => {
     if (disposed) return;
     setStatus("reconnecting");
-    const immediateAfterOpen =
-      everOpened && document.visibilityState === "visible" && reconnectAttempts === 0;
-    const delay = immediateAfterOpen
-      ? 0
-      : Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
+    const delay = Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
     reconnectAttempts += 1;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
@@ -183,7 +173,7 @@ export function connectTaskTerminal(
   function connect(seedHistory: boolean) {
     lastDialSeeded = seedHistory;
     dialOpened = false;
-    socket = openTaskTerminalSocket(handle, seedHistory, clientId);
+    socket = openTaskTerminalSocket(handle, seedHistory);
     socket.addEventListener("open", () => {
       // A successful open resets the backoff. A fresh tmux attach repaints the
       // pane and the resize-on-open makes tmux redraw at the real size, so no

@@ -9,39 +9,12 @@
 // terminal-behavior.test.ts so the gesture runs against the real action.
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { COCKPIT_FIXTURE, mockFetch } from "./fixtures";
+import { mockFetch } from "./fixtures";
 
-// Each row shows its first non-destructive action inline and keeps the rest
-// behind the swipe, so the gesture needs a row with two safe actions. A faulted
-// row is the real case: a remediation plus Repair. Rows with a single safe
-// action (Ship on reviewable, Review on running) render no reveal at all.
-const TARGET_HANDLE = "web/broken-ci";
+// A calm (non-inbox) row: inbox rows surface their actions inline as real
+// buttons, so the swipe gesture only applies to the calm list.
+const TARGET_HANDLE = "api/add-auth";
 const OPERATION_PATH = "/api/operations";
-
-// The revealed action is the second safe one; the first rides inline.
-const INLINE_ACTION = "fix-ci";
-const REVEALED_ACTION = "repair";
-
-const SWIPEABLE_COCKPIT = {
-  ...COCKPIT_FIXTURE,
-  cards: [
-    ...COCKPIT_FIXTURE.cards,
-    {
-      id: TARGET_HANDLE,
-      qualified_handle: TARGET_HANDLE,
-      repo: "web",
-      title: "Broken CI",
-      status: "error",
-      status_explanation: "CI failed",
-      attention: "needs-you",
-      actions: [
-        { action: INLINE_ACTION, label: "Fix CI", destructive: false, confirmation_required: false },
-        { action: REVEALED_ACTION, label: "Repair", destructive: false, confirmation_required: false },
-        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
-      ],
-    },
-  ],
-};
 
 type FetchCall = { url: string; method: string; body: string | null };
 
@@ -114,7 +87,7 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
   await page.setViewportSize({ width: 390, height: 844 });
   // mockFetch must install first so the spy wraps it; otherwise the mock
   // returns early for matched paths and the spy never sees the operation POST.
-  await mockFetch(page, { "/api/cockpit": SWIPEABLE_COCKPIT });
+  await mockFetch(page);
   await installFetchSpy(page);
   await page.goto("/app.html");
 
@@ -136,14 +109,9 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
 
   // The revealed action is now visually present in the row wrap and clickable.
   const revealedAction = page.locator(
-    `.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="${REVEALED_ACTION}"]`,
+    `.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="review"]`,
   );
   await expect(revealedAction).toBeVisible();
-
-  // The inline control keeps its own action; the reveal never duplicates it.
-  await expect(
-    page.locator(`.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="${INLINE_ACTION}"]`),
-  ).toHaveCount(1);
 
   await revealedAction.click();
 
