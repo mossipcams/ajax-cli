@@ -3,7 +3,6 @@
 // stay ignored so scroll still works.
 
 export const NAVIGATE_SWIPE_TRIGGER = 56; // px past which release navigates
-export const NAVIGATE_SWIPE_MAX = 96; // visual clamp while dragging
 const ENGAGE_MIN = 8;
 const LOCK_RATIO = 1.15;
 
@@ -24,6 +23,7 @@ export function navigateSwipeMove(
   state: NavigateSwipeState,
   dx: number,
   dy: number,
+  pageWidth: number,
 ): NavigateSwipeState {
   let engaged = state.engaged;
   if (!engaged) {
@@ -33,7 +33,8 @@ export function navigateSwipeMove(
     }
     engaged = true;
   }
-  const clamped = Math.max(-NAVIGATE_SWIPE_MAX, Math.min(NAVIGATE_SWIPE_MAX, dx));
+  const max = Math.max(pageWidth, NAVIGATE_SWIPE_TRIGGER);
+  const clamped = Math.max(-max, Math.min(max, dx));
   if (dx <= -NAVIGATE_SWIPE_TRIGGER) {
     return { engaged, direction: "left", dx: clamped };
   }
@@ -51,6 +52,14 @@ export function navigateSwipeEnd(state: NavigateSwipeState): NavigateSwipeDirect
 export function navigateSwipeTranslateX(state: NavigateSwipeState): number {
   if (!state.engaged) return 0;
   return state.dx;
+}
+
+/** Off-screen target when a swipe commits. */
+export function navigateSwipeCommitOffset(
+  direction: Exclude<NavigateSwipeDirection, "none">,
+  pageWidth: number,
+): number {
+  return direction === "left" ? -pageWidth : pageWidth;
 }
 
 /** True when Diff Review horizontal pans (chips / hunks) own the gesture. */

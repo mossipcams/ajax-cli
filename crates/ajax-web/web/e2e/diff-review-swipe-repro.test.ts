@@ -57,7 +57,7 @@ test("swipe-left opens Diff", async ({ page }) => {
   await dispatchTouch(header, "touchmove", x, y);
   await dispatchTouch(header, "touchend", x, y);
 
-  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8000 });
 });
 
 test("swipe-right does not open Diff", async ({ page }) => {

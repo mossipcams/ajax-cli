@@ -43,7 +43,7 @@ test("task detail swipe-left opens Diff Review chrome", async ({ page }) => {
   await expect(page.getByTestId("task-detail")).toBeVisible({ timeout: 10_000 });
 
   await touchSwipeLeft(page.getByTestId("mobile-chrome-header"), 120);
-  await expect(page.getByTestId("outlet-diff")).toBeVisible();
+  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8000 });
   await expect(page.getByTestId("diff-review")).toBeVisible();
   await expect(page.getByTestId("diff-pr-strip")).toBeVisible();
   // Signal files auto-open into the hunk viewer (file list is the empty/noise-only path).
