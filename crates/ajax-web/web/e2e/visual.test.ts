@@ -65,7 +65,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
 
   // Task rows have the compact list padding (would be 0 if unstyled).
   const row = page.locator(".task-row").first();
-  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("12px");
+  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("10px");
 
   // Single new-task entry: bottom-nav only (no in-list dashed CTA).
   await expect(page.locator(".new-task-row")).toHaveCount(0);
