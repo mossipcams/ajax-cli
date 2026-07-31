@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api";
-import type { DiffFileView, PullRequestView, TaskDiffView } from "@/shared/lib/types";
+import type {
+  DiffFileView,
+  DiffFlagView,
+  DiffJudgmentView,
+  PullRequestView,
+  TaskDiffView,
+} from "@/shared/lib/types";
 import { isDiffPanGestureTarget } from "@/shared/gestures/navigateSwipe";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 
@@ -49,6 +55,8 @@ function partitionFilesByRole(files: DiffFileView[]) {
     noiseFiles: sortFilesForDisplay(noise),
   };
 }
+
+const GUIDE_CHIP_LIMIT = 5;
 
 function FileRow({
   file,
@@ -103,6 +111,96 @@ function FileHunks({ file }: { file: DiffFileView }) {
         ))
       )}
     </article>
+  );
+}
+
+function JudgmentOrientation({ judgment }: { judgment: DiffJudgmentView }) {
+  const { totals } = judgment;
+  return (
+    <p className="diff-orientation" data-testid="diff-orientation">
+      {totals.files} files · {totals.signal} signal · {totals.noise} noise · +
+      {totals.additions} −{totals.deletions}
+    </p>
+  );
+}
+
+function JudgmentFlags({
+  flags,
+  onSelectPath,
+}: {
+  flags: DiffFlagView[];
+  onSelectPath: (path: string) => void;
+}) {
+  if (flags.length === 0) return null;
+  return (
+    <ul className="diff-flags" data-testid="diff-flags">
+      {flags.map((flag, index) => {
+        const interactive = Boolean(flag.path);
+        const className = `diff-flag severity-${flag.severity}${interactive ? " is-action" : ""}`;
+        const content = (
+          <>
+            <span className="diff-flag-kind">{flag.kind}</span>
+            <span className="diff-flag-detail">{flag.detail}</span>
+            {flag.path ? <span className="diff-flag-path">{flag.path}</span> : null}
+          </>
+        );
+        return (
+          <li key={`${flag.kind}-${flag.path ?? "none"}-${index}`}>
+            {interactive ? (
+              <button
+                type="button"
+                className={className}
+                data-testid="diff-flag"
+                data-flag-kind={flag.kind}
+                data-flag-severity={flag.severity}
+                onClick={() => onSelectPath(flag.path as string)}
+              >
+                {content}
+              </button>
+            ) : (
+              <div
+                className={className}
+                data-testid="diff-flag"
+                data-flag-kind={flag.kind}
+                data-flag-severity={flag.severity}
+              >
+                {content}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function GuideStrip({
+  paths,
+  onSelectPath,
+}: {
+  paths: string[];
+  onSelectPath: (path: string) => void;
+}) {
+  if (paths.length === 0) return null;
+  const chips = paths.slice(0, GUIDE_CHIP_LIMIT);
+  return (
+    <div className="diff-guide-strip" data-testid="diff-guide-strip" role="navigation">
+      {chips.map((path) => {
+        const label = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
+        return (
+          <button
+            key={path}
+            type="button"
+            className="diff-guide-chip"
+            data-testid="diff-guide-chip"
+            title={path}
+            onClick={() => onSelectPath(path)}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -162,13 +260,12 @@ export default function DiffReview({
         setState({ status: "error", message });
       }
     }
-
     void load();
   }, [handle, selectedPr]);
 
   const { signalFiles, noiseFiles } = useMemo(() => {
     if (state.status !== "ready") {
-      return { signalFiles: [], noiseFiles: [] };
+      return { signalFiles: [] as DiffFileView[], noiseFiles: [] as DiffFileView[] };
     }
     return partitionFilesByRole(state.diff.files);
   }, [state]);
@@ -176,6 +273,11 @@ export default function DiffReview({
   useEffect(() => {
     if (state.status !== "ready" || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
+    const fromGuide = state.diff.judgment.reading_order[0];
+    if (fromGuide && state.diff.files.some((file) => file.path === fromGuide)) {
+      setSelectedPath(fromGuide);
+      return;
+    }
     const topSignal = signalFiles[0];
     if (topSignal) setSelectedPath(topSignal.path);
   }, [state, signalFiles]);
@@ -272,6 +374,16 @@ export default function DiffReview({
           <p className="diff-source" data-testid="diff-source">
             Source: {state.diff.source}
           </p>
+
+          <JudgmentOrientation judgment={state.diff.judgment} />
+          <JudgmentFlags
+            flags={state.diff.judgment.flags}
+            onSelectPath={(path) => setSelectedPath(path)}
+          />
+          <GuideStrip
+            paths={state.diff.judgment.reading_order}
+            onSelectPath={(path) => setSelectedPath(path)}
+          />
 
           {activeFile ? (
             <div className="diff-hunk-viewer" data-testid="diff-hunk-viewer">

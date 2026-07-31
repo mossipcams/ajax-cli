@@ -165,6 +165,24 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
                   hunks: [{ header: "@@ -1 +1,2 @@", lines: [" context", "+added"] }],
                 },
               ],
+              judgment: {
+                totals: {
+                  files: 1,
+                  signal: 1,
+                  noise: 0,
+                  additions: 1,
+                  deletions: 0,
+                },
+                reading_order: ["src/a.ts"],
+                flags: [
+                  {
+                    kind: "unexpected_path",
+                    severity: "info",
+                    path: "src/a.ts",
+                    detail: "unexpected path outside common roots",
+                  },
+                ],
+              },
             },
           ),
           { status: 200, headers: { "content-type": "application/json" } },

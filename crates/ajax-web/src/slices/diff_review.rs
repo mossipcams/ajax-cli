@@ -4,9 +4,9 @@ use ajax_core::{
     adapters::{CommandRunner, GithubChecksAdapter},
     commands::CommandContext,
     diff_review::{
-        observe_task_pull_requests, project_task_diff, DiffFile, DiffFileRole, DiffHunk,
-        DiffReviewError, DiffSource, PullRequestRef, PullRequestState, TaskDiffProjection,
-        AJAX_PULL_REQUESTS_KEY,
+        observe_task_pull_requests, project_task_diff, DiffFile, DiffFileRole, DiffFlag,
+        DiffFlagKind, DiffFlagSeverity, DiffHunk, DiffJudgment, DiffReviewError, DiffSource,
+        DiffTotals, PullRequestRef, PullRequestState, TaskDiffProjection, AJAX_PULL_REQUESTS_KEY,
     },
     registry::Registry,
 };
@@ -45,12 +45,56 @@ fn role_label(role: DiffFileRole) -> &'static str {
     }
 }
 
+fn flag_kind_label(kind: DiffFlagKind) -> &'static str {
+    match kind {
+        DiffFlagKind::UnexpectedPath => "unexpected_path",
+        DiffFlagKind::DeletedTest => "deleted_test",
+        DiffFlagKind::SecretPattern => "secret_pattern",
+        DiffFlagKind::PermissionWiden => "permission_widen",
+        DiffFlagKind::DependencyManifest => "dependency_manifest",
+        DiffFlagKind::DeletedCheckPath => "deleted_check_path",
+    }
+}
+
+fn flag_severity_label(severity: DiffFlagSeverity) -> &'static str {
+    match severity {
+        DiffFlagSeverity::Info => "info",
+        DiffFlagSeverity::Warn => "warn",
+        DiffFlagSeverity::Critical => "critical",
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffTotalsDto {
+    pub files: u32,
+    pub signal: u32,
+    pub noise: u32,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffFlagDto {
+    pub kind: &'static str,
+    pub severity: &'static str,
+    pub path: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffJudgmentDto {
+    pub totals: DiffTotalsDto,
+    pub reading_order: Vec<String>,
+    pub flags: Vec<DiffFlagDto>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct TaskDiffDto {
     pub source: String,
     pub pr: Option<PullRequestDto>,
     pub files: Vec<DiffFileDto>,
     pub fell_back_from_pr: Option<u64>,
+    pub judgment: DiffJudgmentDto,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -120,6 +164,33 @@ fn file_dto(file: DiffFile) -> DiffFileDto {
     }
 }
 
+fn totals_dto(totals: DiffTotals) -> DiffTotalsDto {
+    DiffTotalsDto {
+        files: totals.files,
+        signal: totals.signal,
+        noise: totals.noise,
+        additions: totals.additions,
+        deletions: totals.deletions,
+    }
+}
+
+fn flag_dto(flag: DiffFlag) -> DiffFlagDto {
+    DiffFlagDto {
+        kind: flag_kind_label(flag.kind),
+        severity: flag_severity_label(flag.severity),
+        path: flag.path,
+        detail: flag.detail,
+    }
+}
+
+fn judgment_dto(judgment: DiffJudgment) -> DiffJudgmentDto {
+    DiffJudgmentDto {
+        totals: totals_dto(judgment.totals),
+        reading_order: judgment.reading_order,
+        flags: judgment.flags.into_iter().map(flag_dto).collect(),
+    }
+}
+
 fn diff_dto(projection: TaskDiffProjection) -> TaskDiffDto {
     let source = match projection.source {
         DiffSource::Local => "local".to_string(),
@@ -130,6 +201,7 @@ fn diff_dto(projection: TaskDiffProjection) -> TaskDiffDto {
         pr: projection.pr.map(pr_dto),
         files: projection.files.into_iter().map(file_dto).collect(),
         fell_back_from_pr: projection.fell_back_from_pr,
+        judgment: judgment_dto(projection.judgment),
     }
 }
 
@@ -333,6 +405,15 @@ diff --git a/src/a.rs b/src/a.rs
         assert_eq!(projection.diff.files[0].path, "src/a.rs");
         assert_eq!(projection.diff.files[0].role, "signal");
         assert_eq!(projection.diff.files[0].additions, 1);
+        assert_eq!(projection.diff.judgment.totals.files, 1);
+        assert_eq!(projection.diff.judgment.totals.signal, 1);
+        assert_eq!(projection.diff.judgment.reading_order, vec!["src/a.rs"]);
+        assert!(projection
+            .diff
+            .judgment
+            .flags
+            .iter()
+            .any(|flag| flag.kind == "unexpected_path"));
         assert!(runner
             .commands
             .iter()

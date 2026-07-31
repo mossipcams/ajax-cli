@@ -45,11 +45,43 @@ export interface DiffFileView {
   hunks: DiffHunkView[];
 }
 
+export interface DiffTotalsView {
+  files: number;
+  signal: number;
+  noise: number;
+  additions: number;
+  deletions: number;
+}
+
+export type DiffFlagKind =
+  | "unexpected_path"
+  | "deleted_test"
+  | "secret_pattern"
+  | "permission_widen"
+  | "dependency_manifest"
+  | "deleted_check_path";
+
+export type DiffFlagSeverity = "info" | "warn" | "critical";
+
+export interface DiffFlagView {
+  kind: DiffFlagKind;
+  severity: DiffFlagSeverity;
+  path: string | null;
+  detail: string;
+}
+
+export interface DiffJudgmentView {
+  totals: DiffTotalsView;
+  reading_order: string[];
+  flags: DiffFlagView[];
+}
+
 export interface TaskDiffView {
   source: string;
   pr: PullRequestView | null;
   files: DiffFileView[];
   fell_back_from_pr?: number | null;
+  judgment: DiffJudgmentView;
 }
 
 export interface BranchAdoptionPlan {

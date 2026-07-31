@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import DiffReview from "./DiffReview";
 import * as api from "@/shared/lib/api";
+import type { DiffFileView, DiffJudgmentView, TaskDiffView } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 
 vi.mock("@/shared/lib/api", async () => {
@@ -16,6 +17,39 @@ vi.mock("@/shared/lib/api", async () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function judgmentFor(files: DiffFileView[], flags: DiffJudgmentView["flags"] = []): DiffJudgmentView {
+  const signal = files.filter((file) => file.role === "signal");
+  const noise = files.filter((file) => file.role === "noise");
+  const reading_order = [...signal]
+    .sort((left, right) => {
+      const churn =
+        right.additions + right.deletions - (left.additions + left.deletions);
+      if (churn !== 0) return churn;
+      return left.path.localeCompare(right.path);
+    })
+    .map((file) => file.path);
+  return {
+    totals: {
+      files: files.length,
+      signal: signal.length,
+      noise: noise.length,
+      additions: files.reduce((sum, file) => sum + file.additions, 0),
+      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+    },
+    reading_order,
+    flags,
+  };
+}
+
+function diffView(
+  partial: Omit<TaskDiffView, "judgment"> & { judgment?: DiffJudgmentView },
+): TaskDiffView {
+  return {
+    ...partial,
+    judgment: partial.judgment ?? judgmentFor(partial.files),
+  };
+}
 
 beforeEach(() => {
   vi.mocked(api.fetchTaskPullRequests).mockResolvedValue([
@@ -36,32 +70,43 @@ beforeEach(() => {
       head_sha: "def",
     },
   ]);
-  vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-    source: "pr:12",
-    pr: {
-      number: 12,
-      title: "Retry",
-      url: "https://example.com/12",
-      state: "OPEN",
-      head_ref: "ajax/fix-login",
-      head_sha: "abc",
+  const files: DiffFileView[] = [
+    {
+      path: "src/a.ts",
+      status: "modified",
+      role: "signal",
+      additions: 2,
+      deletions: 1,
+      hunks: [
+        {
+          header: "@@ -1,2 +1,3 @@",
+          lines: [" context", "-old", "+new", "+more"],
+        },
+      ],
     },
-    files: [
-      {
-        path: "src/a.ts",
-        status: "modified",
-        role: "signal",
-        additions: 2,
-        deletions: 1,
-        hunks: [
-          {
-            header: "@@ -1,2 +1,3 @@",
-            lines: [" context", "-old", "+new", "+more"],
-          },
-        ],
+  ];
+  vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+    diffView({
+      source: "pr:12",
+      pr: {
+        number: 12,
+        title: "Retry",
+        url: "https://example.com/12",
+        state: "OPEN",
+        head_ref: "ajax/fix-login",
+        head_sha: "abc",
       },
-    ],
-  });
+      files,
+      judgment: judgmentFor(files, [
+        {
+          kind: "unexpected_path",
+          severity: "info",
+          path: "src/a.ts",
+          detail: "unexpected path outside common roots",
+        },
+      ]),
+    }),
+  );
 });
 
 describe("DiffReview", () => {
@@ -81,17 +126,39 @@ describe("DiffReview", () => {
     expect(screen.getByTestId("diff-hunk")).toHaveTextContent("+new");
   });
 
+  it("renders orientation, flags, and guide chips from judgment", async () => {
+    render(<DiffReview handle="web/fix-login" title="Fix login" />);
+
+    expect(await screen.findByTestId("diff-orientation")).toHaveTextContent(
+      "1 files · 1 signal · 0 noise · +2 −1",
+    );
+    expect(screen.getByTestId("diff-flags")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-flag")).toHaveAttribute("data-flag-kind", "unexpected_path");
+    expect(screen.getByTestId("diff-guide-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-guide-chip")).toHaveTextContent("a.ts");
+
+    expect(await screen.findByTestId("diff-hunk-viewer")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("← Files"));
+    fireEvent.click(screen.getByTestId("diff-flag"));
+    expect(await screen.findByTestId("diff-hunk-viewer")).toBeInTheDocument();
+  });
+
   it("shows empty local chip when no PRs exist", async () => {
     vi.mocked(api.fetchTaskPullRequests).mockResolvedValue([]);
-    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-      source: "local",
-      pr: null,
-      files: [],
-    });
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+      diffView({
+        source: "local",
+        pr: null,
+        files: [],
+      }),
+    );
 
     render(<DiffReview handle="web/fix-login" />);
     expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
     expect(screen.getByTestId("diff-empty")).toHaveTextContent("No file changes");
+    expect(screen.getByTestId("diff-orientation")).toHaveTextContent(
+      "0 files · 0 signal · 0 noise · +0 −0",
+    );
   });
 
   it("surfaces load errors", async () => {
@@ -103,14 +170,23 @@ describe("DiffReview", () => {
 
   it("still loads a local diff when PR list fetch fails", async () => {
     vi.mocked(api.fetchTaskPullRequests).mockRejectedValue(new api.ApiError("http", "gh down", 502));
-    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-      source: "local",
-      pr: null,
-      files: [],
-    });
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+      diffView({
+        source: "local",
+        pr: null,
+        files: [],
+      }),
+    );
     render(<DiffReview handle="web/fix-login" />);
     expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
     expect(screen.getByTestId("diff-empty")).toHaveTextContent("No file changes");
+    expect(api.fetchTaskDiff).toHaveBeenCalledWith("web/fix-login", { local: true });
+  });
+
+  it("requests the first listed PR when selectedPr is unset", async () => {
+    render(<DiffReview handle="web/fix-login" />);
+    await screen.findByTestId("diff-pr-strip");
+    expect(api.fetchTaskDiff).toHaveBeenCalledWith("web/fix-login", { pr: 12 });
   });
 
   it("ignores stale diff responses when selectedPr changes quickly", async () => {
@@ -256,36 +332,39 @@ describe("DiffReview", () => {
   });
 
   it("lists signal files first, collapses noise, and opens top signal by churn", async () => {
-    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-      source: "local",
-      pr: null,
-      files: [
-        {
-          path: "Cargo.lock",
-          status: "modified",
-          role: "noise",
-          additions: 100,
-          deletions: 50,
-          hunks: [{ header: "@@", lines: ["+lock"] }],
-        },
-        {
-          path: "src/b.ts",
-          status: "modified",
-          role: "signal",
-          additions: 1,
-          deletions: 0,
-          hunks: [{ header: "@@", lines: ["+b"] }],
-        },
-        {
-          path: "src/a.ts",
-          status: "modified",
-          role: "signal",
-          additions: 5,
-          deletions: 2,
-          hunks: [{ header: "@@", lines: ["+a"] }],
-        },
-      ],
-    });
+    const files: DiffFileView[] = [
+      {
+        path: "Cargo.lock",
+        status: "modified",
+        role: "noise",
+        additions: 100,
+        deletions: 50,
+        hunks: [{ header: "@@", lines: ["+lock"] }],
+      },
+      {
+        path: "src/b.ts",
+        status: "modified",
+        role: "signal",
+        additions: 1,
+        deletions: 0,
+        hunks: [{ header: "@@", lines: ["+b"] }],
+      },
+      {
+        path: "src/a.ts",
+        status: "modified",
+        role: "signal",
+        additions: 5,
+        deletions: 2,
+        hunks: [{ header: "@@", lines: ["+a"] }],
+      },
+    ];
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+      diffView({
+        source: "local",
+        pr: null,
+        files,
+      }),
+    );
 
     render(<DiffReview handle="web/fix-login" />);
 
@@ -304,20 +383,23 @@ describe("DiffReview", () => {
   });
 
   it("stays on collapsed file list when only noise files exist", async () => {
-    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-      source: "local",
-      pr: null,
-      files: [
-        {
-          path: "Cargo.lock",
-          status: "modified",
-          role: "noise",
-          additions: 2,
-          deletions: 1,
-          hunks: [{ header: "@@", lines: ["+lock"] }],
-        },
-      ],
-    });
+    const files: DiffFileView[] = [
+      {
+        path: "Cargo.lock",
+        status: "modified",
+        role: "noise",
+        additions: 2,
+        deletions: 1,
+        hunks: [{ header: "@@", lines: ["+lock"] }],
+      },
+    ];
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+      diffView({
+        source: "local",
+        pr: null,
+        files,
+      }),
+    );
 
     render(<DiffReview handle="web/fix-login" />);
 
@@ -325,5 +407,6 @@ describe("DiffReview", () => {
     expect(screen.queryByTestId("diff-hunk-viewer")).not.toBeInTheDocument();
     expect(screen.getByTestId("diff-noise-toggle")).toHaveTextContent("1 noise");
     expect(screen.queryByTestId("diff-file-row")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("diff-guide-strip")).not.toBeInTheDocument();
   });
 });
