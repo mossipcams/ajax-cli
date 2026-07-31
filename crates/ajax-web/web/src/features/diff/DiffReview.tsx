@@ -3,8 +3,6 @@ import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api
 import type { DiffFileView, PullRequestView, TaskDiffView } from "@/shared/lib/types";
 import {
   isDiffPanGestureTarget,
-  NAVIGATE_LONG_PRESS_MS,
-  NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX,
   navigateSwipeEnd,
   navigateSwipeMove,
   navigateSwipeStart,
@@ -128,12 +126,7 @@ export default function DiffReview({
   const touchRef = useRef({
     x: 0,
     y: 0,
-    lastX: 0,
-    lastY: 0,
     tracking: false,
-    armingCancelled: false,
-    armed: false,
-    armTimer: 0 as ReturnType<typeof setTimeout> | 0,
     swipe: navigateSwipeStart(),
   });
 
@@ -177,12 +170,6 @@ export default function DiffReview({
     };
   }, [handle, selectedPr]);
 
-  useEffect(() => {
-    return () => {
-      if (touchRef.current.armTimer) clearTimeout(touchRef.current.armTimer);
-    };
-  }, []);
-
   const { signalFiles, noiseFiles } = useMemo(() => {
     if (state.status !== "ready") {
       return { signalFiles: [], noiseFiles: [] };
@@ -202,77 +189,35 @@ export default function DiffReview({
     return state.diff.files.find((file) => file.path === selectedPath) ?? null;
   }, [state, selectedPath]);
 
-  function clearArmTimer() {
-    if (touchRef.current.armTimer) {
-      clearTimeout(touchRef.current.armTimer);
-      touchRef.current.armTimer = 0;
-    }
-  }
-
   function onTouchStart(event: TouchEvent) {
     if (isDiffPanGestureTarget(event.target)) {
-      clearArmTimer();
       touchRef.current.tracking = false;
       return;
     }
     const touch = event.changedTouches[0];
     if (!touch) return;
-    clearArmTimer();
     touchRef.current = {
       x: touch.clientX,
       y: touch.clientY,
-      lastX: touch.clientX,
-      lastY: touch.clientY,
       tracking: true,
-      armingCancelled: false,
-      armed: false,
-      armTimer: 0,
       swipe: navigateSwipeStart(),
     };
-    touchRef.current.armTimer = setTimeout(() => {
-      const press = touchRef.current;
-      if (!press.tracking || press.armingCancelled) return;
-      press.x = press.lastX;
-      press.y = press.lastY;
-      press.swipe = navigateSwipeStart();
-      press.armed = true;
-      press.armTimer = 0;
-    }, NAVIGATE_LONG_PRESS_MS);
   }
 
   function onTouchMove(event: TouchEvent) {
     if (!touchRef.current.tracking) return;
     const touch = event.changedTouches[0];
     if (!touch) return;
-    const press = touchRef.current;
-    press.lastX = touch.clientX;
-    press.lastY = touch.clientY;
-    const dx = touch.clientX - press.x;
-    const dy = touch.clientY - press.y;
-    if (!press.armed) {
-      if (press.armingCancelled) return;
-      const movedPx = Math.max(Math.abs(dx), Math.abs(dy));
-      if (movedPx > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX) {
-        press.armingCancelled = true;
-        clearArmTimer();
-      }
-      return;
-    }
-    press.swipe = navigateSwipeMove(press.swipe, dx, dy);
+    const dx = touch.clientX - touchRef.current.x;
+    const dy = touch.clientY - touchRef.current.y;
+    touchRef.current.swipe = navigateSwipeMove(touchRef.current.swipe, dx, dy);
   }
 
   function onTouchEnd() {
     if (!touchRef.current.tracking) return;
-    const armed = touchRef.current.armed;
     const direction = navigateSwipeEnd(touchRef.current.swipe);
-    clearArmTimer();
     touchRef.current.tracking = false;
-    if (armed && direction === "left") onBackRef.current?.();
-  }
-
-  function onTouchCancel() {
-    clearArmTimer();
-    touchRef.current.tracking = false;
+    if (direction === "right") onBackRef.current?.();
   }
 
   const heading = title || handle;
@@ -286,7 +231,9 @@ export default function DiffReview({
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchCancel}
+      onTouchCancel={() => {
+        touchRef.current.tracking = false;
+      }}
     >
       <div className="detail-header" data-testid="diff-review-header">
         <button type="button" className="back" onClick={() => onBack?.()}>
