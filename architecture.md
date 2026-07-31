@@ -232,7 +232,8 @@ The task operation boundary now owns the main mutable task actions:
   succeeded, and merge/check failure state. When checkout mismatch is present
   (worktree exists, checkout misaligned), Open/Resume, Check, and Review remain
   available; Review diffs `base...HEAD` at the worktree path (CLI/operate text
-  summary). Ship and Drop/Cleanup are blocked until reconciliation. Repair on
+  summary). Ship and Clean remain blocked until reconciliation; Drop stays
+  available as an escape hatch. Repair on
   mismatch offers a zero-command, confirmation-required `BranchAdoptionPlan`
   carrying the exact expected/observed branch pair; core revalidates that pair
   at execution, updates only task branch intent, records a substrate-change
