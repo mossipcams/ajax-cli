@@ -150,6 +150,13 @@ pub(crate) fn translate_native_event(
         ("cursor", "subagentStart") => Some(child_started()),
         ("cursor", "subagentStop") => Some(child_settled()),
         ("cursor", "stop") => Some(cursor_stop(payload)),
+        ("cursor", "Notification:permission_prompt") => {
+            Some(attention_requested(AttentionReason::Permission))
+        }
+        ("cursor", "Notification:elicitation_dialog") => {
+            Some(attention_requested(AttentionReason::Question))
+        }
+        ("cursor", "ElicitationResult") => Some(turn_started()),
         ("cursor", "sessionStart") => Some(session_opened()),
         ("cursor", "sessionEnd") => Some(session_closed()),
         ("pi", "before_agent_start") => Some(turn_started()),
@@ -707,6 +714,42 @@ mod tests {
             }),
             "Failed would project to TaskStatus::Error"
         );
+    }
+
+    #[test]
+    fn cursor_notification_permission_prompt_requests_permission_attention() {
+        let payload = serde_json::json!({});
+        let canonical =
+            translate_native_event("cursor", "Notification:permission_prompt", &payload).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+        assert_eq!(
+            canonical.detail,
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Permission
+            })
+        );
+    }
+
+    #[test]
+    fn cursor_notification_elicitation_dialog_requests_question_attention() {
+        let payload = serde_json::json!({});
+        let canonical =
+            translate_native_event("cursor", "Notification:elicitation_dialog", &payload).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+        assert_eq!(
+            canonical.detail,
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Question
+            })
+        );
+    }
+
+    #[test]
+    fn cursor_elicitation_result_starts_turn() {
+        let payload = serde_json::json!({});
+        let canonical = translate_native_event("cursor", "ElicitationResult", &payload).unwrap();
+        assert_eq!(canonical.kind, CanonicalEventKind::TurnStarted);
+        assert_eq!(canonical.detail, None);
     }
 
     #[test]

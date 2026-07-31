@@ -478,11 +478,12 @@ Waiting and Error operator status after a shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) that applies to all actionable attention — a
 Waiting→Error flap mid-dwell does not restart the clock. Actionable Waiting is allowlisted to structured
 wait/ask explanations only (`Waiting for input`, `Waiting for approval` from
-Claude `Notification`, Codex `PermissionRequest`, and legacy provider hook files
-that write `wait`/`ask`). Cursor and Pi have no native wait/ask hook today —
-they still notify on Error-class evidence (CI/wrapper/substrate). Auth required,
-context waits, lifecycle review, rate limits, response-ready settle, and parent
-phases that wait on delegated children remain visible as Waiting but do not
+Claude `Notification`, Codex `PermissionRequest`, Cursor `Notification`
+permission/elicitation matchers, and legacy provider hook files that write
+`wait`/`ask`). Pi has no native wait/ask hook today — they still notify on
+Error-class evidence (CI/wrapper/substrate). Auth required, context waits,
+lifecycle review, rate limits, response-ready settle, and parent phases that
+wait on delegated children remain visible as Waiting but do not
 phone-ping. Ordinary user waits and approvals still notify once the dwell
 confirms sustained attention.
 
@@ -766,7 +767,7 @@ each fire a single webhook after the same shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient `Rate limited` Waiting,
 lifecycle-only "Ready for review", turn-settled "Response ready" (`Done` from
 Cursor `stop` / Claude·Codex·Pi settle), and auth/context waits do **not**
-phone-ping — Cursor has no native wait/ask, so settle must not look like
+phone-ping — Pi has no native wait/ask, so settle must not look like
 actionable attention. Episode dedup is status-class only; the webhook body still
 includes the agent client and explanation
 (`repo/handle: Waiting (codex) — …`). Delivery stays on CLI/cockpit refresh

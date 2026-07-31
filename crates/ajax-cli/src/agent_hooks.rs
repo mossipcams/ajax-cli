@@ -135,6 +135,16 @@ fn install_cursor_hooks(home: &Path) -> Result<&'static str, CliError> {
             changed = true;
         }
     }
+    for matcher in ["permission_prompt", "elicitation_dialog"] {
+        let command = hook_command_matched("cursor", "Notification", matcher);
+        if merge_cursor_matched_hook_entry(&mut root, "Notification", matcher, &command) {
+            changed = true;
+        }
+    }
+    let elicitation_result_command = hook_command("cursor", "ElicitationResult");
+    if merge_cursor_hook_entry(&mut root, "ElicitationResult", &elicitation_result_command) {
+        changed = true;
+    }
     if changed {
         write_json(&path, &root)?;
         Ok("installed")
@@ -327,6 +337,35 @@ fn merge_cursor_hook_entry(root: &mut Value, event: &str, command: &str) -> bool
     true
 }
 
+fn merge_cursor_matched_hook_entry(
+    root: &mut Value,
+    event: &str,
+    matcher: &str,
+    command: &str,
+) -> bool {
+    ensure_cursor_version(root);
+    let object = root.as_object_mut().expect("root json object");
+    if !object.contains_key("hooks") {
+        object.insert("hooks".to_string(), Value::Object(Map::new()));
+    }
+    let hooks = object
+        .get_mut("hooks")
+        .and_then(Value::as_object_mut)
+        .expect("hooks object");
+    if !hooks.contains_key(event) {
+        hooks.insert(event.to_string(), Value::Array(Vec::new()));
+    }
+    let entries = hooks
+        .get_mut(event)
+        .and_then(Value::as_array_mut)
+        .expect("event hook array");
+    if cursor_matched_command_present(entries, matcher, command) {
+        return false;
+    }
+    entries.push(serde_json::json!({ "matcher": matcher, "command": command }));
+    true
+}
+
 fn hook_command_present(entries: &[Value], command: &str) -> bool {
     entries.iter().any(|entry| {
         entry
@@ -348,6 +387,16 @@ fn cursor_command_present(entries: &[Value], command: &str) -> bool {
             .get("command")
             .and_then(Value::as_str)
             .is_some_and(|existing| existing == command)
+    })
+}
+
+fn cursor_matched_command_present(entries: &[Value], matcher: &str, command: &str) -> bool {
+    entries.iter().any(|entry| {
+        entry.get("matcher").and_then(Value::as_str) == Some(matcher)
+            && entry
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|existing| existing == command)
     })
 }
 
@@ -489,6 +538,27 @@ mod tests {
                 "missing cursor hook for {event}"
             );
         }
+        for matcher in ["permission_prompt", "elicitation_dialog"] {
+            let command =
+                format!("{AGENT_EVENT_MARKER} --client cursor --event Notification:{matcher}");
+            let entries = hooks["hooks"]["Notification"].as_array().unwrap();
+            assert!(
+                entries.iter().any(|entry| {
+                    entry.get("matcher") == Some(&serde_json::Value::String(matcher.to_string()))
+                        && entry["command"] == command
+                }),
+                "missing matched cursor Notification hook for {matcher}"
+            );
+        }
+        let elicitation_result_command =
+            format!("{AGENT_EVENT_MARKER} --client cursor --event ElicitationResult");
+        let elicitation_entries = hooks["hooks"]["ElicitationResult"].as_array().unwrap();
+        assert!(
+            elicitation_entries
+                .iter()
+                .any(|entry| entry["command"] == elicitation_result_command),
+            "missing cursor ElicitationResult hook"
+        );
     }
 
     fn assert_pi_extension(home: &std::path::Path) {
