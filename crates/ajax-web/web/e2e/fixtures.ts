@@ -33,8 +33,7 @@ export const COCKPIT_FIXTURE = {
       status: "running",
       status_explanation: null,
       attention: "active",
-      // Calm rows are where swipe-reveal lives: inbox rows render their actions
-      // inline instead, so the gesture needs a non-inbox card to exercise.
+      // Non-inbox card with a safe action for dashboard action-row coverage.
       actions: [
         { action: "review", label: "Review", destructive: false, confirmation_required: false },
       ],
@@ -337,6 +336,12 @@ export async function terminalInputFrames(page: Page): Promise<TerminalInputFram
       typeof (frame as { data?: unknown }).data === "string",
   );
 }
+
+/** A roster row by handle. The dashboard names the same handle in the row and in
+ * the action rail, so a bare getByText("repo/task") matches twice; every load
+ * wait goes through this locator instead. */
+export const rosterRow = (page: Page, handle: string) =>
+  page.getByTestId(`task-row-${handle}`);
 
 export const terminalSurface = (page: Page) =>
   page.locator("[data-testid='task-terminal-panel']");

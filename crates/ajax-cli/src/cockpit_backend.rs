@@ -2,8 +2,8 @@ use ajax_core::{
     adapters::{CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError},
     models::OperatorAction,
-    registry::{InMemoryRegistry, Registry},
-    runtime_refresh::{refresh_runtime_context_with_acp_statuses, RefreshTier},
+    registry::InMemoryRegistry,
+    runtime_refresh::{refresh_runtime_context_with_tier, RefreshTier},
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
@@ -16,7 +16,7 @@ use std::{
 };
 
 use crate::{
-    agent_acp_snapshot::collect_statuses,
+    agent_status_cache::AgentStatusFiles,
     cockpit_actions::{
         cockpit_action_outcome, execute_pending_cockpit_action_with_task_session,
         execute_pending_cockpit_action_with_task_session_and_checkpoint,
@@ -421,20 +421,9 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    let statuses = collect_statuses(
-        &context.runtime_paths.cache_dir.join("agent-acp"),
-        &task_ids,
-        SystemTime::now(),
-    )?;
-    let refreshed =
-        refresh_runtime_context_with_acp_statuses(context, runner, &statuses, RefreshTier::Full)
-            .map_err(crate::command_error)?;
+    let source = AgentStatusFiles::from_runtime_cache(&context.runtime_paths.cache_dir);
+    let refreshed = refresh_runtime_context_with_tier(context, runner, &source, RefreshTier::Full)
+        .map_err(crate::command_error)?;
     let notified = crate::notify::notify_attention_transitions(context, runner);
     Ok(refreshed || notified)
 }
@@ -667,8 +656,10 @@ fn write_stream_frame(writer: &mut impl Write, frame: &str) -> Result<bool, CliE
 mod tests {
     use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
-        acp_status::{AcpActionKind, AcpSessionState, AcpStatusObservation, ObservedAcpStatus},
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        agent_status::{
+            ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
+        },
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{
@@ -678,10 +669,9 @@ mod tests {
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry},
-        runtime_refresh::{refresh_runtime_context_with_acp_statuses, RefreshTier},
+        runtime_refresh::{refresh_runtime_context_with_tier, AgentStatusSource, RefreshTier},
     };
     use ajax_tui::CockpitSnapshot;
-    use std::{collections::BTreeMap, time::SystemTime};
 
     #[derive(Default)]
     struct LiveRefreshRunner;
@@ -817,39 +807,55 @@ mod tests {
         context
     }
 
-    fn acp_statuses(state: AcpSessionState) -> BTreeMap<TaskId, ObservedAcpStatus> {
-        BTreeMap::from([(
-            TaskId::new("task-1"),
-            ObservedAcpStatus {
-                observation: AcpStatusObservation {
-                    state,
-                    detail: None,
-                },
-                observed_at: SystemTime::now(),
-            },
-        )])
+    struct StaticAgentStatusSource {
+        observations: Vec<StatusObservation>,
+        liveness: Option<ProcessLiveness>,
+    }
+
+    impl StaticAgentStatusSource {
+        fn lifecycle(kind: ActivityKind) -> Self {
+            let now = std::time::SystemTime::now();
+            Self {
+                observations: vec![StatusObservation {
+                    source: ObservationSource::ProviderLifecycle,
+                    observed_at: now,
+                    expires_at: now + std::time::Duration::from_secs(1800),
+                    confidence: Confidence::High,
+                    run_id: "primary".to_string(),
+                    parent_run_id: None,
+                    kind,
+                }],
+                liveness: None,
+            }
+        }
+    }
+
+    impl AgentStatusSource for StaticAgentStatusSource {
+        fn observations_for_task(&self, _task_id: &TaskId) -> Vec<StatusObservation> {
+            self.observations.clone()
+        }
+
+        fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
+            self.liveness
+        }
     }
 
     #[test]
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
         let mut runner = LiveRefreshRunner;
-        let statuses = acp_statuses(AcpSessionState::RequiresAction(AcpActionKind::Permission));
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::WaitingApproval);
         let mut state_changed = false;
 
-        state_changed |= refresh_runtime_context_with_acp_statuses(
-            &mut context,
-            &mut runner,
-            &statuses,
-            RefreshTier::Full,
-        )
-        .unwrap();
+        state_changed |=
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+                .unwrap();
         let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
         assert_eq!(
             snapshot.cards[0].status_explanation.as_deref(),
-            Some("Approval required")
+            Some("Waiting for approval")
         );
         assert!(snapshot.inbox.items.iter().any(|item| {
             item.reason == "waiting_for_approval" && item.task_handle == "web/fix-login"
@@ -870,35 +876,15 @@ mod tests {
     }
 
     #[test]
-    fn acp_snapshot_drives_cockpit_refresh() {
+    fn cockpit_refresh_uses_hook_backed_agent_status_cache() {
         let mut context = context_with_active_task();
-        let now = SystemTime::now();
-        let cache_dir = std::env::temp_dir().join(format!(
-            "ajax-cockpit-acp-refresh-{}-{}",
-            std::process::id(),
-            now.duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        context.runtime_paths.cache_dir = cache_dir.clone();
-        let now_millis = now
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        crate::agent_acp_snapshot::AcpSnapshotPublisher::claim(
-            &context.runtime_paths.cache_dir.join("agent-acp"),
-            "task-1",
-            "test-generation",
-            None,
-            AcpStatusObservation {
-                state: AcpSessionState::Running,
-                detail: None,
-            },
-            now_millis,
-        )
-        .unwrap();
         let mut runner = LiveRefreshRunner;
-        let state_changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::Working);
+        let mut state_changed = false;
+
+        state_changed |=
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+                .unwrap();
         let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
@@ -908,22 +894,11 @@ mod tests {
             .find(|card| card.qualified_handle == "web/fix-login")
             .expect("task should stay visible in cockpit");
         assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Running);
-        assert_eq!(card.status_explanation.as_deref(), Some("Agent running"));
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .live_status
-                .as_ref()
-                .map(|status| status.summary.as_str()),
-            Some("Agent running")
-        );
-        let _ = std::fs::remove_dir_all(cache_dir);
+        assert_eq!(card.status_explanation.as_deref(), Some("Agent working"));
     }
 
     #[test]
-    fn live_refresh_clears_stale_input_when_acp_reports_running() {
+    fn live_refresh_clears_stale_input_when_hook_reports_working() {
         let mut context = context_with_active_task();
         let task = context
             .registry
@@ -938,16 +913,12 @@ mod tests {
         ));
         task.annotations = ajax_core::attention::annotate(task);
         let mut runner = LiveRefreshRunner;
-        let statuses = acp_statuses(AcpSessionState::Running);
+        let cache = StaticAgentStatusSource::lifecycle(ActivityKind::Working);
         let mut state_changed = false;
 
-        state_changed |= refresh_runtime_context_with_acp_statuses(
-            &mut context,
-            &mut runner,
-            &statuses,
-            RefreshTier::Full,
-        )
-        .unwrap();
+        state_changed |=
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+                .unwrap();
         let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
@@ -957,7 +928,7 @@ mod tests {
             .find(|card| card.qualified_handle == "web/fix-login")
             .expect("task should stay visible in cockpit");
         assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Running);
-        assert_eq!(card.status_explanation.as_deref(), Some("Agent running"));
+        assert_eq!(card.status_explanation.as_deref(), Some("Agent working"));
         assert!(card.annotations.is_empty(), "{:?}", card.annotations);
         assert!(!snapshot
             .inbox

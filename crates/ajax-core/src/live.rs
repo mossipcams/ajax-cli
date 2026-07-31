@@ -7,39 +7,6 @@ pub use application::{
     apply_trusted_observation_at,
 };
 
-/// Internal live summary when the parent is idle/absent and a child is active.
-pub(crate) const SUMMARY_WAITING_ON_DELEGATED: &str = "waiting on delegated runs";
-/// Internal live summary when the primary run is terminal but children remain.
-pub(crate) const SUMMARY_DELEGATED_STILL_ACTIVE: &str = "delegated runs still active";
-
-/// Operator-facing explanation for [`SUMMARY_WAITING_ON_DELEGATED`].
-pub(crate) const EXPLANATION_WAITING_ON_DELEGATED: &str = "Waiting on delegated runs";
-/// Operator-facing explanation for [`SUMMARY_DELEGATED_STILL_ACTIVE`].
-pub(crate) const EXPLANATION_DELEGATED_STILL_ACTIVE: &str = "Delegated runs still active";
-
-/// True when a live/operator waiting summary means the parent is blocked on
-/// children rather than on the operator. These must not set `NeedsInput` or
-/// fire attention webhooks.
-pub(crate) fn is_delegated_waiting_summary(summary: &str) -> bool {
-    operator_explanation_for_summary(summary).is_some()
-}
-
-/// Map an internal delegated summary onto the operator explanation string.
-pub(crate) fn operator_explanation_for_summary(summary: &str) -> Option<&'static str> {
-    let trimmed = summary.trim();
-    if trimmed.eq_ignore_ascii_case(SUMMARY_WAITING_ON_DELEGATED)
-        || trimmed.eq_ignore_ascii_case(EXPLANATION_WAITING_ON_DELEGATED)
-    {
-        Some(EXPLANATION_WAITING_ON_DELEGATED)
-    } else if trimmed.eq_ignore_ascii_case(SUMMARY_DELEGATED_STILL_ACTIVE)
-        || trimmed.eq_ignore_ascii_case(EXPLANATION_DELEGATED_STILL_ACTIVE)
-    {
-        Some(EXPLANATION_DELEGATED_STILL_ACTIVE)
-    } else {
-        None
-    }
-}
-
 pub fn reduce_live_observation(
     current: Option<&LiveObservation>,
     next: LiveObservation,
