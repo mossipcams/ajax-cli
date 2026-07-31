@@ -699,7 +699,8 @@ mod tests {
                     "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => {
-                    "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel\n"
+                    // No wait chrome — running reconcile must not invent Waiting.
+                    "agent working\nesc to interrupt\n"
                 }
                 _ => "",
             };

@@ -150,25 +150,36 @@ source: the canonical JSONL event log folded per run. `ajax-cli`'s
 log (`agent-events/{stem}.jsonl`) and the launch-wrapper runtime snapshot
 (`agent-runtime/{stem}.json`) — and yields reducer-ready `StatusObservation`s
 directly to core; there is no status-string round-trip and no legacy
-`~/.cache/tmux-agent-status` or scalar `{stem}.json` reads. When no structured
-lifecycle observation exists, runtime refresh may capture the visible pane only
-for clients whose capability profile marks wait evidence unavailable or
-unverified. That weak fallback recognizes bottom-anchored permission/input
-chrome only; it cannot infer activity or errors and never overrides structured
-lifecycle evidence. Uninstrumented sessions otherwise project no confident
-activity beyond prior state, process liveness, and confirmed wrapper exit
-(`done`/`failed`). When sources disagree, the single reducer
-(`agent_status::reduce_agent_status`) applies this precedence:
+`~/.cache/tmux-agent-status` or scalar `{stem}.json` reads. Runtime refresh may
+also capture the visible pane under AoE-shaped reconcile gates (below) so
+mid-turn Working evidence can be corrected to Waiting when permission/input
+chrome is on screen. When structured lifecycle evidence is absent, a weaker
+capability-gated fallback still applies for clients whose wait facts are
+unavailable or unverified. Pane text never invents Running or errors.
+Uninstrumented sessions otherwise project no confident activity beyond prior
+state, process liveness, and confirmed wrapper exit (`done`/`failed`). When
+sources disagree, the single reducer (`agent_status::reduce_agent_status`)
+applies this precedence:
 
 1. Terminal process exit or fatal runtime error (confirmed wrapper exit, 120s)
 2. Structured native lifecycle events folded from the JSONL log (attention and
    open activities persist until cleared or session end; non-terminal phases
    expire after a generous window; terminal outcomes persist until superseded)
-3. Capability-gated visible-pane permission/input evidence when structured
-   lifecycle evidence is absent
+3. Visible-pane permission/input evidence under reconcile gates: when lifecycle
+   projects `ActivelyWorking` for Claude, Codex, or Cursor, or when Claude
+   projects `FullyCompleted` after prior `AgentRunning` or actionable
+   wait (`WaitingForApproval` / `WaitingForInput`) live status, runtime
+   refresh may capture the pane and upgrade to Waiting when bottom-anchored
+   wait chrome is visible. Soft waits such as `Done` (response ready) do not
+   open that gate. Capability-gated pane fallback still applies only
+   when structured lifecycle evidence is absent (`Unknown` phase); Unknown
+   never clears prior live evidence by applying `LiveStatusKind::Unknown`.
 4. Process liveness (wrapper `Starting`/`Running`,
    `PROCESS_LIVENESS_FRESH_FOR` = 30s) — informational only; never alone
    becomes `AgentRunning`
+
+Pane evidence never invents `AgentRunning` from chrome. It may only correct
+structured activity toward Waiting under the gates above.
 
 Liveness is supplied separately from observations and is never activity: a fresh
 heartbeat rules out `Unknown` (the process demonstrably exists, so the task is
