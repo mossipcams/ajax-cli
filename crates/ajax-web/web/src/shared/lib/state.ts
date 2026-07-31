@@ -51,6 +51,11 @@ export function filterByProject(
   return cards.filter((card) => card.repo === project);
 }
 
+/** TaskList bands: Active = non-idle (unknown stays Active); Idle = idle only. */
+function sectionRank(status: string): number {
+  return (status || "").toLowerCase() === "idle" ? 1 : 0;
+}
+
 export function sortCards(
   cards: BrowserTaskCard[],
   previousOrder: readonly string[] = [],
@@ -59,8 +64,8 @@ export function sortCards(
   return cards
     .slice()
     .sort((a, b) => {
-      const byStatus = statusRank(a.status) - statusRank(b.status);
-      if (byStatus !== 0) return byStatus;
+      const bySection = sectionRank(a.status) - sectionRank(b.status);
+      if (bySection !== 0) return bySection;
 
       const aPrev = prevIndex.get(a.qualified_handle);
       const bPrev = prevIndex.get(b.qualified_handle);
@@ -69,6 +74,9 @@ export function sortCards(
       }
       if (aPrev !== undefined && bPrev === undefined) return -1;
       if (aPrev === undefined && bPrev !== undefined) return 1;
+
+      const byStatus = statusRank(a.status) - statusRank(b.status);
+      if (byStatus !== 0) return byStatus;
 
       return (
         (b.last_activity_unix_secs ?? 0) - (a.last_activity_unix_secs ?? 0) ||
