@@ -1,13 +1,7 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useRef } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { statusMeta } from "@/shared/lib/state";
-import {
-  navigateSwipeEnd,
-  navigateSwipeMove,
-  navigateSwipeStart,
-  navigateSwipeTranslateX,
-  type NavigateSwipeState,
-} from "@/shared/gestures/navigateSwipe";
+import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import TaskMetaDetails from "./TaskMetaDetails";
@@ -36,82 +30,26 @@ export default function TaskDetail({
   const meta = statusMeta(detail.status);
   const actions = visibleTaskActions(detail.actions);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const originRef = useRef({ x: 0, y: 0 });
-  const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
-  // Inline App callbacks change every cockpit poll; keep listeners stable.
   const onOpenDiffRef = useRef(onOpenDiff);
   onOpenDiffRef.current = onOpenDiff;
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
-  const [dragX, setDragX] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const { swiping, style } = useSwipePageTransition(rootRef, {
+    onLeft: () => onOpenDiffRef.current?.(),
+    onRight: () => onBackRef.current?.(),
+  });
 
   const activityLine = (() => {
     const line = detail.agent_activity ?? detail.live_status_summary;
     return line && line !== detail.status_explanation ? line : null;
   })();
 
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const reset = () => {
-      swipeRef.current = navigateSwipeStart();
-      setDragX(0);
-      setDragging(false);
-    };
-
-    const onTouchStart = (event: TouchEvent) => {
-      const touch = event.changedTouches[0] ?? event.touches[0];
-      if (!touch) return;
-      originRef.current = { x: touch.clientX, y: touch.clientY };
-      swipeRef.current = navigateSwipeStart();
-      setDragging(false);
-      setDragX(0);
-    };
-
-    const onTouchMove = (event: TouchEvent) => {
-      const touch = event.changedTouches[0] ?? event.touches[0];
-      if (!touch) return;
-      const dx = touch.clientX - originRef.current.x;
-      const dy = touch.clientY - originRef.current.y;
-      const next = navigateSwipeMove(swipeRef.current, dx, dy);
-      swipeRef.current = next;
-      if (!next.engaged) return;
-      // Own the gesture once horizontal intent is clear (including over the terminal).
-      if (event.cancelable) event.preventDefault();
-      setDragging(true);
-      setDragX(navigateSwipeTranslateX(next));
-    };
-
-    const onTouchEnd = () => {
-      const direction = navigateSwipeEnd(swipeRef.current);
-      reset();
-      if (direction === "left") onOpenDiffRef.current?.();
-      else if (direction === "right") onBackRef.current?.();
-    };
-
-    root.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
-    root.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
-    root.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
-    root.addEventListener("touchcancel", reset, { capture: true, passive: true });
-    return () => {
-      root.removeEventListener("touchstart", onTouchStart, true);
-      root.removeEventListener("touchmove", onTouchMove, true);
-      root.removeEventListener("touchend", onTouchEnd, true);
-      root.removeEventListener("touchcancel", reset, true);
-    };
-  }, []);
-
   return (
     <div
       ref={rootRef}
-      className={`task-detail${dragging ? " is-diff-swiping" : ""}`}
+      className={`task-detail${swiping ? " is-diff-swiping" : ""}`}
       data-testid="task-detail"
-      style={{
-        transform: dragX ? `translate3d(${dragX}px, 0, 0)` : undefined,
-        transition: dragging ? "none" : "transform 180ms var(--ease, ease)",
-      }}
+      style={style}
     >
       <div
         className="detail-header"

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import DiffReview from "./DiffReview";
 import * as api from "@/shared/lib/api";
+import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 
 vi.mock("@/shared/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/api")>("@/shared/lib/api");
@@ -143,10 +144,19 @@ describe("DiffReview", () => {
     const onBack = vi.fn();
     render(<DiffReview handle="web/fix-login" onBack={onBack} />);
     const root = await screen.findByTestId("diff-review");
-    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
-    fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
-    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
-    expect(onBack).toHaveBeenCalledOnce();
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+      fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
+      fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+      });
+      expect(onBack).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists signal files first, collapses noise, and opens top signal by churn", async () => {

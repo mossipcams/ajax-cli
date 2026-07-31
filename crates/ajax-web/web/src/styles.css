@@ -2291,6 +2291,37 @@ html.keyboard-open .app-viewport {
   touch-action: pan-y;
 }
 
+.diff-review.is-diff-swiping {
+  will-change: transform;
+  touch-action: pan-y;
+}
+
+@keyframes swipe-enter-from-right {
+  from {
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes swipe-enter-from-left {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+[data-outlet].ajax-swipe-enter-left {
+  animation: swipe-enter-from-right 220ms var(--ease-spring);
+}
+
+[data-outlet].ajax-swipe-enter-right {
+  animation: swipe-enter-from-left 220ms var(--ease-spring);
+}
+
 /* DIFF REVIEW ------------------------------------------------------------- */
 .diff-review {
   display: flex;

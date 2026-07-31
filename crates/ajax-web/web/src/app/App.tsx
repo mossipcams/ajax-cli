@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { dashboardHash, projectHash, settingsHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
 import {
   cockpitRefreshIntervalMs,
@@ -24,6 +24,11 @@ import { usePullToRefresh } from "@/shared/hooks/usePullToRefresh";
 import { useVersionMonitor } from "@/shared/hooks/useVersionMonitor";
 import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
 import { useTaskDetailResource } from "@/features/task/useTaskDetailResource";
+import {
+  consumeSwipeEnterDirection,
+  swipeEnterClassName,
+  type SwipeEnterDirection,
+} from "@/shared/lib/swipeEnter";
 
 type ResultState = {
   message: string;
@@ -59,6 +64,8 @@ export default function App() {
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
+  const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | null>(null);
+  const outletSwipeRef = useRef<HTMLElement | null>(null);
 
   // Report what's live first, then the inventory size.
   const statusText = (() => {
@@ -172,6 +179,24 @@ export default function App() {
     }
   }, [route]);
 
+  useEffect(() => {
+    // Always consume: clears leftover enter class on button / bottom-nav navigations.
+    setSwipeEnter(consumeSwipeEnterDirection());
+  }, [route]);
+
+  useEffect(() => {
+    const node = outletSwipeRef.current;
+    if (!node || !swipeEnter) return;
+    const onAnimationEnd = (event: AnimationEvent) => {
+      if (event.target !== node) return;
+      setSwipeEnter(null);
+    };
+    node.addEventListener("animationend", onAnimationEnd);
+    return () => node.removeEventListener("animationend", onAnimationEnd);
+  }, [swipeEnter, route.kind]);
+
+  const swipeOutletClass = swipeEnterClassName(swipeEnter);
+
   const chrome = (
     <div className="cockpit-chrome">
       <header>
@@ -245,6 +270,8 @@ export default function App() {
             </section>
           ) : route.kind === "diff" && route.handle ? (
             <section
+              ref={outletSwipeRef}
+              className={swipeOutletClass || undefined}
               data-outlet="diff"
               data-testid="outlet-diff"
               data-handle={route.handle}
@@ -266,6 +293,8 @@ export default function App() {
             </section>
           ) : route.kind === "task" ? (
             <section
+              ref={outletSwipeRef}
+              className={swipeOutletClass || undefined}
               data-outlet="task"
               data-testid="outlet-task"
               data-handle={route.handle}
@@ -289,7 +318,11 @@ export default function App() {
             </section>
           ) : (
             <section
-              ref={pullToRefreshRef}
+              ref={(node) => {
+                pullToRefreshRef(node);
+                outletSwipeRef.current = node;
+              }}
+              className={swipeOutletClass || undefined}
               data-outlet={route.kind === "project" ? "project" : "dashboard"}
               data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
               aria-live="polite"
