@@ -427,8 +427,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                                 refresh_cached_annotations(task);
                                 changed |= *task != previous;
                             }
-                            continue;
                         }
+                        // Wait chrome is visible: never fall through to apply
+                        // Working/Done from lifecycle in the same tick (Bugbot).
+                        continue;
                     }
                 }
             }
@@ -2250,6 +2252,35 @@ mod tests {
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn ack_blocked_pane_wait_does_not_fall_through_to_agent_running() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+        task.live_status_observed_at = Some(SystemTime::now() - Duration::from_secs(30));
+        // Future ack makes pane Waiting blocked_by_ack (`now <= ack`).
+        task.record_attention_acknowledgment(SystemTime::now() + Duration::from_secs(3600));
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval),
+            "ack-blocked pane wait chrome must not fall through to AgentRunning"
         );
     }
 
