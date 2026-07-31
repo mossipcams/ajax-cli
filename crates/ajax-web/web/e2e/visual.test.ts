@@ -18,11 +18,7 @@
 // surface-containment test below closes that class.
 
 import { test, expect, type Locator } from "@playwright/test";
-import {
-  COCKPIT_FIXTURE,
-  mockFetch,
-  rosterRow,
-} from "./fixtures";
+import { mockFetch, COCKPIT_FIXTURE } from "./fixtures";
 
 // ---- design tokens (must match styles.css :root) -------------------------
 
@@ -37,86 +33,43 @@ function bg(locator: Locator) {
 
 // ---- tests ---------------------------------------------------------------
 
-test("dashboard chrome, roster, and rail carry the cockpit stylesheet", async ({ page }) => {
+test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   // Bottom-nav "New" button is the accent call-to-action, not a default button.
   const newButton = page.locator('.bottom-nav button[data-bottom-action="new-task"]');
   expect(await bg(newButton)).toBe(ACCENT);
 
-  // Roster rows are one 44px line each: the density the whole design rests on.
-  const row = rosterRow(page, "web/fix-login");
-  const rowBox = await row.evaluate((el) => {
+  // Active project pill is filled accent (selection); warn stays for attention.
+  const activePill = page.locator(".project-pill.is-active").first();
+  expect(await bg(activePill)).toBe(ACCENT);
+
+  // Calm task row: opaque bg, no left stripe — tone lives on the status label.
+  const taskRow = page.locator('.task-row[data-handle="web/fix-login"]').first();
+  const rowStyle = await taskRow.evaluate((el) => {
     const s = getComputedStyle(el);
     return {
-      minHeight: s.minHeight,
-      height: Math.round(el.getBoundingClientRect().height),
+      bg: s.backgroundColor,
       leftWidth: s.borderLeftWidth,
     };
   });
-  expect(rowBox.minHeight).toBe("44px");
-  expect(rowBox.height).toBeLessThanOrEqual(56);
-  expect(rowBox.leftWidth).not.toBe("3px");
+  expect(rowStyle.bg).not.toBe(TRANSPARENT);
+  expect(rowStyle.leftWidth).not.toBe("3px");
 
-  // The selected row is washed in its own tone, not marked with a side stripe.
-  const selected = page.locator(".task-row.is-selected");
-  await expect(selected).toHaveCount(1);
-  expect(await bg(selected)).not.toBe(TRANSPARENT);
+  // The row's status dot paints with the tone color (waiting -> warn). It is the
+  // row's only state marker now, so an unstyled dot must fail here.
+  const status = taskRow.locator(".status-dot");
+  expect(await status.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(WARN);
 
-  // The row glyph paints with the tone color (waiting -> warn), so an unstyled
-  // glyph must fail here.
-  const glyph = selected.locator(".task-row-glyph");
-  expect(await glyph.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
-
-  // The dock is fixed and opaque; the armed-channel card riding on it carries
-  // the visible border, radius, and the page's one filled pill.
-  const rail = page.locator('[data-testid="task-rail"]');
-  const railStyle = await rail.evaluate((el) => {
-    const s = getComputedStyle(el);
-    return { bg: s.backgroundColor, position: s.position };
-  });
-  expect(railStyle.bg).not.toBe(TRANSPARENT);
-  expect(railStyle.position).toBe("fixed");
-
-  const railInner = page.locator(".rail-inner");
-  const railInnerStyle = await railInner.evaluate((el) => {
-    const s = getComputedStyle(el);
-    return { borderTopWidth: s.borderTopWidth, borderRadius: s.borderTopLeftRadius };
-  });
-  expect(railInnerStyle.borderTopWidth).toBe("2px");
-  expect(railInnerStyle.borderRadius).not.toBe("0px");
-
-  expect(await page.locator('[data-layout="primary-key"]').count()).toBe(1);
-  expect(await bg(rail.locator(".action.primary"))).toBe(ACCENT);
+  // Task rows have the compact list padding (would be 0 if unstyled).
+  const row = page.locator(".task-row").first();
+  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("10px");
 
   // Single new-task entry: bottom-nav only (no in-list dashed CTA).
   await expect(page.locator(".new-task-row")).toHaveCount(0);
   await expect(newButton).toBeVisible();
-});
-
-// The rail is fixed over the scroll canvas, so it can hide the tail of the
-// roster. The dashboard reserves its measured height; assert the reservation is
-// real, because a collapsed clearance looks fine until you scroll to the end.
-test("the rail never covers the end of the roster", async ({ page }) => {
-  await mockFetch(page);
-  await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
-
-  const measured = await page.evaluate(() => {
-    const rail = document.querySelector('[data-testid="task-rail"]');
-    const clearance = document.querySelector('[data-testid="rail-clearance"]');
-    if (!rail || !clearance) return null;
-    return {
-      railHeight: Math.round(rail.getBoundingClientRect().height),
-      clearance: Math.round(clearance.getBoundingClientRect().height),
-    };
-  });
-
-  expect(measured, "rail and clearance both present").not.toBeNull();
-  expect(measured!.railHeight).toBeGreaterThan(0);
-  expect(measured!.clearance).toBeGreaterThanOrEqual(measured!.railHeight);
 });
 
 // A control group must read as part of the thing it acts on. We assert it by
@@ -126,9 +79,8 @@ test("the rail never covers the end of the roster", async ({ page }) => {
 // entirely and only stops at the app root's page paper — which is precisely the
 // "floating on the background" look, and the exact shape of the shipped bug.
 
-// Two inbox entries on purpose: the lead entry is what the rail opens on, and
-// the other stays an unselected roster row. The shipped regression left action
-// pills floating on the page background with every other test green.
+// Two inbox entries on purpose: the lead entry and the ones behind it are styled
+// by different rules, and the shipped regression only affected the latter.
 const TWO_ATTENTION_ITEMS = {
   ...COCKPIT_FIXTURE,
   cards: [
@@ -159,7 +111,7 @@ test("dashboard action groups sit on a card, not on the page background", async 
 }) => {
   await mockFetch(page, { "/api/cockpit": TWO_ATTENTION_ITEMS });
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const groups = page.locator('[data-testid="outlet-dashboard"] .action-row');
   expect(await groups.count()).toBeGreaterThan(0);
