@@ -41,6 +41,8 @@ export default function TaskDetail({
   // Inline App callbacks change every cockpit poll; keep listeners stable.
   const onOpenDiffRef = useRef(onOpenDiff);
   onOpenDiffRef.current = onOpenDiff;
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
 
@@ -85,7 +87,8 @@ export default function TaskDetail({
     const onTouchEnd = () => {
       const direction = navigateSwipeEnd(swipeRef.current);
       reset();
-      if (direction === "right") onOpenDiffRef.current?.();
+      if (direction === "left") onOpenDiffRef.current?.();
+      else if (direction === "right") onBackRef.current?.();
     };
 
     root.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
