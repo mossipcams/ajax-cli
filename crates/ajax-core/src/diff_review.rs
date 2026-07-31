@@ -28,13 +28,54 @@ pub struct DiffHunk {
     pub lines: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffFileRole {
+    Signal,
+    Noise,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiffFile {
     pub path: String,
     pub status: String,
     pub additions: u32,
     pub deletions: u32,
+    pub role: DiffFileRole,
     pub hunks: Vec<DiffHunk>,
+}
+
+/// Deterministic path heuristics for vibe review: lockfiles, build output, and
+/// minified/generated artifacts are noise; everything else is signal.
+pub fn classify_diff_path(path: &str) -> DiffFileRole {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+
+    if matches!(
+        basename,
+        "Cargo.lock" | "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml"
+    ) {
+        return DiffFileRole::Noise;
+    }
+
+    if basename.ends_with(".lock") {
+        return DiffFileRole::Noise;
+    }
+
+    if basename.ends_with(".min.js") || basename.ends_with(".map") {
+        return DiffFileRole::Noise;
+    }
+
+    for segment in ["/dist/", "/target/", "/.next/"] {
+        if path.contains(segment) {
+            return DiffFileRole::Noise;
+        }
+    }
+
+    if path.starts_with("dist/") || path.starts_with("target/") || path.starts_with(".next/") {
+        return DiffFileRole::Noise;
+    }
+
+    DiffFileRole::Signal
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,10 +233,11 @@ fn parse_diff_section(section: &str) -> Option<DiffFile> {
     }
 
     Some(DiffFile {
-        path,
+        path: path.clone(),
         status: status.to_string(),
         additions,
         deletions,
+        role: classify_diff_path(&path),
         hunks,
     })
 }
@@ -320,8 +362,8 @@ pub fn project_task_diff(
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_pull_request_lists, parse_unified_diff, remember_pull_requests, select_default_pr,
-        stored_pull_requests, PullRequestRef, PullRequestState,
+        classify_diff_path, merge_pull_request_lists, parse_unified_diff, remember_pull_requests,
+        select_default_pr, stored_pull_requests, DiffFileRole, PullRequestRef, PullRequestState,
     };
     use crate::models::{AgentClient, Task, TaskId};
 
@@ -459,6 +501,7 @@ index 0000000..3333333
             .lines
             .iter()
             .any(|line| line == "+    let y = 2;"));
+        assert_eq!(foo.role, DiffFileRole::Signal);
 
         let bar = &files[1];
         assert_eq!(bar.path, "src/bar.rs");
@@ -466,6 +509,54 @@ index 0000000..3333333
         assert_eq!(bar.additions, 2);
         assert_eq!(bar.deletions, 0);
         assert_eq!(bar.hunks.len(), 1);
+        assert_eq!(bar.role, DiffFileRole::Signal);
+    }
+
+    #[test]
+    fn classify_diff_path_marks_lockfiles_and_generated_paths_as_noise() {
+        assert_eq!(classify_diff_path("Cargo.lock"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("package-lock.json"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("yarn.lock"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("pnpm-lock.yaml"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("foo.lock"), DiffFileRole::Noise);
+        assert_eq!(
+            classify_diff_path("crates/app/target/debug/app"),
+            DiffFileRole::Noise
+        );
+        assert_eq!(classify_diff_path("dist/bundle.js"), DiffFileRole::Noise);
+        assert_eq!(
+            classify_diff_path(".next/static/chunk.js"),
+            DiffFileRole::Noise
+        );
+        assert_eq!(classify_diff_path("web/app.min.js"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("web/app.js.map"), DiffFileRole::Noise);
+        assert_eq!(classify_diff_path("src/lib.rs"), DiffFileRole::Signal);
+    }
+
+    #[test]
+    fn parse_unified_diff_preserves_file_order_while_annotating_roles() {
+        let patch = "\
+diff --git a/Cargo.lock b/Cargo.lock
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1 +1,2 @@
+ keep
++new
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1 +1,2 @@
+ keep
++code
+";
+
+        let files = parse_unified_diff(patch);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "Cargo.lock");
+        assert_eq!(files[0].role, DiffFileRole::Noise);
+        assert_eq!(files[1].path, "src/main.rs");
+        assert_eq!(files[1].role, DiffFileRole::Signal);
     }
 
     #[test]

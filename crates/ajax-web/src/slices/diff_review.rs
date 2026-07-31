@@ -4,8 +4,9 @@ use ajax_core::{
     adapters::{CommandRunner, GithubChecksAdapter},
     commands::CommandContext,
     diff_review::{
-        observe_task_pull_requests, project_task_diff, DiffFile, DiffHunk, DiffReviewError,
-        DiffSource, PullRequestRef, PullRequestState, TaskDiffProjection, AJAX_PULL_REQUESTS_KEY,
+        observe_task_pull_requests, project_task_diff, DiffFile, DiffFileRole, DiffHunk,
+        DiffReviewError, DiffSource, PullRequestRef, PullRequestState, TaskDiffProjection,
+        AJAX_PULL_REQUESTS_KEY,
     },
     registry::Registry,
 };
@@ -33,7 +34,15 @@ pub struct DiffFileDto {
     pub status: String,
     pub additions: u32,
     pub deletions: u32,
+    pub role: &'static str,
     pub hunks: Vec<DiffHunkDto>,
+}
+
+fn role_label(role: DiffFileRole) -> &'static str {
+    match role {
+        DiffFileRole::Signal => "signal",
+        DiffFileRole::Noise => "noise",
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -105,6 +114,7 @@ fn file_dto(file: DiffFile) -> DiffFileDto {
         status: file.status,
         additions: file.additions,
         deletions: file.deletions,
+        role: role_label(file.role),
         hunks: file.hunks.into_iter().map(hunk_dto).collect(),
     }
 }
@@ -318,6 +328,7 @@ diff --git a/src/a.rs b/src/a.rs
         assert_eq!(projection.diff.source, "local");
         assert_eq!(projection.diff.files.len(), 1);
         assert_eq!(projection.diff.files[0].path, "src/a.rs");
+        assert_eq!(projection.diff.files[0].role, "signal");
         assert_eq!(projection.diff.files[0].additions, 1);
         assert!(runner
             .commands

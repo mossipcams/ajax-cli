@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, fireEvent, screen } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
+import { NAVIGATE_LONG_PRESS_MS } from "@/shared/gestures/navigateSwipe";
 import taskDetailSource from "./TaskDetail?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
@@ -113,27 +114,76 @@ describe("TaskDetail", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it("opens Diff Review on a left swipe outside the terminal surface", () => {
+  it("does not open Diff Review on a quick left swipe", () => {
     const onOpenDiff = vi.fn();
     render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    expect(onOpenDiff).toHaveBeenCalledOnce();
+    expect(onOpenDiff).not.toHaveBeenCalled();
+    expect(root.style.transform).toBe("");
   });
 
-  it("opens Diff Review even when the swipe begins on the terminal panel", () => {
+  it("does not open Diff Review on a quick right swipe", () => {
     const onOpenDiff = vi.fn();
     render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
-    const terminal = document.createElement("div");
-    terminal.setAttribute("data-testid", "task-terminal-panel");
-    root.appendChild(terminal);
-    fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 200, clientY: 40 }] });
-    fireEvent.touchMove(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    fireEvent.touchEnd(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    expect(onOpenDiff).toHaveBeenCalledOnce();
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
+    fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    expect(onOpenDiff).not.toHaveBeenCalled();
+  });
+
+  it("opens Diff Review after long-press and right swipe outside the terminal", () => {
+    vi.useFakeTimers();
+    try {
+      const onOpenDiff = vi.fn();
+      render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+      const root = screen.getByTestId("task-detail");
+      fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
+      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
+      fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      expect(onOpenDiff).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not open Diff Review after long-press and left swipe", () => {
+    vi.useFakeTimers();
+    try {
+      const onOpenDiff = vi.fn();
+      render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+      const root = screen.getByTestId("task-detail");
+      fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
+      fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      expect(onOpenDiff).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens Diff Review after long-press and right swipe when the gesture begins on the terminal", () => {
+    vi.useFakeTimers();
+    try {
+      const onOpenDiff = vi.fn();
+      render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+      const root = screen.getByTestId("task-detail");
+      const terminal = document.createElement("div");
+      terminal.setAttribute("data-testid", "task-terminal-panel");
+      root.appendChild(terminal);
+      fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 40, clientY: 40 }] });
+      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
+      fireEvent.touchMove(terminal, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      fireEvent.touchEnd(terminal, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+      expect(onOpenDiff).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not own document scroll via ajax-task-open", () => {

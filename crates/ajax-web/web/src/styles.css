@@ -2360,6 +2360,28 @@ html.keyboard-open .app-viewport {
   gap: 8px;
 }
 
+.diff-noise-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-noise-toggle {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+}
+
+.diff-noise-list {
+  margin-top: 0;
+}
+
 .diff-file-row,
 .diff-file-header {
   display: flex;
