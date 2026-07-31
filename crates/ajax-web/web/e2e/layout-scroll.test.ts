@@ -16,7 +16,6 @@ function cockpitWithManyTasks(count: number) {
     title: `Task ${index} with a long title that must stay on one line`,
     status: index % 4 === 0 ? "waiting" : "running",
     status_explanation: index % 4 === 0 ? "Needs review" : null,
-    attention: index % 4 === 0 ? "needs-you" : "active",
     actions: [],
   }));
   return { ...COCKPIT_FIXTURE, cards, inbox: { items: [] } };

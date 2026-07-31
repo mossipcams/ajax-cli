@@ -3,6 +3,7 @@ import {
   STATUS_ORDER,
   statusRank,
   filterByProject,
+  fleetSegments,
   isQuiet,
   QUIET_THRESHOLD_SECS,
   reposWithFault,
@@ -22,7 +23,6 @@ function card(handle: string, status: BrowserTaskCard["status"]): BrowserTaskCar
     repo: handle.split("/")[0],
     title: handle,
     status,
-    attention: "idle",
     last_activity_unix_secs: 0,
     actions: [],
   };
@@ -122,6 +122,31 @@ describe("isQuiet", () => {
   });
 });
 
+describe("fleetSegments", () => {
+  it("orders faults, waiting, running and excludes idle", () => {
+    const cards = [
+      card("web/a", "running"),
+      card("web/b", "idle"),
+      card("web/c", "error"),
+      card("web/d", "waiting"),
+      card("web/e", "running"),
+    ];
+    expect(fleetSegments(cards)).toEqual([
+      { status: "error", count: 1 },
+      { status: "waiting", count: 1 },
+      { status: "running", count: 2 },
+    ]);
+  });
+
+  it("omits states with no tasks so an accent never shows for an empty state", () => {
+    const cards = [card("web/a", "running"), card("web/b", "idle")];
+    expect(fleetSegments(cards)).toEqual([{ status: "running", count: 1 }]);
+  });
+
+  it("returns nothing when only idle tasks exist", () => {
+    expect(fleetSegments([card("web/a", "idle")])).toEqual([]);
+  });
+});
 
 describe("reposWithFault", () => {
   it("collects only repos with a faulted task", () => {
