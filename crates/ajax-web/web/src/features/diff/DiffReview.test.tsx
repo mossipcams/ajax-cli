@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import DiffReview from "./DiffReview";
 import * as api from "@/shared/lib/api";
+import { NAVIGATE_LONG_PRESS_MS } from "@/shared/gestures/navigateSwipe";
 
 vi.mock("@/shared/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/api")>("@/shared/lib/api");
@@ -127,6 +128,48 @@ describe("DiffReview", () => {
     fireEvent.touchMove(hunk, { changedTouches: [{ clientX: 140, clientY: 82 }] });
     fireEvent.touchEnd(hunk, { changedTouches: [{ clientX: 140, clientY: 82 }] });
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("does not swipe-back on a quick right swipe", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
+    fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("swipe-backs after long-press and left swipe", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    vi.useFakeTimers();
+    try {
+      fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 80 }] });
+      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
+      fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
+      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
+      expect(onBack).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not swipe-back after long-press and right swipe", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    vi.useFakeTimers();
+    try {
+      fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
+      vi.advanceTimersByTime(NAVIGATE_LONG_PRESS_MS);
+      fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
+      fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
+      expect(onBack).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists signal files first, collapses noise, and opens top signal by churn", async () => {
