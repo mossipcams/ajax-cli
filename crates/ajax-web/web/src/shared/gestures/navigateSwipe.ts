@@ -4,8 +4,9 @@
 
 export const NAVIGATE_SWIPE_TRIGGER = 56; // px past which release navigates
 export const NAVIGATE_SWIPE_MAX = 96; // visual clamp while dragging
-export const NAVIGATE_LONG_PRESS_MS = 475;
-export const NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX = 8;
+export const NAVIGATE_LONG_PRESS_MS = 350;
+/** Finger jitter during a hold; keep loose enough for real iOS touches. */
+export const NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX = 16;
 const ENGAGE_MIN = 8;
 const LOCK_RATIO = 1.15;
 
