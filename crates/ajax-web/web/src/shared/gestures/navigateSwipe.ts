@@ -1,11 +1,24 @@
-// Pure horizontal navigate-swipe math for task chrome. Task detail: swipe right
-// opens Diff Review; Diff Review: swipe left returns. Vertical-dominant drags
-// stay ignored so scroll still works.
+// Pure horizontal navigate-swipe math for task chrome. Task detail: long-press
+// then swipe right opens Diff Review; Diff Review: long-press then swipe left
+// returns. Vertical-dominant drags stay ignored so scroll still works.
 
 export const NAVIGATE_SWIPE_TRIGGER = 56; // px past which release navigates
 export const NAVIGATE_SWIPE_MAX = 96; // visual clamp while dragging
+export const NAVIGATE_LONG_PRESS_MS = 350;
+/** Finger jitter during a hold; keep loose enough for real iOS touches. */
+export const NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX = 16;
 const ENGAGE_MIN = 8;
 const LOCK_RATIO = 1.15;
+
+/** True once the finger has been still long enough to arm a navigate swipe. */
+export function longPressArmed(
+  pressStartedAt: number,
+  now: number,
+  movedPx: number,
+): boolean {
+  if (movedPx > NAVIGATE_LONG_PRESS_MOVE_CANCEL_PX) return false;
+  return now - pressStartedAt >= NAVIGATE_LONG_PRESS_MS;
+}
 
 export type NavigateSwipeDirection = "none" | "left" | "right";
 
