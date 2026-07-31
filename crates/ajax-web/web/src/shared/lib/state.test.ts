@@ -76,11 +76,31 @@ describe("status ordering (presentation only)", () => {
     ).toEqual(["web/b", "web/a"]);
   });
 
-  it("still promotes a card when its status rank changes despite previous order", () => {
+  it("reorders when a card crosses Active and Idle despite previous order", () => {
     const prev = ["web/a", "web/b"];
     const idle = { ...card("web/a", "idle"), last_activity_unix_secs: 900 };
     const running = { ...card("web/b", "running"), last_activity_unix_secs: 100 };
     expect(sortCards([idle, running], prev).map((c) => c.qualified_handle)).toEqual([
+      "web/b",
+      "web/a",
+    ]);
+  });
+
+  it("keeps relative order when active tasks flip between running and waiting", () => {
+    const prev = ["web/a", "web/b"];
+    const waiting = card("web/a", "waiting");
+    const running = card("web/b", "running");
+    expect(sortCards([waiting, running], prev).map((c) => c.qualified_handle)).toEqual([
+      "web/a",
+      "web/b",
+    ]);
+  });
+
+  it("moves a card to the idle band when status becomes idle despite previous order", () => {
+    const prev = ["web/b", "web/a"];
+    const wasActive = card("web/b", "running");
+    const nowIdle = card("web/a", "idle");
+    expect(sortCards([nowIdle, wasActive], prev).map((c) => c.qualified_handle)).toEqual([
       "web/b",
       "web/a",
     ]);
