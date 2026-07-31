@@ -49,6 +49,7 @@ beforeEach(() => {
       {
         path: "src/a.ts",
         status: "modified",
+        role: "signal",
         additions: 2,
         deletions: 1,
         hunks: [
@@ -63,7 +64,7 @@ beforeEach(() => {
 });
 
 describe("DiffReview", () => {
-  it("renders PR chips, file list, and opens hunks on file tap", async () => {
+  it("renders PR chips, auto-opens top signal file, and shows hunks", async () => {
     render(<DiffReview handle="web/fix-login" title="Fix login" />);
 
     expect(await screen.findByTestId("diff-pr-strip")).toBeInTheDocument();
@@ -75,8 +76,7 @@ describe("DiffReview", () => {
       "https://example.com/12",
     );
 
-    fireEvent.click(screen.getByTestId("diff-file-row"));
-    expect(screen.getByTestId("diff-hunk-viewer")).toBeInTheDocument();
+    expect(await screen.findByTestId("diff-hunk-viewer")).toBeInTheDocument();
     expect(screen.getByTestId("diff-hunk")).toHaveTextContent("+new");
   });
 
@@ -122,11 +122,82 @@ describe("DiffReview", () => {
   it("does not swipe-back when the gesture starts on a hunk", async () => {
     const onBack = vi.fn();
     render(<DiffReview handle="web/fix-login" onBack={onBack} />);
-    fireEvent.click(await screen.findByTestId("diff-file-row"));
     const hunk = await screen.findByTestId("diff-hunk");
     fireEvent.touchStart(hunk, { changedTouches: [{ clientX: 40, clientY: 80 }] });
     fireEvent.touchMove(hunk, { changedTouches: [{ clientX: 140, clientY: 82 }] });
     fireEvent.touchEnd(hunk, { changedTouches: [{ clientX: 140, clientY: 82 }] });
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("lists signal files first, collapses noise, and opens top signal by churn", async () => {
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
+      source: "local",
+      pr: null,
+      files: [
+        {
+          path: "Cargo.lock",
+          status: "modified",
+          role: "noise",
+          additions: 100,
+          deletions: 50,
+          hunks: [{ header: "@@", lines: ["+lock"] }],
+        },
+        {
+          path: "src/b.ts",
+          status: "modified",
+          role: "signal",
+          additions: 1,
+          deletions: 0,
+          hunks: [{ header: "@@", lines: ["+b"] }],
+        },
+        {
+          path: "src/a.ts",
+          status: "modified",
+          role: "signal",
+          additions: 5,
+          deletions: 2,
+          hunks: [{ header: "@@", lines: ["+a"] }],
+        },
+      ],
+    });
+
+    render(<DiffReview handle="web/fix-login" />);
+
+    expect(await screen.findByTestId("diff-hunk-viewer")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-file")).toHaveTextContent("src/a.ts");
+
+    fireEvent.click(screen.getByText("← Files"));
+    const rows = screen.getAllByTestId("diff-file-row");
+    expect(rows[0]).toHaveTextContent("src/a.ts");
+    expect(rows[1]).toHaveTextContent("src/b.ts");
+    expect(screen.queryByText("Cargo.lock")).not.toBeInTheDocument();
+    expect(screen.getByTestId("diff-noise-toggle")).toHaveTextContent("1 noise");
+
+    fireEvent.click(screen.getByTestId("diff-noise-toggle"));
+    expect(screen.getByText("Cargo.lock")).toBeInTheDocument();
+  });
+
+  it("stays on collapsed file list when only noise files exist", async () => {
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
+      source: "local",
+      pr: null,
+      files: [
+        {
+          path: "Cargo.lock",
+          status: "modified",
+          role: "noise",
+          additions: 2,
+          deletions: 1,
+          hunks: [{ header: "@@", lines: ["+lock"] }],
+        },
+      ],
+    });
+
+    render(<DiffReview handle="web/fix-login" />);
+
+    expect(await screen.findByTestId("diff-file-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("diff-hunk-viewer")).not.toBeInTheDocument();
+    expect(screen.getByTestId("diff-noise-toggle")).toHaveTextContent("1 noise");
+    expect(screen.queryByTestId("diff-file-row")).not.toBeInTheDocument();
   });
 });

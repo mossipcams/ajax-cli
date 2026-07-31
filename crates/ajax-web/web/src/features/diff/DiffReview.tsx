@@ -32,6 +32,54 @@ function lineClass(line: string): string {
   return "diff-line";
 }
 
+function sortFilesForDisplay(files: DiffFileView[]): DiffFileView[] {
+  return [...files].sort((left, right) => {
+    const churnDiff =
+      right.additions + right.deletions - (left.additions + left.deletions);
+    if (churnDiff !== 0) return churnDiff;
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function partitionFilesByRole(files: DiffFileView[]) {
+  const signal: DiffFileView[] = [];
+  const noise: DiffFileView[] = [];
+  for (const file of files) {
+    if (file.role === "noise") noise.push(file);
+    else signal.push(file);
+  }
+  return {
+    signalFiles: sortFilesForDisplay(signal),
+    noiseFiles: sortFilesForDisplay(noise),
+  };
+}
+
+function FileRow({
+  file,
+  onSelect,
+}: {
+  file: DiffFileView;
+  onSelect: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        className="diff-file-row"
+        data-testid="diff-file-row"
+        data-file-role={file.role}
+        onClick={onSelect}
+      >
+        <span className="diff-file-path">{file.path}</span>
+        <span className="diff-file-stats">
+          <span className="add">+{file.additions}</span>
+          <span className="del">−{file.deletions}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 function FileHunks({ file }: { file: DiffFileView }) {
   return (
     <article className="diff-file" data-testid="diff-file">
@@ -71,12 +119,16 @@ export default function DiffReview({
 }: Props) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [noiseExpanded, setNoiseExpanded] = useState(false);
+  const autoOpenedRef = useRef(false);
   const touchRef = useRef({ x: 0, y: 0, tracking: false, swipe: navigateSwipeStart() });
 
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
     setSelectedPath(null);
+    setNoiseExpanded(false);
+    autoOpenedRef.current = false;
 
     async function load() {
       try {
@@ -110,6 +162,20 @@ export default function DiffReview({
       cancelled = true;
     };
   }, [handle, selectedPr]);
+
+  const { signalFiles, noiseFiles } = useMemo(() => {
+    if (state.status !== "ready") {
+      return { signalFiles: [], noiseFiles: [] };
+    }
+    return partitionFilesByRole(state.diff.files);
+  }, [state]);
+
+  useEffect(() => {
+    if (state.status !== "ready" || autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    const topSignal = signalFiles[0];
+    if (topSignal) setSelectedPath(topSignal.path);
+  }, [state, signalFiles]);
 
   const activeFile = useMemo(() => {
     if (state.status !== "ready" || !selectedPath) return null;
@@ -249,22 +315,37 @@ export default function DiffReview({
             </p>
           ) : (
             <ul className="diff-file-list" data-testid="diff-file-list">
-              {state.diff.files.map((file) => (
-                <li key={file.path}>
+              {signalFiles.map((file) => (
+                <FileRow
+                  key={file.path}
+                  file={file}
+                  onSelect={() => setSelectedPath(file.path)}
+                />
+              ))}
+              {noiseFiles.length > 0 ? (
+                <li className="diff-noise-section">
                   <button
                     type="button"
-                    className="diff-file-row"
-                    data-testid="diff-file-row"
-                    onClick={() => setSelectedPath(file.path)}
+                    className="diff-noise-toggle"
+                    data-testid="diff-noise-toggle"
+                    aria-expanded={noiseExpanded}
+                    onClick={() => setNoiseExpanded((expanded) => !expanded)}
                   >
-                    <span className="diff-file-path">{file.path}</span>
-                    <span className="diff-file-stats">
-                      <span className="add">+{file.additions}</span>
-                      <span className="del">−{file.deletions}</span>
-                    </span>
+                    {noiseExpanded ? "Hide noise" : `${noiseFiles.length} noise`}
                   </button>
+                  {noiseExpanded ? (
+                    <ul className="diff-file-list diff-noise-list">
+                      {noiseFiles.map((file) => (
+                        <FileRow
+                          key={file.path}
+                          file={file}
+                          onSelect={() => setSelectedPath(file.path)}
+                        />
+                      ))}
+                    </ul>
+                  ) : null}
                 </li>
-              ))}
+              ) : null}
             </ul>
           )}
         </>

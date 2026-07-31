@@ -34,11 +34,14 @@ export interface DiffHunkView {
   lines: string[];
 }
 
+export type DiffFileRole = "signal" | "noise";
+
 export interface DiffFileView {
   path: string;
   status: string;
   additions: number;
   deletions: number;
+  role: DiffFileRole;
   hunks: DiffHunkView[];
 }
 
