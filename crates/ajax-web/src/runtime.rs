@@ -994,7 +994,111 @@ where
             serde_json::json!({ "ok": false, "error": "not found" }),
         );
     }
+    if let Some(task_handle) = handle.strip_suffix("/pull-requests") {
+        return axum_task_pull_requests(State(state), task_handle.to_string()).await;
+    }
+    if let Some(task_handle) = handle.strip_suffix("/diff") {
+        return axum_task_diff(State(state), task_handle.to_string(), req).await;
+    }
     axum_task_detail::<C, B>(State(state), handle).await
+}
+
+async fn axum_task_pull_requests<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let response = state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
+        let result = match crate::slices::diff_review::list_task_pull_requests(context, runner, &handle)
+        {
+            Ok(projection) => {
+                if projection.metadata_changed {
+                    if let Err(error) = bridge.persist_registry_snapshot(context) {
+                        return response_from_web_error(error, None);
+                    }
+                }
+                json_response(
+                    200,
+                    serde_json::json!({ "pull_requests": projection.pull_requests }),
+                )
+            }
+            Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => json_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "task not found" }),
+            ),
+            Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
+                json_response(502, serde_json::json!({ "ok": false, "error": reason }))
+            }
+            Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
+                json_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
+                )
+            }
+        };
+        result.unwrap_or_else(|error| response_from_web_error(error, None))
+    });
+    response.into_axum_response()
+}
+
+async fn axum_task_diff<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let query = req.uri().query().unwrap_or("");
+    let force_local = query
+        .split('&')
+        .any(|part| part == "local=1" || part == "local=true");
+    let pr_number = query.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        if key == "pr" {
+            value.parse::<u64>().ok()
+        } else {
+            None
+        }
+    });
+
+    let response = state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
+        let result = match crate::slices::diff_review::task_diff_projection(
+            context,
+            runner,
+            &handle,
+            pr_number,
+            force_local,
+        ) {
+            Ok(projection) => {
+                if projection.metadata_changed {
+                    if let Err(error) = bridge.persist_registry_snapshot(context) {
+                        return response_from_web_error(error, None);
+                    }
+                }
+                json_response(200, serde_json::to_value(projection.diff).unwrap_or_default())
+            }
+            Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => json_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "task not found" }),
+            ),
+            Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
+                json_response(502, serde_json::json!({ "ok": false, "error": reason }))
+            }
+            Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
+                json_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
+                )
+            }
+        };
+        result.unwrap_or_else(|error| response_from_web_error(error, None))
+    });
+    response.into_axum_response()
 }
 
 async fn axum_task_terminal<C, B>(
@@ -1330,6 +1434,15 @@ pub trait RuntimeBridge<C: CommandRunner> {
         _task_handle: &str,
     ) -> Result<bool, WebError> {
         Ok(false)
+    }
+
+    /// Persist registry mutations that are not part of operate/start/ack flows
+    /// (e.g. Diff Review PR metadata observation). Default is a no-op for tests.
+    fn persist_registry_snapshot(
+        &mut self,
+        _context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), WebError> {
+        Ok(())
     }
 }
 

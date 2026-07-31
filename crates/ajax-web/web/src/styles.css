@@ -2286,6 +2286,179 @@ html.keyboard-open .app-viewport {
   transform: rotate(180deg);
 }
 
+/* DIFF REVIEW ------------------------------------------------------------- */
+.diff-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.diff-open-github {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.diff-pr-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.diff-pr-chip {
+  flex: none;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--rule-strong);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.diff-pr-chip.is-active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.diff-source,
+.diff-status {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.diff-error {
+  color: var(--danger);
+}
+
+.diff-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-file-row,
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--paper) 92%, var(--ink));
+  color: var(--ink);
+  text-align: left;
+}
+
+.diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.diff-file-stats {
+  flex: none;
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.diff-file-stats .add {
+  color: var(--ok);
+}
+
+.diff-file-stats .del {
+  color: var(--danger);
+}
+
+.diff-back-files {
+  align-self: start;
+  min-height: 40px;
+  margin-bottom: 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  text-transform: uppercase;
+}
+
+.diff-hunk-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.diff-file {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-hunk {
+  margin: 0;
+  padding: 10px 0;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.diff-hunk code {
+  display: block;
+}
+
+.diff-line {
+  display: block;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+.diff-line.del {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.diff-line.hunk {
+  color: var(--ink-muted);
+}
+
+.diff-empty-hunks {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

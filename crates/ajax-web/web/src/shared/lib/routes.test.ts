@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parseRoute, dashboardHash, projectHash, taskHash, settingsHash } from "./routes";
+import {
+  parseRoute,
+  dashboardHash,
+  projectHash,
+  taskHash,
+  taskDiffHash,
+  settingsHash,
+} from "./routes";
 
 describe("parseRoute", () => {
   it("treats empty hash as dashboard", () => {
@@ -27,6 +34,18 @@ describe("parseRoute", () => {
     });
   });
 
+  it("parses a task diff route and optional pr query", () => {
+    expect(parseRoute("#/t/web%2Ffix-login/diff")).toEqual({
+      kind: "diff",
+      handle: "web/fix-login",
+    });
+    expect(parseRoute("#/t/web%2Ffix-login/diff?pr=12")).toEqual({
+      kind: "diff",
+      handle: "web/fix-login",
+      pr: 12,
+    });
+  });
+
   it("falls back to dashboard for unknown hashes", () => {
     expect(parseRoute("#/garbage")).toEqual({ kind: "dashboard" });
   });
@@ -38,5 +57,7 @@ describe("route formatters", () => {
     expect(settingsHash()).toBe("#/settings");
     expect(projectHash("my repo")).toBe("#/p/my%20repo");
     expect(taskHash("web/fix-login")).toBe("#/t/web%2Ffix-login");
+    expect(taskDiffHash("web/fix-login")).toBe("#/t/web%2Ffix-login/diff");
+    expect(taskDiffHash("web/fix-login", 12)).toBe("#/t/web%2Ffix-login/diff?pr=12");
   });
 });

@@ -231,17 +231,24 @@ The task operation boundary now owns the main mutable task actions:
   core owns post-execution reducers such as opened, merged, repair/check
   succeeded, and merge/check failure state. When checkout mismatch is present
   (worktree exists, checkout misaligned), Open/Resume, Check, and Review remain
-  available; Review diffs `base...HEAD` at the worktree path. Ship and
-  Drop/Cleanup are blocked until reconciliation. Repair on mismatch offers a
-  zero-command, confirmation-required `BranchAdoptionPlan` carrying the exact
-  expected/observed branch pair; core revalidates that pair at execution, updates
-  only task branch intent, records a substrate-change event, and preserves task
-  identity, path, session, lifecycle, and history. Adoption runs no
-  branch-switch command. Detached checkout cannot be adopted; the operator must
-  switch to a named branch externally and refresh to clear mismatch without
-  changing intent. CLI and Cockpit adapters display the core-provided pair in
-  confirmation prompts, retain it between activations, and resubmit it
-  unchanged; core rejects stale or altered evidence.
+  available; Review diffs `base...HEAD` at the worktree path (CLI/operate text
+  summary). Ship and Drop/Cleanup are blocked until reconciliation. Repair on
+  mismatch offers a zero-command, confirmation-required `BranchAdoptionPlan`
+  carrying the exact expected/observed branch pair; core revalidates that pair
+  at execution, updates only task branch intent, records a substrate-change
+  event, and preserves task identity, path, session, lifecycle, and history.
+  Adoption runs no branch-switch command. Detached checkout cannot be adopted;
+  the operator must switch to a named branch externally and refresh to clear
+  mismatch without changing intent. CLI and Cockpit adapters display the
+  core-provided pair in confirmation prompts, retain it between activations, and
+  resubmit it unchanged; core rejects stale or altered evidence.
+- Web Diff Review is a separate read-only projection surface (not a mutable
+  task operation). Core observes GitHub PRs associated with a task branch,
+  merges live `gh` results with durable `PullRequestRef` metadata on the task
+  (so a merged PR remains visible after a later PR is opened for the same
+  task), and projects structured file/hunk diffs for a selected PR or a local
+  `base...HEAD` fallback. The browser only renders that projection; it must not
+  invent PR association, parse `gh` output, or store a second PR registry.
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
 - Confirmed worktree teardown renames the worktree into a sibling
@@ -567,6 +574,8 @@ task-operation commands or separate operator domains.
 `ajax-core::adapters` is the adapter facade.
 
 - `adapters/command.rs` defines command specs and the command-runner port.
+- `adapters/github.rs` observes PR checks and Diff Review PR list / patch
+  payloads through `gh` (browser never runs or parses these itself).
 - `adapters/process.rs` executes subprocesses.
 - `adapters/git.rs` builds and parses Git commands.
 - `adapters/tmux.rs` builds and parses tmux commands.
@@ -641,11 +650,14 @@ sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
-desktop. The browser submits only an Ajax task handle; `ajax-web` resolves that
-handle to the registered `tmux_session` and attaches to the fixed ` task window`
-target. The browser must not accept raw tmux target names or make pane captures,
-snapshot viewers, key-send endpoints, or answer routes the default task
-interaction path.
+desktop. From a selected task, swipe-left navigation opens Diff Review
+(`#/t/<handle>/diff`), a read-only PR/file/hunk viewer fed by core projections
+over `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Diff
+Review must not steal terminal horizontal pans. The browser submits only an
+Ajax task handle; `ajax-web` resolves that handle to the registered
+`tmux_session` and attaches to the fixed ` task window` target. The browser
+must not accept raw tmux target names or make pane captures, snapshot viewers,
+key-send endpoints, or answer routes the default task interaction path.
 
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and

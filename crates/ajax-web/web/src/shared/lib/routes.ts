@@ -8,10 +8,12 @@ export interface Route {
   kind: RouteKind;
   project?: string;
   handle?: string;
+  pr?: number;
 }
 
 const TASK_PREFIX = "#/t/";
 const PROJECT_PREFIX = "#/p/";
+const DIFF_SUFFIX = "/diff";
 
 function safeDecode(s: string): string {
   try {
@@ -21,11 +23,37 @@ function safeDecode(s: string): string {
   }
 }
 
+function parsePrQuery(query: string): number | undefined {
+  if (!query) return undefined;
+  for (const part of query.split("&")) {
+    const [key, value] = part.split("=");
+    if (key === "pr" && value) {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return undefined;
+}
+
 export function parseRoute(hash: string): Route {
-  const value = hash || "#/";
+  const raw = hash || "#/";
+  const qIndex = raw.indexOf("?");
+  const value = qIndex >= 0 ? raw.slice(0, qIndex) : raw;
+  const query = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
+
   if (value === "#/settings") return { kind: "settings" };
   if (value.startsWith(TASK_PREFIX)) {
-    const handle = safeDecode(value.slice(TASK_PREFIX.length));
+    const rest = value.slice(TASK_PREFIX.length);
+    if (!rest) return { kind: "dashboard" };
+    if (rest.endsWith(DIFF_SUFFIX)) {
+      const encodedHandle = rest.slice(0, -DIFF_SUFFIX.length);
+      if (!encodedHandle) return { kind: "dashboard" };
+      const handle = safeDecode(encodedHandle);
+      if (!handle) return { kind: "dashboard" };
+      const pr = parsePrQuery(query);
+      return pr !== undefined ? { kind: "diff", handle, pr } : { kind: "diff", handle };
+    }
+    const handle = safeDecode(rest);
     if (!handle) return { kind: "dashboard" };
     return { kind: "task", handle };
   }
@@ -51,4 +79,9 @@ export function projectHash(project: string): string {
 
 export function taskHash(handle: string): string {
   return `${TASK_PREFIX}${encodeURIComponent(handle)}`;
+}
+
+export function taskDiffHash(handle: string, pr?: number): string {
+  const base = `${TASK_PREFIX}${encodeURIComponent(handle)}${DIFF_SUFFIX}`;
+  return pr !== undefined ? `${base}?pr=${pr}` : base;
 }

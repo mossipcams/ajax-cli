@@ -23,7 +23,7 @@ export const TEST_IN_STABLE_TIMEOUT_MS = 900_000;
 // Bounds stalled LAN/TLS GETs; recovery comes from the existing poll interval.
 export const GET_REQUEST_TIMEOUT_MS = 10000;
 
-export type PollingRouteKind = "dashboard" | "project" | "task" | "settings";
+export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings";
 
 export function cockpitRefreshIntervalMs(input: {
   visibilityState: DocumentVisibilityState;
@@ -31,7 +31,9 @@ export function cockpitRefreshIntervalMs(input: {
 }): number {
   if (input.visibilityState !== "visible") return REFRESH_INTERVAL_HIDDEN_MS;
   if (input.routeKind === "task") return REFRESH_INTERVAL_TERMINAL_MS;
-  if (input.routeKind === "settings") return REFRESH_INTERVAL_IDLE_MS;
+  if (input.routeKind === "settings" || input.routeKind === "diff") {
+    return REFRESH_INTERVAL_IDLE_MS;
+  }
   return REFRESH_INTERVAL_ACTIVE_MS;
 }
 

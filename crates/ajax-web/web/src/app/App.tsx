@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useState } from "react";
-import { dashboardHash, projectHash, settingsHash, taskHash } from "@/shared/lib/routes";
+import { dashboardHash, projectHash, settingsHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
 import {
   cockpitRefreshIntervalMs,
   REFRESH_INTERVAL_ACTIVE_MS,
@@ -11,6 +11,7 @@ import ResultPanel from "@/shared/ui/ResultPanel";
 import TaskList from "@/features/task/TaskList";
 import TaskDetail from "@/features/task/TaskDetail";
 import TaskLoadError from "@/features/task/TaskLoadError";
+import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
 import Skeleton from "@/shared/ui/Skeleton";
@@ -44,7 +45,8 @@ export default function App() {
     markConnected,
   } = useCockpitResource();
   const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
-  const taskOpenHandle = route.kind === "task" ? (route.handle ?? null) : null;
+  const taskOpenHandle =
+    route.kind === "task" || route.kind === "diff" ? (route.handle ?? null) : null;
   const { detail, reload } = useTaskDetailResource(taskOpenHandle, {
     applyCockpit,
     applyConnectionError,
@@ -241,6 +243,27 @@ export default function App() {
                 }}
               />
             </section>
+          ) : route.kind === "diff" && route.handle ? (
+            <section
+              data-outlet="diff"
+              data-testid="outlet-diff"
+              data-handle={route.handle}
+              aria-live="polite"
+            >
+              <DiffReview
+                handle={route.handle}
+                title={detail.data?.title}
+                selectedPr={route.pr}
+                onBack={() => {
+                  if (route.kind === "diff" && route.handle) go(taskHash(route.handle));
+                }}
+                onSelectPr={(pr) => {
+                  if (route.kind === "diff" && route.handle) {
+                    go(taskDiffHash(route.handle, pr));
+                  }
+                }}
+              />
+            </section>
           ) : route.kind === "task" ? (
             <section
               data-outlet="task"
@@ -254,6 +277,7 @@ export default function App() {
                 <TaskDetail
                   detail={detail.data}
                   onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                  onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => route.kind === "task" && route.handle && reload()}

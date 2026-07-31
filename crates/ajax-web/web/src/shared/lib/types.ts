@@ -17,7 +17,36 @@ export type ConnectionState =
   | "stale session";
 
 /** Hash-route kinds. */
-export type RouteKind = "dashboard" | "project" | "task" | "settings";
+export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings";
+
+/** Read-only Diff Review projection (mirrors ajax-web `diff_review` DTOs). */
+export interface PullRequestView {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  head_ref: string;
+  head_sha: string | null;
+}
+
+export interface DiffHunkView {
+  header: string;
+  lines: string[];
+}
+
+export interface DiffFileView {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  hunks: DiffHunkView[];
+}
+
+export interface TaskDiffView {
+  source: string;
+  pr: PullRequestView | null;
+  files: DiffFileView[];
+}
 
 export interface BranchAdoptionPlan {
   expected_branch: string;
