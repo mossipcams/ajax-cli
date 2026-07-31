@@ -1,4 +1,5 @@
 use super::command::{CommandOutput, CommandRunError, CommandSpec};
+use crate::diff_review::{PullRequestRef, PullRequestState};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -50,12 +51,84 @@ impl GithubChecksAdapter {
             Ok(output) => parse_stdout_or_stderr(output),
         }
     }
+
+    pub fn pr_list(&self, worktree_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "pr",
+                "list",
+                "--state",
+                "all",
+                "--head",
+                branch,
+                "--json",
+                "number,title,url,state,headRefName,headRefOid",
+            ],
+        )
+        .with_cwd(worktree_path)
+        .with_timeout(GH_PR_CHECKS_TIMEOUT)
+    }
+
+    pub fn parse_pr_list(
+        result: &Result<CommandOutput, CommandRunError>,
+    ) -> Result<Vec<PullRequestRef>, String> {
+        let output = match result {
+            Err(error) => return Err(error.to_string()),
+            Ok(output) => output,
+        };
+
+        let rows: Vec<PrListRow> = serde_json::from_str(&output.stdout)
+            .map_err(|error| format!("unparsable gh pr list output: {error}"))?;
+
+        Ok(rows.into_iter().map(map_pr_row).collect())
+    }
+
+    pub fn pr_diff(&self, worktree_path: &str, number: u64) -> CommandSpec {
+        CommandSpec::new(&self.program, ["pr", "diff", &number.to_string()])
+            .with_cwd(worktree_path)
+            .with_timeout(GH_PR_CHECKS_TIMEOUT)
+    }
+
+    pub fn local_diff(&self, worktree_path: &str, base_branch: &str) -> CommandSpec {
+        let range = format!("{base_branch}...HEAD");
+        CommandSpec::new("git", ["diff", &range]).with_cwd(worktree_path)
+    }
 }
 
 #[derive(Deserialize)]
 struct CheckRow {
     name: String,
     state: String,
+}
+
+#[derive(Deserialize)]
+struct PrListRow {
+    number: u64,
+    title: String,
+    url: String,
+    state: String,
+    #[serde(rename = "headRefName")]
+    head_ref: String,
+    #[serde(rename = "headRefOid")]
+    head_sha: Option<String>,
+}
+
+fn map_pr_row(row: PrListRow) -> PullRequestRef {
+    let state = match row.state.to_ascii_uppercase().as_str() {
+        "OPEN" => PullRequestState::Open,
+        "MERGED" => PullRequestState::Merged,
+        _ => PullRequestState::Closed,
+    };
+
+    PullRequestRef {
+        number: row.number,
+        title: row.title,
+        url: row.url,
+        state,
+        head_ref: row.head_ref,
+        head_sha: row.head_sha,
+    }
 }
 
 fn parse_stdout_or_stderr(output: &CommandOutput) -> CiChecksObservation {
@@ -384,5 +457,85 @@ mod tests {
             }
             other => panic!("empty array should be unobservable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pr_list_plans_gh_json_in_worktree_with_timeout() {
+        let adapter = GithubChecksAdapter::new("gh");
+
+        let spec = adapter.pr_list("/worktrees/ajax-fix-login", "feature-branch");
+
+        assert_eq!(
+            spec,
+            CommandSpec::new(
+                "gh",
+                [
+                    "pr",
+                    "list",
+                    "--state",
+                    "all",
+                    "--head",
+                    "feature-branch",
+                    "--json",
+                    "number,title,url,state,headRefName,headRefOid",
+                ]
+            )
+            .with_cwd("/worktrees/ajax-fix-login")
+            .with_timeout(GH_PR_CHECKS_TIMEOUT)
+        );
+    }
+
+    #[test]
+    fn parse_pr_list_maps_open_and_merged_states() {
+        let stdout = r#"[
+            {"number":12,"title":"Open PR","url":"https://example.com/12","state":"OPEN","headRefName":"feature","headRefOid":"abc"},
+            {"number":10,"title":"Merged PR","url":"https://example.com/10","state":"MERGED","headRefName":"feature","headRefOid":"def"},
+            {"number":8,"title":"Closed PR","url":"https://example.com/8","state":"CLOSED","headRefName":"feature","headRefOid":null}
+        ]"#;
+        let result = Ok(ok_output(0, stdout, ""));
+
+        let prs = GithubChecksAdapter::parse_pr_list(&result).expect("parse should succeed");
+
+        assert_eq!(prs.len(), 3);
+        assert_eq!(prs[0].state, crate::diff_review::PullRequestState::Open);
+        assert_eq!(prs[1].state, crate::diff_review::PullRequestState::Merged);
+        assert_eq!(prs[2].state, crate::diff_review::PullRequestState::Closed);
+        assert_eq!(prs[0].head_sha.as_deref(), Some("abc"));
+        assert!(prs[2].head_sha.is_none());
+    }
+
+    #[test]
+    fn parse_pr_list_empty_array_is_ok_not_error() {
+        let result = Ok(ok_output(0, "[]", ""));
+
+        let prs = GithubChecksAdapter::parse_pr_list(&result).expect("empty list should parse");
+
+        assert!(prs.is_empty());
+    }
+
+    #[test]
+    fn pr_diff_plans_gh_command_in_worktree() {
+        let adapter = GithubChecksAdapter::new("gh");
+
+        let spec = adapter.pr_diff("/worktrees/ajax-fix-login", 42);
+
+        assert_eq!(
+            spec,
+            CommandSpec::new("gh", ["pr", "diff", "42"])
+                .with_cwd("/worktrees/ajax-fix-login")
+                .with_timeout(GH_PR_CHECKS_TIMEOUT)
+        );
+    }
+
+    #[test]
+    fn local_diff_plans_git_range_in_worktree() {
+        let adapter = GithubChecksAdapter::new("gh");
+
+        let spec = adapter.local_diff("/worktrees/ajax-fix-login", "main");
+
+        assert_eq!(
+            spec,
+            CommandSpec::new("git", ["diff", "main...HEAD"]).with_cwd("/worktrees/ajax-fix-login")
+        );
     }
 }

@@ -9,6 +9,7 @@ pub mod attention;
 pub mod canonical_agent_event;
 pub mod commands;
 pub mod config;
+pub mod diff_review;
 pub mod events;
 pub mod ghost_task;
 pub mod lifecycle;

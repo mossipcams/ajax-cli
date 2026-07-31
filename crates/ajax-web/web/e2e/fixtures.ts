@@ -123,6 +123,52 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (/^\/api\/tasks\/[^/]+\/pull-requests$/.test(path)) {
+        return new Response(
+          JSON.stringify(
+            routeMap["__pull_requests__"] ?? {
+              pull_requests: [
+                {
+                  number: 12,
+                  title: "Retry",
+                  url: "https://example.com/12",
+                  state: "OPEN",
+                  head_ref: "ajax/fix-login",
+                  head_sha: "abc",
+                },
+              ],
+            },
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (/^\/api\/tasks\/[^/]+\/diff$/.test(path)) {
+        return new Response(
+          JSON.stringify(
+            routeMap["__diff__"] ?? {
+              source: "pr:12",
+              pr: {
+                number: 12,
+                title: "Retry",
+                url: "https://example.com/12",
+                state: "OPEN",
+                head_ref: "ajax/fix-login",
+                head_sha: "abc",
+              },
+              files: [
+                {
+                  path: "src/a.ts",
+                  status: "modified",
+                  additions: 1,
+                  deletions: 0,
+                  hunks: [{ header: "@@ -1 +1,2 @@", lines: [" context", "+added"] }],
+                },
+              ],
+            },
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       if (/^\/api\/tasks\/[^/]+$/.test(path)) {
         return new Response(JSON.stringify(routeMap["__detail__"]), {
           status: 200,

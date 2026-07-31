@@ -113,6 +113,29 @@ describe("TaskDetail", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
+  it("opens Diff Review on a left swipe outside the terminal surface", () => {
+    const onOpenDiff = vi.fn();
+    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+    const root = screen.getByTestId("task-detail");
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    expect(onOpenDiff).toHaveBeenCalledOnce();
+  });
+
+  it("does not open Diff Review when the swipe begins on the terminal panel", () => {
+    const onOpenDiff = vi.fn();
+    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+    const root = screen.getByTestId("task-detail");
+    const terminal = document.createElement("div");
+    terminal.setAttribute("data-testid", "task-terminal-panel");
+    root.appendChild(terminal);
+    fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchMove(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchEnd(terminal, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    expect(onOpenDiff).not.toHaveBeenCalled();
+  });
+
   it("does not own document scroll via ajax-task-open", () => {
     expect(taskDetailSource).not.toMatch(/ajax-task-open/);
     expect(routeScrollSource).toMatch(/data-testid="route-scroll"/);

@@ -15,7 +15,9 @@ import type {
   DevDeployResponse,
   OperationRequest,
   OperationResponse,
+  PullRequestView,
   StartTaskRequest,
+  TaskDiffView,
   VersionResponse,
 } from "./types";
 
@@ -164,6 +166,35 @@ export async function fetchCockpit(): Promise<BrowserCockpitView> {
 export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {
   const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}`);
   return assertDetail(value);
+}
+
+export async function fetchTaskPullRequests(handle: string): Promise<PullRequestView[]> {
+  const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}/pull-requests`);
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("pull_requests" in value) ||
+    !Array.isArray((value as { pull_requests: unknown }).pull_requests)
+  ) {
+    throw new ApiError("incompatible", "invalid pull-requests payload");
+  }
+  return (value as { pull_requests: PullRequestView[] }).pull_requests;
+}
+
+export async function fetchTaskDiff(
+  handle: string,
+  options: { pr?: number; local?: boolean } = {},
+): Promise<TaskDiffView> {
+  const params = new URLSearchParams();
+  if (options.local) params.set("local", "1");
+  else if (options.pr !== undefined) params.set("pr", String(options.pr));
+  const query = params.toString();
+  const path = `/api/tasks/${encodeURIComponent(handle)}/diff${query ? `?${query}` : ""}`;
+  const value = await getJson(path);
+  if (typeof value !== "object" || value === null || !("files" in value) || !("source" in value)) {
+    throw new ApiError("incompatible", "invalid diff payload");
+  }
+  return value as TaskDiffView;
 }
 
 export async function fetchVersion(): Promise<VersionResponse> {

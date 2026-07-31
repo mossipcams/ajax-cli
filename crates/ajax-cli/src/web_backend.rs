@@ -330,6 +330,14 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             .map_err(web_error_from_cli)?;
         Ok(true)
     }
+
+    fn persist_registry_snapshot(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), WebError> {
+        self.persist_changed_state(context)
+            .map_err(web_error_from_cli)
+    }
 }
 
 impl CliRuntimeBridge {
@@ -1611,6 +1619,53 @@ mod tests {
             Some(later),
             "in-context acknowledgment unchanged"
         );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn persist_registry_snapshot_writes_diff_review_metadata_across_reload() {
+        let dir = scratch_dir("diff-review-persist");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let mut context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .expect("task present");
+            ajax_core::diff_review::remember_pull_requests(
+                task,
+                &[ajax_core::diff_review::PullRequestRef {
+                    number: 12,
+                    title: "Retry".into(),
+                    url: "https://example.com/12".into(),
+                    state: ajax_core::diff_review::PullRequestState::Open,
+                    head_ref: "ajax/fix-login".into(),
+                    head_sha: Some("abc".into()),
+                }],
+            );
+        }
+
+        <super::CliRuntimeBridge as RuntimeBridge<super::NoopRunner>>::persist_registry_snapshot(
+            &mut bridge,
+            &mut context,
+        )
+        .expect("persist ok");
+
+        let reloaded = crate::context::load_context(&paths).expect("reload saved state");
+        let stored = ajax_core::diff_review::stored_pull_requests(
+            reloaded
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .expect("task"),
+        );
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].number, 12);
 
         let _ = std::fs::remove_dir_all(dir);
     }

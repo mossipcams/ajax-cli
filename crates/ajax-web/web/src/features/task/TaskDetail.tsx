@@ -1,6 +1,12 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useRef, type TouchEvent } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { statusMeta } from "@/shared/lib/state";
+import {
+  isTerminalGestureTarget,
+  navigateSwipeEnd,
+  navigateSwipeMove,
+  navigateSwipeStart,
+} from "@/shared/gestures/navigateSwipe";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import TaskMetaDetails from "./TaskMetaDetails";
@@ -10,6 +16,7 @@ const TaskTerminal = lazy(() => import("./TaskTerminal"));
 interface Props {
   detail: BrowserTaskDetail;
   onBack?: () => void;
+  onOpenDiff?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
@@ -19,6 +26,7 @@ interface Props {
 export default function TaskDetail({
   detail,
   onBack,
+  onOpenDiff,
   onCockpit,
   onResult,
   onMutated,
@@ -26,14 +34,55 @@ export default function TaskDetail({
 }: Props) {
   const meta = statusMeta(detail.status);
   const actions = visibleTaskActions(detail.actions);
+  const touchRef = useRef({ x: 0, y: 0, tracking: false, swipe: navigateSwipeStart() });
 
   const activityLine = (() => {
     const line = detail.agent_activity ?? detail.live_status_summary;
     return line && line !== detail.status_explanation ? line : null;
   })();
 
+  function onTouchStart(event: TouchEvent) {
+    if (isTerminalGestureTarget(event.target)) {
+      touchRef.current.tracking = false;
+      return;
+    }
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    touchRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      tracking: true,
+      swipe: navigateSwipeStart(),
+    };
+  }
+
+  function onTouchMove(event: TouchEvent) {
+    if (!touchRef.current.tracking) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchRef.current.x;
+    const dy = touch.clientY - touchRef.current.y;
+    touchRef.current.swipe = navigateSwipeMove(touchRef.current.swipe, dx, dy);
+  }
+
+  function onTouchEnd() {
+    if (!touchRef.current.tracking) return;
+    const direction = navigateSwipeEnd(touchRef.current.swipe);
+    touchRef.current.tracking = false;
+    if (direction === "left") onOpenDiff?.();
+  }
+
   return (
-    <div className="task-detail" data-testid="task-detail">
+    <div
+      className="task-detail"
+      data-testid="task-detail"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={() => {
+        touchRef.current.tracking = false;
+      }}
+    >
       <div
         className="detail-header"
         data-mobile-chrome="header"
