@@ -1,6 +1,6 @@
 // Swipe-to-reveal e2e characterization. Pins TaskList behavior across
 // implementations: a left touch-drag on a dashboard row opens it by exactly
-// SWIPE_REVEAL_WIDTH and tapping the revealed first action dispatches
+// SWIPE_REVEAL_WIDTH (88px) and tapping the revealed first action dispatches
 // the operation (no second confirm tap for non-destructive review).
 //
 // Mobile-webkit only — desktop has no touch path and no reduced-pointer
@@ -14,6 +14,7 @@ import { mockFetch } from "./fixtures";
 // A calm (non-inbox) row: inbox rows surface their actions inline as real
 // buttons, so the swipe gesture only applies to the calm list.
 const TARGET_HANDLE = "api/add-auth";
+const REVEAL_WIDTH_PX = 88;
 const OPERATION_PATH = "/api/operations";
 
 type FetchCall = { url: string; method: string; body: string | null };
@@ -94,18 +95,14 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
   const row = page.locator(`.task-row[data-handle="${TARGET_HANDLE}"]`);
   await expect(row).toBeVisible({ timeout: 10_000 });
 
-  const revealWidth = await page
-    .locator(`.task-row-wrap[data-handle="${TARGET_HANDLE}"] .task-row-reveal`)
-    .evaluate((el) => parseInt((el as HTMLElement).style.width, 10));
+  // Swipe past the 56px snap trigger so the action settles open at the 88px cap.
+  await touchDragRowLeft(page, row, 120);
 
-  // Swipe past the 56px snap trigger so the action settles open at the reveal cap.
-  await touchDragRowLeft(page, row, revealWidth + 20);
-
-  // Reveal state: row is flagged is-revealed and translated by the reveal width.
+  // Reveal state: row is flagged is-revealed and translated by exactly 88px.
   await expect(row).toHaveClass(/is-revealed/);
   await expect
     .poll(() => row.evaluate((el) => (el as HTMLElement).style.transform))
-    .toBe(`translateX(-${revealWidth}px)`);
+    .toBe(`translateX(-${REVEAL_WIDTH_PX}px)`);
 
   // The revealed action is now visually present in the row wrap and clickable.
   const revealedAction = page.locator(
