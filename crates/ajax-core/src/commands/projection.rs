@@ -258,7 +258,11 @@ mod tests {
         assert_eq!(card.primary_action, OperatorAction::Resume);
         assert_eq!(
             card.available_actions,
-            vec![OperatorAction::Repair, OperatorAction::Resume]
+            vec![
+                OperatorAction::Repair,
+                OperatorAction::Resume,
+                OperatorAction::Drop,
+            ]
         );
 
         let projection = cockpit_projection(&[&task], summary());

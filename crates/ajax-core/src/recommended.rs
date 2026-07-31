@@ -187,7 +187,11 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         && (task.has_checkout_mismatch()
             || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch)
     {
-        return vec![OperatorAction::Repair, OperatorAction::Resume];
+        return vec![
+            OperatorAction::Repair,
+            OperatorAction::Resume,
+            OperatorAction::Drop,
+        ];
     }
 
     // A missing worktree is recoverable while the branch still exists — the
@@ -402,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn checkout_mismatch_recommends_repair_and_only_safe_terminal_access() {
+    fn checkout_mismatch_includes_repair_resume_and_drop() {
         let mut t = clean_reviewable_task("fix-login");
         t.git_status.as_mut().unwrap().current_branch = Some("fix/pane-stuck".to_string());
 
@@ -412,7 +416,11 @@ mod tests {
         assert_eq!(plan.reason, "checkout_mismatch");
         assert_eq!(
             plan.available_actions,
-            vec![OperatorAction::Repair, OperatorAction::Resume]
+            vec![
+                OperatorAction::Repair,
+                OperatorAction::Resume,
+                OperatorAction::Drop,
+            ]
         );
     }
 

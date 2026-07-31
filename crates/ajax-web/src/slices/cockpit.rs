@@ -406,6 +406,7 @@ pub(crate) mod tests {
         assert_eq!(card["status_explanation"], EXPLANATION);
         assert_eq!(card["actions"][0]["action"], "repair");
         assert_eq!(card["actions"][1]["action"], "resume");
+        assert_eq!(card["actions"][2]["action"], "drop");
 
         let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
@@ -413,6 +414,7 @@ pub(crate) mod tests {
         assert_eq!(detail.status_explanation.as_deref(), Some(EXPLANATION));
         assert_eq!(detail.actions[0].action, "repair");
         assert_eq!(detail.actions[1].action, "resume");
+        assert_eq!(detail.actions[2].action, "drop");
     }
 
     #[test]
