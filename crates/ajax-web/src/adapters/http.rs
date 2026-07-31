@@ -13,7 +13,7 @@ const CONTENT_SECURITY_POLICY: &str = concat!(
     "form-action 'none'; ",
     "object-src 'none'; ",
     "connect-src 'self' ws: wss:; ",
-    "script-src 'self' 'wasm-unsafe-eval'; ",
+    "script-src 'self' 'wasm-unsafe-eval' 'sha256-cEhm08XCOf2Kt9IKuI0/0iLwb9l8WTTdGXVjJSGMA8E='; ",
     "style-src 'self' 'unsafe-inline'; ",
     "img-src 'self' data:; ",
     "font-src 'self' data:"
@@ -175,5 +175,9 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("frame-ancestors 'none'"));
+        assert!(response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("'sha256-cEhm08XCOf2Kt9IKuI0/0iLwb9l8WTTdGXVjJSGMA8E='"));
     }
 }
