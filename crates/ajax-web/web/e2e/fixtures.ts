@@ -161,6 +161,7 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
                   status: "modified",
                   additions: 1,
                   deletions: 0,
+                  role: "signal",
                   hunks: [{ header: "@@ -1 +1,2 @@", lines: [" context", "+added"] }],
                 },
               ],
