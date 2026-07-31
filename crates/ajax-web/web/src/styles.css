@@ -881,10 +881,7 @@ header .bar h1 {
   bottom: 0;
   z-index: 20;
   display: grid;
-  /* One column per destination — auto-fit, so adding or removing a nav button
-     never wraps a second row into the bar's fixed height. */
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   width: min(var(--shell), 100%);
   margin: 0 auto;
@@ -929,18 +926,16 @@ header .bar h1 {
   color: var(--paper);
 }
 
-/* An underline, not a filled wash: the docked armed channel is already the
-   page's one filled surface, so current-page chrome stays quiet beside it. */
 .bottom-nav button[aria-current="page"] {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-deep) 55%, var(--paper-tint));
   color: var(--ink);
 }
 
 .bottom-nav button[aria-current="page"]:hover,
 .bottom-nav button[aria-current="page"]:focus-visible {
-  background: var(--paper-tint);
+  border-color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent-deep) 45%, var(--paper-raised));
   color: var(--ink);
 }
 
@@ -1006,547 +1001,271 @@ header .bar h1 {
   .status-line { font-size: var(--text-label); }
 }
 
-/* DASHBOARD — channel traces + iOS-docked armed channel --------------------- */
-/* One armed channel owns the next safe intent in the thumb zone; the fleet
-   above reads as thin traces, not cards. No card per task, no eyebrow labels,
-   no second copy of link state. */
-
-/* ROSTER HEAD — how big the fleet is, what shape it is in, which repo. ------ */
-.roster-head {
+/* TASK LIST (dashboard) --------------------------------------------------- */
+.project-nav {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule-strong);
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 14px;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-/* On a phone the fleet's shape takes its own line rather than ellipsing behind
-   the repo picker: the counts are the head's whole point. */
-@media (max-width: 430px) {
-  .roster-breakdown {
-    order: 3;
-    flex-basis: 100%;
-  }
-}
-
-.roster-count {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-
-.roster-count-value {
-  font-family: var(--mono);
-  font-size: var(--text-heading);
-  font-weight: 700;
-  color: var(--ink);
-  font-feature-settings: "tnum";
-}
-
-.roster-count-label {
+.project-nav-label {
   font-size: var(--text-micro);
+  font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--ink-faint);
+  margin-right: 4px;
 }
 
-/* The fleet's shape as words, never a proportional gauge: a bar whose segments
-   reflow on every poll moves the page under the operator's eye. */
-.roster-breakdown {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--text-micro);
-  color: var(--ink-muted);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.repo-select {
-  flex: 0 0 auto;
-  max-width: 42vw;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius-sm);
-  background: var(--paper-tint);
-  color: var(--ink);
-  padding: 5px 8px;
-  min-height: 32px;
-}
-
-/* CHANNEL TRACES — one line per task, so the fleet reads whole. ------------- */
-.task-list {
-  display: block;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.task-row-item {
-  display: block;
-}
-
-/* Band rule: a labelled hairline between groups, not a section shell. */
-/* The label line is as tall as its own type: four bands cost the roster four
-   rows of fleet if the lead is generous, and the fleet is the point. */
-.task-band-rule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 0 2px;
-  line-height: 1;
-  font-size: var(--text-micro);
-  font-weight: 700;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.task-band-rule::after {
-  content: "";
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--rule);
-}
-
-.task-band-count {
-  order: 1;
-  color: var(--ink-muted);
-  font-feature-settings: "tnum";
-}
-
-.task-band-label {
-  order: 0;
-}
-
-/* The row is a trace, not a card: glyph, handle, age. The title and every
-   action live on the armed channel — the handle already carries identity and
-   44px buys the whole fleet. */
-.task-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 6px 10px 6px 8px;
-  /* Selection scrolls with `block: "nearest"`; the docked channel floats over
-     the scrollport, so "nearest" must mean clear of the channel, not clear of
-     the viewport. --rail-h is the measured channel height. */
-  scroll-margin-bottom: calc(var(--rail-h, 240px) + 8px);
-  border: 0;
+.project-pill {
   background: transparent;
-  color: inherit;
-  text-align: left;
-  transition: background 140ms var(--ease);
-}
-
-.task-row-item + .task-row-item {
-  border-top: 1px solid var(--rule);
-}
-
-/* A band rule already separates groups, so the hairline inside a band is the
-   only divider a row needs. */
-.task-band-rule + .task-row-item {
-  border-top: 0;
-}
-
-.task-row:active {
-  background: var(--paper-tint);
-}
-
-.task-row.is-selected {
-  border-radius: var(--radius-sm);
-  background: var(--tone-bg, var(--paper-raised));
-}
-
-.task-row:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* The CLI's own glyph, in a fixed gutter so handles align down the column. */
-.task-row-glyph {
-  flex: 0 0 12px;
-  font-family: var(--mono);
-  font-size: var(--text-body-sm);
-  line-height: 1;
-  text-align: center;
-  color: var(--tone, var(--ink-muted));
-}
-
-.task-row.tone-running .task-row-glyph {
-  animation: pulse 2.2s ease-in-out infinite;
-}
-
-/* A running row gone silent must not look alive. */
-.task-row.is-quiet .task-row-glyph {
-  animation: none;
-}
-
-.task-row-handle {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--text-body-sm);
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
   color: var(--ink-soft);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  min-height: 28px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
-.task-row.is-selected .task-row-handle {
+.project-pill:hover,
+.project-pill:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.project-pill.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--ink);
   font-weight: 600;
 }
 
-.task-row-time {
-  flex: 0 0 auto;
+.pill-badge {
+  background: var(--warn);
+  color: var(--paper);
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
   font-size: var(--text-micro);
-  color: var(--ink-faint);
+  font-weight: 600;
   font-feature-settings: "tnum";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  margin-left: 6px;
 }
 
-/* ARMED CHANNEL — docked in the iOS thumb zone above the bottom nav. -------- */
-.rail-clearance {
-  width: 100%;
+/* A faulted repo shows a fault dot, not a count — health, not a metric. The pill
+   is not a flex row, so the dot needs inline-block to keep its box. */
+.pill-fault-dot {
+  display: inline-block;
+  vertical-align: middle;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  margin-left: 6px;
 }
 
-.task-rail {
-  position: fixed;
-  left: 0;
-  right: 0;
-  /* Reaches the viewport floor and pads itself past the bottom nav (8 + 44 + 8 +
-     hairline). Opaque floor, not a bordered shell: the card riding on it carries
-     the visible edge and shadow, so the dock itself is bare chrome. */
-  bottom: 0;
-  z-index: 15;
-  width: 100%;
-  padding: 10px max(16px, env(safe-area-inset-left)) calc(10px + 61px)
-    max(16px, env(safe-area-inset-right));
-  background: var(--paper);
+.tasks {
+  margin-top: 6px;
 }
 
-/* A trace cut mid-glyph should read as continuing under the dock, not as a
-   clipped render. A short fade is enough — the armed channel's own card, not
-   this scrim, carries the seam's visual weight. */
-.task-rail::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 8px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--paper));
+.task-band + .task-band {
+  margin-top: 14px;
 }
 
-.rail-inner {
-  display: flex;
-  flex-direction: column;
-  width: min(var(--shell), 100%);
-  margin: 0 auto;
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  background: var(--paper-tint);
-  border-top: 2px solid var(--tone, var(--accent));
-  box-shadow: var(--elev-2);
-  /* Lift and re-hang: a new arm settles once, ≤160ms, no layout shift. This is
-     the channel's only motion. */
-  animation: channel-settle 160ms var(--ease) both;
-}
-
-@keyframes channel-settle {
-  from {
-    opacity: 0.4;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rail-inner {
-    animation: none;
-  }
-}
-
-.rail-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.rail-handle {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--text-label);
-  color: var(--tone, var(--ink-muted));
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.rail-age {
-  flex: 0 0 auto;
-  font-size: var(--text-micro);
-  color: var(--ink-faint);
-  font-feature-settings: "tnum";
-}
-
-/* The surface's only route to the task page and its terminal: a real control
-   beside the identity line, reading in accent ink. */
-.rail-open {
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 0 0 10px;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: var(--text-label);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.rail-open:hover,
-.rail-open:focus-visible {
-  color: var(--accent-bright);
-  outline: none;
-}
-
-.rail-open:focus-visible {
-  text-decoration: underline;
-}
-
-/* The one heading-weight title on the dashboard: the armed channel is the
-   page's answer, so its title reads at display size, not row size. */
-.rail-title {
-  margin: 6px 0 0;
-  font-size: var(--text-display);
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  line-height: 1.25;
-  text-transform: none;
-  color: var(--ink);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.rail-note {
-  margin: 4px 0 0;
-  font-size: var(--text-body-sm);
-  color: var(--tone, var(--ink-soft));
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.rail-note--muted {
-  color: var(--ink-faint);
-}
-
-.rail-actions {
-  margin-top: 12px;
-}
-
-/* The channel is the page's one filled pill: the intent leads full-bleed, and
-   every other safe action stacks full-width beneath it, so a thumb resting in
-   the dock never has to aim sideways. */
-.rail-actions .action-row--primary-key {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.rail-actions .action-primary-slot .action {
-  width: 100%;
-  min-height: 46px;
-}
-
-.rail-actions .action-secondary-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.rail-actions .action-secondary-row .action {
-  width: 100%;
-  min-height: 36px;
-}
-
-/* SYSTEM — repo inventory and backend health, closed until asked for. ------- */
-.fleet-footer {
-  margin-top: 18px;
-  /* Keeps System clear of the docked armed channel when the disclosure opens. */
-  margin-bottom: 16px;
-  border-top: 1px solid var(--rule);
-  padding-top: 6px;
-}
-
-.fleet-summary {
+.task-band-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  cursor: pointer;
-  list-style: none;
+  margin: 0 0 6px;
+  padding-left: 2px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
 }
 
-.fleet-summary::-webkit-details-marker {
+.task-band-count {
+  color: var(--ink-muted);
+  font-feature-settings: "tnum";
+}
+
+/* Native disclosure for the idle tail — no JS, no custom toggle. */
+.idle-band > summary {
+  cursor: pointer;
+  list-style: none;
+  min-height: 28px;
+}
+
+.idle-band > summary::-webkit-details-marker {
   display: none;
 }
 
-.fleet-summary::after {
+.idle-band > summary::after {
   content: "›";
-  margin-left: auto;
   font-size: 18px;
   line-height: 1;
   color: var(--ink-faint);
   transition: transform 140ms var(--ease);
 }
 
-.fleet-footer[open] .fleet-summary::after {
+.idle-band[open] > summary::after {
   transform: rotate(90deg);
 }
 
-.fleet-summary-label {
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-soft);
-}
-
-.fleet-summary-meta {
-  min-width: 0;
-  font-size: var(--text-micro);
-  color: var(--ink-faint);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.fleet-body {
+.task-list {
   display: grid;
-  gap: 12px;
-  padding: 4px 0 6px;
-}
-
-.fleet-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 12px;
-  margin: 0;
-}
-
-.fleet-grid dt {
-  font-size: var(--text-micro);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.fleet-grid dd {
-  margin: 2px 0 0;
-  min-width: 0;
-  font-size: var(--text-data);
-  color: var(--ink-soft);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.system-warning {
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: rgba(215, 175, 95, 0.12);
-  border: 1px solid var(--warn);
-  color: var(--warn-bright);
-  font-size: var(--text-body-sm);
-}
-
-.system-dot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-}
-
-.system-dot.is-live {
-  background: var(--ok);
-}
-
-.repo-lines {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.repo-line {
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
   border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
   background: var(--paper-tint);
+  box-shadow: var(--elev-1);
+}
+
+.task-row-wrap {
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid var(--rule);
+}
+
+.task-row-wrap:first-child {
+  border-top: none;
+}
+
+.task-row-reveal {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-right: var(--space-2);
+}
+
+.task-row-reveal .action {
+  min-height: 36px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.task-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 48px;
+  padding: 10px var(--space-4);
+  background: var(--paper-tint);
+  border: none;
+  color: var(--ink);
+  text-align: left;
+  transition: background 120ms var(--ease), transform 220ms var(--ease);
+  touch-action: pan-y;
+}
+
+.task-row:hover,
+.task-row:focus-visible {
+  background: var(--paper-raised);
+  outline: none;
+}
+
+.task-row:active {
+  background: var(--paper-high);
+}
+
+.task-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
-.repo-line-name {
-  font-size: var(--text-body-sm);
-  font-weight: 600;
+/* Title is what the operator recognises; the handle is the address below it. */
+.task-row-title {
+  font-size: var(--text-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink);
 }
 
-/* The path is orientation, not a target — it truncates from the left so the
-   leaf directory (the part that identifies the repo) always survives. `rtl`
-   moves the ellipsis to the start; the inner <bdi> keeps the path itself
-   rendering left-to-right so the slashes don't invert. */
-.repo-line-path {
-  font-family: var(--mono);
+.task-row-handle {
   font-size: var(--text-micro);
-  color: var(--ink-faint);
-  overflow: hidden;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
+  color: var(--ink-faint);
 }
 
-.repo-line-path > bdi {
-  direction: ltr;
-  unicode-bidi: isolate;
-}
-
-.repo-line-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.repo-chip {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--paper-high);
+.task-row-sub {
+  font-size: var(--text-label);
   color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "Running but wedged": amber note, and the running dot stops pulsing so a
+   stalled agent doesn't read as live. */
+.task-row-quiet {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-row.is-quiet .status-dot.tone-running {
+  animation: none;
+}
+
+.task-row-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.task-row-status {
+  flex: none;
   font-size: var(--text-micro);
   font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--tone, var(--ink-muted));
+}
+
+.task-row-time {
+  font-size: var(--text-micro);
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-feature-settings: "tnum";
   white-space: nowrap;
 }
 
-.repo-chip.is-quiet {
+.task-row-chevron {
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
   color: var(--ink-faint);
 }
 
@@ -1858,24 +1577,6 @@ header .bar h1 {
   color: var(--ink);
   font-size: var(--text-label);
   font-weight: 600;
-}
-
-.floating-context-menu {
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 120px;
-  padding: 6px;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--paper-raised) 96%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 18%, transparent);
-}
-
-.floating-context-menu__item {
-  justify-content: flex-start;
-  width: 100%;
 }
 
 .terminal-new-output {

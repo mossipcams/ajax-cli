@@ -3,13 +3,7 @@
 // addInitScript before boot, matching e2e/smoke.test.ts.
 
 import { test, expect, type Page } from "@playwright/test";
-import {
-  COCKPIT_FIXTURE,
-  DETAIL_FIXTURE,
-  mockFetch,
-  mockTerminalWebSocket,
-  rosterRow,
-} from "./fixtures";
+import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket } from "./fixtures";
 
 /** Sane upper bound for a single compact task row (min-height + padding + subline). */
 const MAX_TASK_ROW_HEIGHT_PX = 96;
@@ -22,36 +16,9 @@ function cockpitWithManyTasks(count: number) {
     title: `Task ${index} with a long title that must stay on one line`,
     status: index % 4 === 0 ? "waiting" : "running",
     status_explanation: index % 4 === 0 ? "Needs review" : null,
-    attention: index % 4 === 0 ? "needs-you" : "active",
     actions: [],
   }));
   return { ...COCKPIT_FIXTURE, cards, inbox: { items: [] } };
-}
-
-/** One wide row (long title + a full action strip) alongside a plain one. The
- *  action strip is the widest thing the dashboard can put in a grid track. */
-function cockpitWithWideRow() {
-  return {
-    ...COCKPIT_FIXTURE,
-    cards: [
-      {
-        id: "api/add-auth",
-        qualified_handle: "api/add-auth",
-        repo: "api",
-        title: "Add OAuth device flow to the public API and then some more words",
-        status: "waiting",
-        status_explanation: "Waiting for review",
-        attention: "review",
-        actions: [
-          { action: "review", label: "Review", destructive: false, confirmation_required: false },
-          { action: "ship", label: "Ship", destructive: false, confirmation_required: false },
-          { action: "repair", label: "Repair", destructive: false, confirmation_required: false },
-        ],
-      },
-      { ...COCKPIT_FIXTURE.cards[0], attention: "review" },
-    ],
-    inbox: { items: [] },
-  };
 }
 
 // ---- layout probes (computed styles, not screenshots) --------------------
@@ -151,7 +118,7 @@ async function visibleAppBand(page: Page) {
 test("dashboard has exactly one normal route scroll owner", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const { routeScrollCount, rogueOwners } = await probeNormalRouteScrollOwners(page);
   expect(routeScrollCount, "route-scroll elements").toBe(1);
@@ -161,7 +128,7 @@ test("dashboard has exactly one normal route scroll owner", async ({ page }) => 
 test("html, body, and #app never become scroll containers on the dashboard", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const shells = await probeLockedShells(page);
   for (const shell of shells) {
@@ -173,7 +140,7 @@ test("html, body, and #app never become scroll containers on the dashboard", asy
 test("task rows stay within a sane height after many tasks render", async ({ page }) => {
   await mockFetch(page, { "/api/cockpit": cockpitWithManyTasks(40) });
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/task-0")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/task-0")).toBeVisible({ timeout: 10_000 });
 
   const rowHeights = await page.locator(".task-row").evaluateAll((rows) =>
     rows.map((row) => Math.round(row.getBoundingClientRect().height)),
@@ -184,41 +151,10 @@ test("task rows stay within a sane height after many tasks render", async ({ pag
   }
 });
 
-// The dashboard list is a grid, and grid items default to min-width:auto — so the
-// widest row's action strip sizes the whole track and pushes every row's
-// timestamp out past the clipped card edge. Measure containment, not pixels.
-test("a wide action row never pushes any row past the task list edge", async ({ page }) => {
-  await mockFetch(page, { "/api/cockpit": cockpitWithWideRow() });
-  await page.goto("/app.html");
-  await expect(rosterRow(page, "api/add-auth")).toBeVisible({ timeout: 10_000 });
-
-  const overflow = await page.locator(".task-list").evaluateAll((lists) =>
-    lists.flatMap((list) => {
-      const listRight = list.getBoundingClientRect().right;
-      return [...list.querySelectorAll(".task-row")].flatMap((row) => {
-        const handle = row.getAttribute("data-handle") ?? "?";
-        const probes: Array<{ what: string; overhang: number }> = [
-          { what: `${handle} row`, overhang: row.getBoundingClientRect().right - listRight },
-        ];
-        const time = row.querySelector(".task-row-time");
-        if (time) {
-          probes.push({
-            what: `${handle} timestamp`,
-            overhang: time.getBoundingClientRect().right - listRight,
-          });
-        }
-        return probes.filter((probe) => probe.overhang > 1);
-      });
-    }),
-  );
-
-  expect(overflow).toEqual([]);
-});
-
 test("new task sheet stays inside the simulated keyboard viewport band", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
   const sheet = page.locator('[data-testid="new-task-sheet"]');
@@ -330,48 +266,4 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
   const { routeScrollCount, rogueOwners } = await probeNormalRouteScrollOwners(page);
   expect(routeScrollCount, "route-scroll elements").toBe(1);
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
-});
-
-// Regression: the bottom nav was a fixed 2-column grid, so adding a third
-// destination wrapped it onto a second row. The taller bar then covered the
-// bottom of the scrolled page, because the scroll band is sized for one row.
-// The dashboard now also fixes an action rail above the nav, so the reachable
-// floor is the rail's top edge. Measures reachability of the last control, not
-// a column count.
-test("the last dashboard control clears the fixed chrome when scrolled to the end", async ({
-  page,
-}) => {
-  await mockFetch(page);
-  await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
-
-  const routeScroll = page.locator('[data-testid="route-scroll"]');
-  await routeScroll.evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
-  });
-
-  const clearance = await page.evaluate(() => {
-    const nav = document.querySelector(".bottom-nav");
-    const rail = document.querySelector('[data-testid="task-rail"]');
-    // v3's last content control is the System disclosure summary at the tail.
-    const last = document.querySelector(".fleet-summary");
-    if (!nav || !last) return null;
-    const floor = Math.min(
-      nav.getBoundingClientRect().top,
-      rail ? rail.getBoundingClientRect().top : Infinity,
-    );
-    const lastRect = last.getBoundingClientRect();
-    return {
-      overlap: lastRect.bottom - floor,
-      navHeight: nav.getBoundingClientRect().height,
-      railed: rail != null,
-    };
-  });
-
-  expect(clearance, "bottom nav or system footer missing").not.toBeNull();
-  expect(clearance!.railed, "dashboard rail present").toBe(true);
-  expect(
-    clearance!.overlap,
-    `last control overlaps fixed chrome by ${clearance!.overlap}px (nav ${clearance!.navHeight}px tall)`,
-  ).toBeLessThanOrEqual(1);
 });

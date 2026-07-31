@@ -7,9 +7,6 @@ import type { ApiError } from "./api";
 /** Canonical task status owned by Rust (`TaskStatus` serde lowercase). */
 export type TaskStatus = "running" | "waiting" | "idle" | "error" | "unknown";
 
-/** Which of the operator's questions this task answers. Owned by Rust. */
-export type AttentionBand = "needs-you" | "review" | "active" | "idle";
-
 /** Connection display states surfaced in the UI. */
 export type ConnectionState =
   | "connected"
@@ -35,16 +32,9 @@ export interface WebAction {
   branch_adoption?: BranchAdoptionPlan;
 }
 
-/** Mirrors `ajax_core::output::RepoSummary`. Every field but `name` is optional
- * here on purpose: a server that stops projecting a count must degrade to a
- * quieter repo row, never to a crashed dashboard. */
 export interface RepoSummary {
   name: string;
-  path?: string;
-  active_tasks?: number;
   attention_items?: number;
-  reviewable_tasks?: number;
-  cleanable_tasks?: number;
   [key: string]: unknown;
 }
 
@@ -74,7 +64,6 @@ export interface BrowserTaskCard {
   repo: string;
   title: string;
   status: TaskStatus;
-  attention: AttentionBand;
   status_explanation?: string | null;
   last_activity_unix_secs: number;
   actions: WebAction[];

@@ -6,7 +6,6 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
   mockFetch,
-  rosterRow,
 } from "./fixtures";
 
 // Record clipboard writes so Copy buttons can be asserted.
@@ -49,12 +48,12 @@ const resultPanel = (page: Page) => page.locator(".result-panel");
 
 // ---- App chrome navigation ------------------------------------------------
 
-test("bottom-nav Settings opens the settings route", async ({ page }) => {
+test("header Settings link opens the settings route", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
-  await page.locator('.bottom-nav button[data-bottom-route="#/settings"]').click();
+  await page.locator("button.settings-link").click();
   await expect(settings(page)).toBeVisible();
 });
 
@@ -155,7 +154,7 @@ test("settings Copy Diagnostics surfaces a result and Dismiss clears it", async 
 test("new task sheet Cancel closes the sheet", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
   await expect(page.locator("[data-testid='new-task-sheet']")).toBeVisible();
@@ -169,7 +168,7 @@ test("new task sheet Start submits and reports the task started", async ({ page 
     "/api/tasks": { ok: true, state_changed: true, cockpit: COCKPIT_FIXTURE, output: "started", error: null },
   });
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
   const sheet = page.locator("[data-testid='new-task-sheet']");
@@ -188,7 +187,7 @@ test("new task sheet Start submits and reports the task started", async ({ page 
 test("agent picker is keyboard reachable and moves with arrow keys", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
-  await expect(rosterRow(page, "web/fix-login")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
   const sheet = page.locator("[data-testid='new-task-sheet']");
