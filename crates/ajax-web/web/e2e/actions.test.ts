@@ -48,12 +48,12 @@ const resultPanel = (page: Page) => page.locator(".result-panel");
 
 // ---- App chrome navigation ------------------------------------------------
 
-test("bottom-nav Settings opens the settings route", async ({ page }) => {
+test("header Settings link opens the settings route", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
-  await page.locator('.bottom-nav button[data-bottom-route="#/settings"]').click();
+  await page.locator("button.settings-link").click();
   await expect(settings(page)).toBeVisible();
 });
 

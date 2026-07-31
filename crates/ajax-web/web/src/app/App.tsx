@@ -8,7 +8,7 @@ import {
 } from "@/shared/lib/polling";
 import ConnectionStatus from "@/shared/ui/ConnectionStatus";
 import ResultPanel from "@/shared/ui/ResultPanel";
-import Dashboard from "@/features/dashboard/Dashboard";
+import TaskList from "@/features/task/TaskList";
 import TaskDetail from "@/features/task/TaskDetail";
 import TaskLoadError from "@/features/task/TaskLoadError";
 import SettingsView from "@/features/settings/SettingsView";
@@ -179,8 +179,9 @@ export default function App() {
           <p className="status-line" aria-live="polite">
             {statusText}
           </p>
-          {/* Settings is a bottom-nav destination now; the header keeps only
-              what reports state. */}
+          <button className="settings-link" type="button" onClick={() => go(settingsHash())}>
+            Settings
+          </button>
           <span
             className={`live-dot${connection === "connected" ? " is-live" : ""}`}
             aria-hidden="true"
@@ -221,14 +222,6 @@ export default function App() {
       </button>
       <button type="button" data-bottom-action="new-task" onClick={() => setSheetOpen(true)}>
         New
-      </button>
-      <button
-        type="button"
-        data-bottom-route="#/settings"
-        aria-current={route.kind === "settings" ? "page" : undefined}
-        onClick={() => go(settingsHash())}
-      >
-        Settings
       </button>
     </nav>
   );
@@ -286,15 +279,13 @@ export default function App() {
                 <span className="pull-spinner" />
               </div>
               {cockpit.data ? (
-                <Dashboard
+                <TaskList
                   cockpit={cockpit.data}
-                  connection={connection}
                   selectedProject={selectedProject}
                   onSelectProject={(project: string | null) =>
                     go(project ? projectHash(project) : dashboardHash())
                   }
                   onOpenTask={(handle: string) => go(taskHash(handle))}
-                  onOpenSettings={() => go(settingsHash())}
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => loadCockpit()}
