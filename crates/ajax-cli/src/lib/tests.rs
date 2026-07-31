@@ -745,25 +745,6 @@ fn command_flow_fixture_records_partial_success_before_failure() {
     );
 }
 
-fn tmux_probe_commands() -> Vec<CommandSpec> {
-    tmux_live_commands().into_iter().take(2).collect()
-}
-
-fn tmux_probe_and_orphan_scan_commands() -> Vec<CommandSpec> {
-    let mut commands = tmux_probe_commands();
-    commands.push(CommandSpec::new(
-        "git",
-        [
-            "-C",
-            "/Users/matt/projects/web",
-            "worktree",
-            "list",
-            "--porcelain",
-        ],
-    ));
-    commands
-}
-
 fn tmux_live_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
@@ -789,6 +770,20 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
             ],
         ),
     ]
+}
+
+/// Working lifecycle opens the AoE running-reconcile capture gate for Codex.
+fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
+    let mut commands = tmux_live_commands();
+    commands.insert(
+        2,
+        CommandSpec::new(
+            "tmux",
+            ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
+        )
+        .with_timeout(std::time::Duration::from_secs(8)),
+    );
+    commands
 }
 
 /// Runtime refresh now ends with a GitHub PR check probe for the fixture
@@ -1539,7 +1534,7 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
             .find(|line| line.starts_with("web/fix-login")),
         Some("web/fix-login\tRunning - Agent working\tFix login")
     );
-    let mut expected = tmux_live_commands();
+    let mut expected = tmux_live_commands_with_running_reconcile();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -1587,7 +1582,7 @@ fn status_command_renders_json_from_refreshed_live_state() {
         parsed["tasks"][0]["live_status"]["summary"],
         "agent running"
     );
-    let mut expected = tmux_live_commands();
+    let mut expected = tmux_live_commands_with_running_reconcile();
     expected.push(expected_ci_probe_command());
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -1631,7 +1626,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
 
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
         assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
-        let mut expected = tmux_probe_and_orphan_scan_commands();
+        let mut expected = tmux_live_commands_with_running_reconcile();
         expected.push(expected_ci_probe_command());
         assert_eq!(runner.commands, expected, "{command:?}");
         let _ = std::fs::remove_dir_all(cache_dir);
@@ -1657,7 +1652,7 @@ fn read_commands_share_live_refresh_contract() {
             .unwrap_or_else(|error| panic!("{args:?} failed: {error}"));
 
         assert!(!output.is_empty(), "{args:?} should render a response");
-        let mut expected = tmux_live_commands();
+        let mut expected = tmux_live_commands_with_running_reconcile();
         expected.push(expected_ci_probe_command());
         assert_eq!(runner.commands, expected, "{args:?}");
         let _ = std::fs::remove_dir_all(cache_dir);
@@ -2009,6 +2004,11 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "-F",
                     "#{session_name}\t#{window_name}\t#{pane_current_path}",
                 ],
+            )
+            .with_timeout(std::time::Duration::from_secs(8)),
+            CommandSpec::new(
+                "tmux",
+                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
             )
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(

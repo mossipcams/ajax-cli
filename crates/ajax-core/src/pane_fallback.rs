@@ -63,6 +63,23 @@ pub fn maybe_pane_wait(agent: AgentClient, visible_pane: &str) -> Option<LiveObs
     }
 }
 
+/// Ungated pane wait observation for AoE-shaped running/idle reconcile.
+///
+/// Used when structured lifecycle projects activity but visible-pane chrome may
+/// still show a permission or input prompt.
+pub fn reconcile_wait_from_pane(agent: AgentClient, visible_pane: &str) -> Option<LiveObservation> {
+    match recognize_wait_hint(agent, visible_pane)? {
+        PaneWaitHint::WaitingPermission => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        )),
+        PaneWaitHint::WaitingQuestion => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        )),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RawPromptHint {
     IdlePrompt,
@@ -236,6 +253,14 @@ mod tests {
     #[test]
     fn gated_fallback_skips_when_claude_has_native_wait() {
         let pane = "Do you want to run this command?\n\n❯ 1. Yes\n  2. No\n\nEsc to cancel";
+        assert_eq!(maybe_pane_wait(AgentClient::Claude, pane), None);
+    }
+
+    #[test]
+    fn reconcile_wait_from_pane_is_ungated_for_claude_permission_chrome() {
+        let pane = "Do you want to run this command?\n\n❯ 1. Yes\n  2. No\n\nEsc to cancel";
+        let observation = reconcile_wait_from_pane(AgentClient::Claude, pane).unwrap();
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
         assert_eq!(maybe_pane_wait(AgentClient::Claude, pane), None);
     }
 
