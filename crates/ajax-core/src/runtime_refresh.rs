@@ -381,28 +381,63 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             changed |= *task != previous;
         }
 
-        if projection.phase == crate::agent_status::ParentPhase::Unknown {
-            if crate::pane_fallback::profile_allows_any_pane_wait_fallback(
-                task_snapshot.selected_agent,
-            ) {
-                let capture_command =
-                    tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
-                if let Ok(output) = runner.run(&capture_command) {
-                    if output.status_code == 0 {
-                        if let Some(observation) = crate::pane_fallback::maybe_pane_wait(
-                            task_snapshot.selected_agent,
-                            &output.stdout,
-                        ) {
+        let agent = task_snapshot.selected_agent;
+        let reconcile_running = projection.phase
+            == crate::agent_status::ParentPhase::ActivelyWorking
+            && matches!(
+                agent,
+                AgentClient::Claude | AgentClient::Codex | AgentClient::Cursor
+            );
+        // Actionable waits only — Done/"Response ready" is Waiting-class but must
+        // not open the idle reconcile capture gate (Bugbot).
+        let prior_actionable_or_running =
+            task_snapshot.live_status.as_ref().is_some_and(|status| {
+                matches!(
+                    status.kind,
+                    LiveStatusKind::AgentRunning
+                        | LiveStatusKind::WaitingForApproval
+                        | LiveStatusKind::WaitingForInput
+                )
+            });
+        let reconcile_idle = projection.phase == crate::agent_status::ParentPhase::FullyCompleted
+            && agent == AgentClient::Claude
+            && prior_actionable_or_running;
+        let unknown_fallback = projection.phase == crate::agent_status::ParentPhase::Unknown
+            && crate::pane_fallback::profile_allows_any_pane_wait_fallback(agent);
+
+        if reconcile_running || reconcile_idle || unknown_fallback {
+            let capture_command =
+                tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
+            if let Ok(output) = runner.run(&capture_command) {
+                if output.status_code == 0 {
+                    let pane_observation = if unknown_fallback {
+                        crate::pane_fallback::maybe_pane_wait(agent, &output.stdout)
+                    } else {
+                        crate::pane_fallback::reconcile_wait_from_pane(agent, &output.stdout)
+                    };
+                    if let Some(observation) = pane_observation {
+                        let blocked_by_ack = observation.kind.class() == LiveStatusClass::Waiting
+                            && task_snapshot
+                                .attention_acknowledged_at
+                                .is_some_and(|ack| now <= ack);
+                        if !blocked_by_ack {
                             if let Some(task) = context.registry.get_task_mut(&task_id) {
                                 let previous = task.clone();
                                 live::apply_observation_at(task, observation, now);
                                 refresh_cached_annotations(task);
                                 changed |= *task != previous;
                             }
+                            continue;
                         }
                     }
                 }
             }
+        }
+        // Preserve prior live evidence when the reducer has nothing trustworthy.
+        // Claude (native waits) never takes unknown_fallback, so without this
+        // continue we would apply LiveStatusKind::Unknown and clear waiting
+        // while leaving NeedsInput — re-arming attention after ack (Bugbot).
+        if projection.phase == crate::agent_status::ParentPhase::Unknown {
             continue;
         }
         let observation = projection.live.clone();
@@ -1074,7 +1109,9 @@ mod tests {
             }
             "-C" if git_branch_list(args) => "main\najax/fix-login\n",
             "list-windows" => "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
-            "capture-pane" => "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n",
+            // Non-wait chrome: Working reconcile captures for Claude/Codex/Cursor;
+            // idle composer here would falsely upgrade Working → Waiting.
+            "capture-pane" => "{\"type\":\"thinking\"}\n",
             _ => "",
         }
     }
@@ -2148,7 +2185,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_evidence_never_overrides_lifecycle_observation() {
+    fn running_lifecycle_reconciles_to_waiting_on_permission_pane() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = PermissionMenuRunner::default();
         let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
@@ -2163,19 +2200,113 @@ mod tests {
                 matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
             })
             .count();
-        assert_eq!(capture_panes, 0);
+        assert_eq!(capture_panes, 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::AgentRunning)
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    const CURSOR_PERMISSION_MENU: &str =
+        "Run this command?\n\n> Allow this command\n  Deny\n\nenter to select · esc to cancel";
+
+    #[derive(Default)]
+    struct CursorPermissionMenuRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for CursorPermissionMenuRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => CURSOR_PERMISSION_MENU,
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn cursor_running_reconciles_on_cursor_permission_chrome() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Cursor;
+        let mut runner = CursorPermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn claude_running_reconciles_despite_native_wait_capability() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn fully_completed_claude_idle_reconciles_to_waiting_on_permission_pane() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Done, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
         );
     }
 
     #[test]
     fn steady_state_refresh_skips_capture_pane_when_agent_cache_is_stable() {
         let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+        task.agent_status = AgentRuntimeStatus::Done;
+        task.remove_side_flag(SideFlag::AgentRunning);
         let mut runner = GitSkippingRunner::default();
-        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Done, 1, 120)]);
 
         let _changed =
             refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
@@ -2185,7 +2316,88 @@ mod tests {
             !runner.commands.iter().any(|command| {
                 matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
             }),
-            "stable agent cache with unchanged live status should skip capture-pane"
+            "stable FullyCompleted task with no reconcile gate should skip capture-pane"
+        );
+    }
+
+    #[test]
+    fn claude_unknown_phase_preserves_prior_waiting_live_status() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.remove_side_flag(SideFlag::AgentRunning);
+        let mut runner = PermissionMenuRunner::default();
+        // Liveness without lifecycle observations → reducer Unknown. Claude has no
+        // capability-gated unknown fallback; must not apply Unknown / clear waiting.
+        let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+            alive: true,
+            observed_at: SystemTime::now(),
+        });
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval),
+            "Unknown must not clear prior waiting live status for Claude"
+        );
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            runner
+                .commands
+                .iter()
+                .filter(|command| {
+                    matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+                })
+                .count(),
+            0,
+            "Claude Unknown without fallback must not capture-pane"
+        );
+    }
+
+    #[test]
+    fn claude_done_fully_completed_does_not_idle_reconcile_on_permission_pane() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+        task.agent_status = AgentRuntimeStatus::Done;
+        task.remove_side_flag(SideFlag::AgentRunning);
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Done, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let capture_panes = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+            })
+            .count();
+        assert_eq!(
+            capture_panes, 0,
+            "Done (soft Waiting-class) must not open idle reconcile"
+        );
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
         );
     }
 
@@ -2242,7 +2454,8 @@ mod tests {
             .count();
 
         assert_eq!(git_worktree_lists, 0);
-        assert_eq!(capture_panes, 0);
+        // Working Codex opens the running-reconcile capture gate once.
+        assert_eq!(capture_panes, 1);
         assert!(
             tmux_commands <= 2,
             "expected at most list-sessions + list-windows, got {tmux_commands}"
