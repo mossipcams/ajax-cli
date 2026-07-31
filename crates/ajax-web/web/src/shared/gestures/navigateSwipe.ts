@@ -1,5 +1,5 @@
-// Pure horizontal navigate-swipe math for task chrome. Task detail: swipe right
-// opens Diff Review; Diff Review: swipe left returns. Vertical-dominant drags
+// Pure horizontal navigate-swipe math for task chrome. Task detail: swipe left
+// opens Diff Review; Diff Review: swipe right returns. Vertical-dominant drags
 // stay ignored so scroll still works.
 
 export const NAVIGATE_SWIPE_TRIGGER = 56; // px past which release navigates

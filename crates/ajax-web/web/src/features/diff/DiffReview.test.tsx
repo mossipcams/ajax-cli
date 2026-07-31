@@ -129,23 +129,23 @@ describe("DiffReview", () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
-  it("does not swipe-back on a right swipe", async () => {
-    const onBack = vi.fn();
-    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
-    const root = await screen.findByTestId("diff-review");
-    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
-    fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
-    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
-  it("swipe-backs on a left swipe", async () => {
+  it("does not swipe-back on a left swipe", async () => {
     const onBack = vi.fn();
     render(<DiffReview handle="web/fix-login" onBack={onBack} />);
     const root = await screen.findByTestId("diff-review");
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 80 }] });
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 80 }] });
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("swipe-backs on a right swipe", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
+    fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
     expect(onBack).toHaveBeenCalledOnce();
   });
 

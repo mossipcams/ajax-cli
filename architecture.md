@@ -652,7 +652,7 @@ sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
-desktop. From a selected task, swipe-right navigation opens Diff Review
+desktop. From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer fed by core projections
 over `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Diff
 Review must not steal terminal horizontal pans. The browser submits only an

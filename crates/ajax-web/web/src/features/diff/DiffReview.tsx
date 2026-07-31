@@ -217,7 +217,7 @@ export default function DiffReview({
     if (!touchRef.current.tracking) return;
     const direction = navigateSwipeEnd(touchRef.current.swipe);
     touchRef.current.tracking = false;
-    if (direction === "left") onBackRef.current?.();
+    if (direction === "right") onBackRef.current?.();
   }
 
   const heading = title || handle;
