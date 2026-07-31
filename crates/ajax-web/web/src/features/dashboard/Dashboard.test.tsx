@@ -270,7 +270,7 @@ describe("Dashboard — the rail", () => {
 
     // jsdom reports offsetHeight 0, so the component keeps its fallback rather
     // than collapsing the clearance and letting the rail cover the last row.
-    expect(screen.getByTestId("rail-clearance").style.height).toBe("240px");
+    expect(screen.getByTestId("rail-clearance").style.height).toBe("148px");
   });
 });
 

@@ -70,25 +70,15 @@ test("dashboard chrome, roster, and rail carry the cockpit stylesheet", async ({
   const glyph = selected.locator(".task-row-glyph");
   expect(await glyph.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
 
-  // The dock is fixed and opaque; the armed-channel card riding on it carries
-  // the visible border, radius, and the page's one filled pill.
+  // The rail is the page's one filled pill and its own opaque surface.
   const rail = page.locator('[data-testid="task-rail"]');
   const railStyle = await rail.evaluate((el) => {
     const s = getComputedStyle(el);
-    return { bg: s.backgroundColor, position: s.position };
+    return { bg: s.backgroundColor, position: s.position, borderTopWidth: s.borderTopWidth };
   });
   expect(railStyle.bg).not.toBe(TRANSPARENT);
   expect(railStyle.position).toBe("fixed");
-
-  const railInner = page.locator(".rail-inner");
-  const railInnerStyle = await railInner.evaluate((el) => {
-    const s = getComputedStyle(el);
-    return { borderTopWidth: s.borderTopWidth, borderRadius: s.borderTopLeftRadius };
-  });
-  expect(railInnerStyle.borderTopWidth).toBe("2px");
-  expect(railInnerStyle.borderRadius).not.toBe("0px");
-
-  expect(await page.locator('[data-layout="primary-key"]').count()).toBe(1);
+  expect(railStyle.borderTopWidth).toBe("1px");
   expect(await bg(rail.locator(".action.primary"))).toBe(ACCENT);
 
   // Single new-task entry: bottom-nav only (no in-list dashed CTA).

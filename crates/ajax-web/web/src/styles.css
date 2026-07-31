@@ -929,18 +929,16 @@ header .bar h1 {
   color: var(--paper);
 }
 
-/* An underline, not a filled wash: the docked armed channel is already the
-   page's one filled surface, so current-page chrome stays quiet beside it. */
 .bottom-nav button[aria-current="page"] {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-deep) 55%, var(--paper-tint));
   color: var(--ink);
 }
 
 .bottom-nav button[aria-current="page"]:hover,
 .bottom-nav button[aria-current="page"]:focus-visible {
-  background: var(--paper-tint);
+  border-color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent-deep) 45%, var(--paper-raised));
   color: var(--ink);
 }
 
@@ -1006,9 +1004,10 @@ header .bar h1 {
   .status-line { font-size: var(--text-label); }
 }
 
-/* DASHBOARD — channel traces + iOS-docked armed channel --------------------- */
-/* One armed channel owns the next safe intent in the thumb zone; the fleet
-   above reads as thin traces, not cards. No card per task, no eyebrow labels,
+/* DASHBOARD — command roster + peg rail ------------------------------------ */
+/* The fleet is one roster read in a single viewport; the centre stays emptied
+   for it, and every tool for the selected task hangs on the rail at one
+   ordained height above the bottom nav. No card per task, no eyebrow labels,
    no second copy of link state. */
 
 /* ROSTER HEAD — how big the fleet is, what shape it is in, which repo. ------ */
@@ -1075,7 +1074,7 @@ header .bar h1 {
   min-height: 32px;
 }
 
-/* CHANNEL TRACES — one line per task, so the fleet reads whole. ------------- */
+/* ROSTER — one line per task, so the fleet reads whole. --------------------- */
 .task-list {
   display: block;
   margin: 0;
@@ -1120,9 +1119,8 @@ header .bar h1 {
   order: 0;
 }
 
-/* The row is a trace, not a card: glyph, handle, age. The title and every
-   action live on the armed channel — the handle already carries identity and
-   44px buys the whole fleet. */
+/* The row is the fleet's atom: glyph, handle, age. The title lives on the rail,
+   because the handle already carries identity and 44px buys the whole fleet. */
 .task-row {
   display: flex;
   align-items: center;
@@ -1131,10 +1129,10 @@ header .bar h1 {
   min-width: 0;
   min-height: 44px;
   padding: 6px 10px 6px 8px;
-  /* Selection scrolls with `block: "nearest"`; the docked channel floats over
-     the scrollport, so "nearest" must mean clear of the channel, not clear of
-     the viewport. --rail-h is the measured channel height. */
-  scroll-margin-bottom: calc(var(--rail-h, 240px) + 8px);
+  /* Selection scrolls with `block: "nearest"`; the rail is fixed over the
+     scrollport, so "nearest" must mean clear of the rail, not clear of the
+     viewport. --rail-h is the measured rail height. */
+  scroll-margin-bottom: calc(var(--rail-h, 148px) + 8px);
   border: 0;
   background: transparent;
   color: inherit;
@@ -1208,7 +1206,7 @@ header .bar h1 {
   font-feature-settings: "tnum";
 }
 
-/* ARMED CHANNEL — docked in the iOS thumb zone above the bottom nav. -------- */
+/* PEG RAIL — fixed height, fixed place, everything you can do from here. ---- */
 .rail-clearance {
   width: 100%;
 }
@@ -1218,46 +1216,54 @@ header .bar h1 {
   left: 0;
   right: 0;
   /* Reaches the viewport floor and pads itself past the bottom nav (8 + 44 + 8 +
-     hairline). Opaque floor, not a bordered shell: the card riding on it carries
-     the visible edge and shadow, so the dock itself is bare chrome. */
+     hairline). The nav is translucent, so anything left uncovered under it blurs
+     scrolling roster type into the nav bar; the member backs it instead. Its top
+     edge sits at the same height either way. */
   bottom: 0;
   z-index: 15;
+  /* The member crosses the whole room at one ordained height; only the tools on
+     it keep the 560px measure. */
   width: 100%;
-  padding: 10px max(16px, env(safe-area-inset-left)) calc(10px + 61px)
-    max(16px, env(safe-area-inset-right));
-  background: var(--paper);
+  padding: 9px 0 calc(11px + 61px);
+  border-top: 1px solid var(--tone, var(--rule-strong));
+  /* Opaque, not translucent chrome: the roster's tail scrolls under the rail,
+     and blurred type showing through a control surface reads as a defect. */
+  background: var(--paper-tint);
+  /* DESIGN.md's documented chrome lift, same as the bottom nav it sits on. */
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
 }
 
-/* A trace cut mid-glyph should read as continuing under the dock, not as a
-   clipped render. A short fade is enough — the armed channel's own card, not
-   this scrim, carries the seam's visual weight. */
+/* A row cut mid-glyph should read as continuing under the member, not as a
+   clipped render. `bottom: 100%` resolves against the padding box, which put the
+   scrim's opaque edge over the 1px tone rule and neutralised the selection
+   thread — hence the extra pixel. The fade ends on the rail's own surface so
+   there is no tone step at the seam. */
 .task-rail::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 100%;
-  height: 8px;
+  bottom: calc(100% + 1px);
+  height: 16px;
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--paper));
+  background: linear-gradient(to bottom, transparent, var(--paper-tint));
 }
 
 .rail-inner {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: start;
   width: min(var(--shell), 100%);
   margin: 0 auto;
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  background: var(--paper-tint);
-  border-top: 2px solid var(--tone, var(--accent));
-  box-shadow: var(--elev-2);
-  /* Lift and re-hang: a new arm settles once, ≤160ms, no layout shift. This is
-     the channel's only motion. */
-  animation: channel-settle 160ms var(--ease) both;
+  padding: 0 calc(20px + env(safe-area-inset-right)) 0
+    calc(20px + env(safe-area-inset-left));
+  /* Lift and re-hang: the tool that changed settles once, ≤160ms, no layout
+     shift. This is the rail's only motion. */
+  animation: rail-settle 160ms var(--ease) both;
 }
 
-@keyframes channel-settle {
+@keyframes rail-settle {
   from {
     opacity: 0.4;
     transform: translateY(4px);
@@ -1272,6 +1278,11 @@ header .bar h1 {
   .rail-inner {
     animation: none;
   }
+}
+
+.rail-text {
+  grid-column: 1;
+  min-width: 0;
 }
 
 .rail-head {
@@ -1299,12 +1310,14 @@ header .bar h1 {
   font-feature-settings: "tnum";
 }
 
-/* The surface's only route to the task page and its terminal: a real control
-   beside the identity line, reading in accent ink. */
+/* The surface's only route to the task page and its terminal: a real control at
+   the documented floor, reading in accent ink. */
 .rail-open {
-  flex: 0 0 auto;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   min-height: 44px;
-  padding: 0 0 0 10px;
+  padding: 0 4px 0 10px;
   border: 0;
   background: transparent;
   color: var(--accent);
@@ -1323,15 +1336,11 @@ header .bar h1 {
   text-decoration: underline;
 }
 
-/* The one heading-weight title on the dashboard: the armed channel is the
-   page's answer, so its title reads at display size, not row size. */
 .rail-title {
-  margin: 6px 0 0;
-  font-size: var(--text-display);
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  line-height: 1.25;
-  text-transform: none;
+  margin: 2px 0 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.3;
   color: var(--ink);
   overflow: hidden;
   display: -webkit-box;
@@ -1340,7 +1349,7 @@ header .bar h1 {
 }
 
 .rail-note {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: var(--text-body-sm);
   color: var(--tone, var(--ink-soft));
   overflow: hidden;
@@ -1353,39 +1362,29 @@ header .bar h1 {
 }
 
 .rail-actions {
-  margin-top: 12px;
+  grid-column: 1 / -1;
+  margin-top: 10px;
 }
 
-/* The channel is the page's one filled pill: the intent leads full-bleed, and
-   every other safe action stacks full-width beneath it, so a thumb resting in
-   the dock never has to aim sideways. */
-.rail-actions .action-row--primary-key {
+/* The rail is the page's one filled pill: the intent leads and grows, the rest
+   stay at their natural width beside it. */
+.rail-actions .action-row {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.rail-actions .action-primary-slot .action {
-  width: 100%;
-  min-height: 46px;
+.rail-actions .action {
+  flex: 0 1 auto;
 }
 
-.rail-actions .action-secondary-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.rail-actions .action-secondary-row .action {
-  width: 100%;
-  min-height: 36px;
+.rail-actions .action.primary {
+  flex: 1 1 auto;
 }
 
 /* SYSTEM — repo inventory and backend health, closed until asked for. ------- */
 .fleet-footer {
   margin-top: 18px;
-  /* Keeps System clear of the docked armed channel when the disclosure opens. */
-  margin-bottom: 16px;
   border-top: 1px solid var(--rule);
   padding-top: 6px;
 }

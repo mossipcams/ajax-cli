@@ -175,14 +175,14 @@ components:
 
 Ajax is the product and the visual brief: a pocket operator console for a local agent fleet. Soft Charcoal surfaces, Soft Steel Blue as the running signal, and a terminal pane that owns the work. Chrome is sparse, pill-decisive, and mobile-first for Safari on iPhone — status, required decision, then the raw tmux/xterm bridge.
 
-Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are CLI-locked to match Native Cockpit. Motion is short state feedback (≈140–220ms), never page choreography. The home dashboard answers "what now?" before "what is there?": one **armed channel** docked above the bottom nav in the iOS thumb zone, carrying the host's highest-severity attention item with a full-bleed primary intent (Fix CI / Review / Ship) and full-width secondaries stacked beneath it, above thin band-tagged fleet traces that carry identity only — never a per-row action, never a ledger with controls tucked away. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
+Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are CLI-locked to match Native Cockpit. Motion is short state feedback (≈140–220ms), never page choreography. The home dashboard answers "what now?" before "what is there?": one **Next card** carrying the host's highest-severity attention item with a full-width primary intent (Fix CI / Review / Ship), then a single band-tagged queue where every safe action is still a visible outlined tap target — never a ledger with controls tucked away. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
 
 **Key Characteristics:**
 - Soft Charcoal stack with hairline rules; depth mostly from paper steps
 - Soft Steel Blue as primary action and running tone; semantic amber / rose / sage for wait / fault / done
 - Pill actions (44px min primary) and uppercase tracked chrome labels
 - Shell width capped at 560px; iOS safe-area and keyboard geometry are first-class
-- Dashboard: one iOS-docked armed channel (full-bleed primary) above band-tagged fleet traces
+- Dashboard: one raised Next card (full-bleed primary) above a flat band-tagged queue
 - Terminal is the signature surface on task detail; UI never competes with the pane
 - Fixed rem type ramp in CSS (`--text-micro` … `--text-display`); no Inter in the stack
 
@@ -248,7 +248,7 @@ Restrained dark console palette: neutrals do the work; semantic accents speak on
 
 Mobile-first single column inside a **560px** shell (`--shell`). Horizontal inset ~`20px`. Spacing is a 4px rhythm (`--space-1`…`--space-6`). Body reserves ~72px for the fixed bottom nav; safe-area insets belong on chrome edges.
 
-Dashboard reading order: head (count · fleet shape as words · native repo picker) → band-tagged fleet traces ordered Needs → Running → Ready → Recent → System disclosure (repo inventory + backend authority, closed at rest) → the armed channel, docked above the bottom nav and always in view. Task detail yields the viewport band to the terminal when the keyboard is open or the pane is expanded. Breakpoint `@media (max-width: 380px)` only tightens type — no multi-column dashboard lattice inside the shell.
+Dashboard reading order: Next card → attention chips + native repo picker → one queue ordered Needs → Running → Ready → Recent → System disclosure (repo inventory + backend authority, closed at rest). Task detail yields the viewport band to the terminal when the keyboard is open or the pane is expanded. Breakpoint `@media (max-width: 380px)` only tightens type — no multi-column dashboard lattice inside the shell.
 
 ## Elevation & Depth
 
@@ -260,7 +260,7 @@ Mostly flat. Depth comes from the Soft Charcoal paper steps (`--soft-charcoal` �
 - **Backdrop chrome**: Sticky header / bottom nav use `color-mix` + light blur — functional Safari chrome, not glassmorphism decoration.
 
 ### Named Rules
-**The Flat-By-Default Rule.** Task rows and content panels stay tonal. If a shadow appears on a list card, remove it. The single exception is the dashboard's armed channel (`--elev-2`) — one raised object per page, earning it by being the page's answer and the one control surface docked above the bottom nav.
+**The Flat-By-Default Rule.** Task rows and content panels stay tonal. If a shadow appears on a list card, remove it. The single exception is the dashboard's Next card (`--elev-2`) — one raised object per page, earning it by being the page's answer.
 
 ## Shapes
 
@@ -303,11 +303,11 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - **Connection recovery:** Retry is the sole primary; Reload / diagnostics / health are secondary.
 - **Mobile:** Safe-area padding mandatory; keyboard-open and terminal-expanded modes collapse chrome so the terminal owns the band.
 
-### Signature: Armed channel + band-tagged traces
-- **Armed channel** — the page's one raised surface (`--elev-2`, `--paper-tint`, 2px `--tone` top rule), docked above the bottom nav in the iOS thumb zone: handle · age · `Open ›`, title at `--text-display`, tone-coloured note, then a full-bleed primary pill (`min-height: 46px`) with full-width secondaries stacked beneath it (`ActionBar layout="primary-key"`). It is the sanctioned exception to the Flat-By-Default Rule — one per page, never a card grid.
+### Signature: Next card + band-tagged queue
+- **Next card** — the page's one raised surface (`--elev-2`, `--paper-raised`, 2px `--tone` top rule): NEXT label, identity head (dot · handle · time), title at `--text-heading`, tone-coloured note, then a full-bleed primary pill (`min-height: 46px`) with natural-width secondaries under it (`ActionBar layout="primary-key"`). It is the sanctioned exception to the Flat-By-Default Rule — one per page, never a card grid.
 - **Which task** is the host's call: `cockpit.inbox` is already severity-ordered by `projection.rs`, so the browser takes the leading entry still in view and never ranks severity itself. `inbox.reason` is an evidence label the browser must not translate.
-- **Traces** — one flat `.task-list`, glyph · handle · age only, no per-row title, note, or action. Band rules (Needs you / Running / Ready / Recent) tag groups with a count, so the whole fleet reads at a glance above the docked channel.
-- Drop never appears on the dashboard; Resume/Open stay filtered (open is the channel's `Open ›`, not a row tap).
+- **Queue** — one flat `.task-list`, no band sections. Each row: status dot + identity head (handle · uppercase band tag in `--tone` · time), title, note, then every safe action as an outlined pill (`min-height: 36px`); the leading action keeps accent ink but no fill, so the Next card owns the page's only filled pill.
+- Drop never appears on the dashboard; Resume/Open stay filtered (open is the row tap).
 - Band membership, band order and action lists come from the host — the browser never invents task truth.
 
 ### Signature: Task terminal + interact strip
