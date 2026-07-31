@@ -17,6 +17,10 @@ mobile-WebKit behavior suite including the viewport-burst case passes as of
 | Document viewport + keyboard truth | `viewport.ts` |
 | Pure grid/scale/row/font persistence math | `terminalGeometry.ts` |
 | Frame coalescing, two-frame settling, 100 ms PTY debounce, dimension dedupe, disposal | `terminalRefit.ts` |
+| xterm addon attach/dispose (fit, web-links, serialize) | `terminalAddons.ts` |
+| Link activation, open/copy actions | `terminalLinkService.ts` (http(s) only; `_blank` + noopener/noreferrer via temporary anchor so standalone PWA is not replaced) |
+| In-memory terminal buffer snapshot | `terminalSnapshot.ts` |
+| Generic floating action menu | `FloatingContextMenu.tsx` |
 | PTY attach + frame bridge | `ajax-web::adapters::terminal_pty` |
 | Task-handle attach planning | `ajax-web::slices::terminal` |
 | Protected route `/api/tasks/{handle}/terminal` | `ajax-web::runtime` |

@@ -1,8 +1,10 @@
 import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { copyText } from "@/shared/lib/clipboard";
+import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
+import { findHttpLinkAtClient } from "@/shared/lib/terminalLinkHitTest";
+import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
 import { resetDocumentScroll } from "@/shared/lib/viewport";
 import {
   connectTaskTerminal,
@@ -22,6 +24,7 @@ import {
 import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
+import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -90,6 +93,15 @@ export default function TaskTerminal({ handle }: Props) {
   const [copyNotice, setCopyNotice] = useState("");
   const [copyFallbackOpen, setCopyFallbackOpen] = useState(false);
   const [copyFallbackText, setCopyFallbackText] = useState("");
+  const [linkMenu, setLinkMenu] = useState<{
+    url: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const linkServiceRef = useRef<TerminalLinkService | undefined>(undefined);
+  const terminalSnapshotRef = useRef<
+    ReturnType<typeof attachTerminalAddons>["snapshot"] | undefined
+  >(undefined);
 
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
@@ -642,7 +654,7 @@ export default function TaskTerminal({ handle }: Props) {
 
     // Deferred init: closed over by fitLocal / cleanup before first assignment.
     // eslint-disable-next-line prefer-const -- assigned once after helper closures are built
-    let fitAddon: FitAddon | undefined;
+    let terminalAddons: ReturnType<typeof attachTerminalAddons> | undefined;
     let lastSentCols = 0;
     let lastSentRows = 0;
     let fitFrame = 0;
@@ -768,6 +780,7 @@ export default function TaskTerminal({ handle }: Props) {
     };
 
     const fitLocal = () => {
+      const fitAddon = terminalAddons?.fitAddon;
       if (!isActive() || !fitAddon || !termRef.current || !hostEl) return;
       syncHostToWrap();
       const proposed = fitAddon.proposeDimensions();
@@ -906,6 +919,18 @@ export default function TaskTerminal({ handle }: Props) {
     const onInteractionClick = (event: MouseEvent) => {
       const target = event.target;
       if (target instanceof Element && target.closest("button")) return;
+
+      const hit = findHttpLinkAtClient(
+        termRef.current,
+        event.clientX,
+        event.clientY,
+        hostEl,
+      );
+      if (hit) {
+        setLinkMenu({ url: hit.url, x: event.clientX, y: event.clientY });
+        return;
+      }
+
       const textarea = termTextarea();
       if (textarea) {
         resetDocumentScroll();
@@ -1153,8 +1178,13 @@ export default function TaskTerminal({ handle }: Props) {
         cursor: "#87afd7",
       },
     });
-    fitAddon = new FitAddon();
-    liveTerm.loadAddon(fitAddon);
+    terminalAddons = attachTerminalAddons(liveTerm, {
+      onLinkActivate: ({ url, clientX, clientY }) => {
+        setLinkMenu({ url, x: clientX, y: clientY });
+      },
+    });
+    linkServiceRef.current = terminalAddons.linkService;
+    terminalSnapshotRef.current = terminalAddons.snapshot;
     liveTerm.open(hostEl);
     termRef.current = liveTerm;
     onHardenTextarea();
@@ -1311,7 +1341,9 @@ export default function TaskTerminal({ handle }: Props) {
       if (connection && connectionRef.current === connection) {
         connectionRef.current = undefined;
       }
-      fitAddon?.dispose();
+      terminalAddons?.dispose();
+      linkServiceRef.current = undefined;
+      terminalSnapshotRef.current = undefined;
       termRef.current?.dispose();
       if (viteDev && hostEl) {
         delete (hostEl as unknown as { __xterm?: Terminal }).__xterm;
@@ -1390,6 +1422,46 @@ export default function TaskTerminal({ handle }: Props) {
           </>
         ) : null}
       </div>
+      {linkMenu ? (
+        <FloatingContextMenu
+          open
+          anchor={{ x: linkMenu.x, y: linkMenu.y }}
+          items={[
+            {
+              id: "open",
+              label: "Open",
+              onSelect: () => {
+                linkServiceRef.current?.onOpen(linkMenu.url);
+                setLinkMenu(null);
+              },
+            },
+            {
+              id: "copy",
+              label: "Copy",
+              onSelect: () => {
+                const url = linkMenu.url;
+                setLinkMenu(null);
+                void (async () => {
+                  const copied = await linkServiceRef.current?.onCopy(url);
+                  if (copied) {
+                    if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
+                    setCopyNotice("Copied");
+                    copyNoticeTimerRef.current = setTimeout(() => {
+                      setCopyNotice("");
+                      copyNoticeTimerRef.current = undefined;
+                    }, 1500);
+                    return;
+                  }
+                  setCopyFallbackText(url);
+                  setCopyFallbackOpen(true);
+                })();
+              },
+            },
+          ]}
+          onClose={() => setLinkMenu(null)}
+          ariaLabel="Terminal link actions"
+        />
+      ) : null}
       {copyFallbackOpen ? (
         <div className="terminal-paste-fallback">
           <p className="terminal-paste-notice" role="status">
