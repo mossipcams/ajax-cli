@@ -88,16 +88,10 @@ describe("TaskList", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("groups active tasks into health tiers, faults before running, idle in the disclosure", () => {
+  it("places running/error tasks in Active and idle tasks in the disclosure", () => {
     render(<TaskList cockpit={cockpit} />);
     const tasks = screen.getByRole("region", { name: "Tasks" });
-    const label = { selector: ".task-band-label" } as const;
-    expect(within(tasks).getByText("Faults", label)).toHaveClass("task-band-label");
-    expect(within(tasks).getByText("Running", label)).toHaveClass("task-band-label");
-    const tierOrder = within(tasks)
-      .getAllByText(/^(Faults|Waiting|Running)$/, label)
-      .map((node) => node.textContent);
-    expect(tierOrder).toEqual(["Faults", "Running"]);
+    expect(within(tasks).getByText("Active")).toHaveClass("task-band-label");
 
     const idle = within(tasks).getByRole("group");
     expect(idle).toHaveAttribute("open");
@@ -107,39 +101,11 @@ describe("TaskList", () => {
     expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
   });
 
-  it("summarizes the active fleet as a muster bar, idle excluded", () => {
+  it("shows per-repo attention counts on project pills", () => {
     render(<TaskList cockpit={cockpit} />);
-    expect(screen.getByRole("group", { name: "Fleet status" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 Error — tap to filter/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 Running — tap to filter/ })).toBeInTheDocument();
-    // idle never gets a segment.
-    expect(screen.queryByRole("button", { name: /Idle — tap to filter/ })).toBeNull();
-  });
-
-  it("filters the tiers to one state when a muster segment is tapped", () => {
-    render(<TaskList cockpit={cockpit} />);
-    fireEvent.click(screen.getByRole("button", { name: /1 Error — tap to filter/ }));
-    const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByText("Faults")).toBeInTheDocument();
-    expect(within(tasks).queryByText("Running")).toBeNull();
-    expect(within(tasks).queryByRole("group")).toBeNull(); // idle disclosure hidden while filtered
-    expect(within(tasks).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
-    expect(within(tasks).queryByRole("button", { name: /web\/b/ })).toBeNull();
-  });
-
-  it("flags a running task that has gone quiet past the threshold", () => {
-    // web/b last activity is 5m ago — past the 4m quiet boundary.
-    render(<TaskList cockpit={cockpit} />);
-    const rowB = screen.getByRole("button", { name: /web\/b/ });
-    expect(rowB).toHaveClass("is-quiet");
-    expect(within(rowB).getByText(/Quiet 5m — no output/)).toBeInTheDocument();
-  });
-
-  it("marks faulted repos with a fault dot on the project pill", () => {
-    render(<TaskList cockpit={cockpit} />);
-    // The accessible label is the fault contract; the dot itself is decorative.
-    const webPill = screen.getByRole("button", { name: "web — has a fault" });
-    expect(webPill).toHaveAttribute("aria-label", "web — has a fault");
+    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
+    expect(webPill).toHaveAttribute("aria-label", "web — 2 need attention");
+    expect(within(webPill).getByText("2")).toHaveClass("pill-badge");
     const apiPill = screen.getByRole("button", { name: "api" });
     expect(apiPill).toHaveAttribute("aria-label", "api");
   });
@@ -156,7 +122,7 @@ describe("TaskList", () => {
     const onSelectProject = vi.fn();
     render(<TaskList cockpit={cockpit} onSelectProject={onSelectProject} />);
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
-    const webPill = screen.getByRole("button", { name: "web — has a fault" });
+    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
     fireEvent.click(webPill);
     expect(onSelectProject).toHaveBeenCalledWith("web");
   });
@@ -243,20 +209,13 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
-  it("uses accent for the active project pill and danger for the fault dot", () => {
+  it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
-    const faultDotRule = stylesSource.match(/\.pill-fault-dot\s*\{([^}]*)\}/)?.[1] ?? "";
+    const pillBadgeRule = stylesSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
     expect(activePillRule).not.toMatch(/var\(--warn/);
-    expect(faultDotRule).toMatch(/var\(--danger\)/);
-  });
-
-  it("keeps swipe-reveal action labels on one line with enough horizontal pad", () => {
-    expect(stylesSource).toMatch(/\.task-row-reveal\s+\.action[\s\S]*?white-space:\s*nowrap/);
-    expect(stylesSource).toMatch(
-      /\.task-row-reveal\s+\.action[\s\S]*?padding:\s*[0-9]+px\s+(?:1[2-9]|[2-9]\d)px/,
-    );
+    expect(pillBadgeRule).toMatch(/var\(--warn/);
   });
 });
