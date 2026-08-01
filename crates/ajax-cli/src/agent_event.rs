@@ -128,9 +128,10 @@ pub(crate) fn translate_native_event(
         | ("claude", "Notification:agent_needs_input") => {
             Some(attention_requested(AttentionReason::Question))
         }
-        ("claude", "Notification:idle_prompt") | ("claude", "Notification:agent_completed") => {
-            Some(turn_settled(TurnOutcome::Completed))
+        ("claude", "Notification:idle_prompt") => {
+            Some(attention_requested(AttentionReason::Question))
         }
+        ("claude", "Notification:agent_completed") => Some(turn_settled(TurnOutcome::Completed)),
         ("claude", "Stop") => Some(claude_stop(payload)),
         // Rate-limit / API-error turn ends are not task failures; Failed would project Error.
         ("claude", "StopFailure") => Some(turn_settled(TurnOutcome::Interrupted)),
@@ -684,16 +685,25 @@ mod tests {
             );
         }
 
-        for event in ["Notification:idle_prompt", "Notification:agent_completed"] {
-            let canonical = translate_native_event("claude", event, &payload).unwrap();
-            assert_eq!(canonical.kind, CanonicalEventKind::TurnSettled);
-            assert_eq!(
-                canonical.detail,
-                Some(CanonicalEventDetail::Outcome {
-                    outcome: TurnOutcome::Completed
-                })
-            );
-        }
+        let idle_prompt =
+            translate_native_event("claude", "Notification:idle_prompt", &payload).unwrap();
+        assert_eq!(idle_prompt.kind, CanonicalEventKind::AttentionRequested);
+        assert_eq!(
+            idle_prompt.detail,
+            Some(CanonicalEventDetail::Attention {
+                attention: AttentionReason::Question
+            })
+        );
+
+        let agent_completed =
+            translate_native_event("claude", "Notification:agent_completed", &payload).unwrap();
+        assert_eq!(agent_completed.kind, CanonicalEventKind::TurnSettled);
+        assert_eq!(
+            agent_completed.detail,
+            Some(CanonicalEventDetail::Outcome {
+                outcome: TurnOutcome::Completed
+            })
+        );
     }
 
     #[test]

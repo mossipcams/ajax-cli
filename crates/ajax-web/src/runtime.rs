@@ -140,6 +140,44 @@ where
     }
 }
 
+impl<C, B> WebAppState<C, B>
+where
+    C: Clone + CommandRunner,
+    B: Clone + RuntimeBridge<C>,
+{
+    /// Run `operate` against a clone without holding the shared lock. The HTTP
+    /// response is always returned; when `metadata_changed` is true, observed
+    /// PR metadata is persisted best-effort and merged into shared state only
+    /// when no concurrent writer advanced the revision.
+    fn run_read(
+        &self,
+        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> (Response, bool),
+    ) -> Response {
+        let (mut context, mut runner, mut bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        let (response, metadata_changed) = operate(&mut context, &mut runner, &mut bridge);
+        if metadata_changed {
+            let _ = bridge.persist_registry_snapshot(&mut context);
+            let mut guard = self.shared();
+            if guard.revision == base_revision {
+                guard.context = context;
+                guard.runner = runner;
+                guard.bridge = bridge;
+                guard.revision = guard.revision.saturating_add(1);
+                guard.cockpit_cache = None;
+            }
+        }
+        response
+    }
+}
+
 impl<C, B> WebAppState<C, B> {
     fn shared(&self) -> std::sync::MutexGuard<'_, WebSharedState<C, B>> {
         self.shared
@@ -1012,36 +1050,43 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let response = tokio::task::spawn_blocking(move || {
-        state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
-            let result =
-                match crate::slices::diff_review::list_task_pull_requests(context, runner, &handle) {
-                    Ok(projection) => {
-                        if projection.metadata_changed {
-                            // Persist is best-effort: never turn a successful projection into a 500.
-                            let _ = bridge.persist_registry_snapshot(context);
-                        }
-                        json_response(
-                            200,
-                            serde_json::json!({ "pull_requests": projection.pull_requests }),
-                        )
-                    }
-                    Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => {
-                        json_response(
-                            404,
-                            serde_json::json!({ "ok": false, "error": "task not found" }),
-                        )
-                    }
-                    Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
-                        json_response(502, serde_json::json!({ "ok": false, "error": reason }))
-                    }
-                    Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
-                        json_response(
-                            404,
-                            serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
-                        )
-                    }
-                };
-            result.unwrap_or_else(|error| response_from_web_error(error, None))
+        state.run_read(|context, runner, _bridge| {
+            let (response, metadata_changed) = match crate::slices::diff_review::list_task_pull_requests(
+                context,
+                runner,
+                &handle,
+            ) {
+                Ok(projection) => {
+                    let metadata_changed = projection.metadata_changed;
+                    let response = json_response(
+                        200,
+                        serde_json::json!({ "pull_requests": projection.pull_requests }),
+                    );
+                    (response, metadata_changed)
+                }
+                Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": "task not found" }),
+                    ),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => (
+                    json_response(502, serde_json::json!({ "ok": false, "error": reason })),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
+                    ),
+                    false,
+                ),
+            };
+            (
+                response.unwrap_or_else(|error| response_from_web_error(error, None)),
+                metadata_changed,
+            )
         })
     })
     .await
@@ -1077,8 +1122,8 @@ where
     });
 
     let response = tokio::task::spawn_blocking(move || {
-        state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
-            let result = match crate::slices::diff_review::task_diff_projection(
+        state.run_read(|context, runner, _bridge| {
+            let (response, metadata_changed) = match crate::slices::diff_review::task_diff_projection(
                 context,
                 runner,
                 &handle,
@@ -1086,27 +1131,34 @@ where
                 force_local,
             ) {
                 Ok(projection) => {
-                    if projection.metadata_changed {
-                        // Persist is best-effort: never turn a successful projection into a 500.
-                        let _ = bridge.persist_registry_snapshot(context);
-                    }
-                    json_response(200, serde_json::to_value(projection.diff).unwrap_or_default())
+                    let metadata_changed = projection.metadata_changed;
+                    let response =
+                        json_response(200, serde_json::to_value(projection.diff).unwrap_or_default());
+                    (response, metadata_changed)
                 }
-                Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => json_response(
-                    404,
-                    serde_json::json!({ "ok": false, "error": "task not found" }),
+                Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": "task not found" }),
+                    ),
+                    false,
                 ),
-                Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
-                    json_response(502, serde_json::json!({ "ok": false, "error": reason }))
-                }
-                Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
+                Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => (
+                    json_response(502, serde_json::json!({ "ok": false, "error": reason })),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => (
                     json_response(
                         404,
                         serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
-                    )
-                }
+                    ),
+                    false,
+                ),
             };
-            result.unwrap_or_else(|error| response_from_web_error(error, None))
+            (
+                response.unwrap_or_else(|error| response_from_web_error(error, None)),
+                metadata_changed,
+            )
         })
     })
     .await
@@ -1787,13 +1839,17 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     struct SlowDiffRunner {
         delay: Duration,
+        entered: Option<Arc<Notify>>,
     }
 
     impl CommandRunner for SlowDiffRunner {
         fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if let Some(entered) = self.entered.as_ref() {
+                entered.notify_one();
+            }
             std::thread::sleep(self.delay);
             Ok(CommandOutput {
                 status_code: 0,
@@ -3453,6 +3509,7 @@ mod tests {
             context_with_task(),
             SlowDiffRunner {
                 delay: Duration::from_millis(400),
+                entered: None,
             },
             TestBridge::default(),
             scratch_dir("axum-diff-health"),
@@ -3480,6 +3537,51 @@ mod tests {
             health_elapsed < Duration::from_millis(150),
             "health took {health_elapsed:?} while Diff Review was in flight"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_diff_review_returns_ok_when_revision_bumps_during_projection() {
+        let entered = Arc::new(Notify::new());
+        let state = super::WebAppState::new(
+            context_with_task(),
+            SlowDiffRunner {
+                delay: Duration::from_millis(400),
+                entered: Some(Arc::clone(&entered)),
+            },
+            TestBridge::default(),
+            scratch_dir("axum-diff-revision-race"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state.clone());
+
+        let diff_app = app.clone();
+        let diff_cookie = cookie.clone();
+        let diff = tokio::spawn(async move {
+            get(
+                &diff_app,
+                &diff_cookie,
+                "/api/tasks/web/fix-login/pull-requests",
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("diff projection never entered the runner");
+
+        let operation = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"req-diff-race","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await;
+        assert_eq!(operation.status(), StatusCode::OK);
+
+        let diff = diff.await.unwrap();
+        assert_eq!(diff.status(), StatusCode::OK);
+        let json = json_of(diff).await;
+        assert!(json["pull_requests"].is_array());
     }
 
     #[tokio::test]

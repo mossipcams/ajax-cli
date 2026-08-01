@@ -112,6 +112,8 @@ describe("createTerminalLinkService", () => {
     ["data:text/html,hi"],
     ["file:///tmp"],
     ["not a url"],
+    ["https://user:pass@example.com/x"],
+    ["https://user@example.com/x"],
   ])("onOpen rejects %s and does not open anything", (badUrl) => {
     const service = createTerminalLinkService();
 

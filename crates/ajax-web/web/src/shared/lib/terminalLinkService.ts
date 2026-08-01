@@ -49,6 +49,7 @@ export function createTerminalLinkService(): TerminalLinkService {
         return;
       }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+      if (parsed.username || parsed.password) return;
 
       const safeHref = parsed.href;
 

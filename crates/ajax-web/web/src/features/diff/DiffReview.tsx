@@ -117,6 +117,7 @@ export default function DiffReview({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [noiseExpanded, setNoiseExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
+  const loadSeqRef = useRef(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
@@ -127,7 +128,7 @@ export default function DiffReview({
   });
 
   useEffect(() => {
-    let cancelled = false;
+    const loadSeq = ++loadSeqRef.current;
     setState({ status: "loading" });
     setSelectedPath(null);
     setNoiseExpanded(false);
@@ -142,14 +143,16 @@ export default function DiffReview({
           // Soft-fail: still try a local/selected diff projection.
           prs = [];
         }
+        if (loadSeq !== loadSeqRef.current) return;
         const pr = selectedPr ?? prs[0]?.number;
         const diff = await fetchTaskDiff(
           handle,
           pr !== undefined ? { pr } : { local: true },
         );
-        if (!cancelled) setState({ status: "ready", prs, diff });
+        if (loadSeq !== loadSeqRef.current) return;
+        setState({ status: "ready", prs, diff });
       } catch (error) {
-        if (cancelled) return;
+        if (loadSeq !== loadSeqRef.current) return;
         const message =
           error instanceof ApiError
             ? error.message
@@ -161,9 +164,6 @@ export default function DiffReview({
     }
 
     void load();
-    return () => {
-      cancelled = true;
-    };
   }, [handle, selectedPr]);
 
   const { signalFiles, noiseFiles } = useMemo(() => {
@@ -261,6 +261,13 @@ export default function DiffReview({
               })
             )}
           </div>
+
+          {state.diff.fell_back_from_pr != null ? (
+            <p className="diff-status" data-testid="diff-fallback-banner">
+              PR #{state.diff.fell_back_from_pr} patch unavailable — showing local
+              base…HEAD diff.
+            </p>
+          ) : null}
 
           <p className="diff-source" data-testid="diff-source">
             Source: {state.diff.source}
