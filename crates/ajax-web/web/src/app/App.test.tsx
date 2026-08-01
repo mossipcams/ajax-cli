@@ -431,6 +431,38 @@ describe("App shell", () => {
     expect(await screen.findByTestId("outlet-task")).toBeInTheDocument();
   });
 
+  it("applies swipe enter-left when opening a task from the list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    sessionStorage.clear();
+    render(<App />);
+    fireEvent.click(await screen.findByText("Fix login"));
+
+    const outlet = await screen.findByTestId("outlet-task");
+    expect(outlet).toHaveClass("ajax-swipe-enter-left");
+  });
+
+  it("does not apply swipe enter when opening settings from the header", async () => {
+    sessionStorage.clear();
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    const outlet = await screen.findByTestId("outlet-settings");
+    expect(outlet).not.toHaveClass("ajax-swipe-enter-left");
+    expect(outlet).not.toHaveClass("ajax-swipe-enter-right");
+  });
+
   it("renders task detail while the resume operation is still in flight", async () => {
     let releaseResume!: (value: ReturnType<typeof jsonResponse>) => void;
     const resumePending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {

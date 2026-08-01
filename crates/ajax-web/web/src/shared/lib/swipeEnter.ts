@@ -10,6 +10,11 @@ export function setSwipeEnterDirection(direction: SwipeEnterDirection): void {
   }
 }
 
+export function navigateHashWithEnter(hash: string, direction: SwipeEnterDirection): void {
+  setSwipeEnterDirection(direction);
+  location.hash = hash;
+}
+
 export function consumeSwipeEnterDirection(): SwipeEnterDirection | null {
   try {
     const value = sessionStorage.getItem(STORAGE_KEY);

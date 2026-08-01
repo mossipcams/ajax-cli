@@ -8,7 +8,18 @@ import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
+import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { readFileSync } from "node:fs";
+
+vi.mock("@/shared/lib/swipeEnter", async () => {
+  const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
+    "@/shared/lib/swipeEnter",
+  );
+  return {
+    ...actual,
+    setSwipeEnterDirection: vi.fn(actual.setSwipeEnterDirection),
+  };
+});
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -23,6 +34,7 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
+  vi.mocked(setSwipeEnterDirection).mockClear();
 });
 
 afterEach(() => {
@@ -110,11 +122,35 @@ describe("TaskDetail", () => {
     expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
 
-  it("fires onBack from the back control", async () => {
+  it("fires onBack from the back control after the commit animation", async () => {
+    vi.useFakeTimers();
     const onBack = vi.fn();
     render(<TaskDetail detail={detail()} onBack={onBack} />);
+    const root = screen.getByTestId("task-detail");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.click(screen.getByText("← Back"));
+    expect(onBack).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(setSwipeEnterDirection).toHaveBeenCalledWith("right");
     expect(onBack).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("does not double-navigate when Back is clicked during settle", async () => {
+    vi.useFakeTimers();
+    const onBack = vi.fn();
+    render(<TaskDetail detail={detail()} onBack={onBack} />);
+    const root = screen.getByTestId("task-detail");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+    fireEvent.click(screen.getByText("← Back"));
+    fireEvent.click(screen.getByText("← Back"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onBack).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
   it("opens Diff Review on a left swipe", async () => {

@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import {
   navigateSwipeCommitOffset,
   navigateSwipeEnd,
@@ -19,10 +26,14 @@ export interface SwipePageTransitionOptions {
   capture?: boolean;
 }
 
+export type SwipePageCommitDirection = "left" | "right";
+
 export interface SwipePageTransitionResult {
   dragX: number;
   swiping: boolean;
   style: CSSProperties;
+  /** Programmatic commit — same exit+enter path as a successful swipe. */
+  commit: (direction: SwipePageCommitDirection) => void;
 }
 
 function readTouch(event: TouchEvent): { x: number; y: number } | null {
@@ -43,6 +54,8 @@ export function useSwipePageTransition(
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [settling, setSettling] = useState(false);
+  const settlingRef = useRef(false);
+  const commitRef = useRef<(direction: SwipePageCommitDirection) => void>(() => {});
 
   useEffect(() => {
     const root = ref.current;
@@ -55,12 +68,15 @@ export function useSwipePageTransition(
     const reset = () => {
       swipeRef.current = navigateSwipeStart();
       touchTargetRef.current = null;
+      settlingRef.current = false;
       setDragX(0);
       setDragging(false);
       setSettling(false);
     };
 
     const animateTo = (targetX: number, direction: SwipeEnterDirection | null, then?: () => void) => {
+      if (settlingRef.current) return;
+      settlingRef.current = true;
       setDragging(false);
       setSettling(true);
       setDragX(targetX);
@@ -87,6 +103,24 @@ export function useSwipePageTransition(
 
       const timer = window.setTimeout(finish, SWIPE_PAGE_COMMIT_MS + 40);
       root.addEventListener("transitionend", onTransitionEnd);
+    };
+
+    commitRef.current = (direction: SwipePageCommitDirection) => {
+      if (direction === "left" && optsRef.current.onLeft) {
+        animateTo(
+          navigateSwipeCommitOffset("left", pageWidth()),
+          "left",
+          () => optsRef.current.onLeft?.(),
+        );
+        return;
+      }
+      if (direction === "right" && optsRef.current.onRight) {
+        animateTo(
+          navigateSwipeCommitOffset("right", pageWidth()),
+          "right",
+          () => optsRef.current.onRight?.(),
+        );
+      }
     };
 
     const onTouchStart = (event: TouchEvent) => {
@@ -161,6 +195,10 @@ export function useSwipePageTransition(
     };
   }, [options.capture, ref]);
 
+  const commit = useCallback((direction: SwipePageCommitDirection) => {
+    commitRef.current(direction);
+  }, []);
+
   const swiping = dragging || settling;
   const style: CSSProperties = {
     transform: dragX ? `translate3d(${dragX}px, 0, 0)` : undefined,
@@ -171,5 +209,5 @@ export function useSwipePageTransition(
         : undefined,
   };
 
-  return { dragX, swiping, style };
+  return { dragX, swiping, style, commit };
 }

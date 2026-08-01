@@ -4,6 +4,17 @@ import DiffReview from "./DiffReview";
 import * as api from "@/shared/lib/api";
 import type { DiffFileView, DiffJudgmentView, TaskDiffView } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
+import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
+
+vi.mock("@/shared/lib/swipeEnter", async () => {
+  const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
+    "@/shared/lib/swipeEnter",
+  );
+  return {
+    ...actual,
+    setSwipeEnterDirection: vi.fn(actual.setSwipeEnterDirection),
+  };
+});
 
 vi.mock("@/shared/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/api")>("@/shared/lib/api");
@@ -52,6 +63,7 @@ function diffView(
 }
 
 beforeEach(() => {
+  vi.mocked(setSwipeEnterDirection).mockClear();
   vi.mocked(api.fetchTaskPullRequests).mockResolvedValue([
     {
       number: 12,
@@ -364,6 +376,43 @@ describe("DiffReview", () => {
       fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 80 }] });
       fireEvent.touchMove(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
       fireEvent.touchEnd(root, { changedTouches: [{ clientX: 140, clientY: 82 }] });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+      });
+      expect(onBack).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs via the button after the commit animation", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+      fireEvent.click(screen.getByText("← Back"));
+      expect(onBack).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+      });
+      expect(setSwipeEnterDirection).toHaveBeenCalledWith("right");
+      expect(onBack).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not double-navigate when Back is clicked during settle", async () => {
+    const onBack = vi.fn();
+    render(<DiffReview handle="web/fix-login" onBack={onBack} />);
+    const root = await screen.findByTestId("diff-review");
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+      fireEvent.click(screen.getByText("← Back"));
+      fireEvent.click(screen.getByText("← Back"));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
       });

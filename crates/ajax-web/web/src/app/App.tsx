@@ -26,6 +26,7 @@ import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
 import { useTaskDetailResource } from "@/features/task/useTaskDetailResource";
 import {
   consumeSwipeEnterDirection,
+  navigateHashWithEnter,
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
@@ -97,6 +98,10 @@ export default function App() {
 
   function go(hash: string) {
     location.hash = hash;
+  }
+
+  function openTask(handle: string) {
+    navigateHashWithEnter(taskHash(handle), "left");
   }
 
   const pullToRefreshRef = usePullToRefresh({
@@ -341,7 +346,7 @@ export default function App() {
                   onSelectProject={(project: string | null) =>
                     go(project ? projectHash(project) : dashboardHash())
                   }
-                  onOpenTask={(handle: string) => go(taskHash(handle))}
+                  onOpenTask={openTask}
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => loadCockpit()}
@@ -372,7 +377,7 @@ export default function App() {
           onClose={() => setSheetOpen(false)}
           onCockpit={applyCockpit}
           onResult={showResult}
-          onOpenTask={(handle: string) => go(taskHash(handle))}
+          onOpenTask={openTask}
         />
       )}
     </AppViewport>
