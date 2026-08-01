@@ -19,13 +19,21 @@ interface Props {
 }
 
 type LoadState =
-  | { status: "loading" }
+  | { status: "loading"; phase: "pull-requests" | "diff" }
   | { status: "error"; message: string }
   | {
       status: "ready";
       prs: PullRequestView[];
       diff: TaskDiffView;
+      /** Non-fatal: PR list failed; diff may still be local/selected. */
+      prListError?: string;
     };
+
+function errorText(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
 
 const FLAG_DETAIL: Record<DiffFlagKind, string> = {
   unexpected_path: "unexpected path outside common roots",
@@ -185,7 +193,10 @@ export default function DiffReview({
   onBack,
   onSelectPr,
 }: Props) {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState>({
+    status: "loading",
+    phase: "pull-requests",
+  });
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [noiseExpanded, setNoiseExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
@@ -201,37 +212,45 @@ export default function DiffReview({
 
   useEffect(() => {
     const loadSeq = ++loadSeqRef.current;
-    setState({ status: "loading" });
+    setState({ status: "loading", phase: "pull-requests" });
     setSelectedPath(null);
     setNoiseExpanded(false);
     autoOpenedRef.current = false;
 
     async function load() {
+      let prs: Awaited<ReturnType<typeof fetchTaskPullRequests>> = [];
+      let prListError: string | undefined;
       try {
-        let prs: Awaited<ReturnType<typeof fetchTaskPullRequests>> = [];
-        try {
-          prs = await fetchTaskPullRequests(handle);
-        } catch {
-          // Soft-fail: still try a local/selected diff projection.
-          prs = [];
-        }
-        if (loadSeq !== loadSeqRef.current) return;
+        prs = await fetchTaskPullRequests(handle);
+      } catch (error) {
+        // Keep going: selectedPr or local diff can still load. Surface the cause.
+        prListError = errorText(error, "Failed to load pull requests");
+        prs = [];
+      }
+      if (loadSeq !== loadSeqRef.current) return;
+
+      setState({ status: "loading", phase: "diff" });
+      try {
         const pr = selectedPr ?? prs[0]?.number;
         const diff = await fetchTaskDiff(
           handle,
           pr !== undefined ? { pr } : { local: true },
         );
         if (loadSeq !== loadSeqRef.current) return;
-        setState({ status: "ready", prs, diff });
+        if (!diff.judgment) {
+          setState({
+            status: "error",
+            message: "Diff response missing judgment projection",
+          });
+          return;
+        }
+        setState({ status: "ready", prs, diff, prListError });
       } catch (error) {
         if (loadSeq !== loadSeqRef.current) return;
-        const message =
-          error instanceof ApiError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : "Failed to load diff";
-        setState({ status: "error", message });
+        setState({
+          status: "error",
+          message: errorText(error, "Failed to load diff"),
+        });
       }
     }
     void load();
@@ -295,7 +314,9 @@ export default function DiffReview({
 
       {state.status === "loading" ? (
         <p className="diff-status" data-testid="diff-loading">
-          Loading pull requests…
+          {state.phase === "pull-requests"
+            ? "Loading pull requests…"
+            : "Loading diff…"}
         </p>
       ) : null}
 
@@ -307,6 +328,11 @@ export default function DiffReview({
 
       {state.status === "ready" && totals ? (
         <>
+          {state.prListError ? (
+            <p className="diff-status diff-error" data-testid="diff-pr-list-error">
+              Could not load pull requests — {state.prListError}
+            </p>
+          ) : null}
           <div className="diff-pr-strip" data-testid="diff-pr-strip" role="tablist">
             {state.prs.length === 0 ? (
               <button
