@@ -487,6 +487,8 @@ describe("TaskTerminal speech input", () => {
     // StrictMode's double-invoke would write the transcript to the PTY twice.
     const onFinal = taskTerminalSource.match(/onFinal:[\s\S]*?\n {8}\},/)?.[0] ?? "";
     expect(onFinal).toMatch(/isStandalonePause\(text\)/);
+    expect(onFinal).toMatch(/isStandaloneStartOver\(text\)/);
+    expect(onFinal).toMatch(/undoInsertedSpeech\(\)/);
     expect(onFinal).toMatch(/insertedFinalsRef\.current\.has\(sequence\)/);
     expect(onFinal).toMatch(/pasteThroughTerm\(text, false\)/);
 

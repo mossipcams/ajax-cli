@@ -3,6 +3,7 @@ import {
   DEFAULT_SPEECH_CONFIG,
   createSpeechInputModel,
   isStandalonePause,
+  isStandaloneStartOver,
   speechReducer,
 } from "./speechState";
 
@@ -74,6 +75,35 @@ describe("speech state", () => {
 
     expect(paused.pauseDeadlineMs).toBe(5000);
     expect(paused.pauseDeadlineMs).not.toBe(1000 + DEFAULT_SPEECH_CONFIG.pauseGracePeriodMs);
+  });
+
+  it("recognizes only a normalized standalone start over utterance", () => {
+    expect(isStandaloneStartOver("start over")).toBe(true);
+    expect(isStandaloneStartOver("Start over.")).toBe(true);
+    expect(isStandaloneStartOver("START OVER!")).toBe(true);
+    expect(isStandaloneStartOver("We should start over tomorrow.")).toBe(false);
+
+    let model = speechReducer(startListening(), {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "Hello world.",
+      nowMs: 1000,
+    });
+    expect(model.finalTranscript).toBe("Hello world.");
+
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 2,
+      text: "Start over.",
+      nowMs: 1100,
+    });
+
+    expect(model.state).toBe("listening");
+    expect(model.finalTranscript).toBe("");
+    expect(model.partialTranscript).toBe("");
+    expect(model.finalSegments).toEqual({});
   });
 
   it("keeps sentence uses of pause as transcript content", () => {

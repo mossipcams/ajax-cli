@@ -61,6 +61,11 @@ export function isStandalonePause(text: string): boolean {
   return normalized === "pause";
 }
 
+export function isStandaloneStartOver(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[\s.!?]+$/, "");
+  return normalized === "start over";
+}
+
 function buildFinalTranscript(finalSegments: Record<number, string>): string {
   const sequences = Object.keys(finalSegments)
     .map(Number)
@@ -126,6 +131,14 @@ export function speechReducer(
           pauseDeadlineMs: action.nowMs + model.pauseGracePeriodMs,
           pauseTimerToken: timerToken,
           nextPauseTimerToken: timerToken + 1,
+        };
+      }
+      if (isStandaloneStartOver(action.text)) {
+        return {
+          ...model,
+          finalSegments: {},
+          finalTranscript: "",
+          partialTranscript: "",
         };
       }
       if (model.finalSegments[action.sequence] !== undefined) {

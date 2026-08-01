@@ -31,8 +31,21 @@ Configure the shell command Ajax should launch:
 ### The bundled sidecar
 
 Ajax ships a reference implementation at `scripts/ajax-moonshine-sidecar`. It
-speaks the framed protocol below and runs Moonshine ONNX locally. Set it up in
-its own virtualenv so it never touches your system Python:
+speaks the framed protocol below and runs Moonshine ONNX locally. On the Mac
+that hosts `ajax-cli web`, run the one-shot installer:
+
+```sh
+./scripts/setup-stt.sh
+```
+
+That creates `~/.ajax-dev/stt-venv`, installs `useful-moonshine-onnx`, copies
+the sidecar to `~/.ajax-dev/bin/ajax-moonshine-sidecar`, and writes a matching
+`[stt]` block into **both** stable (`~/.config/ajax/config.toml`) and dev
+(`~/.ajax-dev/config.toml`) config files. One venv and sidecar serve both
+profiles.
+
+Manual setup (if you prefer not to run the script) uses its own virtualenv so it
+never touches your system Python:
 
 ```sh
 python3 -m venv ~/.ajax-stt-venv
@@ -175,10 +188,11 @@ Speech is **text composition only**:
 3. Say standalone **`pause`** (normalized `pause`, `Pause.`, `PAUSE`) to enter a
    nine-second grace period. **Speak to continue** cancels the timer; if it
    expires, the session finalizes and releases the mic.
-4. Review and edit text in the **Terminal composer**; partial preview stays
-   separate from editable value.
-5. Use **Insert transcript** (or your normal send path) to move text into the
-   terminal explicitly.
+4. Say standalone **`start over`** (normalized `start over`, `Start over.`,
+   `START OVER`) to delete everything dictated in the current mic session from
+   the terminal. The session keeps listening so you can dictate again.
+5. Edit or send from the terminal as you normally would; recognition output is
+   inserted into the active shell line as it is finalized.
 
 Ajax does **not** auto-press Enter, execute commands, or write recognition
 output directly to xterm, tmux, or the PTY. Existing keyboard Ctrl+C and tmux
