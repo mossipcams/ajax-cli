@@ -787,6 +787,59 @@ test("native uri-list-only paste sends the link URL in one input frame", async (
   expect(frames.at(-1)?.data).toBe(url);
 });
 
+test("native plain URL paste sends the link in one input frame", async ({ page }) => {
+  await openTaskTerminal(page);
+  await clickTerminalSurfaceInterior(page);
+
+  const url = "https://example.com/plain";
+  const baseline = await inputFrameCount(page);
+
+  await page.evaluate((pasteUrl) => {
+    const textarea = document.querySelector(
+      "textarea.xterm-helper-textarea",
+    ) as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error("helper textarea missing");
+    textarea.focus();
+    const data = new DataTransfer();
+    data.setData("text/plain", pasteUrl);
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  }, url);
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  const frames = await terminalInputFrames(page);
+  expect(frames.at(-1)?.data).toBe(url);
+});
+
+test("insertFromPaste beforeinput sends a link when clipboardData is empty", async ({ page }) => {
+  await openTaskTerminal(page);
+  await clickTerminalSurfaceInterior(page);
+
+  const url = "https://example.com/beforeinput";
+  const baseline = await inputFrameCount(page);
+
+  await page.evaluate((pasteUrl) => {
+    const textarea = document.querySelector(
+      "textarea.xterm-helper-textarea",
+    ) as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error("helper textarea missing");
+    textarea.focus();
+    textarea.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertFromPaste",
+        data: pasteUrl,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, url);
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  const frames = await terminalInputFrames(page);
+  expect(frames.at(-1)?.data).toBe(url);
+});
+
 test("bracketed paste wraps toolbar paste in DEC bracket mode", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);

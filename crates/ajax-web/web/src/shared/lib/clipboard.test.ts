@@ -58,6 +58,12 @@ describe("readPasteText", () => {
     ).toBe("");
   });
 
+  it("reads plain text from the text/ alias used by some WebKit builds", () => {
+    expect(readPasteText(pasteData({ text: "https://example.com/text" }))).toBe(
+      "https://example.com/text",
+    );
+  });
+
   it("returns empty string for empty clipboard data", () => {
     expect(readPasteText(pasteData({}))).toBe("");
     expect(readPasteText(null)).toBe("");

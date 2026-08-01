@@ -8,7 +8,8 @@
  */
 export function readPasteText(data: DataTransfer | null): string {
   if (!data) return "";
-  const plain = data.getData("text/plain").trim();
+  // Some WebKit builds expose plain as "text" rather than "text/plain".
+  const plain = (data.getData("text/plain") || data.getData("text")).trim();
   if (/^https?:\/\//i.test(plain)) return plain;
 
   const uri =
