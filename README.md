@@ -91,10 +91,10 @@ pane and rejects the answer if the agent has moved on. Free-form input and other
 terminal-only interactions use the raw task terminal bridge instead of a browser
 composer or read-only snapshot viewer.
 
-In the task terminal, an editable **Terminal composer** sits beside the raw
-xterm view. **Mic** (after **Paste** in the shortcut bar) starts host-side
-continuous speech-to-text: iPhone capture, Mac recognition, explicit Insert into
-the PTY. See [`docs/speech-input.md`](docs/speech-input.md) for Moonshine v2 host
+In the task terminal, **Mic** (after **Paste** in the shortcut bar) starts
+host-side continuous speech-to-text: iPhone capture, Mac recognition, auto-insert
+into the active shell line through the same paste/PTY path as manual paste. See
+[`docs/speech-input.md`](docs/speech-input.md) for Moonshine v2 host
 setup, `[stt]` configuration, iOS behavior, and recovery.
 
 Notifications are out of scope. Ajax Web Cockpit does not support Web Push,
