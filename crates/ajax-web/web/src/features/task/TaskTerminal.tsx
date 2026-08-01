@@ -24,7 +24,19 @@ import {
 import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
+import {
+  createSpeechInputModel,
+  speechReducer,
+  type SpeechInputModel,
+} from "@/shared/lib/speechState";
+import {
+  createBrowserSpeechPlatform,
+  createSpeechTransport,
+  newSessionId,
+  type SpeechTransport,
+} from "@/shared/lib/speechTransport";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
+import TerminalComposer from "./TerminalComposer";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -103,6 +115,15 @@ export default function TaskTerminal({ handle }: Props) {
   const terminalSnapshotRef = useRef<
     ReturnType<typeof attachTerminalAddons>["snapshot"] | undefined
   >(undefined);
+  const [speechModel, setSpeechModel] = useState<SpeechInputModel>(() =>
+    createSpeechInputModel(),
+  );
+  const [composerValue, setComposerValue] = useState("");
+  const [pauseCountdownSeconds, setPauseCountdownSeconds] = useState<number | undefined>();
+  const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
+  const speechPrefixRef = useRef("");
+  const speechModelRef = useRef(speechModel);
+  speechModelRef.current = speechModel;
 
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
@@ -162,7 +183,6 @@ export default function TaskTerminal({ handle }: Props) {
   const CONTROL_KEYS = [
     { label: "Esc", ariaLabel: "Escape", data: "\x1b" },
     { label: "Tab", ariaLabel: "Tab", data: "\t" },
-    { label: "⌃C", ariaLabel: "Control C", data: "\x03" },
     { label: "⌫", ariaLabel: "Backspace", data: "\x7f" },
     { label: "←", ariaLabel: "Left arrow", data: "\x1b[D" },
     { label: "↑", ariaLabel: "Up arrow", data: "\x1b[A" },
@@ -630,6 +650,160 @@ export default function TaskTerminal({ handle }: Props) {
   const cancelPasteFallback = () => {
     closePasteFallback();
   };
+
+  const joinComposerTranscript = (base: string, addition: string): string => {
+    if (!addition) return base;
+    if (!base) return addition;
+    if (/\s$/.test(base) || /^\s/.test(addition) || /^[.,!?;:]/.test(addition)) {
+      return base + addition;
+    }
+    return `${base} ${addition}`;
+  };
+
+  const dispatchSpeech = (action: Parameters<typeof speechReducer>[1]) => {
+    setSpeechModel((previous) => {
+      const next = speechReducer(previous, action);
+      if (
+        action.type === "final" &&
+        next.finalTranscript !== previous.finalTranscript &&
+        next.state === "listening"
+      ) {
+        setComposerValue(joinComposerTranscript(speechPrefixRef.current, next.finalTranscript));
+      }
+      return next;
+    });
+  };
+
+  const cancelSpeechInput = () => {
+    const sessionId = speechModelRef.current.sessionId;
+    speechTransportRef.current?.cancel();
+    speechTransportRef.current = undefined;
+    if (sessionId) {
+      dispatchSpeech({ type: "cancel", sessionId });
+    } else {
+      setSpeechModel(createSpeechInputModel());
+    }
+    setPauseCountdownSeconds(undefined);
+  };
+
+  const activateMic = () => {
+    if (
+      !(
+        speechModelRef.current.state === "idle" ||
+        speechModelRef.current.state === "error"
+      )
+    ) {
+      return;
+    }
+
+    if (speechTransportRef.current) {
+      speechTransportRef.current.cancel();
+      speechTransportRef.current = undefined;
+    }
+
+    const sessionId = newSessionId();
+    speechPrefixRef.current = composerValue;
+    dispatchSpeech({ type: "start", sessionId });
+
+    const transport = createSpeechTransport(
+      handle,
+      {
+        onReady: ({ pauseGracePeriodMs }) =>
+          dispatchSpeech({ type: "provider_ready", sessionId, pauseGracePeriodMs }),
+        onPartial: (sequence, text) =>
+          dispatchSpeech({ type: "partial", sessionId, sequence, text }),
+        onFinal: (sequence, text) =>
+          dispatchSpeech({
+            type: "final",
+            sessionId,
+            sequence,
+            text,
+            nowMs: performance.now(),
+          }),
+        onSpeechStarted: () => dispatchSpeech({ type: "speech_started", sessionId }),
+        onSpeechEnded: () => {},
+        onError: (message) => dispatchSpeech({ type: "error", sessionId, message }),
+        onClosed: () => {
+          const current = speechModelRef.current;
+          if (current.state === "finalizing" && current.sessionId === sessionId) {
+            dispatchSpeech({ type: "finalization_complete", sessionId });
+          } else if (
+            current.sessionId === sessionId &&
+            current.state !== "finalizing" &&
+            current.state !== "idle" &&
+            current.state !== "error"
+          ) {
+            dispatchSpeech({
+              type: "error",
+              sessionId,
+              message: "Speech connection closed",
+            });
+          }
+          if (speechTransportRef.current) {
+            speechTransportRef.current = undefined;
+          }
+          setPauseCountdownSeconds(undefined);
+        },
+      },
+      createBrowserSpeechPlatform(),
+      { sessionId },
+    );
+    speechTransportRef.current = transport;
+    void transport.start().catch(() => {
+      // Errors surface through onError / reducer.
+    });
+  };
+
+  const insertComposerTranscript = (value: string) => {
+    if (!value) return;
+    pasteThroughTerm(value, true);
+  };
+
+  useEffect(() => {
+    if (speechModel.state !== "pause_pending" || speechModel.pauseDeadlineMs === undefined) {
+      setPauseCountdownSeconds(undefined);
+      return;
+    }
+    const sessionId = speechModel.sessionId;
+    const timerToken = speechModel.pauseTimerToken;
+    const deadlineMs = speechModel.pauseDeadlineMs;
+    if (!sessionId || timerToken === undefined) return;
+
+    const tick = () => {
+      const remainingMs = deadlineMs - performance.now();
+      if (remainingMs <= 0) {
+        setPauseCountdownSeconds(0);
+        setSpeechModel((previous) => {
+          const next = speechReducer(previous, {
+            type: "pause_elapsed",
+            sessionId,
+            timerToken,
+          });
+          if (next.state === "finalizing" && previous.state === "pause_pending") {
+            speechTransportRef.current?.stop();
+          }
+          return next;
+        });
+        return;
+      }
+      setPauseCountdownSeconds(Math.max(1, Math.ceil(remainingMs / 1000)));
+    };
+    tick();
+    const intervalId = window.setInterval(tick, 200);
+    return () => window.clearInterval(intervalId);
+  }, [
+    speechModel.state,
+    speechModel.pauseDeadlineMs,
+    speechModel.pauseTimerToken,
+    speechModel.sessionId,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      speechTransportRef.current?.cancel();
+      speechTransportRef.current = undefined;
+    };
+  }, []);
 
   const syncCopyOverlay = () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -1423,6 +1597,8 @@ export default function TaskTerminal({ handle }: Props) {
       viewport?.removeEventListener("resize", onViewportChange);
       clearExpandedInert();
       document.documentElement.classList.remove(EXPANDED_CLASS);
+      speechTransportRef.current?.cancel();
+      speechTransportRef.current = undefined;
       connection?.dispose();
       if (connection && connectionRef.current === connection) {
         connectionRef.current = undefined;
@@ -1585,6 +1761,33 @@ export default function TaskTerminal({ handle }: Props) {
           </div>
         </div>
       ) : null}
+      <TerminalComposer
+        value={composerValue}
+        partialText={speechModel.partialTranscript}
+        state={speechModel.state}
+        pauseCountdownSeconds={
+          speechModel.state === "pause_pending" ? pauseCountdownSeconds : undefined
+        }
+        errorMessage={speechModel.errorMessage}
+        onChange={setComposerValue}
+        onInsert={insertComposerTranscript}
+      />
+      {speechModel.state !== "idle" ? (
+        <div className="terminal-speech-actions">
+          <button
+            type="button"
+            className="terminal-key"
+            aria-label="Cancel voice input"
+            onPointerDown={onToolbarPointerDown}
+            onClick={(event) => {
+              const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+              cancelSpeechInput();
+              refocusTermIfOwned(ownedFocus);
+            }}>
+            Cancel voice input
+          </button>
+        </div>
+      ) : null}
       <div data-testid="terminal-bottom-controls">
         <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
           {CONTROL_KEYS.map((key) => {
@@ -1636,6 +1839,22 @@ export default function TaskTerminal({ handle }: Props) {
               void requestPaste(ownedFocus);
             }}>
             Paste
+          </button>
+          <button
+            type="button"
+            className={`terminal-key${speechModel.state !== "idle" ? " is-armed" : ""}`}
+            aria-label="Start voice input"
+            title="Start voice input"
+            disabled={
+              speechModel.state === "connecting" || speechModel.state === "finalizing"
+            }
+            onPointerDown={onToolbarPointerDown}
+            onClick={(event) => {
+              const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+              activateMic();
+              refocusTermIfOwned(ownedFocus);
+            }}>
+            Mic
           </button>
         </div>
       </div>

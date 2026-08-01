@@ -1774,6 +1774,7 @@ mod tests {
             ],
             test_commands: vec![TestCommand::new("web", "cargo test")],
             notify: None,
+            ..Config::default()
         };
         let context = CommandContext::new(config, InMemoryRegistry::default());
         let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])

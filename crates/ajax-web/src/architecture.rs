@@ -2,21 +2,23 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 6] = [
+    const SLICES: [&str; 7] = [
         "cockpit",
         "dev_deploy",
         "diff_review",
         "install",
         "operate",
+        "stt",
         "terminal",
     ];
-    const ADAPTERS: [&str; 8] = [
+    const ADAPTERS: [&str; 9] = [
         "assets",
         "browser_session",
         "cloudflare_access",
         "http",
         "server",
         "skills",
+        "stt_provider",
         "terminal_pty",
         "tls",
     ];
@@ -26,7 +28,7 @@ mod tests {
     #[test]
     fn each_web_adapter_does_not_depend_on_slices_or_runtime() {
         for adapter in ADAPTERS {
-            let forbidden_slices = forbidden_paths_for_slices(&SLICES);
+            let forbidden_slices = forbidden_slices_for_adapter(adapter);
             let forbidden_runtime = forbidden_runtime_dependencies();
             let forbidden = forbidden_slices
                 .iter()
@@ -114,6 +116,19 @@ mod tests {
             .filter(|sibling| *sibling != slice)
             .collect::<Vec<_>>();
         forbidden_paths_for_slices(&siblings)
+    }
+
+    fn forbidden_slices_for_adapter(adapter: &str) -> Vec<String> {
+        if adapter == "stt_provider" {
+            let siblings = SLICES
+                .iter()
+                .copied()
+                .filter(|slice| *slice != "stt")
+                .collect::<Vec<_>>();
+            forbidden_paths_for_slices(&siblings)
+        } else {
+            forbidden_paths_for_slices(&SLICES)
+        }
     }
 
     fn forbidden_runtime_dependencies() -> Vec<String> {

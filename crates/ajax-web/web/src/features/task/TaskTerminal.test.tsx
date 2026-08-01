@@ -310,9 +310,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("names terminal control keys for assistive tech", () => {
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
-    expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Control C"/);
-    expect(taskTerminalSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
+    // Visible ⌃C toolbar entry removed; keyboard Ctrl+C remains via Control modifier.
     expect(taskTerminalSource).toMatch(/aria-label="Control modifier"/);
+    expect(taskTerminalSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
     expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
   });
 
@@ -472,6 +472,46 @@ describe("TaskTerminal iOS keyboard geometry", () => {
         moduleScope.test(taskTerminalSource) || effectEvent.test(taskTerminalSource),
       ).toBe(true);
     }
+  });
+});
+
+describe("TaskTerminal speech input", () => {
+  it("uses the existing composer and one visible Mic shortcut after Paste", () => {
+    expect(taskTerminalSource).toMatch(/TerminalComposer/);
+    expect(taskTerminalSource).toMatch(/createSpeechTransport/);
+
+    const paste = taskTerminalSource.indexOf(">\n            Paste");
+    const mic = taskTerminalSource.indexOf(">\n            Mic");
+    expect(paste).toBeGreaterThan(-1);
+    expect(mic).toBeGreaterThan(paste);
+    expect(taskTerminalSource).toMatch(/aria-label=["']Start voice input["']/);
+  });
+
+  it("removes only the visible toolbar Ctrl+C entry and keeps the Ctrl path", () => {
+    expect(taskTerminalSource).not.toMatch(/label:\s*["']⌃C["']/);
+    expect(taskTerminalSource).toMatch(/aria-label=["']Control modifier["']/);
+    expect(taskTerminalSource).toMatch(/sendKey\(consumeCtrl\(data\)\)/);
+  });
+
+  it("keeps Mic text visible across active speech states", () => {
+    // Mic stays the fixed toolbar label (JSX text child); states only arm styling.
+    expect(taskTerminalSource).toMatch(/>\n\s*Mic\n/);
+    expect(taskTerminalSource).toMatch(/pause_pending/);
+    expect(taskTerminalSource).toMatch(/finalizing/);
+    expect(taskTerminalSource).toMatch(/is-armed/);
+  });
+
+  it("allows a recoverable error to retry voice input", () => {
+    expect(taskTerminalSource).toMatch(/speechModelRef\.current\.state\s*===\s*["']error["']/);
+    expect(taskTerminalSource).toMatch(/activateMic\s*\(\s*\)/);
+  });
+
+  it("surfaces an unexpected STT socket close as a recoverable error", () => {
+    const closeBody =
+      taskTerminalSource.match(/onClosed:\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\},/)?.[1] ?? "";
+
+    expect(closeBody).toMatch(/current\.state\s*!==\s*["']finalizing["']/);
+    expect(closeBody).toMatch(/Speech connection closed/);
   });
 });
 
