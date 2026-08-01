@@ -106,6 +106,89 @@ describe("speech state", () => {
     expect(model.finalSegments).toEqual({});
   });
 
+  it("clears segments on start over during pause_pending without changing state", () => {
+    let model = speechReducer(startListening(), {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "Hello world.",
+      nowMs: 1000,
+    });
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 2,
+      text: "pause",
+      nowMs: 1100,
+    });
+    expect(model.state).toBe("pause_pending");
+
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 3,
+      text: "Start over.",
+      nowMs: 1200,
+    });
+
+    expect(model.state).toBe("pause_pending");
+    expect(model.finalTranscript).toBe("");
+    expect(model.partialTranscript).toBe("");
+    expect(model.finalSegments).toEqual({});
+    expect(model.pauseDeadlineMs).toBe(1100 + DEFAULT_SPEECH_CONFIG.pauseGracePeriodMs);
+    expect(model.pauseTimerToken).toBe(1);
+  });
+
+  it("accepts a repeated sequence after start over clears segments", () => {
+    let model = speechReducer(startListening(), {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "Hello.",
+      nowMs: 1000,
+    });
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "start over",
+      nowMs: 1100,
+    });
+    expect(model.finalSegments).toEqual({});
+
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "Hello again.",
+      nowMs: 1200,
+    });
+
+    expect(model.finalTranscript).toBe("Hello again.");
+    expect(model.finalSegments).toEqual({ 1: "Hello again." });
+  });
+
+  it("ignores ordinary finals while pause_pending", () => {
+    const paused = speechReducer(startListening(), {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "pause",
+      nowMs: 1000,
+    });
+    const withFinal = speechReducer(paused, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 2,
+      text: "Late phrase.",
+      nowMs: 1100,
+    });
+
+    expect(withFinal).toBe(paused);
+    expect(withFinal.finalTranscript).toBe("");
+    expect(withFinal.finalSegments).toEqual({});
+  });
+
   it("keeps sentence uses of pause as transcript content", () => {
     const result = speechReducer(startListening(), {
       type: "final",

@@ -744,6 +744,7 @@ pub async fn bridge_task_stt_socket(
                                 version: STT_PROTOCOL_VERSION,
                                 session_id,
                                 pause_grace_period_ms,
+                                finalization_timeout_ms,
                             },
                         )
                         .await

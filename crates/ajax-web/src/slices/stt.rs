@@ -46,6 +46,8 @@ pub enum SttServerEvent {
         session_id: String,
         #[serde(rename = "pauseGracePeriodMs")]
         pause_grace_period_ms: u64,
+        #[serde(rename = "finalizationTimeoutMs")]
+        finalization_timeout_ms: u64,
     },
     #[serde(rename = "stt.partial")]
     Partial {
@@ -152,6 +154,7 @@ mod tests {
             version: STT_PROTOCOL_VERSION,
             session_id: "session-1".to_string(),
             pause_grace_period_ms: 4_000,
+            finalization_timeout_ms: 5_000,
         };
 
         let json = serde_json::to_value(&event).expect("serialize ready");
@@ -159,6 +162,8 @@ mod tests {
         assert_eq!(json["type"], "stt.ready");
         assert_eq!(json["pauseGracePeriodMs"], 4_000);
         assert!(json.get("pause_grace_period_ms").is_none());
+        assert_eq!(json["finalizationTimeoutMs"], 5_000);
+        assert!(json.get("finalization_timeout_ms").is_none());
     }
 
     #[test]

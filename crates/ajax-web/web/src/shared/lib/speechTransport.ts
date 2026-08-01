@@ -37,7 +37,10 @@ export interface SpeechTransportPlatform {
 }
 
 export interface SpeechTransportCallbacks {
-  onReady: (config: { pauseGracePeriodMs: number }) => void;
+  onReady: (config: {
+    pauseGracePeriodMs: number;
+    finalizationTimeoutMs: number;
+  }) => void;
   onPartial: (sequence: number, text: string) => void;
   onFinal: (sequence: number, text: string) => void;
   onSpeechStarted: () => void;
@@ -248,6 +251,7 @@ export function createSpeechTransport(
   let errorListener: SocketListener | undefined;
   let closeListener: SocketListener | undefined;
   let finalizationComplete = false;
+  let sessionFinalizationTimeoutMs = FINALIZATION_TIMEOUT_MS;
 
   function clearFinalizationTimer() {
     if (finalizationTimer !== undefined) {
@@ -330,6 +334,7 @@ export function createSpeechTransport(
       version?: number;
       sessionId?: string;
       pauseGracePeriodMs?: unknown;
+      finalizationTimeoutMs?: unknown;
       sequence?: number;
       text?: string;
       message?: string;
@@ -348,7 +353,11 @@ export function createSpeechTransport(
           typeof payload.pauseGracePeriodMs === "number"
             ? payload.pauseGracePeriodMs
             : DEFAULT_PAUSE_GRACE_PERIOD_MS;
-        callbacks.onReady({ pauseGracePeriodMs });
+        sessionFinalizationTimeoutMs =
+          typeof payload.finalizationTimeoutMs === "number"
+            ? payload.finalizationTimeoutMs
+            : FINALIZATION_TIMEOUT_MS;
+        callbacks.onReady({ pauseGracePeriodMs, finalizationTimeoutMs: sessionFinalizationTimeoutMs });
         break;
       }
       case "stt.partial":
@@ -458,6 +467,7 @@ export function createSpeechTransport(
       activeSessionId = injectedSessionId ?? newSessionId();
       nextSequence = 0;
       finalizationComplete = false;
+      sessionFinalizationTimeoutMs = FINALIZATION_TIMEOUT_MS;
 
       try {
         mediaStream = await platform.getUserMedia();
@@ -519,7 +529,7 @@ export function createSpeechTransport(
     clearFinalizationTimer();
     finalizationTimer = setTimeout(() => {
       completeFinalization();
-    }, FINALIZATION_TIMEOUT_MS);
+    }, sessionFinalizationTimeoutMs);
   }
 
   function cancel() {

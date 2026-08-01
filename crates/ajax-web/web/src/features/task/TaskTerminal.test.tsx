@@ -490,7 +490,13 @@ describe("TaskTerminal speech input", () => {
     expect(onFinal).toMatch(/isStandaloneStartOver\(text\)/);
     expect(onFinal).toMatch(/undoInsertedSpeech\(\)/);
     expect(onFinal).toMatch(/insertedFinalsRef\.current\.has\(sequence\)/);
-    expect(onFinal).toMatch(/pasteThroughTerm\(text, false\)/);
+    expect(onFinal).toMatch(/prepareSpeechInsert\(/);
+    expect(onFinal).toMatch(/pasteThroughTerm\(textToPaste, false\)/);
+    expect(onFinal).toMatch(/speechState === "listening"/);
+    expect(onFinal).toMatch(/insertedSpeechRef\.current\.push\(record\)/);
+    expect(onFinal).toMatch(/insertedFinalsRef\.current\.add\(sequence\)/);
+    expect(taskTerminalSource).toMatch(/insertedSpeechRef/);
+    expect(taskTerminalSource).toMatch(/undoPayload/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
     const mic = taskTerminalSource.indexOf(">\n            Mic");

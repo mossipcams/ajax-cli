@@ -78,7 +78,8 @@ max_buffered_audio_ms = 2000
 finalization_timeout_ms = 5000
 """
 
-section_pattern = re.compile(r"\n\[stt\][\s\S]*?(?=\n\[|\Z)")
+section_pattern = re.compile(r"(?:^|\n)\[stt\][\s\S]*?(?=\n\[|\Z)")
+assert section_pattern.search("[stt]\nx=1\n") is not None
 
 
 def ensure_config(path: pathlib.Path) -> None:

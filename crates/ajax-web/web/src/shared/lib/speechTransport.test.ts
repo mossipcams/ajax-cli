@@ -205,7 +205,67 @@ describe("speech transport", () => {
       }),
     );
 
-    expect(events.onReady).toHaveBeenCalledWith({ pauseGracePeriodMs: 4000 });
+    expect(events.onReady).toHaveBeenCalledWith({
+      pauseGracePeriodMs: 4000,
+      finalizationTimeoutMs: 5000,
+    });
+  });
+
+  it("passes finalizationTimeoutMs from stt.ready to onReady", async () => {
+    const socket = fakeSocket();
+    const { platform } = platformFor(socket);
+    const events = callbacks();
+    const transport = createSpeechTransport("web/fix-login", events, platform);
+    const started = transport.start();
+    socket.readyState = 1;
+    socket.emit("open");
+    await started;
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          version: 1,
+          type: "stt.ready",
+          sessionId: transport.sessionId(),
+          pauseGracePeriodMs: 4000,
+          finalizationTimeoutMs: 3000,
+        }),
+      }),
+    );
+
+    expect(events.onReady).toHaveBeenCalledWith({
+      pauseGracePeriodMs: 4000,
+      finalizationTimeoutMs: 3000,
+    });
+  });
+
+  it("falls back to 5000 when stt.ready omits finalizationTimeoutMs", async () => {
+    const socket = fakeSocket();
+    const { platform } = platformFor(socket);
+    const events = callbacks();
+    const transport = createSpeechTransport("web/fix-login", events, platform);
+    const started = transport.start();
+    socket.readyState = 1;
+    socket.emit("open");
+    await started;
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          version: 1,
+          type: "stt.ready",
+          sessionId: transport.sessionId(),
+          pauseGracePeriodMs: 4000,
+        }),
+      }),
+    );
+
+    expect(events.onReady).toHaveBeenCalledWith({
+      pauseGracePeriodMs: 4000,
+      finalizationTimeoutMs: 5000,
+    });
   });
 
   it("falls back to 9000 when stt.ready omits pauseGracePeriodMs", async () => {
@@ -229,7 +289,10 @@ describe("speech transport", () => {
       }),
     );
 
-    expect(events.onReady).toHaveBeenCalledWith({ pauseGracePeriodMs: 9000 });
+    expect(events.onReady).toHaveBeenCalledWith({
+      pauseGracePeriodMs: 9000,
+      finalizationTimeoutMs: 5000,
+    });
   });
 
   it("releases audio resources when visibility interrupts capture", async () => {
@@ -271,6 +334,41 @@ describe("speech transport", () => {
     expect(events.onError).toHaveBeenCalledWith("Web Audio is unavailable in this browser");
     expect(track.stop).toHaveBeenCalled();
     expect(socket.close).toHaveBeenCalled();
+  });
+
+  it("uses finalizationTimeoutMs from stt.ready for stop fallback timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = fakeSocket();
+      const { platform } = platformFor(socket);
+      const events = callbacks();
+      const transport = createSpeechTransport("web/fix-login", events, platform);
+      const started = transport.start();
+      socket.readyState = 1;
+      socket.emit("open");
+      await started;
+
+      socket.emit(
+        "message",
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            version: 1,
+            type: "stt.ready",
+            sessionId: transport.sessionId(),
+            finalizationTimeoutMs: 3000,
+          }),
+        }),
+      );
+
+      transport.stop();
+      expect(socket.close).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(2_999);
+      expect(socket.close).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(2);
+      expect(socket.close).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the STT socket open during finalization, then closes on timeout", async () => {
