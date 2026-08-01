@@ -75,6 +75,11 @@ screenful. Authorized implement of attached plan.
   accepts on reviewed diff + parent-run verification, not the broken YAML.
 - Focused playwright without `web:smoke` harness could not connect to
   localhost:5173; not treated as a product failure.
+- CI Web smoke: suppressing wrapper scroll + force-follow on pending writes
+  broke "New output" e2e (scroll during quiet left followLive true / re-pinned).
+  Fix: keep only `onTermScroll` suppress while pending; let wrapper scroll
+  update followLive; remove pending-write force-follow (reveal still always
+  snaps).
 
 ## Validation ledger
 
@@ -82,3 +87,5 @@ screenful. Authorized implement of attached plan.
 - Delegate `npm run web:build` — EXIT 0; dist embeds `rg=120,ng=2e3`
 - Focused e2e `-g 'seeded open…'` — SKIPPED (no vite server)
 - Review gate: **ACCEPT** (scoped delta matches packet)
+- Husky pre-commit (`npm run web:build` + `npm run verify` + release build/install) — EXIT 0
+- PR: https://github.com/mossipcams/ajax-cli/pull/732

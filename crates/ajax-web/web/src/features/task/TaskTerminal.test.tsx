@@ -477,11 +477,8 @@ describe("TaskTerminal seeded history reveal", () => {
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
-    expect(onOutputBody).toMatch(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{\s*\n\s*scrollSync\.setFollowLive\(true\)/);
-    const applyOutputIndex = onOutputBody.indexOf("scrollSync.applyOutput()");
-    const forceFollowIndex = onOutputBody.indexOf("scrollSync.setFollowLive(true)");
-    expect(forceFollowIndex).toBeGreaterThan(-1);
-    expect(applyOutputIndex).toBeGreaterThan(forceFollowIndex);
+    expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
+    expect(onOutputBody).not.toMatch(/setFollowLive\(true\)/);
     expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
 
@@ -520,12 +517,15 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(beginBody).toMatch(/classList\.add\(["']is-seed-pending["']\)/);
     expect(beginBody).not.toMatch(/setTimeout/);
 
-    // Mid-parse scroll sync while hidden would fight the reveal snap.
+    // Mid-parse term scroll sync while hidden would fight the reveal snap.
+    // Wrapper scroll must still run so followLive can drop for "New output".
     expect(mountBody).toMatch(
       /onScroll\(\(\)\s*=>\s*\{[\s\S]*?if\s*\(\s*isSeedPending\(\)\s*\)\s*return;[\s\S]*?scrollSync\.onTermScroll\(\)/,
     );
-    expect(mountBody).toMatch(
-      /if\s*\(\s*onRestorePinnedScroll\(\)\s*\)\s*return;[\s\S]*?if\s*\(\s*isSeedPending\(\)\s*\)\s*return;[\s\S]*?scrollSync\.onInteractionScroll\(\)/,
-    );
+    const wrapScrollBody =
+      mountBody.match(/const onWrapScroll = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(wrapScrollBody).toMatch(/onRestorePinnedScroll\(\)/);
+    expect(wrapScrollBody).toMatch(/scrollSync\.onInteractionScroll\(\)/);
+    expect(wrapScrollBody).not.toMatch(/isSeedPending\(\)/);
   });
 });

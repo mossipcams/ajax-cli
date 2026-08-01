@@ -1291,7 +1291,9 @@ export default function TaskTerminal({ handle }: Props) {
     const onWrapScroll = () => {
       // Undone caret reveal: never map it onto the PTY viewport.
       if (onRestorePinnedScroll()) return;
-      if (isSeedPending()) return;
+      // Do not gate on isSeedPending: wrapper scroll must still flip followLive
+      // off so "New output" works if the user (or a test) scrolls during the
+      // quiet window. Mid-parse yank is handled by ignoring onTermScroll above.
       scrollSync.onInteractionScroll();
     };
     interactionEl.addEventListener("scroll", onWrapScroll, { passive: true });
@@ -1316,9 +1318,10 @@ export default function TaskTerminal({ handle }: Props) {
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
           termRef.current?.write(text, () => {
-            if (isSeedPending()) {
-              scrollSync.setFollowLive(true);
-            }
+            // Mid-parse xterm onScroll is ignored while seed-pending (above), so
+            // followLive stays put across the write. Do not force-follow here —
+            // that would re-pin after a wrapper scroll during the quiet window
+            // and suppress the "New output" affordance.
             scrollSync.applyOutput();
             deferSeedReveal();
           });
