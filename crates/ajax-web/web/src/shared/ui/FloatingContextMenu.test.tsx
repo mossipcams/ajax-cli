@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, screen, fireEvent } from "@testing-library/react";
 import {
   FloatingContextMenu,
@@ -6,7 +9,23 @@ import {
   readFloatingMenuShiftPadding,
 } from "./FloatingContextMenu";
 
+const stylesSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
+  "utf8",
+);
+
 describe("FloatingContextMenu", () => {
+  it("stacks above the expanded terminal panel", () => {
+    // Expanded terminal uses z-index 45; without this the portaled Open/Copy
+    // menu paints under the terminal and taps never reach the buttons (#708
+    // restore dropped the CSS while keeping the TSX).
+    const rule = stylesSource.match(
+      /\.floating-context-menu\s*\{[^}]*\}/,
+    )?.[0];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/z-index:\s*50/);
+  });
+
   it("renders items when open with an anchor point", () => {
     const onOpen = vi.fn();
     const onCopy = vi.fn();
