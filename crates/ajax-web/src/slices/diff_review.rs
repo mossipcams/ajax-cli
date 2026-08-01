@@ -4,9 +4,9 @@ use ajax_core::{
     adapters::{CommandRunner, GithubChecksAdapter},
     commands::CommandContext,
     diff_review::{
-        observe_task_pull_requests, project_task_diff, DiffFile, DiffFileRole, DiffHunk,
-        DiffReviewError, DiffSource, PullRequestRef, PullRequestState, TaskDiffProjection,
-        AJAX_PULL_REQUESTS_KEY,
+        observe_task_pull_requests, project_task_diff, DiffFile, DiffFileRole, DiffFlag,
+        DiffFlagKind, DiffFlagSeverity, DiffHunk, DiffJudgment, DiffReviewError, DiffSource,
+        DiffTotals, PullRequestRef, PullRequestState, TaskDiffProjection, AJAX_PULL_REQUESTS_KEY,
     },
     registry::Registry,
 };
@@ -46,11 +46,26 @@ fn role_label(role: DiffFileRole) -> &'static str {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct DiffFlagDto {
+    pub kind: DiffFlagKind,
+    pub severity: DiffFlagSeverity,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiffJudgmentDto {
+    pub totals: DiffTotals,
+    pub reading_order: Vec<String>,
+    pub flags: Vec<DiffFlagDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct TaskDiffDto {
     pub source: String,
     pub pr: Option<PullRequestDto>,
     pub files: Vec<DiffFileDto>,
     pub fell_back_from_pr: Option<u64>,
+    pub judgment: DiffJudgmentDto,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -120,6 +135,22 @@ fn file_dto(file: DiffFile) -> DiffFileDto {
     }
 }
 
+fn flag_dto(flag: DiffFlag) -> DiffFlagDto {
+    DiffFlagDto {
+        kind: flag.kind,
+        severity: flag.severity,
+        path: flag.path,
+    }
+}
+
+fn judgment_dto(judgment: DiffJudgment) -> DiffJudgmentDto {
+    DiffJudgmentDto {
+        totals: judgment.totals,
+        reading_order: judgment.reading_order,
+        flags: judgment.flags.into_iter().map(flag_dto).collect(),
+    }
+}
+
 fn diff_dto(projection: TaskDiffProjection) -> TaskDiffDto {
     let source = match projection.source {
         DiffSource::Local => "local".to_string(),
@@ -130,6 +161,7 @@ fn diff_dto(projection: TaskDiffProjection) -> TaskDiffDto {
         pr: projection.pr.map(pr_dto),
         files: projection.files.into_iter().map(file_dto).collect(),
         fell_back_from_pr: projection.fell_back_from_pr,
+        judgment: judgment_dto(projection.judgment),
     }
 }
 
@@ -333,6 +365,15 @@ diff --git a/src/a.rs b/src/a.rs
         assert_eq!(projection.diff.files[0].path, "src/a.rs");
         assert_eq!(projection.diff.files[0].role, "signal");
         assert_eq!(projection.diff.files[0].additions, 1);
+        assert_eq!(projection.diff.judgment.totals.files, 1);
+        assert_eq!(projection.diff.judgment.totals.signal, 1);
+        assert_eq!(projection.diff.judgment.reading_order, vec!["src/a.rs"]);
+        assert!(projection
+            .diff
+            .judgment
+            .flags
+            .iter()
+            .any(|flag| flag.kind == DiffFlagKind::UnexpectedPath));
         assert!(runner
             .commands
             .iter()

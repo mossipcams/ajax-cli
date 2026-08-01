@@ -248,8 +248,10 @@ The task operation boundary now owns the main mutable task actions:
   merges live `gh` results with durable `PullRequestRef` metadata on the task
   (so a merged PR remains visible after a later PR is opened for the same
   task), and projects structured file/hunk diffs for a selected PR or a local
-  `base...HEAD` fallback. The browser only renders that projection; it must not
-  invent PR association, parse `gh` output, or store a second PR registry.
+  `base...HEAD` fallback, plus a deterministic vibe-judgment block (totals,
+  signal reading order, and path/hunk heuristic flags). The browser only
+  renders that projection; it must not invent PR association, parse `gh`
+  output, derive judgment rules, or store a second PR registry.
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
 - Confirmed worktree teardown renames the worktree into a sibling
@@ -653,8 +655,9 @@ task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
 desktop. From a selected task, swipe-left navigation opens Diff Review
-(`#/t/<handle>/diff`), a read-only PR/file/hunk viewer fed by core projections
-over `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
+(`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
+orientation, judgment flags, and reading-order guide chips, fed by
+`GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
 navigates with a one-shot CSS enter on the destination outlet; button and
 bottom-nav navigations stay instant.
 Diff Review must not steal terminal horizontal pans. The browser submits only an
