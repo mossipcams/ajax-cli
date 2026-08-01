@@ -899,8 +899,10 @@ transcript arrives. If the full grace period expires, the session enters
 provider to finalize, waits for pending finals and successful completion,
 releases microphone and audio resources, closes the STT session, cancels
 timers, and returns to idle without `stt.error`. No automatic Enter, shell
-execution, or prompt submission occurs. There is no spoken `start over`
-command; ordinary uses of “start over” remain dictated text.
+execution, or prompt submission occurs. Standalone spoken `start over` or
+`start fresh` (including punctuated forms) clears finalized speech state and
+undoes auto-inserted shell text for the active session while capture continues;
+sentence uses of those phrases remain dictated text.
 
 Manual cancel and provider failure share the same teardown path. They stop
 capture and transport, cancel the session and all timers, release browser audio

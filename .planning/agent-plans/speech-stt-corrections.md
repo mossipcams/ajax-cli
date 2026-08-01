@@ -23,7 +23,7 @@ delegate deltas cannot leave finalize/ready/composer contracts contradictory.
 2. Persistent Moonshine Small Streaming worker; model loads once.
 3. Explicit successful completion (`completed` / `stt.closed`); no `stt.error` on expected finalize.
 4. Real readiness from sidecar after model load.
-5. Remove spoken `start over`.
+5. Spoken `start over` / `start fresh` clears auto-inserted dictation (restored after user correction).
 6. Observable bounded backpressure; no silent audio drops.
 
 ## Task checklist

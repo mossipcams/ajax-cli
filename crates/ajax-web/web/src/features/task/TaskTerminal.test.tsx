@@ -503,14 +503,16 @@ describe("TaskTerminal speech input", () => {
     expect(taskTerminalSource).not.toMatch(/insertComposerTranscript/);
     expect(taskTerminalSource).not.toMatch(/composerText/);
     expect(taskTerminalSource).toMatch(/createSpeechTransport/);
+    expect(taskTerminalSource).toMatch(/speechInsertLedger/);
+    expect(taskTerminalSource).toMatch(/undoInsertedSpeech/);
+    expect(taskTerminalSource).toMatch(/isStandaloneStartOver/);
 
     // Contiguous finalTranscript deltas paste in onFinal (outside setState).
     const onFinal = taskTerminalSource.match(/onFinal:[\s\S]*?\n {8}\},/)?.[0] ?? "";
     expect(onFinal).toMatch(/pasteThroughTerm\(/);
     expect(onFinal).toMatch(/finalTranscript/);
-    expect(onFinal).not.toMatch(/isStandaloneStartOver/);
-    expect(onFinal).not.toMatch(/undoInsertedSpeech/);
-    expect(taskTerminalSource).not.toMatch(/speechInsertLedger/);
+    expect(onFinal).toMatch(/isStandaloneStartOver\(text\)/);
+    expect(onFinal).toMatch(/undoInsertedSpeech\(\)/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
     const mic = taskTerminalSource.indexOf(">\n            Mic");

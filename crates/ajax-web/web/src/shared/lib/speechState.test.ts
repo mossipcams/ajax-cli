@@ -3,6 +3,7 @@ import {
   DEFAULT_SPEECH_CONFIG,
   createSpeechInputModel,
   isStandalonePause,
+  isStandaloneStartOver,
   speechReducer,
 } from "./speechState";
 
@@ -58,20 +59,51 @@ describe("speech state", () => {
     expect(paused.pauseDeadlineMs).toBe(1000 + DEFAULT_SPEECH_CONFIG.pauseGracePeriodMs);
   });
 
-  it("treats start over as ordinary dictated text", () => {
+  it("clears finals on standalone start over / start fresh and continues sequences", () => {
+    expect(isStandaloneStartOver("start over")).toBe(true);
+    expect(isStandaloneStartOver("Start over.")).toBe(true);
+    expect(isStandaloneStartOver("start fresh")).toBe(true);
+    expect(isStandaloneStartOver("Start fresh!")).toBe(true);
+    expect(isStandaloneStartOver("please start over now")).toBe(false);
     expect(isStandalonePause("start over")).toBe(false);
 
-    const model = speechReducer(startListening(), {
+    let model = startListening();
+    model = speechReducer(model, {
       type: "final",
       sessionId: "session-1",
       sequence: 0,
-      text: "Start over.",
+      text: "Hello",
       nowMs: 1000,
     });
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "world",
+      nowMs: 1100,
+    });
+    expect(model.finalTranscript).toBe("Hello world");
 
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 2,
+      text: "Start over.",
+      nowMs: 1200,
+    });
     expect(model.state).toBe("listening");
-    expect(model.finalTranscript).toBe("Start over.");
-    expect(model.finalSegments).toEqual({ 0: "Start over." });
+    expect(model.finalTranscript).toBe("");
+    expect(model.finalSegments).toEqual({});
+    expect(model.nextExpectedSequence).toBe(3);
+
+    model = speechReducer(model, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 3,
+      text: "Again",
+      nowMs: 1300,
+    });
+    expect(model.finalTranscript).toBe("Again");
   });
 
   it("uses server-provided pause grace period for pause deadline", () => {
@@ -394,10 +426,10 @@ describe("speech state", () => {
       type: "final",
       sessionId: "session-1",
       sequence: 1,
-      text: "start over",
+      text: "and more",
       nowMs: 1_100,
     });
-    expect(model.finalTranscript).toBe("Hello world start over");
+    expect(model.finalTranscript).toBe("Hello world and more");
     expect(model.state).toBe("listening");
 
     model = speechReducer(model, {
@@ -408,7 +440,7 @@ describe("speech state", () => {
       nowMs: 1_200,
     });
     expect(model.state).toBe("pause_pending");
-    expect(model.finalTranscript).toBe("Hello world start over");
+    expect(model.finalTranscript).toBe("Hello world and more");
     expect(model.pauseDeadlineMs).toBe(1_200 + 9_000);
 
     // Speak-to-continue cancels the countdown.
@@ -443,7 +475,7 @@ describe("speech state", () => {
     });
     expect(model.state).toBe("idle");
     expect(model.sessionId).toBeUndefined();
-    expect(model.finalTranscript).toBe("Hello world start over");
+    expect(model.finalTranscript).toBe("Hello world and more");
     expect(model.partialTranscript).toBe("");
     // Speech never auto-submits: no trailing Enter / newline from the lifecycle.
     expect(model.finalTranscript.includes("\n")).toBe(false);
