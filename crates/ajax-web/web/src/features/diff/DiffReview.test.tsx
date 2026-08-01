@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import DiffReview from "./DiffReview";
 import * as api from "@/shared/lib/api";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
@@ -111,6 +111,102 @@ describe("DiffReview", () => {
     render(<DiffReview handle="web/fix-login" />);
     expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
     expect(screen.getByTestId("diff-empty")).toHaveTextContent("No file changes");
+  });
+
+  it("ignores stale diff responses when selectedPr changes quickly", async () => {
+    const pr9Diff = {
+      source: "pr:9",
+      pr: {
+        number: 9,
+        title: "First",
+        url: "https://example.com/9",
+        state: "MERGED",
+        head_ref: "ajax/fix-login",
+        head_sha: "def",
+      },
+      files: [
+        {
+          path: "src/fresh.ts",
+          status: "modified",
+          role: "signal",
+          additions: 1,
+          deletions: 0,
+          hunks: [{ header: "@@", lines: ["+fresh"] }],
+        },
+      ],
+    };
+    const pr12Diff = {
+      source: "pr:12",
+      pr: {
+        number: 12,
+        title: "Retry",
+        url: "https://example.com/12",
+        state: "OPEN",
+        head_ref: "ajax/fix-login",
+        head_sha: "abc",
+      },
+      files: [
+        {
+          path: "src/stale.ts",
+          status: "modified",
+          role: "signal",
+          additions: 1,
+          deletions: 0,
+          hunks: [{ header: "@@", lines: ["+stale"] }],
+        },
+      ],
+    };
+
+    const resolvers: Array<(value: typeof pr9Diff) => void> = [];
+    vi.mocked(api.fetchTaskDiff).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const { rerender } = render(<DiffReview handle="web/fix-login" selectedPr={12} />);
+    await waitFor(() => expect(resolvers).toHaveLength(1));
+
+    rerender(<DiffReview handle="web/fix-login" selectedPr={9} />);
+    await waitFor(() => expect(resolvers).toHaveLength(2));
+
+    await act(async () => {
+      resolvers[1](pr9Diff);
+    });
+    expect(await screen.findByTestId("diff-source")).toHaveTextContent("pr:9");
+    expect(screen.getByTestId("diff-file")).toHaveTextContent("src/fresh.ts");
+
+    await act(async () => {
+      resolvers[0](pr12Diff);
+    });
+    expect(screen.getByTestId("diff-source")).toHaveTextContent("pr:9");
+    expect(screen.getByTestId("diff-file")).toHaveTextContent("src/fresh.ts");
+  });
+
+  it("shows a fallback banner when PR patch fell back to local diff", async () => {
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
+      source: "local",
+      pr: null,
+      fell_back_from_pr: 12,
+      files: [
+        {
+          path: "src/a.ts",
+          status: "modified",
+          role: "signal",
+          additions: 1,
+          deletions: 0,
+          hunks: [{ header: "@@", lines: ["+new"] }],
+        },
+      ],
+    });
+
+    render(<DiffReview handle="web/fix-login" selectedPr={12} />);
+
+    const banner = await screen.findByTestId("diff-fallback-banner");
+    expect(banner).toHaveTextContent("PR #12 patch unavailable");
+    expect(banner).toHaveTextContent("local");
+    expect(screen.getByTestId("diff-source")).toHaveTextContent("local");
   });
 
   it("notifies parent when a PR chip is selected", async () => {

@@ -49,6 +49,7 @@ export interface TaskDiffView {
   source: string;
   pr: PullRequestView | null;
   files: DiffFileView[];
+  fell_back_from_pr?: number | null;
 }
 
 export interface BranchAdoptionPlan {

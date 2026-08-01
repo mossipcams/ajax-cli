@@ -21,6 +21,7 @@ class MockWebSocket {
 
   readyState = 0;
   url: string;
+  binaryType = "blob";
   private handlers = new Map<string, SocketHandler[]>();
 
   constructor(url: string) {
@@ -34,9 +35,17 @@ class MockWebSocket {
     this.handlers.set(type, list);
   }
 
-  removeEventListener() {}
+  removeEventListener(type: string, handler: SocketHandler) {
+    const list = this.handlers.get(type);
+    if (!list) return;
+    const index = list.indexOf(handler);
+    if (index >= 0) list.splice(index, 1);
+  }
 
-  close() {}
+  close() {
+    this.readyState = 3;
+    this.fire("close");
+  }
 
   send() {}
 
@@ -201,7 +210,7 @@ describe("connectTaskTerminal", () => {
 
   it("keeps reconnecting after a socket has opened", () => {
     createConnection();
-    const socket = latestSocket();
+    let socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
     socket.fire("open");
 
@@ -210,9 +219,9 @@ describe("connectTaskTerminal", () => {
       vi.runOnlyPendingTimers();
       expect(statuses.at(-1)).toBe("reconnecting");
       expect(statuses).not.toContain("unavailable");
-      const next = latestSocket();
-      next.readyState = MockWebSocket.OPEN;
-      next.fire("open");
+      socket = latestSocket();
+      socket.readyState = MockWebSocket.OPEN;
+      socket.fire("open");
     }
   });
 
@@ -257,6 +266,63 @@ describe("connectTaskTerminal", () => {
   it("first connect dials without a seed opt-out (seed)", () => {
     createConnection();
     expect(MockWebSocket.instances[0].url).not.toContain("seed=0");
+  });
+
+  it("sets binaryType to arraybuffer on connect", () => {
+    createConnection();
+    expect(latestSocket().binaryType).toBe("arraybuffer");
+  });
+
+  it("second dial while first still CONNECTING closes prior socket and avoids double onOpen", () => {
+    let openCount = 0;
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: () => {},
+      onServerError: () => {},
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+      onOpen: () => {
+        openCount += 1;
+      },
+    });
+
+    const first = MockWebSocket.instances[0];
+    expect(first.readyState).toBe(0);
+
+    let firstClosed = false;
+    first.close = () => {
+      firstClosed = true;
+      first.readyState = 3;
+    };
+
+    connection.reconnectNow();
+
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(firstClosed).toBe(true);
+
+    first.readyState = MockWebSocket.OPEN;
+    first.fire("open");
+    expect(openCount).toBe(0);
+
+    const second = MockWebSocket.instances[1];
+    second.readyState = MockWebSocket.OPEN;
+    second.fire("open");
+    expect(openCount).toBe(1);
+  });
+
+  it("superseded socket close does not schedule another reconnect", () => {
+    createConnection();
+    const first = latestSocket();
+    first.readyState = MockWebSocket.OPEN;
+    first.fire("open");
+
+    connection.reconnectNow();
+    const dialsAfterRedial = MockWebSocket.instances.length;
+
+    first.fire("close");
+    vi.advanceTimersByTime(60_000);
+
+    expect(MockWebSocket.instances.length).toBe(dialsAfterRedial);
   });
 
   it("first visible auto-reconnect after open dials immediately with client id", () => {

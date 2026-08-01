@@ -1064,18 +1064,6 @@ header .bar h1 {
   margin-left: 6px;
 }
 
-/* A faulted repo shows a fault dot, not a count — health, not a metric. The pill
-   is not a flex row, so the dot needs inline-block to keep its box. */
-.pill-fault-dot {
-  display: inline-block;
-  vertical-align: middle;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-  margin-left: 6px;
-}
-
 .tasks {
   margin-top: 6px;
 }
@@ -1220,21 +1208,6 @@ header .bar h1 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* "Running but wedged": amber note, and the running dot stops pulsing so a
-   stalled agent doesn't read as live. */
-.task-row-quiet {
-  font-size: var(--text-label);
-  font-weight: 500;
-  color: var(--warn);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.task-row.is-quiet .status-dot.tone-running {
-  animation: none;
 }
 
 .task-row-side {
