@@ -29,12 +29,6 @@ export function statusMeta(status: string): StatusMeta {
   return { tone, label: STATUS_LABELS[tone] };
 }
 
-export function severityBucket(value: number): "high" | "medium" | "low" {
-  if (value <= 2) return "high";
-  if (value <= 3) return "medium";
-  return "low";
-}
-
 /** Presentation-only ordering. NOT a priority policy (that lives in Rust). */
 export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle", "unknown"];
 
@@ -87,45 +81,6 @@ export function sortCards(
 
 export function isConfirmExpired(entry: { expiresAt: number }, now: number): boolean {
   return now > entry.expiresAt;
-}
-
-/** A running task with no activity for this long reads as quiet/stuck. */
-export const QUIET_THRESHOLD_SECS = 240; // 4 minutes
-
-/** True when a running task has gone silent past the quiet threshold — the
- * "running but wedged" signal a plain status count hides. Unset activity (0)
- * never counts as quiet. */
-export function isQuiet(card: BrowserTaskCard, nowSecs: number): boolean {
-  return (
-    card.status === "running" &&
-    card.last_activity_unix_secs > 0 &&
-    nowSecs - card.last_activity_unix_secs >= QUIET_THRESHOLD_SECS
-  );
-}
-
-export type ActiveStatus = Exclude<TaskStatus, "idle" | "unknown">;
-
-export interface FleetSegment {
-  status: ActiveStatus;
-  count: number;
-}
-
-/** Muster Bar order: faults first, then what's blocked on you, then the healthy
- * body. Idle is inventory, not fleet health, so it never gets a segment. */
-const ACTIVE_ORDER: ActiveStatus[] = ["error", "waiting", "running"];
-
-/** Active-fleet composition for the Muster Bar. Only nonzero states appear, so
- * an accent never shows for an empty state (Accent Rarity holds by construction). */
-export function fleetSegments(cards: BrowserTaskCard[]): FleetSegment[] {
-  return ACTIVE_ORDER.map((status) => ({
-    status,
-    count: cards.filter((c) => c.status === status).length,
-  })).filter((segment) => segment.count > 0);
-}
-
-/** Repos with at least one faulted task — drives the project-pill fault dot. */
-export function reposWithFault(cards: BrowserTaskCard[]): Set<string> {
-  return new Set(cards.filter((c) => c.status === "error").map((c) => c.repo));
 }
 
 /** Compact relative timestamp for glanceable metadata: "now", "5m ago",

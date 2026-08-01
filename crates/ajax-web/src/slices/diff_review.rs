@@ -50,6 +50,7 @@ pub struct TaskDiffDto {
     pub source: String,
     pub pr: Option<PullRequestDto>,
     pub files: Vec<DiffFileDto>,
+    pub fell_back_from_pr: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,6 +129,7 @@ fn diff_dto(projection: TaskDiffProjection) -> TaskDiffDto {
         source,
         pr: projection.pr.map(pr_dto),
         files: projection.files.into_iter().map(file_dto).collect(),
+        fell_back_from_pr: projection.fell_back_from_pr,
     }
 }
 
@@ -326,6 +328,7 @@ diff --git a/src/a.rs b/src/a.rs
 
         assert!(!projection.metadata_changed);
         assert_eq!(projection.diff.source, "local");
+        assert_eq!(projection.diff.fell_back_from_pr, None);
         assert_eq!(projection.diff.files.len(), 1);
         assert_eq!(projection.diff.files[0].path, "src/a.rs");
         assert_eq!(projection.diff.files[0].role, "signal");
@@ -352,6 +355,51 @@ diff --git a/src/a.rs b/src/a.rs
             error,
             DiffReviewRouteError::Unobservable(reason) if reason.contains("bad revision")
         ));
+    }
+
+    #[test]
+    fn task_diff_projection_pr_fallback_sets_fell_back_from_pr() {
+        let mut context = context();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .unwrap();
+            remember_pull_requests(
+                task,
+                &[PullRequestRef {
+                    number: 12,
+                    title: "Retry".into(),
+                    url: "https://example.com/12".into(),
+                    state: PullRequestState::Open,
+                    head_ref: "ajax/fix-login".into(),
+                    head_sha: Some("abc".into()),
+                }],
+            );
+        }
+        let patch = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1,2 @@
+ keep
++new
+";
+        let mut runner = QueuedRunner::new(vec![
+            ok(r#"[]"#),
+            Err(CommandRunError::SpawnFailed(
+                "gh pr diff unavailable".into(),
+            )),
+            ok(patch),
+        ]);
+
+        let projection =
+            task_diff_projection(&mut context, &mut runner, "web/fix-login", Some(12), false)
+                .expect("hybrid fallback");
+
+        assert_eq!(projection.diff.source, "local");
+        assert_eq!(projection.diff.fell_back_from_pr, Some(12));
+        assert_eq!(projection.diff.files.len(), 1);
     }
 
     #[test]

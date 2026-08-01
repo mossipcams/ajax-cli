@@ -761,6 +761,32 @@ test("multiline Unicode paste preserves content in one input frame", async ({ pa
   expect(frames.at(-1)?.data).toBe(MULTILINE_UNICODE_CLIPBOARD);
 });
 
+test("native uri-list-only paste sends the link URL in one input frame", async ({ page }) => {
+  await openTaskTerminal(page);
+  await clickTerminalSurfaceInterior(page);
+
+  const url = "https://example.com/a";
+  const baseline = await inputFrameCount(page);
+
+  await page.evaluate((pasteUrl) => {
+    const textarea = document.querySelector(
+      "textarea.xterm-helper-textarea",
+    ) as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error("helper textarea missing");
+    textarea.focus();
+    const data = new DataTransfer();
+    data.setData("text/uri-list", pasteUrl);
+    data.setData("text/plain", "");
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  }, url);
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  const frames = await terminalInputFrames(page);
+  expect(frames.at(-1)?.data).toBe(url);
+});
+
 test("bracketed paste wraps toolbar paste in DEC bracket mode", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
@@ -2910,7 +2936,8 @@ test("seeded open stays hidden until output after the seed settles, then lands a
   // arrives in a later frame. Revealing between the two is what made the
   // terminal visibly scroll a screenful on load.
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
-  await page.waitForTimeout(60);
+  // Stay under SEED_REVEAL_QUIET_MS (48) so the mid-gap assert still sees pending.
+  await page.waitForTimeout(24);
   await expect(surface).toHaveClass(/is-seed-pending/);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);

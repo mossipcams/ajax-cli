@@ -43,7 +43,7 @@ export function connectTaskTerminal(
   handle: string,
   events: TerminalConnectionEvents,
 ): TerminalConnection {
-  let socket: WebSocket;
+  let socket: WebSocket | undefined;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let everOpened = false;
@@ -54,6 +54,7 @@ export function connectTaskTerminal(
   let sessionRenewTried = false;
   let attachFailed = false;
   let disposed = false;
+  let supersedingDial = false;
   let status: TerminalConnectionStatus = "connecting";
   let lastDialSeeded = true;
   // One id for this controller only (reconnects reuse it; a duplicated tab
@@ -81,7 +82,7 @@ export function connectTaskTerminal(
     });
   };
 
-  const bytesFromBinaryData = async (data: unknown): Promise<Uint8Array | null> => {
+  const bytesFromBinaryDataSync = (data: unknown): Uint8Array | null => {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
     if (ArrayBuffer.isView(data)) {
       return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
@@ -94,10 +95,11 @@ export function connectTaskTerminal(
     ) {
       return new Uint8Array(data as ArrayBuffer);
     }
-    if (data instanceof Blob) {
-      return new Uint8Array(await readBlobArrayBuffer(data));
-    }
     return null;
+  };
+
+  const bytesFromBinaryBlob = async (blob: Blob): Promise<Uint8Array> => {
+    return new Uint8Array(await readBlobArrayBuffer(blob));
   };
 
   const handleJsonControlFrame = (text: string): boolean => {
@@ -134,20 +136,29 @@ export function connectTaskTerminal(
       return;
     }
 
+    const syncBytes = bytesFromBinaryDataSync(raw);
+    if (syncBytes) {
+      // binaryType=arraybuffer: decode synchronously so UTF-8 stream order stays intact.
+      if (syncBytes.length > 0 && syncBytes[0] === 0x7b /* { */) {
+        const asText = new TextDecoder().decode(syncBytes);
+        if (handleJsonControlFrame(asText)) return;
+      }
+      events.onOutput(outputDecoder.decode(syncBytes, { stream: true }));
+      return;
+    }
+
     void (async () => {
-      // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
-      const binaryBytes = await bytesFromBinaryData(raw);
-      if (binaryBytes) {
-        // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
-        if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
-          const asText = new TextDecoder().decode(binaryBytes);
-          if (handleJsonControlFrame(asText)) return;
-        }
-        events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
+      // Blob fallback when binaryType is not arraybuffer (tests / legacy browsers).
+      if (!(raw instanceof Blob)) {
+        events.onOutput(String(raw));
         return;
       }
-
-      events.onOutput(String(raw));
+      const binaryBytes = await bytesFromBinaryBlob(raw);
+      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
+        const asText = new TextDecoder().decode(binaryBytes);
+        if (handleJsonControlFrame(asText)) return;
+      }
+      events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
     })();
   };
 
@@ -183,8 +194,17 @@ export function connectTaskTerminal(
   function connect(seedHistory: boolean) {
     lastDialSeeded = seedHistory;
     dialOpened = false;
-    socket = openTaskTerminalSocket(handle, seedHistory, clientId);
-    socket.addEventListener("open", () => {
+    const priorSocket = socket;
+    const dialSocket = openTaskTerminalSocket(handle, seedHistory, clientId);
+    socket = dialSocket;
+    dialSocket.binaryType = "arraybuffer";
+    if (priorSocket) {
+      supersedingDial = true;
+      priorSocket.close();
+      supersedingDial = false;
+    }
+    dialSocket.addEventListener("open", () => {
+      if (socket !== dialSocket) return;
       // A successful open resets the backoff. A fresh tmux attach repaints the
       // pane and the resize-on-open makes tmux redraw at the real size, so no
       // explicit refresh frame is needed on reconnect.
@@ -197,11 +217,15 @@ export function connectTaskTerminal(
       setStatus("connected");
       events.onOpen(isReconnect, lastDialSeeded);
     });
-    socket.addEventListener("message", onSocketMessage);
+    dialSocket.addEventListener("message", onSocketMessage);
     // An error is followed by close; let the close handler own reconnect so we
     // never schedule it twice.
-    socket.addEventListener("error", () => {});
-    socket.addEventListener("close", () => {
+    dialSocket.addEventListener("error", () => {});
+    dialSocket.addEventListener("close", () => {
+      // Ignore closes from sockets replaced by a newer dial (async close after
+      // supersedingDial clears, or a late fire in tests).
+      if (socket !== dialSocket) return;
+      if (supersedingDial) return;
       if (disposed) return;
       if (attachFailed) {
         setStatus("unavailable");
@@ -246,9 +270,9 @@ export function connectTaskTerminal(
   connect(true);
 
   return {
-    isOpen: () => socket.readyState === WebSocket.OPEN,
+    isOpen: () => socket?.readyState === WebSocket.OPEN,
     sendInput(data: string) {
-      if (socket.readyState !== WebSocket.OPEN) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
       const MAX_INPUT_FRAME_BYTES = 4096;
       const bytes = inputEncoder.encode(data);
       for (let offset = 0; offset < bytes.byteLength; offset += MAX_INPUT_FRAME_BYTES) {
@@ -257,7 +281,7 @@ export function connectTaskTerminal(
       }
     },
     sendResize(cols: number, rows: number) {
-      if (socket.readyState !== WebSocket.OPEN) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
       socket.send(JSON.stringify({ type: "resize", cols, rows }));
     },
     reconnectNow,
@@ -265,7 +289,8 @@ export function connectTaskTerminal(
       disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       document.removeEventListener("visibilitychange", onVisibility);
-      socket.close();
+      socket?.close();
+      socket = undefined;
     },
   };
 }

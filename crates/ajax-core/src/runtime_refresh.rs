@@ -386,7 +386,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             == crate::agent_status::ParentPhase::ActivelyWorking
             && matches!(
                 agent,
-                AgentClient::Claude | AgentClient::Codex | AgentClient::Cursor
+                AgentClient::Claude | AgentClient::Codex | AgentClient::Cursor | AgentClient::Pi
             );
         // Actionable waits only — Done/"Response ready" is Waiting-class but must
         // not open the idle reconcile capture gate (Bugbot).
@@ -400,7 +400,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 )
             });
         let reconcile_idle = projection.phase == crate::agent_status::ParentPhase::FullyCompleted
-            && agent == AgentClient::Claude
+            && matches!(
+                agent,
+                AgentClient::Claude | AgentClient::Codex | AgentClient::Cursor
+            )
             && prior_actionable_or_running;
         let unknown_fallback = projection.phase == crate::agent_status::ParentPhase::Unknown
             && crate::pane_fallback::profile_allows_any_pane_wait_fallback(agent);
@@ -2323,6 +2326,92 @@ mod tests {
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn fully_completed_codex_idle_reconciles_to_waiting_on_permission_pane() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Codex;
+        let mut runner = PermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Done, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn fully_completed_cursor_idle_reconciles_to_waiting_on_permission_pane() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Cursor;
+        let mut runner = CursorPermissionMenuRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Done, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    const PI_PARKED_INPUT_PANE: &str = "complete\npi>";
+
+    #[derive(Default)]
+    struct PiParkedInputRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for PiParkedInputRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => PI_PARKED_INPUT_PANE,
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn pi_running_reconciles_to_waiting_on_parked_input_pane() {
+        let mut context = context_with_unchanged_running_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.selected_agent = AgentClient::Pi;
+        let mut runner = PiParkedInputRunner::default();
+        let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
         );
     }
 

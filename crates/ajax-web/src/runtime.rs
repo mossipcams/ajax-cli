@@ -164,6 +164,44 @@ where
     }
 }
 
+impl<C, B> WebAppState<C, B>
+where
+    C: Clone + CommandRunner,
+    B: Clone + RuntimeBridge<C>,
+{
+    /// Run `operate` against a clone without holding the shared lock. The HTTP
+    /// response is always returned; when `metadata_changed` is true, observed
+    /// PR metadata is persisted best-effort and merged into shared state only
+    /// when no concurrent writer advanced the revision.
+    fn run_read(
+        &self,
+        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> (Response, bool),
+    ) -> Response {
+        let (mut context, mut runner, mut bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        let (response, metadata_changed) = operate(&mut context, &mut runner, &mut bridge);
+        if metadata_changed {
+            let _ = bridge.persist_registry_snapshot(&mut context);
+            let mut guard = self.shared();
+            if guard.revision == base_revision {
+                guard.context = context;
+                guard.runner = runner;
+                guard.bridge = bridge;
+                guard.revision = guard.revision.saturating_add(1);
+                guard.cockpit_cache = None;
+            }
+        }
+        response
+    }
+}
+
 impl<C, B> WebAppState<C, B> {
     fn shared(&self) -> std::sync::MutexGuard<'_, WebSharedState<C, B>> {
         self.shared
@@ -1064,34 +1102,52 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let response = state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
-        let result = match crate::slices::diff_review::list_task_pull_requests(context, runner, &handle)
-        {
-            Ok(projection) => {
-                if projection.metadata_changed {
-                    // Persist is best-effort: never turn a successful projection into a 500.
-                    let _ = bridge.persist_registry_snapshot(context);
+    let response = tokio::task::spawn_blocking(move || {
+        state.run_read(|context, runner, _bridge| {
+            let (response, metadata_changed) = match crate::slices::diff_review::list_task_pull_requests(
+                context,
+                runner,
+                &handle,
+            ) {
+                Ok(projection) => {
+                    let metadata_changed = projection.metadata_changed;
+                    let response = json_response(
+                        200,
+                        serde_json::json!({ "pull_requests": projection.pull_requests }),
+                    );
+                    (response, metadata_changed)
                 }
-                json_response(
-                    200,
-                    serde_json::json!({ "pull_requests": projection.pull_requests }),
-                )
-            }
-            Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => json_response(
-                404,
-                serde_json::json!({ "ok": false, "error": "task not found" }),
-            ),
-            Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
-                json_response(502, serde_json::json!({ "ok": false, "error": reason }))
-            }
-            Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
-                json_response(
-                    404,
-                    serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
-                )
-            }
-        };
-        result.unwrap_or_else(|error| response_from_web_error(error, None))
+                Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": "task not found" }),
+                    ),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => (
+                    json_response(502, serde_json::json!({ "ok": false, "error": reason })),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
+                    ),
+                    false,
+                ),
+            };
+            (
+                response.unwrap_or_else(|error| response_from_web_error(error, None)),
+                metadata_changed,
+            )
+        })
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("diff review worker failed: {error}")),
+            None,
+        )
     });
     response.into_axum_response()
 }
@@ -1118,36 +1174,52 @@ where
         }
     });
 
-    let response = state.run_optimistic(None, "cockpit state changed", |context, runner, bridge| {
-        let result = match crate::slices::diff_review::task_diff_projection(
-            context,
-            runner,
-            &handle,
-            pr_number,
-            force_local,
-        ) {
-            Ok(projection) => {
-                if projection.metadata_changed {
-                    // Persist is best-effort: never turn a successful projection into a 500.
-                    let _ = bridge.persist_registry_snapshot(context);
+    let response = tokio::task::spawn_blocking(move || {
+        state.run_read(|context, runner, _bridge| {
+            let (response, metadata_changed) = match crate::slices::diff_review::task_diff_projection(
+                context,
+                runner,
+                &handle,
+                pr_number,
+                force_local,
+            ) {
+                Ok(projection) => {
+                    let metadata_changed = projection.metadata_changed;
+                    let response =
+                        json_response(200, serde_json::to_value(projection.diff).unwrap_or_default());
+                    (response, metadata_changed)
                 }
-                json_response(200, serde_json::to_value(projection.diff).unwrap_or_default())
-            }
-            Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => json_response(
-                404,
-                serde_json::json!({ "ok": false, "error": "task not found" }),
-            ),
-            Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => {
-                json_response(502, serde_json::json!({ "ok": false, "error": reason }))
-            }
-            Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => {
-                json_response(
-                    404,
-                    serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
-                )
-            }
-        };
-        result.unwrap_or_else(|error| response_from_web_error(error, None))
+                Err(crate::slices::diff_review::DiffReviewRouteError::TaskNotFound) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": "task not found" }),
+                    ),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::Unobservable(reason)) => (
+                    json_response(502, serde_json::json!({ "ok": false, "error": reason })),
+                    false,
+                ),
+                Err(crate::slices::diff_review::DiffReviewRouteError::PrNotFound(number)) => (
+                    json_response(
+                        404,
+                        serde_json::json!({ "ok": false, "error": format!("PR #{number} not found") }),
+                    ),
+                    false,
+                ),
+            };
+            (
+                response.unwrap_or_else(|error| response_from_web_error(error, None)),
+                metadata_changed,
+            )
+        })
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("diff review worker failed: {error}")),
+            None,
+        )
     });
     response.into_axum_response()
 }
@@ -1351,24 +1423,35 @@ where
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
         return gate_rejection_response(rejection, Some(&request_id), &task_key, "task start");
     }
-    let _lane = state.control_lane.lock().await;
-    let response = state.run_optimistic(
-        Some(&request_id),
-        "cockpit state changed while task start was running",
-        |context, runner, bridge| {
-            let result = match bridge.execute_start_task(request, context, runner) {
-                Ok(outcome) => operation_success_response(outcome, context),
-                Err(error) => operation_error_response(error, context),
-            };
-            match result {
-                Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
-                Err(error) => response_from_web_error(error, Some(&request_id)),
-            }
-        },
-    );
-    state
-        .operations()
-        .finish(Some(&request_id), &task_key, &response);
+    let error_request_id = request_id.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        let response = state.run_optimistic(
+            Some(&request_id),
+            "cockpit state changed while task start was running",
+            |context, runner, bridge| {
+                let result = match bridge.execute_start_task(request, context, runner) {
+                    Ok(outcome) => operation_success_response(outcome, context),
+                    Err(error) => operation_error_response(error, context),
+                };
+                match result {
+                    Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
+                    Err(error) => response_from_web_error(error, Some(&request_id)),
+                }
+            },
+        );
+        state
+            .operations()
+            .finish(Some(&request_id), &task_key, &response);
+        response
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("task start worker failed: {error}")),
+            Some(&error_request_id),
+        )
+    });
     response.into_axum_response()
 }
 
@@ -1449,26 +1532,40 @@ where
         "operate begin"
     );
 
-    let _lane = state.control_lane.lock().await;
-    let response = state.run_optimistic(
-        request_id.as_deref(),
-        "cockpit state changed while operation was running",
-        |context, runner, bridge| match handle_action_request(request, context, runner, bridge) {
-            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-            Err(error) => response_from_web_error(error, request_id.as_deref()),
-        },
-    );
-
-    state
-        .operations()
-        .finish(request_id.as_deref(), &task_key, &response);
+    let log_request_id = request_id.clone();
+    let log_task_key = task_key.clone();
+    let log_action = action.clone();
+    let error_request_id = request_id.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        let response = state.run_optimistic(
+            request_id.as_deref(),
+            "cockpit state changed while operation was running",
+            |context, runner, bridge| match handle_action_request(request, context, runner, bridge)
+            {
+                Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+                Err(error) => response_from_web_error(error, request_id.as_deref()),
+            },
+        );
+        state
+            .operations()
+            .finish(request_id.as_deref(), &task_key, &response);
+        response
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("operation worker failed: {error}")),
+            error_request_id.as_deref(),
+        )
+    });
 
     if response.status_code >= 400 {
         tracing::warn!(
             target: "ajax_web",
-            request_id = ?request_id,
-            task = %task_key,
-            action = %action,
+            request_id = ?log_request_id,
+            task = %log_task_key,
+            action = %log_action,
             status = response.status_code,
             outcome = "err",
             "operate end"
@@ -1476,9 +1573,9 @@ where
     } else {
         tracing::info!(
             target: "ajax_web",
-            request_id = ?request_id,
-            task = %task_key,
-            action = %action,
+            request_id = ?log_request_id,
+            task = %log_task_key,
+            action = %log_action,
             status = response.status_code,
             outcome = "ok",
             "operate end"
@@ -1692,6 +1789,7 @@ mod tests {
         operate: Option<OperateRequest>,
         operate_count: usize,
         operate_delay: Duration,
+        start_delay: Duration,
         refresh_delay: Duration,
         operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
@@ -1720,6 +1818,7 @@ mod tests {
                 operate: None,
                 operate_count: 0,
                 operate_delay: Duration::ZERO,
+                start_delay: Duration::ZERO,
                 refresh_delay: Duration::ZERO,
                 operate_result: Ok(OperateOutcome {
                     state_changed: true,
@@ -1826,6 +1925,7 @@ mod tests {
                 entered.notify_one();
             }
             wait_for_release(&self.start_release, call_index);
+            std::thread::sleep(self.start_delay);
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -1850,6 +1950,35 @@ mod tests {
                 stdout: String::new(),
                 stderr: String::new(),
             })
+        }
+    }
+
+    #[derive(Clone)]
+    struct SlowDiffRunner {
+        delay: Duration,
+        entered: Option<Arc<Notify>>,
+    }
+
+    impl CommandRunner for SlowDiffRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if let Some(entered) = self.entered.as_ref() {
+                entered.notify_one();
+            }
+            std::thread::sleep(self.delay);
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: "[]".to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct PanickingDiffRunner;
+
+    impl CommandRunner for PanickingDiffRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            panic!("diff runner panic")
         }
     }
 
@@ -3449,6 +3578,146 @@ mod tests {
             "health took {health_elapsed:?} while cockpit refresh was in flight"
         );
         assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_task_start_does_not_block_health() {
+        let state = super::WebAppState::new(
+            context_with_web_repo(),
+            OkRunner,
+            TestBridge {
+                start_delay: Duration::from_millis(400),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-start-health"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let health_started = Instant::now();
+
+        let (start, (health, health_elapsed)) = tokio::join!(
+            biased;
+            post_json(
+                &app,
+                &cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-health-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+            ),
+            async {
+                let response = get_public(&app, "/api/health").await;
+                (response, health_started.elapsed())
+            },
+        );
+
+        assert_eq!(start.status(), StatusCode::OK);
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while task start was in flight"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_diff_review_does_not_block_health() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            SlowDiffRunner {
+                delay: Duration::from_millis(400),
+                entered: None,
+            },
+            TestBridge::default(),
+            scratch_dir("axum-diff-health"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let health_started = Instant::now();
+
+        let (diff, (health, health_elapsed)) = tokio::join!(
+            biased;
+            get(
+                &app,
+                &cookie,
+                "/api/tasks/web/fix-login/pull-requests",
+            ),
+            async {
+                let response = get_public(&app, "/api/health").await;
+                (response, health_started.elapsed())
+            },
+        );
+
+        assert_eq!(diff.status(), StatusCode::OK);
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while Diff Review was in flight"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_diff_review_returns_ok_when_revision_bumps_during_projection() {
+        let entered = Arc::new(Notify::new());
+        let state = super::WebAppState::new(
+            context_with_task(),
+            SlowDiffRunner {
+                delay: Duration::from_millis(400),
+                entered: Some(Arc::clone(&entered)),
+            },
+            TestBridge::default(),
+            scratch_dir("axum-diff-revision-race"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state.clone());
+
+        let diff_app = app.clone();
+        let diff_cookie = cookie.clone();
+        let diff = tokio::spawn(async move {
+            get(
+                &diff_app,
+                &diff_cookie,
+                "/api/tasks/web/fix-login/pull-requests",
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("diff projection never entered the runner");
+
+        let operation = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"req-diff-race","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await;
+        assert_eq!(operation.status(), StatusCode::OK);
+
+        let diff = diff.await.unwrap();
+        assert_eq!(diff.status(), StatusCode::OK);
+        let json = json_of(diff).await;
+        assert!(json["pull_requests"].is_array());
+    }
+
+    #[tokio::test]
+    async fn axum_diff_review_runner_panic_returns_internal_server_error() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            PanickingDiffRunner,
+            TestBridge::default(),
+            scratch_dir("axum-diff-panic"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+
+        let response = get(&app, &cookie, "/api/tasks/web/fix-login/pull-requests").await;
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = json_of(response).await;
+        assert_eq!(json["ok"], false);
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("diff review worker failed"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

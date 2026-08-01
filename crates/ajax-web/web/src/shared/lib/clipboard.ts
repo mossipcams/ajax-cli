@@ -1,6 +1,29 @@
 // Clipboard write with an execCommand fallback for plain-http LAN origins,
 // where navigator.clipboard does not exist.
 
+/**
+ * Read native paste payload. Prefers an http(s) URL from plain text, uri-list,
+ * or an HTML href when plain is empty or only a link title; never returns raw
+ * HTML markup.
+ */
+export function readPasteText(data: DataTransfer | null): string {
+  if (!data) return "";
+  const plain = data.getData("text/plain").trim();
+  if (/^https?:\/\//i.test(plain)) return plain;
+
+  const uri =
+    data
+      .getData("text/uri-list")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("#")) ?? "";
+  const href = data.getData("text/html").match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]?.trim() ?? "";
+  const richUrl = [uri, href].find((candidate) => /^https?:\/\//i.test(candidate));
+
+  if (plain) return richUrl ?? plain;
+  return richUrl ?? uri;
+}
+
 /** Copy to clipboard; returns true when the native clipboard accepted it. */
 export async function copyText(text: string): Promise<boolean> {
   try {

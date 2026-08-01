@@ -1,4 +1,4 @@
-// Mobile-webkit: plain swipe-right opens Diff; swipe-left does not.
+// Mobile-webkit: plain swipe-left opens Diff; swipe-right does not.
 //
 //   npm run web:smoke -- e2e/diff-review-swipe-repro.test.ts
 
@@ -46,21 +46,7 @@ async function headerPoint(page: import("@playwright/test").Page) {
   };
 }
 
-test("swipe-right opens Diff", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  const { header, x, y } = await headerPoint(page);
-
-  await dispatchTouch(header, "touchstart", x, y);
-  await dispatchTouch(header, "touchmove", x + 120, y);
-  await dispatchTouch(header, "touchend", x + 120, y);
-
-  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 5000 });
-});
-
-test("swipe-left does not open Diff", async ({ page }) => {
+test("swipe-left opens Diff", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
   await mockTerminalWebSocket(page);
@@ -71,6 +57,21 @@ test("swipe-left does not open Diff", async ({ page }) => {
   await dispatchTouch(header, "touchmove", x, y);
   await dispatchTouch(header, "touchend", x, y);
 
+  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8000 });
+});
+
+test("swipe-right does not open Diff", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  const { header, x, y } = await headerPoint(page);
+
+  await dispatchTouch(header, "touchstart", x, y);
+  await dispatchTouch(header, "touchmove", x + 120, y);
+  await dispatchTouch(header, "touchend", x + 120, y);
+
   await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
-  await expect(page.getByTestId("task-detail")).toBeVisible();
+  await expect(page.getByTestId("task-detail")).toHaveCount(0);
+  await expect(page.getByTestId("outlet-dashboard")).toBeVisible();
 });

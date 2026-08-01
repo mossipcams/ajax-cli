@@ -1,4 +1,4 @@
-// Diff Review mobile-webkit smoke: task detail swipe-right opens the projection
+// Diff Review mobile-webkit smoke: task detail swipe-left opens the projection
 // shell without requiring a live Rust backend.
 
 import { test, expect, type Locator } from "@playwright/test";
@@ -13,12 +13,12 @@ test.beforeEach(async ({}, testInfo) => {
   );
 });
 
-async function touchSwipeRight(target: Locator, dx: number) {
+async function touchSwipeLeft(target: Locator, dx: number) {
   await target.evaluate((el, distance) => {
     const rect = el.getBoundingClientRect();
-    const startX = rect.left + rect.width * 0.15;
+    const startX = rect.left + rect.width * 0.85;
     const startY = rect.top + rect.height / 2;
-    const endX = startX + distance;
+    const endX = startX - distance;
     const make = (type: string, x: number, y: number) => {
       const event = new Event(type, { bubbles: true, cancelable: true });
       Object.defineProperty(event, "touches", {
@@ -35,15 +35,15 @@ async function touchSwipeRight(target: Locator, dx: number) {
   }, dx);
 }
 
-test("task detail swipe-right opens Diff Review chrome", async ({ page }) => {
+test("task detail swipe-left opens Diff Review chrome", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
   await mockTerminalWebSocket(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.getByTestId("task-detail")).toBeVisible({ timeout: 10_000 });
 
-  await touchSwipeRight(page.getByTestId("mobile-chrome-header"), 120);
-  await expect(page.getByTestId("outlet-diff")).toBeVisible();
+  await touchSwipeLeft(page.getByTestId("mobile-chrome-header"), 120);
+  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8000 });
   await expect(page.getByTestId("diff-review")).toBeVisible();
   await expect(page.getByTestId("diff-pr-strip")).toBeVisible();
   // Signal files auto-open into the hunk viewer (file list is the empty/noise-only path).

@@ -1,12 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api";
 import type { DiffFileView, PullRequestView, TaskDiffView } from "@/shared/lib/types";
-import {
-  isDiffPanGestureTarget,
-  navigateSwipeEnd,
-  navigateSwipeMove,
-  navigateSwipeStart,
-} from "@/shared/gestures/navigateSwipe";
+import { isDiffPanGestureTarget } from "@/shared/gestures/navigateSwipe";
+import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 
 interface Props {
   handle: string;
@@ -121,17 +117,18 @@ export default function DiffReview({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [noiseExpanded, setNoiseExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
+  const loadSeqRef = useRef(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
-  const touchRef = useRef({
-    x: 0,
-    y: 0,
-    tracking: false,
-    swipe: navigateSwipeStart(),
+  const { swiping, style } = useSwipePageTransition(rootRef, {
+    onRight: () => onBackRef.current?.(),
+    shouldIgnoreTarget: isDiffPanGestureTarget,
+    capture: false,
   });
 
   useEffect(() => {
-    let cancelled = false;
+    const loadSeq = ++loadSeqRef.current;
     setState({ status: "loading" });
     setSelectedPath(null);
     setNoiseExpanded(false);
@@ -146,14 +143,16 @@ export default function DiffReview({
           // Soft-fail: still try a local/selected diff projection.
           prs = [];
         }
+        if (loadSeq !== loadSeqRef.current) return;
         const pr = selectedPr ?? prs[0]?.number;
         const diff = await fetchTaskDiff(
           handle,
           pr !== undefined ? { pr } : { local: true },
         );
-        if (!cancelled) setState({ status: "ready", prs, diff });
+        if (loadSeq !== loadSeqRef.current) return;
+        setState({ status: "ready", prs, diff });
       } catch (error) {
-        if (cancelled) return;
+        if (loadSeq !== loadSeqRef.current) return;
         const message =
           error instanceof ApiError
             ? error.message
@@ -165,9 +164,6 @@ export default function DiffReview({
     }
 
     void load();
-    return () => {
-      cancelled = true;
-    };
   }, [handle, selectedPr]);
 
   const { signalFiles, noiseFiles } = useMemo(() => {
@@ -189,51 +185,16 @@ export default function DiffReview({
     return state.diff.files.find((file) => file.path === selectedPath) ?? null;
   }, [state, selectedPath]);
 
-  function onTouchStart(event: TouchEvent) {
-    if (isDiffPanGestureTarget(event.target)) {
-      touchRef.current.tracking = false;
-      return;
-    }
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    touchRef.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      tracking: true,
-      swipe: navigateSwipeStart(),
-    };
-  }
-
-  function onTouchMove(event: TouchEvent) {
-    if (!touchRef.current.tracking) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - touchRef.current.x;
-    const dy = touch.clientY - touchRef.current.y;
-    touchRef.current.swipe = navigateSwipeMove(touchRef.current.swipe, dx, dy);
-  }
-
-  function onTouchEnd() {
-    if (!touchRef.current.tracking) return;
-    const direction = navigateSwipeEnd(touchRef.current.swipe);
-    touchRef.current.tracking = false;
-    if (direction === "left") onBackRef.current?.();
-  }
-
   const heading = title || handle;
   const githubUrl =
     state.status === "ready" ? (state.diff.pr?.url ?? state.prs.find((p) => p.number === selectedPr)?.url) : null;
 
   return (
     <div
-      className="diff-review"
+      ref={rootRef}
+      className={`diff-review${swiping ? " is-diff-swiping" : ""}`}
       data-testid="diff-review"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={() => {
-        touchRef.current.tracking = false;
-      }}
+      style={style}
     >
       <div className="detail-header" data-testid="diff-review-header">
         <button type="button" className="back" onClick={() => onBack?.()}>
@@ -300,6 +261,13 @@ export default function DiffReview({
               })
             )}
           </div>
+
+          {state.diff.fell_back_from_pr != null ? (
+            <p className="diff-status" data-testid="diff-fallback-banner">
+              PR #{state.diff.fell_back_from_pr} patch unavailable — showing local
+              base…HEAD diff.
+            </p>
+          ) : null}
 
           <p className="diff-source" data-testid="diff-source">
             Source: {state.diff.source}

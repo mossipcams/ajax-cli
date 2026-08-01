@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, fireEvent, screen } from "@testing-library/react";
+import { render, fireEvent, screen, act } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
+import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
+import { readFileSync } from "node:fs";
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -24,7 +25,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
   return {
@@ -113,51 +117,78 @@ describe("TaskDetail", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it("does not open Diff Review on a left swipe", () => {
+  it("opens Diff Review on a left swipe", async () => {
+    vi.useFakeTimers();
     const onOpenDiff = vi.fn();
     render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    expect(onOpenDiff).not.toHaveBeenCalled();
-    expect(root.style.transform).toBe("");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onOpenDiff).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
-  it("opens Diff Review on a right swipe", () => {
+  it("does not open Diff Review on a right swipe", async () => {
+    vi.useFakeTimers();
     const onOpenDiff = vi.fn();
-    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+    const onBack = vi.fn();
+    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} onBack={onBack} />);
     const root = screen.getByTestId("task-detail");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    expect(onOpenDiff).toHaveBeenCalledOnce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onOpenDiff).not.toHaveBeenCalled();
+    // Commit leaves the page translated off-screen until the route unmounts.
+    expect(root.style.transform).toContain("390px");
+    vi.useRealTimers();
   });
 
-  it("opens Diff Review on a right swipe that begins on the terminal panel", () => {
+  it("opens Diff Review on a left swipe that begins on the terminal panel", async () => {
+    vi.useFakeTimers();
     const onOpenDiff = vi.fn();
     render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     const terminal = document.createElement("div");
     terminal.setAttribute("data-testid", "task-terminal-panel");
     root.appendChild(terminal);
-    fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 40, clientY: 40 }] });
+    fireEvent.touchStart(terminal, { changedTouches: [{ clientX: 200, clientY: 40 }] });
     fireEvent.touchMove(terminal, { changedTouches: [{ clientX: 120, clientY: 40 }] });
     fireEvent.touchEnd(terminal, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
     expect(onOpenDiff).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
-  it("keeps an in-flight right swipe when onOpenDiff identity changes", () => {
+  it("keeps an in-flight left swipe when onOpenDiff identity changes", async () => {
+    vi.useFakeTimers();
     const first = vi.fn();
     const second = vi.fn();
     const { rerender } = render(<TaskDetail detail={detail()} onOpenDiff={first} />);
     const root = screen.getByTestId("task-detail");
-    fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
     rerender(<TaskDetail detail={detail()} onOpenDiff={second} />);
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
-    expect(first).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
     expect(second).toHaveBeenCalledOnce();
+    expect(first).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("does not own document scroll via ajax-task-open", () => {

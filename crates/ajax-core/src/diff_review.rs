@@ -89,6 +89,8 @@ pub struct TaskDiffProjection {
     pub source: DiffSource,
     pub files: Vec<DiffFile>,
     pub pr: Option<PullRequestRef>,
+    /// PR number requested before hybrid fallback to local base...HEAD.
+    pub fell_back_from_pr: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -297,6 +299,7 @@ pub fn project_task_diff(
             source: DiffSource::Local,
             files: parse_unified_diff(&output.stdout),
             pr: None,
+            fell_back_from_pr: None,
         });
     }
 
@@ -333,7 +336,7 @@ pub fn project_task_diff(
         Ok(output) => output,
         Err(DiffReviewError::Unobservable(_)) if !force_local => {
             // Hybrid fallback: PR patch unavailable → local base...HEAD.
-            return project_task_diff(task, runner, github, None, true);
+            return local_diff_with_pr_fallback(task, runner, github, number);
         }
         Err(error) => return Err(error),
     };
@@ -343,7 +346,7 @@ pub fn project_task_diff(
             return Err(DiffReviewError::PrNotFound(number));
         }
         if !force_local {
-            return project_task_diff(task, runner, github, None, true);
+            return local_diff_with_pr_fallback(task, runner, github, number);
         }
         return Err(DiffReviewError::Unobservable(if output.stderr.is_empty() {
             format!("gh pr diff failed with status {}", output.status_code)
@@ -356,16 +359,35 @@ pub fn project_task_diff(
         source: DiffSource::Pr { number },
         files: parse_unified_diff(&output.stdout),
         pr,
+        fell_back_from_pr: None,
+    })
+}
+
+fn local_diff_with_pr_fallback(
+    task: &Task,
+    runner: &mut impl CommandRunner,
+    github: &GithubChecksAdapter,
+    pr_number: u64,
+) -> Result<TaskDiffProjection, DiffReviewError> {
+    let projection = project_task_diff(task, runner, github, None, true)?;
+    Ok(TaskDiffProjection {
+        fell_back_from_pr: Some(pr_number),
+        ..projection
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_diff_path, merge_pull_request_lists, parse_unified_diff, remember_pull_requests,
-        select_default_pr, stored_pull_requests, DiffFileRole, PullRequestRef, PullRequestState,
+        classify_diff_path, merge_pull_request_lists, parse_unified_diff, project_task_diff,
+        remember_pull_requests, select_default_pr, stored_pull_requests, DiffFileRole,
+        PullRequestRef, PullRequestState,
+    };
+    use crate::adapters::{
+        CommandOutput, CommandRunError, CommandRunner, CommandSpec, GithubChecksAdapter,
     };
     use crate::models::{AgentClient, Task, TaskId};
+    use std::collections::VecDeque;
 
     fn sample_pr(number: u64, state: PullRequestState, title: &str) -> PullRequestRef {
         PullRequestRef {
@@ -580,5 +602,84 @@ diff --git a/src/main.rs b/src/main.rs
         let task = sample_task();
 
         assert!(stored_pull_requests(&task).is_empty());
+    }
+
+    struct QueuedRunner {
+        outputs: VecDeque<Result<CommandOutput, CommandRunError>>,
+    }
+
+    impl QueuedRunner {
+        fn new(outputs: Vec<Result<CommandOutput, CommandRunError>>) -> Self {
+            Self {
+                outputs: outputs.into(),
+            }
+        }
+    }
+
+    impl CommandRunner for QueuedRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.outputs
+                .pop_front()
+                .unwrap_or(Err(CommandRunError::SpawnFailed(
+                    "queued runner exhausted".into(),
+                )))
+        }
+    }
+
+    fn ok(stdout: &str) -> Result<CommandOutput, CommandRunError> {
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+        })
+    }
+
+    #[test]
+    fn project_task_diff_hybrid_fallback_sets_fell_back_from_pr() {
+        let mut task = sample_task();
+        remember_pull_requests(&mut task, &[sample_pr(12, PullRequestState::Open, "Retry")]);
+        let patch = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1,2 @@
+ keep
++new
+";
+        let mut runner = QueuedRunner::new(vec![
+            Err(CommandRunError::SpawnFailed(
+                "gh pr diff unavailable".into(),
+            )),
+            ok(patch),
+        ]);
+        let github = GithubChecksAdapter::new("gh");
+
+        let projection = project_task_diff(&task, &mut runner, &github, Some(12), false)
+            .expect("hybrid fallback");
+
+        assert_eq!(projection.source, super::DiffSource::Local);
+        assert_eq!(projection.fell_back_from_pr, Some(12));
+        assert_eq!(projection.files.len(), 1);
+    }
+
+    #[test]
+    fn project_task_diff_force_local_does_not_set_fell_back_from_pr() {
+        let task = sample_task();
+        let patch = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1,2 @@
+ keep
++new
+";
+        let mut runner = QueuedRunner::new(vec![ok(patch)]);
+        let github = GithubChecksAdapter::new("gh");
+
+        let projection =
+            project_task_diff(&task, &mut runner, &github, None, true).expect("local diff");
+
+        assert_eq!(projection.source, super::DiffSource::Local);
+        assert_eq!(projection.fell_back_from_pr, None);
     }
 }
