@@ -390,6 +390,8 @@ export default function TaskTerminal({ handle }: Props) {
 
   // Dedup paste vs beforeinput(insertFromPaste) on browsers that fire both.
   const pasteHandledAtRef = useRef(0);
+  // Empty sync clipboardData: block xterm's empty clear, recover from input.
+  const pasteExpectRef = useRef(false);
   const claimPasteHandle = (): boolean => {
     const now = performance.now();
     if (now - pasteHandledAtRef.current < 50) return false;
@@ -437,11 +439,33 @@ export default function TaskTerminal({ handle }: Props) {
   // next repeat tick.
   const onTextareaInput = (event: Event) => {
     const inputType = (event as InputEvent).inputType ?? "";
-    if (!inputType.startsWith("delete")) return;
-    seedTermSentinel();
-    // The reveal scroll lands in this frame; drop the pin after it so it can
-    // never swallow a later finger scroll.
-    requestAnimationFrame(clearInteractionScrollPin);
+    if (inputType === "insertText") {
+      pasteExpectRef.current = false;
+      return;
+    }
+    if (inputType.startsWith("delete")) {
+      pasteExpectRef.current = false;
+      seedTermSentinel();
+      // The reveal scroll lands in this frame; drop the pin after it so it can
+      // never swallow a later finger scroll.
+      requestAnimationFrame(clearInteractionScrollPin);
+      return;
+    }
+    if (
+      inputType === "insertFromPaste" ||
+      inputType === "insertFromPasteAsQuotation" ||
+      pasteExpectRef.current
+    ) {
+      const textarea = event.currentTarget;
+      if (textarea instanceof HTMLTextAreaElement) {
+        const raw = textarea.value.replaceAll(BACKSPACE_SENTINEL, "");
+        pasteExpectRef.current = false;
+        // Force-clear: seedBackspaceSentinel no-ops when ZWS is still present
+        // beside the pasted text.
+        textarea.value = BACKSPACE_SENTINEL;
+        sendPastedText(raw);
+      }
+    }
   };
 
   const onTextareaPaste = (event: ClipboardEvent) => {
@@ -462,18 +486,9 @@ export default function TaskTerminal({ handle }: Props) {
       return;
     }
 
-    // Sync formats empty: try async read while the user-gesture is live.
-    if (typeof navigator.clipboard?.readText !== "function") return;
-    event.preventDefault();
+    // Sync formats empty: block xterm's empty clear, let the browser insert.
+    pasteExpectRef.current = true;
     event.stopImmediatePropagation();
-    void navigator.clipboard.readText().then(
-      (asyncText) => {
-        sendPastedText(asyncText.trim());
-      },
-      () => {
-        seedTermSentinel();
-      },
-    );
   };
 
   const termOwnedFocus = (): boolean => {
