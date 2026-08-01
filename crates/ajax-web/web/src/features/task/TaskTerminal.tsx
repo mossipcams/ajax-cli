@@ -368,12 +368,47 @@ export default function TaskTerminal({ handle }: Props) {
     return true;
   };
 
+  // Dedup paste vs beforeinput(insertFromPaste) on browsers that fire both.
+  const pasteHandledAtRef = useRef(0);
+  const claimPasteHandle = (): boolean => {
+    const now = performance.now();
+    if (now - pasteHandledAtRef.current < 50) return false;
+    pasteHandledAtRef.current = now;
+    return true;
+  };
+
+  const sendPastedText = (text: string) => {
+    if (!text || !claimPasteHandle()) return;
+    seedTermSentinel();
+    pasteThroughTerm(text);
+  };
+
+  const onTextareaPasteBeforeInput = (event: InputEvent) => {
+    // iOS keyboard "Paste" / QuickType link often uses beforeinput with the
+    // URL in event.data and an empty ClipboardEvent.clipboardData.
+    if (
+      event.inputType !== "insertFromPaste" &&
+      event.inputType !== "insertFromPasteAsQuotation"
+    ) {
+      return;
+    }
+    const text =
+      (event.dataTransfer ? readPasteText(event.dataTransfer) : "") ||
+      (event.data ?? "").trim();
+    if (!text) return;
+    event.preventDefault();
+    sendPastedText(text);
+  };
+
   const onTextareaBeforeInput = (event: InputEvent) => {
     const payload = deleteInputPayload(event.inputType);
-    if (!payload) return;
-    pinInteractionScroll();
-    // No preventDefault: cancelling here also cancels the iOS repeat loop.
-    sendKey(consumeCtrl(payload));
+    if (payload) {
+      pinInteractionScroll();
+      // No preventDefault: cancelling here also cancels the iOS repeat loop.
+      sendKey(consumeCtrl(payload));
+      return;
+    }
+    onTextareaPasteBeforeInput(event);
   };
 
   // Reseed here, never from a beforeinput microtask: the microtask checkpoint
@@ -390,12 +425,35 @@ export default function TaskTerminal({ handle }: Props) {
   };
 
   const onTextareaPaste = (event: ClipboardEvent) => {
+    const text = readPasteText(event.clipboardData);
+    if (text) {
+      // Only cancel once we have payload — empty preventDefault swallowed all
+      // Safari pastes when clipboardData was inaccessible synchronously.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      sendPastedText(text);
+      return;
+    }
+
+    // beforeinput may already have owned this paste gesture.
+    if (performance.now() - pasteHandledAtRef.current < 50) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+
+    // Sync formats empty: try async read while the user-gesture is live.
+    if (typeof navigator.clipboard?.readText !== "function") return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const text = readPasteText(event.clipboardData);
-    seedTermSentinel();
-    if (!text) return;
-    pasteThroughTerm(text);
+    void navigator.clipboard.readText().then(
+      (asyncText) => {
+        sendPastedText(asyncText.trim());
+      },
+      () => {
+        seedTermSentinel();
+      },
+    );
   };
 
   const termOwnedFocus = (): boolean => {
