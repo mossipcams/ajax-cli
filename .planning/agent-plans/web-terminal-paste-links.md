@@ -77,3 +77,6 @@ cargo install --path crates/ajax-cli --locked --force
   delta was in scope and behavior is correct after parent review.
 - Ponytail follow-up: inlined clipboard helpers; dropped TaskTerminal
   source-regex paste pin (e2e covers wiring).
+- Follow-up bugfix: capture paste always `preventDefault`d before reading,
+  so empty Safari `clipboardData` swallowed pastes. Only cancel when we have
+  text; handle `insertFromPaste` beforeinput; async `readText` fallback.
