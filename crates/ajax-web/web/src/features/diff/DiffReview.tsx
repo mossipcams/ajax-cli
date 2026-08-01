@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api";
 import type {
   DiffFileView,
+  DiffFlagKind,
   DiffFlagView,
-  DiffJudgmentView,
   PullRequestView,
   TaskDiffView,
 } from "@/shared/lib/types";
@@ -27,6 +27,15 @@ type LoadState =
       diff: TaskDiffView;
     };
 
+const FLAG_DETAIL: Record<DiffFlagKind, string> = {
+  unexpected_path: "unexpected path outside common roots",
+  deleted_test: "deleted test file",
+  secret_pattern: "possible secret in added line",
+  permission_widen: "permission widening in added line",
+  dependency_manifest: "dependency manifest changed",
+  deleted_check_path: "deleted check or workflow path",
+};
+
 function lineClass(line: string): string {
   if (line.startsWith("+") && !line.startsWith("+++")) return "diff-line add";
   if (line.startsWith("-") && !line.startsWith("---")) return "diff-line del";
@@ -34,7 +43,7 @@ function lineClass(line: string): string {
   return "diff-line";
 }
 
-function sortFilesForDisplay(files: DiffFileView[]): DiffFileView[] {
+function sortByChurn(files: DiffFileView[]): DiffFileView[] {
   return [...files].sort((left, right) => {
     const churnDiff =
       right.additions + right.deletions - (left.additions + left.deletions);
@@ -43,17 +52,13 @@ function sortFilesForDisplay(files: DiffFileView[]): DiffFileView[] {
   });
 }
 
-function partitionFilesByRole(files: DiffFileView[]) {
-  const signal: DiffFileView[] = [];
-  const noise: DiffFileView[] = [];
-  for (const file of files) {
-    if (file.role === "noise") noise.push(file);
-    else signal.push(file);
-  }
-  return {
-    signalFiles: sortFilesForDisplay(signal),
-    noiseFiles: sortFilesForDisplay(noise),
-  };
+function partitionFilesByRole(files: DiffFileView[], readingOrder: string[]) {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const signalFiles = readingOrder
+    .map((path) => byPath.get(path))
+    .filter((file): file is DiffFileView => Boolean(file));
+  const noiseFiles = sortByChurn(files.filter((file) => file.role === "noise"));
+  return { signalFiles, noiseFiles };
 }
 
 const GUIDE_CHIP_LIMIT = 5;
@@ -114,16 +119,6 @@ function FileHunks({ file }: { file: DiffFileView }) {
   );
 }
 
-function JudgmentOrientation({ judgment }: { judgment: DiffJudgmentView }) {
-  const { totals } = judgment;
-  return (
-    <p className="diff-orientation" data-testid="diff-orientation">
-      {totals.files} files · {totals.signal} signal · {totals.noise} noise · +
-      {totals.additions} −{totals.deletions}
-    </p>
-  );
-}
-
 function JudgmentFlags({
   flags,
   onSelectPath,
@@ -134,42 +129,22 @@ function JudgmentFlags({
   if (flags.length === 0) return null;
   return (
     <ul className="diff-flags" data-testid="diff-flags">
-      {flags.map((flag, index) => {
-        const interactive = Boolean(flag.path);
-        const className = `diff-flag severity-${flag.severity}${interactive ? " is-action" : ""}`;
-        const content = (
-          <>
+      {flags.map((flag, index) => (
+        <li key={`${flag.kind}-${flag.path}-${index}`}>
+          <button
+            type="button"
+            className={`diff-flag severity-${flag.severity} is-action`}
+            data-testid="diff-flag"
+            data-flag-kind={flag.kind}
+            data-flag-severity={flag.severity}
+            onClick={() => onSelectPath(flag.path)}
+          >
             <span className="diff-flag-kind">{flag.kind}</span>
-            <span className="diff-flag-detail">{flag.detail}</span>
-            {flag.path ? <span className="diff-flag-path">{flag.path}</span> : null}
-          </>
-        );
-        return (
-          <li key={`${flag.kind}-${flag.path ?? "none"}-${index}`}>
-            {interactive ? (
-              <button
-                type="button"
-                className={className}
-                data-testid="diff-flag"
-                data-flag-kind={flag.kind}
-                data-flag-severity={flag.severity}
-                onClick={() => onSelectPath(flag.path as string)}
-              >
-                {content}
-              </button>
-            ) : (
-              <div
-                className={className}
-                data-testid="diff-flag"
-                data-flag-kind={flag.kind}
-                data-flag-severity={flag.severity}
-              >
-                {content}
-              </div>
-            )}
-          </li>
-        );
-      })}
+            <span className="diff-flag-detail">{FLAG_DETAIL[flag.kind]}</span>
+            <span className="diff-flag-path">{flag.path}</span>
+          </button>
+        </li>
+      ))}
     </ul>
   );
 }
@@ -182,10 +157,9 @@ function GuideStrip({
   onSelectPath: (path: string) => void;
 }) {
   if (paths.length === 0) return null;
-  const chips = paths.slice(0, GUIDE_CHIP_LIMIT);
   return (
     <div className="diff-guide-strip" data-testid="diff-guide-strip" role="navigation">
-      {chips.map((path) => {
+      {paths.slice(0, GUIDE_CHIP_LIMIT).map((path) => {
         const label = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
         return (
           <button
@@ -267,7 +241,7 @@ export default function DiffReview({
     if (state.status !== "ready") {
       return { signalFiles: [] as DiffFileView[], noiseFiles: [] as DiffFileView[] };
     }
-    return partitionFilesByRole(state.diff.files);
+    return partitionFilesByRole(state.diff.files, state.diff.judgment.reading_order);
   }, [state]);
 
   useEffect(() => {
@@ -290,6 +264,7 @@ export default function DiffReview({
   const heading = title || handle;
   const githubUrl =
     state.status === "ready" ? (state.diff.pr?.url ?? state.prs.find((p) => p.number === selectedPr)?.url) : null;
+  const totals = state.status === "ready" ? state.diff.judgment.totals : null;
 
   return (
     <div
@@ -330,7 +305,7 @@ export default function DiffReview({
         </p>
       ) : null}
 
-      {state.status === "ready" ? (
+      {state.status === "ready" && totals ? (
         <>
           <div className="diff-pr-strip" data-testid="diff-pr-strip" role="tablist">
             {state.prs.length === 0 ? (
@@ -375,7 +350,10 @@ export default function DiffReview({
             Source: {state.diff.source}
           </p>
 
-          <JudgmentOrientation judgment={state.diff.judgment} />
+          <p className="diff-orientation" data-testid="diff-orientation">
+            {totals.files} files · {totals.signal} signal · {totals.noise} noise · +
+            {totals.additions} −{totals.deletions}
+          </p>
           <JudgmentFlags
             flags={state.diff.judgment.flags}
             onSelectPath={(path) => setSelectedPath(path)}

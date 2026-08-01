@@ -45,45 +45,16 @@ fn role_label(role: DiffFileRole) -> &'static str {
     }
 }
 
-fn flag_kind_label(kind: DiffFlagKind) -> &'static str {
-    match kind {
-        DiffFlagKind::UnexpectedPath => "unexpected_path",
-        DiffFlagKind::DeletedTest => "deleted_test",
-        DiffFlagKind::SecretPattern => "secret_pattern",
-        DiffFlagKind::PermissionWiden => "permission_widen",
-        DiffFlagKind::DependencyManifest => "dependency_manifest",
-        DiffFlagKind::DeletedCheckPath => "deleted_check_path",
-    }
-}
-
-fn flag_severity_label(severity: DiffFlagSeverity) -> &'static str {
-    match severity {
-        DiffFlagSeverity::Info => "info",
-        DiffFlagSeverity::Warn => "warn",
-        DiffFlagSeverity::Critical => "critical",
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct DiffTotalsDto {
-    pub files: u32,
-    pub signal: u32,
-    pub noise: u32,
-    pub additions: u32,
-    pub deletions: u32,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct DiffFlagDto {
-    pub kind: &'static str,
-    pub severity: &'static str,
-    pub path: Option<String>,
-    pub detail: String,
+    pub kind: DiffFlagKind,
+    pub severity: DiffFlagSeverity,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DiffJudgmentDto {
-    pub totals: DiffTotalsDto,
+    pub totals: DiffTotals,
     pub reading_order: Vec<String>,
     pub flags: Vec<DiffFlagDto>,
 }
@@ -164,28 +135,17 @@ fn file_dto(file: DiffFile) -> DiffFileDto {
     }
 }
 
-fn totals_dto(totals: DiffTotals) -> DiffTotalsDto {
-    DiffTotalsDto {
-        files: totals.files,
-        signal: totals.signal,
-        noise: totals.noise,
-        additions: totals.additions,
-        deletions: totals.deletions,
-    }
-}
-
 fn flag_dto(flag: DiffFlag) -> DiffFlagDto {
     DiffFlagDto {
-        kind: flag_kind_label(flag.kind),
-        severity: flag_severity_label(flag.severity),
+        kind: flag.kind,
+        severity: flag.severity,
         path: flag.path,
-        detail: flag.detail,
     }
 }
 
 fn judgment_dto(judgment: DiffJudgment) -> DiffJudgmentDto {
     DiffJudgmentDto {
-        totals: totals_dto(judgment.totals),
+        totals: judgment.totals,
         reading_order: judgment.reading_order,
         flags: judgment.flags.into_iter().map(flag_dto).collect(),
     }
@@ -413,7 +373,7 @@ diff --git a/src/a.rs b/src/a.rs
             .judgment
             .flags
             .iter()
-            .any(|flag| flag.kind == "unexpected_path"));
+            .any(|flag| flag.kind == DiffFlagKind::UnexpectedPath));
         assert!(runner
             .commands
             .iter()

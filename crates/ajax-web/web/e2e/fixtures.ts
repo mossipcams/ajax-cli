@@ -179,7 +179,6 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
                     kind: "unexpected_path",
                     severity: "info",
                     path: "src/a.ts",
-                    detail: "unexpected path outside common roots",
                   },
                 ],
               },

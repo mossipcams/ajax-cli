@@ -102,7 +102,6 @@ beforeEach(() => {
           kind: "unexpected_path",
           severity: "info",
           path: "src/a.ts",
-          detail: "unexpected path outside common roots",
         },
       ]),
     }),

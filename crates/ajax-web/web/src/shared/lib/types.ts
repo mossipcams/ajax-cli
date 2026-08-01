@@ -66,8 +66,7 @@ export type DiffFlagSeverity = "info" | "warn" | "critical";
 export interface DiffFlagView {
   kind: DiffFlagKind;
   severity: DiffFlagSeverity;
-  path: string | null;
-  detail: string;
+  path: string;
 }
 
 export interface DiffJudgmentView {

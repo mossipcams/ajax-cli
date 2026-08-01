@@ -48,4 +48,6 @@ npm run verify                              # passed (exit 0)
 
 - [x] Restore DiffReview fetch fallback after Bugbot review
 - [x] Local verify gate
-- [ ] Open PR
+- [x] Open PR — https://github.com/mossipcams/ajax-cli/pull/726
+
+Status: complete.

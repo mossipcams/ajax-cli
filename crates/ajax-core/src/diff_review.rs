@@ -45,7 +45,7 @@ pub struct DiffFile {
     pub hunks: Vec<DiffHunk>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DiffTotals {
     pub files: u32,
@@ -55,7 +55,7 @@ pub struct DiffTotals {
     pub deletions: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffFlagKind {
     UnexpectedPath,
@@ -66,7 +66,7 @@ pub enum DiffFlagKind {
     DeletedCheckPath,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffFlagSeverity {
     Info,
@@ -74,16 +74,15 @@ pub enum DiffFlagSeverity {
     Critical,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DiffFlag {
     pub kind: DiffFlagKind,
     pub severity: DiffFlagSeverity,
-    pub path: Option<String>,
-    pub detail: String,
+    pub path: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DiffJudgment {
     pub totals: DiffTotals,
@@ -133,28 +132,7 @@ const EXPECTED_PATH_PREFIXES: &[&str] = &[
     "web/",
 ];
 
-const EXPECTED_ROOT_FILES: &[&str] = &[
-    "architecture.md",
-    "AGENTS.md",
-    "PRODUCT.md",
-    "README.md",
-    "CONTRIBUTING.md",
-    "Cargo.toml",
-    "package.json",
-    "CLAUDE.md",
-    "deny.toml",
-    "rustfmt.toml",
-    "clippy.toml",
-    "CHANGELOG.md",
-    "version.txt",
-    "package-lock.json",
-    "Cargo.lock",
-];
-
 fn path_is_expected(path: &str) -> bool {
-    if EXPECTED_ROOT_FILES.contains(&path) {
-        return true;
-    }
     EXPECTED_PATH_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
@@ -195,41 +173,38 @@ fn secret_severity(line: &str) -> Option<DiffFlagSeverity> {
     None
 }
 
-fn added_lines_have_permission_widen(file: &DiffFile) -> bool {
-    file.hunks.iter().any(|hunk| {
-        hunk.lines.iter().any(|line| {
-            line.starts_with('+')
-                && !line.starts_with("+++")
-                && (line.contains("chmod 777") || line.contains("0o777"))
-        })
-    })
+fn is_added_hunk_line(line: &str) -> bool {
+    line.starts_with('+') && !line.starts_with("+++")
 }
 
-fn severity_rank(severity: DiffFlagSeverity) -> u8 {
-    match severity {
-        DiffFlagSeverity::Info => 0,
-        DiffFlagSeverity::Warn => 1,
-        DiffFlagSeverity::Critical => 2,
-    }
-}
-
-fn strongest_secret_in_file(file: &DiffFile) -> Option<DiffFlagSeverity> {
-    let mut strongest: Option<DiffFlagSeverity> = None;
+fn scan_added_lines(file: &DiffFile) -> (Option<DiffFlagSeverity>, bool) {
+    let mut secret: Option<DiffFlagSeverity> = None;
+    let mut permission_widen = false;
     for hunk in &file.hunks {
         for line in &hunk.lines {
-            if !line.starts_with('+') || line.starts_with("+++") {
+            if !is_added_hunk_line(line) {
                 continue;
             }
-            let Some(severity) = secret_severity(line) else {
-                continue;
-            };
-            strongest = Some(match strongest {
-                Some(existing) if severity_rank(existing) >= severity_rank(severity) => existing,
-                _ => severity,
-            });
+            if let Some(severity) = secret_severity(line) {
+                secret = Some(match secret {
+                    Some(existing) => existing.max(severity),
+                    None => severity,
+                });
+            }
+            if line.contains("chmod 777") || line.contains("0o777") {
+                permission_widen = true;
+            }
         }
     }
-    strongest
+    (secret, permission_widen)
+}
+
+fn flag(kind: DiffFlagKind, severity: DiffFlagSeverity, path: &str) -> DiffFlag {
+    DiffFlag {
+        kind,
+        severity,
+        path: path.to_string(),
+    }
 }
 
 /// Deterministic vibe-judgment projection over already-parsed diff files.
@@ -249,57 +224,47 @@ pub fn assess_diff_judgment(files: &[DiffFile]) -> DiffJudgment {
         deletions += file.deletions;
 
         if is_dependency_manifest(&file.path) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::DependencyManifest,
-                severity: DiffFlagSeverity::Info,
-                path: Some(file.path.clone()),
-                detail: "dependency manifest changed".to_string(),
-            });
+            flags.push(flag(
+                DiffFlagKind::DependencyManifest,
+                DiffFlagSeverity::Info,
+                &file.path,
+            ));
         }
 
         if file.status == "deleted" && is_test_path(&file.path) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::DeletedTest,
-                severity: DiffFlagSeverity::Warn,
-                path: Some(file.path.clone()),
-                detail: "deleted test file".to_string(),
-            });
+            flags.push(flag(
+                DiffFlagKind::DeletedTest,
+                DiffFlagSeverity::Warn,
+                &file.path,
+            ));
         }
 
         if file.status == "deleted" && is_deleted_check_path(&file.path) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::DeletedCheckPath,
-                severity: DiffFlagSeverity::Warn,
-                path: Some(file.path.clone()),
-                detail: "deleted check or workflow path".to_string(),
-            });
+            flags.push(flag(
+                DiffFlagKind::DeletedCheckPath,
+                DiffFlagSeverity::Warn,
+                &file.path,
+            ));
         }
 
-        if let Some(severity) = strongest_secret_in_file(file) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::SecretPattern,
-                severity,
-                path: Some(file.path.clone()),
-                detail: "possible secret in added line".to_string(),
-            });
+        let (secret, permission_widen) = scan_added_lines(file);
+        if let Some(severity) = secret {
+            flags.push(flag(DiffFlagKind::SecretPattern, severity, &file.path));
         }
-
-        if added_lines_have_permission_widen(file) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::PermissionWiden,
-                severity: DiffFlagSeverity::Warn,
-                path: Some(file.path.clone()),
-                detail: "permission widening in added line".to_string(),
-            });
+        if permission_widen {
+            flags.push(flag(
+                DiffFlagKind::PermissionWiden,
+                DiffFlagSeverity::Warn,
+                &file.path,
+            ));
         }
 
         if file.role == DiffFileRole::Signal && !path_is_expected(&file.path) {
-            flags.push(DiffFlag {
-                kind: DiffFlagKind::UnexpectedPath,
-                severity: DiffFlagSeverity::Info,
-                path: Some(file.path.clone()),
-                detail: "unexpected path outside common roots".to_string(),
-            });
+            flags.push(flag(
+                DiffFlagKind::UnexpectedPath,
+                DiffFlagSeverity::Info,
+                &file.path,
+            ));
         }
     }
 
@@ -1045,15 +1010,13 @@ diff --git a/src/a.rs b/src/a.rs
         assert!(judgment.flags.iter().any(|flag| {
             flag.kind == DiffFlagKind::DeletedTest
                 && flag.severity == DiffFlagSeverity::Warn
-                && flag.path.as_deref() == Some("crates/ajax-core/src/foo_test.rs")
+                && flag.path == "crates/ajax-core/src/foo_test.rs"
         }));
         assert!(judgment.flags.iter().any(|flag| {
-            flag.kind == DiffFlagKind::DependencyManifest
-                && flag.path.as_deref() == Some("Cargo.toml")
+            flag.kind == DiffFlagKind::DependencyManifest && flag.path == "Cargo.toml"
         }));
         assert!(judgment.flags.iter().any(|flag| {
-            flag.kind == DiffFlagKind::UnexpectedPath
-                && flag.path.as_deref() == Some("tmp/scratch.rs")
+            flag.kind == DiffFlagKind::UnexpectedPath && flag.path == "tmp/scratch.rs"
         }));
     }
 
@@ -1081,7 +1044,6 @@ diff --git a/src/a.rs b/src/a.rs
             .find(|flag| flag.kind == DiffFlagKind::SecretPattern)
             .expect("secret flag");
         assert_eq!(secret.severity, DiffFlagSeverity::Critical);
-        assert_eq!(secret.detail, "possible secret in added line");
     }
 
     #[test]
@@ -1113,8 +1075,7 @@ diff --git a/src/a.rs b/src/a.rs
             flag.kind == DiffFlagKind::PermissionWiden && flag.severity == DiffFlagSeverity::Warn
         }));
         assert!(judgment.flags.iter().any(|flag| {
-            flag.kind == DiffFlagKind::DeletedCheckPath
-                && flag.path.as_deref() == Some(".github/workflows/ci.yml")
+            flag.kind == DiffFlagKind::DeletedCheckPath && flag.path == ".github/workflows/ci.yml"
         }));
     }
 }
