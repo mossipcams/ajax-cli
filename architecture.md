@@ -724,19 +724,22 @@ focus, tmux attachment, and PTY behavior remain unchanged.
 
 ### Ownership
 
-- `TaskTerminal.tsx` owns the visible Mic control, transcript auto-insert,
-  accessibility, focus, and the single frontend speech state machine.
-- A small frontend STT controller owns microphone capture, PCM conversion,
-  WebSocket lifecycle, local responsiveness VAD, timer identity, and transcript
-  reduction. It does not own task truth or PTY input.
+- `TaskTerminal.tsx` owns the visible Mic control, transcript auto-insert and
+  start-over undo, accessibility, focus, and the single frontend speech state
+  machine. The insert ledger in TaskTerminal is the authority for what speech
+  wrote to the PTY and what start-over deletes.
+- A small frontend STT controller (`speechTransport`) owns microphone capture,
+  PCM conversion, WebSocket lifecycle, and session-scoped finalization timing.
+  It does not own task truth or PTY input. Pause-timer identity lives with the
+  TaskTerminal state machine that observes provider events.
 - `ajax-web` owns authenticated STT routing, session IDs, bounded audio queues,
   provider lifecycle, protocol validation, health reporting, and cleanup.
 - The provider adapter owns model-specific startup, audio ingestion, inference,
   provider VAD, and provider event translation. The rest of Ajax sees only the
   provider interface and versioned STT events.
-- `ajax-core` owns durable configuration values only. Speech sessions and
-  transcripts are ephemeral browser/backend session state, not task records or
-  registry truth.
+- `ajax-core` owns durable configuration values only (`[stt]` language, timing,
+  provider command). Speech sessions and transcripts are ephemeral
+  browser/backend session state, not task records or registry truth.
 
 ### Provider abstraction and supervision
 
@@ -776,11 +779,13 @@ Protocol messages are versioned and carry the active `sessionId`. JSON control
 messages use the existing Ajax WebSocket framing style:
 
 - `stt.start`: session ID, PCM16 encoding, 16 kHz sample rate, mono channel,
-  language, and protocol version;
+  and protocol version (recognition language comes from host `[stt]` config,
+  not from the browser start message);
 - `stt.stop`: request provider finalization;
 - `stt.cancel`: abandon provider work and release resources;
-- `stt.ready`, `stt.partial`, `stt.final`, `stt.speech_started`,
-  `stt.speech_ended`, and `stt.error` server events.
+- `stt.ready` (includes `pauseGracePeriodMs` and `finalizationTimeoutMs`),
+  `stt.partial`, `stt.final`, `stt.speech_started`, `stt.speech_ended`,
+  `stt.error`, and `stt.closed` server events.
 
 Audio is bounded binary transport. Each binary frame contains one PCM16 audio
 chunk and a monotonically increasing frame sequence in the transport envelope;
@@ -811,46 +816,51 @@ are ignored or rejected without changing the current state. Only one pause
 timer can exist per session; cancelled timer callbacks cannot finalize a later
 session or a resumed session.
 
-The centralized initial timing configuration is:
+The centralized initial timing and language configuration (host `[stt]` and
+`stt.ready`) is:
 
 - `phraseEndSilenceMs = 700` — provider phrase finalization only;
-- `pauseGracePeriodMs = 9000` — spoken stop grace period;
-- `language = "en-US"`;
+- `pauseGracePeriodMs = 9000` — spoken stop grace period (surfaced on
+  `stt.ready`);
+- `language = "en-US"` — host config passed into the provider session, not the
+  browser `stt.start` body;
 - `maxBufferedAudioMs` — bounded transport/provider buffering;
-- `reconnectLimit` — capped STT reconnect attempts;
-- `finalizationTimeoutMs` — safe finalization deadline.
+- `finalizationTimeoutMs` — provider finalize deadline and browser stop
+  fallback (surfaced on `stt.ready`).
 
-There is no short ordinary-inactivity timeout. Any defensive maximum session
-duration must be generous, configurable, documented, and visible before it can
-terminate a session.
+There is no short ordinary-inactivity timeout and no browser STT reconnect
+budget yet: a failed socket or capture path enters an explicit recoverable
+error and the operator taps Mic again. Any future defensive maximum session
+duration or reconnect limit must be generous, configurable, documented, and
+visible before it can terminate a session.
 
 ### VAD and transcript lifecycle
 
-Voice activity detection is separate from phrase finalization. A lightweight
-frontend energy detector may emit an immediate speech-start hint solely to
-cancel `pause_pending`; it never stops a session or decides final transcript
-boundaries. Provider-side VAD is authoritative for speech-started,
-speech-ended, interruption, and inactivity events used by the backend/provider
-contract. The frontend must not run a second independent stop policy.
+Voice activity detection is separate from phrase finalization. Provider-side
+VAD is authoritative for `speech_started`, `speech_ended`, interruption, and
+inactivity events used by the backend/provider contract. The browser does not
+run a second energy detector or independent stop policy; `speech_started` is
+what cancels `pause_pending`.
 
 Ordinary silence may finalize a phrase and start a new provider segment, but it
-does not stop capture, close the session, or finalize the whole dictation. The
-frontend maintains separate `finalTranscript` and `partialTranscript` values.
-Partial text replaces the previous partial value; final segments carry sequence
-numbers, are deduplicated, and are buffered until ordered. Finalized text is
-auto-inserted into the active shell line through the paste/PTY input path with
-sensible whitespace; existing shell-line text is preserved.
+does not stop capture, close the session, or finalize the whole dictation.
+Final segments carry sequence numbers and are deduplicated. Auto-insert pastes
+each new final when it arrives (arrival order), with a leading space before
+later segments when needed. The reducer may still keep `finalSegments` /
+`finalTranscript` / `partialTranscript` as session metadata for tests and
+control-command handling; those values are not a visible composer, and the
+PTY insert ledger—not the reducer transcript—is what start-over undoes.
 
 The standalone normalized finalized utterance `pause` is a control command.
 Only an utterance whose normalized content is exactly `pause` (including
 `Pause.` and `PAUSE`) triggers it. Sentence content such as `Add a pause
 between retries` remains transcript text. When triggered, the command is
 removed, `pause_pending` begins, capture and the provider session remain active,
-and a monotonic nine-second countdown is shown. Any speech-start event cancels
-the timer immediately and returns to `listening`, even before a partial or final
-transcript arrives. If the full grace period expires, the session enters
-`finalizing`, stops accepting new audio, flushes buffered audio, asks the
-provider to finalize, waits for pending ordered finals, releases microphone and
+and a monotonic nine-second countdown is shown. Any provider `speech_started`
+event cancels the timer immediately and returns to `listening`, even before a
+partial or final transcript arrives. If the full grace period expires, the
+session enters `finalizing`, stops accepting new audio, flushes buffered audio,
+asks the provider to finalize, waits for pending finals, releases microphone and
 audio resources, closes the STT session, cancels timers, and leaves the terminal
 usable. No automatic Enter, shell execution, or prompt submission occurs.
 
@@ -858,9 +868,12 @@ The standalone normalized finalized utterance `start over` is a control command.
 Only an utterance whose normalized content is exactly `start over` (including
 `Start over.` and `START OVER`) triggers it. Sentence content such as `Let's
 start over from the top` remains transcript text. When triggered, the command
-is removed and all text dictated in the current mic session is deleted from the
-active shell line; the session keeps listening so the operator can dictate
-again.
+is removed and TaskTerminal undoes speech inserts for the current mic session
+by sending one delete (`\\x7f`) per recorded insert character (including
+inter-segment spaces). That assumes speech only appended on the current shell
+line (operator default: zsh in tmux); it is not a general terminal rewind and
+does not clear manually typed text that speech did not insert. The session
+keeps listening so the operator can dictate again.
 
 Manual cancel is a recovery path. It stops capture and transport, cancels the
 provider and all timers, releases browser audio resources, ignores delayed
