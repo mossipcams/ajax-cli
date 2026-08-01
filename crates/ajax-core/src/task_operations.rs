@@ -188,6 +188,7 @@ mod tests {
                 repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
                 test_commands: vec![TestCommand::new("web", "cargo nextest run")],
                 notify: None,
+                ..Config::default()
             },
             InMemoryRegistry::default(),
         );

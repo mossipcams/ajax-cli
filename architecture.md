@@ -690,6 +690,204 @@ endpoints. It does not own task lifecycle, action policy, registry truth, or
 substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
+## Speech Input Architecture
+
+Speech input is a host-side text-composition capability for Web Cockpit. The
+iPhone supplies microphone audio; the MacBook hosting Ajax owns speech
+recognition. The browser never downloads a speech model, runs heavy inference,
+or writes recognition output directly to the PTY.
+
+```text
+iOS Safari / optional standalone shell
+  -> user-gesture microphone capture
+  -> authenticated task-scoped STT WebSocket
+  -> ajax-web STT session service
+  -> replaceable host-side streaming provider
+  -> partial/final/VAD events
+  -> TaskTerminal composer
+  -> explicit user insert/send action
+```
+
+The current Web Cockpit terminal is a raw xterm.js/tmux terminal. Its hidden
+`.xterm-helper-textarea` is keyboard and iOS input plumbing, not an editable
+composer: writing dictated text into it would send text to the PTY and violate
+terminal safety. Speech therefore uses one TaskTerminal-owned editable composer
+surface alongside the existing terminal. This is a composition surface, not a
+second terminal, registry, task model, or command workflow. Normal keyboard
+input, terminal focus, tmux attachment, and PTY behavior remain unchanged.
+
+### Ownership
+
+- `TaskTerminal.tsx` owns the visible Mic control, composer rendering,
+  accessibility, focus, and the single frontend speech state machine.
+- A small frontend STT controller owns microphone capture, PCM conversion,
+  WebSocket lifecycle, local responsiveness VAD, timer identity, and transcript
+  reduction. It does not own task truth or PTY input.
+- `ajax-web` owns authenticated STT routing, session IDs, bounded audio queues,
+  provider lifecycle, protocol validation, health reporting, and cleanup.
+- The provider adapter owns model-specific startup, audio ingestion, inference,
+  provider VAD, and provider event translation. The rest of Ajax sees only the
+  provider interface and versioned STT events.
+- `ajax-core` owns durable configuration values only. Speech sessions and
+  transcripts are ephemeral browser/backend session state, not task records or
+  registry truth.
+
+### Provider abstraction and supervision
+
+The initial provider is a supervised local Moonshine Small Streaming sidecar
+appropriate for an M1 MacBook Air. Model-specific code and package assumptions
+stay behind a narrow provider interface:
+
+- start a session;
+- push bounded PCM audio;
+- receive partial transcripts;
+- receive ordered final transcripts;
+- receive speech-started and speech-ended events;
+- finalize a session;
+- cancel a session;
+- report provider health and availability;
+- shut down cleanly.
+
+The main Rust process does not import Python internals. A provider process is
+started, health-checked, restarted within configured limits, and shut down by
+the STT service. It is isolated from PTY and task-session failures, binds only
+to a local/private interface when a socket is required, and is never exposed
+as a public STT endpoint. Provider startup or crash becomes a typed provider
+error and leaves the rest of Ajax operational. A future local or remote engine
+can implement the same interface without changing the browser state machine,
+transcript reducer, or WebSocket contract.
+
+### Authenticated audio transport
+
+Speech uses a separate authenticated WebSocket rather than the PTY terminal
+socket, because terminal binary frames must continue to mean PTY input. The
+initial route is task-scoped as `/api/tasks/{handle}/stt`; it uses the existing
+HttpOnly same-origin browser-session cookie and the existing same-origin
+WebSocket `Origin` check. It never accepts an unauthenticated or public STT
+connection, raw tmux target, or browser-supplied provider address.
+
+Protocol messages are versioned and carry the active `sessionId`. JSON control
+messages use the existing Ajax WebSocket framing style:
+
+- `stt.start`: session ID, PCM16 encoding, 16 kHz sample rate, mono channel,
+  language, and protocol version;
+- `stt.stop`: request provider finalization;
+- `stt.cancel`: abandon provider work and release resources;
+- `stt.ready`, `stt.partial`, `stt.final`, `stt.speech_started`,
+  `stt.speech_ended`, and `stt.error` server events.
+
+Audio is bounded binary transport. Each binary frame contains one PCM16 audio
+chunk and a monotonically increasing frame sequence in the transport envelope;
+JSON/base64 wrapping is not used for every audio chunk. The configured frame
+duration and maximum buffered audio duration are shared configuration, not
+scattered constants. The server applies backpressure and rejects or safely
+drops an over-limit frame with a typed overflow error; it never grows an
+unbounded client or provider queue. Reconnects reuse the active browser
+controller/session identity only when the session is still valid and never
+create a duplicate provider session. A failed reconnect enters an explicit
+recoverable error state.
+
+### Speech state machine
+
+The frontend has one explicit state, not independent listening/connecting/timer
+booleans:
+
+```text
+idle -> connecting -> listening -> pause_pending -> listening
+                              \\-> finalizing -> idle
+idle/connecting/listening/pause_pending/finalizing -> error
+connecting/listening/pause_pending/error -> idle  (cancel/recovery)
+```
+
+Every session receives a unique ID. Every provider event, browser event, and
+timer callback is checked against the active session ID. Invalid transitions
+are ignored or rejected without changing the current state. Only one pause
+timer can exist per session; cancelled timer callbacks cannot finalize a later
+session or a resumed session.
+
+The centralized initial timing configuration is:
+
+- `phraseEndSilenceMs = 700` — provider phrase finalization only;
+- `pauseGracePeriodMs = 9000` — spoken stop grace period;
+- `language = "en-US"`;
+- `maxBufferedAudioMs` — bounded transport/provider buffering;
+- `reconnectLimit` — capped STT reconnect attempts;
+- `finalizationTimeoutMs` — safe finalization deadline.
+
+There is no short ordinary-inactivity timeout. Any defensive maximum session
+duration must be generous, configurable, documented, and visible before it can
+terminate a session.
+
+### VAD and transcript lifecycle
+
+Voice activity detection is separate from phrase finalization. A lightweight
+frontend energy detector may emit an immediate speech-start hint solely to
+cancel `pause_pending`; it never stops a session or decides final transcript
+boundaries. Provider-side VAD is authoritative for speech-started,
+speech-ended, interruption, and inactivity events used by the backend/provider
+contract. The frontend must not run a second independent stop policy.
+
+Ordinary silence may finalize a phrase and start a new provider segment, but it
+does not stop capture, close the session, finalize the whole dictation, or send
+terminal input. The frontend maintains separate `finalTranscript` and
+`partialTranscript` values. Partial text replaces the previous partial value;
+final segments carry sequence numbers, are deduplicated, and are buffered until
+ordered. Finalized text is appended to the composer with sensible whitespace;
+existing composer text is preserved.
+
+The standalone normalized finalized utterance `pause` is a control command.
+Only an utterance whose normalized content is exactly `pause` (including
+`Pause.` and `PAUSE`) triggers it. Sentence content such as `Add a pause
+between retries` remains transcript text. When triggered, the command is
+removed, `pause_pending` begins, capture and the provider session remain active,
+and a monotonic nine-second countdown is shown. Any speech-start event cancels
+the timer immediately and returns to `listening`, even before a partial or final
+transcript arrives. If the full grace period expires, the session enters
+`finalizing`, stops accepting new audio, flushes buffered audio, asks the
+provider to finalize, waits for pending ordered finals, releases microphone and
+audio resources, closes the STT session, cancels timers, and leaves the editable
+composer usable. No automatic Enter, PTY write, shell execution, or prompt
+submission occurs.
+
+Manual cancel is a recovery path. It stops capture and transport, cancels the
+provider and all timers, releases browser audio resources, ignores delayed
+events, preserves finalized composer text, removes unstable partial text, and
+returns to a stable idle or explicit error state. Permission denial, unsupported
+browser APIs, unavailable hardware, audio interruption, background/suspension,
+WebSocket failure, provider failure, unsupported format, overflow, duplicate or
+out-of-order events, stale session events, and finalization timeout all preserve
+finalized text and expose a useful recovery message.
+
+### Terminal, authentication, and iOS boundaries
+
+Speech is text composition only. Recognition output never goes directly to
+xterm, tmux, a PTY, or an execution route. The user must review, edit, insert,
+or send it explicitly. Existing physical/software Ctrl+C continues through the
+normal xterm/PTY path. Removing the visible `^C` shortcut only removes that
+toolbar button and exclusive UI code; it does not remove the shared control-key
+infrastructure or backend SIGINT behavior.
+
+The Mic control is in the existing shortcut bar immediately after Paste, keeps
+the visible label `Mic` in every state, and uses the existing key height,
+spacing, typography, border, focus, touch, responsive, and disabled-state
+styles. It exposes an accessible label and tooltip, remains visible on the
+primary phone layout, shows active/connecting/finalizing/error state without
+becoming icon-only, prevents duplicate activation, and associates the
+`Pausing in N… Speak to continue` countdown with the Mic button and composer.
+
+Microphone capture starts only from the Mic user gesture. The implementation
+handles permission denial, absent hardware, audio-route interruption,
+visibility/background changes, screen lock, JavaScript suspension, socket
+interruption, and duplicate-stream prevention. If iOS cannot guarantee capture
+continuity, the session becomes an explicit interrupted/recoverable error and
+does not claim to still be listening. Completion and cancellation always stop
+tracks and release audio resources.
+
+Web Cockpit remains a live same-origin Safari-first shell. No speech model is
+downloaded to the phone, WebGPU is required, or service worker/offline mutation
+path is introduced. Optional standalone/Home Screen behavior is treated as an
+iOS lifecycle variant, not an authentication, storage, or PWA dependency.
+
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
 the HTML shell, the boot client JavaScript (`app.js`), the deferred terminal
 chunk (`terminal.js`), and the stylesheet from that directory.

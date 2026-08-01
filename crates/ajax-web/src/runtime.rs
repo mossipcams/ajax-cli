@@ -4,15 +4,21 @@ use crate::{
     adapters::{
         browser_session::BrowserSession,
         cloudflare_access::{CloudflareAccessConfig, CloudflareAccessError},
-        server, tls,
+        server,
+        stt_provider::MoonshineProvider,
+        tls,
     },
     slices::actions::supported_web_action,
     slices::{cockpit, dev_deploy, install},
     WebError,
 };
 use ajax_core::{
-    adapters::CommandRunner, commands::CommandContext, config::NotifyConfig,
-    models::OperatorAction, registry::InMemoryRegistry, runtime_refresh::RefreshTier,
+    adapters::CommandRunner,
+    commands::CommandContext,
+    config::{Config, NotifyConfig},
+    models::OperatorAction,
+    registry::{InMemoryRegistry, Registry as _},
+    runtime_refresh::RefreshTier,
 };
 use axum::{
     body::Bytes,
@@ -53,6 +59,14 @@ const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_COMPLETED_OPERATIONS: usize = 128;
 
+fn moonshine_provider_from_config(config: &Config) -> Arc<Mutex<MoonshineProvider>> {
+    Arc::new(Mutex::new(MoonshineProvider::new(
+        config.stt.provider_command.clone(),
+        config.stt.max_buffered_audio_ms,
+        config.stt.phrase_end_silence_ms,
+    )))
+}
+
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
     operations: Arc<Mutex<OperationCoordinator>>,
@@ -62,6 +76,11 @@ pub struct WebAppState<C, B> {
     cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
     last_browser_cockpit_at: Arc<Mutex<Option<Instant>>>,
     dev_deploy: Arc<dev_deploy::SharedDevDeploySlot>,
+    stt_provider: Arc<Mutex<MoonshineProvider>>,
+    stt_finalization_timeout_ms: u64,
+    stt_phrase_end_silence_ms: u64,
+    stt_pause_grace_period_ms: u64,
+    stt_language: String,
 }
 
 struct WebSharedState<C, B> {
@@ -90,6 +109,11 @@ impl<C, B> Clone for WebAppState<C, B> {
             cloudflare_access: Arc::clone(&self.cloudflare_access),
             last_browser_cockpit_at: Arc::clone(&self.last_browser_cockpit_at),
             dev_deploy: Arc::clone(&self.dev_deploy),
+            stt_provider: Arc::clone(&self.stt_provider),
+            stt_finalization_timeout_ms: self.stt_finalization_timeout_ms,
+            stt_phrase_end_silence_ms: self.stt_phrase_end_silence_ms,
+            stt_pause_grace_period_ms: self.stt_pause_grace_period_ms,
+            stt_language: self.stt_language.clone(),
         }
     }
 }
@@ -159,6 +183,11 @@ impl<C, B> WebAppState<C, B> {
         bridge: B,
         state_dir: PathBuf,
     ) -> Self {
+        let stt_provider = moonshine_provider_from_config(&context.config);
+        let stt_finalization_timeout_ms = context.config.stt.finalization_timeout_ms;
+        let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
+        let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
+        let stt_language = context.config.stt.language.clone();
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -174,6 +203,11 @@ impl<C, B> WebAppState<C, B> {
             cloudflare_access: Arc::new(None),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
             dev_deploy: Arc::new(Mutex::new(dev_deploy::DevDeploySlot::default())),
+            stt_provider,
+            stt_finalization_timeout_ms,
+            stt_phrase_end_silence_ms,
+            stt_pause_grace_period_ms,
+            stt_language,
         }
     }
 
@@ -207,6 +241,11 @@ impl<C, B> WebAppState<C, B> {
     ) -> Result<Self, WebError> {
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
         let cloudflare_access = CloudflareAccessConfig::from_env()?;
+        let stt_provider = moonshine_provider_from_config(&context.config);
+        let stt_finalization_timeout_ms = context.config.stt.finalization_timeout_ms;
+        let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
+        let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
+        let stt_language = context.config.stt.language.clone();
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -222,6 +261,11 @@ impl<C, B> WebAppState<C, B> {
             cloudflare_access: Arc::new(cloudflare_access),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
             dev_deploy: Arc::new(Mutex::new(dev_deploy::DevDeploySlot::default())),
+            stt_provider,
+            stt_finalization_timeout_ms,
+            stt_phrase_end_silence_ms,
+            stt_pause_grace_period_ms,
+            stt_language,
         })
     }
 
@@ -988,6 +1032,15 @@ where
         };
         return axum_task_terminal(State(state), task_handle.to_string(), req).await;
     }
+    if req.uri().path().ends_with("/stt") {
+        let Some(task_handle) = handle.strip_suffix("/stt") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
+        return axum_task_stt(State(state), task_handle.to_string(), req).await;
+    }
     if handle.ends_with("/snapshot") {
         return json_value_response(
             404,
@@ -1158,6 +1211,67 @@ where
             seed_history,
             client_id,
             on_operator_input,
+        )
+        .await;
+    })
+}
+
+async fn axum_task_stt<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    if !req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    {
+        return text_axum_response(400, "websocket upgrade required");
+    }
+    if !websocket_origin_allowed(req.headers()) {
+        return text_axum_response(403, "websocket origin forbidden");
+    }
+
+    let task_found = {
+        let guard = state.shared();
+        guard
+            .context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .any(|task| task.qualified_handle() == handle)
+    };
+    if !task_found {
+        return json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        );
+    }
+
+    let provider = Arc::clone(&state.stt_provider);
+    let finalization_timeout_ms = state.stt_finalization_timeout_ms;
+    let phrase_end_silence_ms = state.stt_phrase_end_silence_ms;
+    let pause_grace_period_ms = state.stt_pause_grace_period_ms;
+    let language = state.stt_language.clone();
+    let (mut parts, body) = req.into_parts();
+    let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(upgrade) => upgrade,
+        Err(_) => return text_axum_response(400, "websocket upgrade required"),
+    };
+    let _ = body;
+    upgrade.on_upgrade(move |socket| async move {
+        crate::adapters::stt_provider::bridge_task_stt_socket(
+            socket,
+            provider,
+            finalization_timeout_ms,
+            phrase_end_silence_ms,
+            pause_grace_period_ms,
+            language,
         )
         .await;
     })
@@ -3684,6 +3798,60 @@ mod tests {
         assert_ne!(response.status(), StatusCode::FORBIDDEN);
 
         assert!(state.browser_connected());
+    }
+
+    #[tokio::test]
+    async fn axum_task_stt_requires_browser_session_cookie() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("stt-auth"),
+        );
+        let app = super::axum_app(state);
+
+        let response = get_public(&app, "/api/tasks/web%2Ffix-login/stt").await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn axum_task_stt_rejects_non_upgrade_requests() {
+        let (_state, cookie, app) =
+            app_with(context_with_task(), TestBridge::default(), "stt-upgrade");
+
+        let response = get(&app, &cookie, "/api/tasks/web%2Ffix-login/stt").await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "websocket upgrade required"
+        );
+    }
+
+    #[tokio::test]
+    async fn axum_task_stt_rejects_cross_site_websocket_origin() {
+        let (_state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "stt-cross-origin",
+        );
+
+        let response = websocket_get(
+            &app,
+            &cookie,
+            "/api/tasks/web%2Ffix-login/stt",
+            Some("https://evil.example"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "websocket origin forbidden"
+        );
     }
 
     #[test]
