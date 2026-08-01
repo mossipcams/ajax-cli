@@ -27,6 +27,7 @@ import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import {
   createSpeechInputModel,
   isStandalonePause,
+  isStandaloneStartOver,
   speechReducer,
   type SpeechInputModel,
 } from "@/shared/lib/speechState";
@@ -122,6 +123,7 @@ export default function TaskTerminal({ handle }: Props) {
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
   /** Final sequences already written to the PTY, so a resend never double-inserts. */
   const insertedFinalsRef = useRef<Set<number>>(new Set());
+  const insertedSpeechCharsRef = useRef(0);
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
 
@@ -314,6 +316,15 @@ export default function TaskTerminal({ handle }: Props) {
       : text;
     connectionRef.current.sendInput(payload);
     return true;
+  };
+
+  const undoInsertedSpeech = () => {
+    const count = insertedSpeechCharsRef.current;
+    if (count <= 0) return;
+    insertedSpeechCharsRef.current = 0;
+    if (connectionRef.current?.isOpen()) {
+      connectionRef.current.sendInput("\x7f".repeat(count));
+    }
   };
 
   const termTextarea = (): HTMLTextAreaElement | null => {
@@ -660,6 +671,7 @@ export default function TaskTerminal({ handle }: Props) {
     speechTransportRef.current?.cancel();
     speechTransportRef.current = undefined;
     insertedFinalsRef.current.clear();
+    insertedSpeechCharsRef.current = 0;
     if (sessionId) {
       dispatchSpeech({ type: "cancel", sessionId });
     } else {
@@ -685,6 +697,7 @@ export default function TaskTerminal({ handle }: Props) {
 
     const sessionId = newSessionId();
     insertedFinalsRef.current.clear();
+    insertedSpeechCharsRef.current = 0;
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -697,9 +710,14 @@ export default function TaskTerminal({ handle }: Props) {
         onFinal: (sequence, text) => {
           // Insert here, never inside a setState updater: StrictMode may invoke an
           // updater twice, which would write the transcript to the PTY twice.
-          if (!isStandalonePause(text) && !insertedFinalsRef.current.has(sequence)) {
+          if (isStandaloneStartOver(text)) {
+            undoInsertedSpeech();
+            insertedFinalsRef.current.clear();
+          } else if (!isStandalonePause(text) && !insertedFinalsRef.current.has(sequence)) {
             insertedFinalsRef.current.add(sequence);
-            pasteThroughTerm(text, false);
+            if (pasteThroughTerm(text, false)) {
+              insertedSpeechCharsRef.current += text.length;
+            }
           }
           dispatchSpeech({
             type: "final",
