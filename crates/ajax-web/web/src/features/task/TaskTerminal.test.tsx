@@ -388,6 +388,36 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(payloads).toMatch(/deleteWordBackward[\s\S]*?"\\x17"/);
   });
 
+  it("blocks xterm empty paste without preventDefault and recovers from textarea input", () => {
+    const onPaste = extractBlock(
+      taskTerminalSource,
+      /const onTextareaPaste\s*=\s*\(event:\s*ClipboardEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(onPaste).toMatch(/readPasteText\(event\.clipboardData\)/);
+    expect(onPaste).toMatch(/pasteExpectRef\.current\s*=\s*true/);
+    expect(onPaste).toMatch(/event\.stopImmediatePropagation\(\)/);
+    expect(onPaste).not.toMatch(/navigator\.clipboard\?\.readText/);
+
+    const emptyBranch = onPaste.match(
+      /pasteExpectRef\.current\s*=\s*true;[\s\S]*?event\.stopImmediatePropagation\(\);/,
+    )?.[0];
+    expect(emptyBranch).toBeDefined();
+    expect(emptyBranch).not.toMatch(/preventDefault/);
+
+    const onInput = extractBlock(
+      taskTerminalSource,
+      /const onTextareaInput\s*=\s*\(event:\s*Event\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(onInput).toMatch(/insertFromPaste/);
+    expect(onInput).toMatch(/pasteExpectRef\.current/);
+    expect(onInput).toMatch(/replaceAll\(BACKSPACE_SENTINEL/);
+    expect(onInput).toMatch(/textarea\.value\s*=\s*BACKSPACE_SENTINEL/);
+    expect(onInput).toMatch(/sendPastedText\(raw\)/);
+    expect(onInput).toMatch(/inputType === "insertText"/);
+  });
+
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {
     const onInput = extractBlock(
       taskTerminalSource,
