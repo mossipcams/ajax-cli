@@ -1,34 +1,6 @@
 // Clipboard write with an execCommand fallback for plain-http LAN origins,
 // where navigator.clipboard does not exist.
 
-/** First http(s) URL at the start of trimmed text, or null. */
-function extractHttpUrl(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const match = trimmed.match(/^https?:\/\/[^\s<>"{}|\\^`[\]]+/i);
-  return match?.[0] ?? null;
-}
-
-function firstUriListLine(uriList: string): string {
-  for (const line of uriList.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith("#")) return trimmed;
-  }
-  return "";
-}
-
-function extractHttpUrlFromUriList(uriList: string): string | null {
-  const line = firstUriListLine(uriList);
-  return line ? extractHttpUrl(line) : null;
-}
-
-function extractHttpUrlFromHtml(html: string): string | null {
-  if (!html) return null;
-  const hrefMatch = html.match(/\bhref\s*=\s*["']([^"']+)["']/i);
-  if (!hrefMatch) return null;
-  return extractHttpUrl(hrefMatch[1]);
-}
-
 /**
  * Read native paste payload. Prefers an http(s) URL from plain text, uri-list,
  * or an HTML href when plain is empty or only a link title; never returns raw
@@ -36,21 +8,20 @@ function extractHttpUrlFromHtml(html: string): string | null {
  */
 export function readPasteText(data: DataTransfer | null): string {
   if (!data) return "";
-  const plain = data.getData("text/plain");
-  const uriList = data.getData("text/uri-list");
-  const html = data.getData("text/html");
-  const plainTrim = plain.trim();
-  const fromUri = extractHttpUrlFromUriList(uriList);
-  const fromHtml = extractHttpUrlFromHtml(html);
+  const plain = data.getData("text/plain").trim();
+  if (/^https?:\/\//i.test(plain)) return plain;
 
-  if (plainTrim) {
-    // Keep full plain when it already starts with a URL (may include trailing text).
-    if (/^https?:\/\//i.test(plainTrim)) return plainTrim;
-    // Link title + rich URL → prefer the URL.
-    return fromUri ?? fromHtml ?? plainTrim;
-  }
+  const uri =
+    data
+      .getData("text/uri-list")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("#")) ?? "";
+  const href = data.getData("text/html").match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]?.trim() ?? "";
+  const richUrl = [uri, href].find((candidate) => /^https?:\/\//i.test(candidate));
 
-  return fromUri ?? fromHtml ?? firstUriListLine(uriList);
+  if (plain) return richUrl ?? plain;
+  return richUrl ?? uri;
 }
 
 /** Copy to clipboard; returns true when the native clipboard accepted it. */

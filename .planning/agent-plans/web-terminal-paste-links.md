@@ -75,3 +75,5 @@ cargo install --path crates/ajax-cli --locked --force
   no package.json; correct commands are root `npm run web:test` / `web:check`.
 - Delegate report envelope failed parsing (`MISSING_STRUCTURED_REPORT`) but
   delta was in scope and behavior is correct after parent review.
+- Ponytail follow-up: inlined clipboard helpers; dropped TaskTerminal
+  source-regex paste pin (e2e covers wiring).
