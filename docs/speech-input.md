@@ -196,14 +196,20 @@ Practical behavior on Safari and on an optional Home Screen installed shell:
 - **Permission** — microphone access starts only from the **Mic** tap (user
   gesture). Denial surfaces a recoverable error; the terminal stays usable.
 - **Ready gate** — the UI stays Connecting until host `stt.ready`; it does not
-  show Listening before the model can consume audio.
+  show Listening before the model can consume audio. If Ready never arrives
+  (for example an outdated legacy worker under `~/.ajax-dev/bin/`), Ajax fails
+  the session with a recoverable error after a readiness timeout — re-run
+  `./scripts/setup-stt.sh` and restart `ajax web` so the Moonshine v2 worker is
+  loaded.
 - **Interruptions** — audio-route changes, backgrounding, screen lock, tab
   suspension, or socket loss become an explicit **recoverable interruption**
   error instead of a silent "still listening" state.
 - **Resources** — completion, cancel, and error paths stop tracks and release
   browser audio resources through one shared teardown.
 - **Recovery** — read the status message, return to the task when ready, and tap
-  **Mic** again (or use **Cancel voice** during an active session).
+  **Mic** again (or use **Cancel voice** during an active session). After an
+  Ajax STT upgrade, always re-run `./scripts/setup-stt.sh` and restart
+  `ajax web` so the on-disk worker matches the protocol (including `stt.ready`).
 
 ## Normal use and transcript safety
 
@@ -221,6 +227,8 @@ Practical behavior on Safari and on an optional Home Screen installed shell:
 5. Edit the shell line if needed, then press Enter from the terminal yourself
    when you want to submit.
 
-Ajax does **not** auto-press Enter or execute commands on your behalf. There is
-no spoken **start over** command — that phrase is ordinary dictated text.
-Existing keyboard Ctrl+C and tmux behavior are unchanged.
+Ajax does **not** auto-press Enter or execute commands on your behalf. Say
+standalone **`start over`** or **`start fresh`** (including `Start over.`) to
+clear auto-inserted dictation on the current line and keep listening. Sentence
+uses of those phrases remain ordinary text. Existing keyboard Ctrl+C and tmux
+behavior are unchanged.

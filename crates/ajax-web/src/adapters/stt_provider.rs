@@ -527,6 +527,9 @@ impl Drop for PersistentWorker {
 const MAX_STT_CONTROL_BYTES: usize = 8_192;
 const MAX_STT_BINARY_BYTES: usize = 4 + crate::slices::stt::MAX_AUDIO_FRAME_BYTES;
 const STT_EVENT_POLL_MS: u64 = 20;
+/// How long after `stt.start` the sidecar may take to emit `stt.ready`.
+/// Cold model load can be slow; a missing Ready (legacy sidecar) must not hang forever.
+const STT_READY_TIMEOUT_MS: u64 = 60_000;
 
 fn provider_event_to_server(
     session_id: &str,
@@ -634,6 +637,14 @@ fn drain_provider_events(
     (events, completed || session.is_completed())
 }
 
+fn readiness_deadline_expired(
+    session_ready: bool,
+    ready_deadline: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    !session_ready && ready_deadline.is_some_and(|deadline| now >= deadline)
+}
+
 /// Authenticated STT WebSocket loop. Separate from the PTY terminal bridge.
 pub async fn bridge_task_stt_socket(
     mut socket: axum::extract::ws::WebSocket,
@@ -652,6 +663,8 @@ pub async fn bridge_task_stt_socket(
     let mut provider_session: Option<MoonshineSession> = None;
     let mut active_session_id: Option<String> = None;
     let mut finalize_deadline: Option<std::time::Instant> = None;
+    let mut ready_deadline: Option<std::time::Instant> = None;
+    let mut session_ready = false;
 
     loop {
         if let (Some(session), Some(session_id)) =
@@ -664,12 +677,34 @@ pub async fn bridge_task_stt_socket(
                 finalization_timeout_ms,
             );
             for event in events {
+                if matches!(event, SttServerEvent::Ready { .. }) {
+                    session_ready = true;
+                    ready_deadline = None;
+                }
                 if !send_stt_event(&mut socket, &event).await {
                     if let Some(mut session) = provider_session.take() {
                         session.cancel();
                     }
                     return;
                 }
+            }
+            if readiness_deadline_expired(session_ready, ready_deadline, Instant::now()) {
+                let sid = session_id.to_string();
+                let _ = send_stt_error(
+                    &mut socket,
+                    &sid,
+                    "provider_not_ready",
+                    "STT worker did not become ready. Run ./scripts/setup-stt.sh and restart ajax web (worker must emit stt.ready).",
+                )
+                .await;
+                if let Some(mut session) = provider_session.take() {
+                    session.cancel();
+                }
+                active_session_id = None;
+                finalize_deadline = None;
+                ready_deadline = None;
+                session_ready = false;
+                continue;
             }
             if completed {
                 let closed_session_id = session_id.to_string();
@@ -692,6 +727,8 @@ pub async fn bridge_task_stt_socket(
                 }
                 active_session_id = None;
                 finalize_deadline = None;
+                ready_deadline = None;
+                session_ready = false;
             } else if let Some(deadline) = finalize_deadline {
                 if Instant::now() >= deadline {
                     let sid = session_id.to_string();
@@ -707,6 +744,8 @@ pub async fn bridge_task_stt_socket(
                     }
                     active_session_id = None;
                     finalize_deadline = None;
+                    ready_deadline = None;
+                    session_ready = false;
                 }
             }
         }
@@ -889,6 +928,10 @@ pub async fn bridge_task_stt_socket(
                         provider_session = Some(session);
                         active_session_id = Some(session_id.clone());
                         finalize_deadline = None;
+                        session_ready = false;
+                        ready_deadline = Some(
+                            Instant::now() + Duration::from_millis(STT_READY_TIMEOUT_MS.max(1)),
+                        );
                         // stt.ready is forwarded only after the sidecar emits Ready
                         // (model loaded and audio accepted), not on process spawn.
                     }
@@ -955,6 +998,8 @@ pub async fn bridge_task_stt_socket(
                 }
                 active_session_id = None;
                 finalize_deadline = None;
+                ready_deadline = None;
+                session_ready = false;
             }
         }
     }
@@ -1216,6 +1261,17 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&frame[5..5 + body_len]).unwrap();
 
         assert_eq!(body["language"], "en-GB");
+    }
+
+    #[test]
+    fn readiness_deadline_expires_only_before_ready() {
+        let now = std::time::Instant::now();
+        let past = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        let future = now + Duration::from_secs(30);
+        assert!(readiness_deadline_expired(false, Some(past), now));
+        assert!(!readiness_deadline_expired(true, Some(past), now));
+        assert!(!readiness_deadline_expired(false, Some(future), now));
+        assert!(!readiness_deadline_expired(false, None, now));
     }
 
     #[test]

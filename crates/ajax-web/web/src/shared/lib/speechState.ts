@@ -75,6 +75,12 @@ export function isStandalonePause(text: string): boolean {
   return normalizeStandaloneCommand(text) === "pause";
 }
 
+/** Standalone spoken reset: `start over` or `start fresh` (with terminal punctuation). */
+export function isStandaloneStartOver(text: string): boolean {
+  const normalized = normalizeStandaloneCommand(text);
+  return normalized === "start over" || normalized === "start fresh";
+}
+
 function buildFinalTranscript(
   finalSegments: Record<number, string>,
   throughExclusive: number,
@@ -173,7 +179,20 @@ export function speechReducer(
           nextPauseTimerToken: timerToken + 1,
         };
       }
-      // Ordinary dictation — including the words "start over" — is never a control.
+      if (isStandaloneStartOver(action.text)) {
+        if (!canAcceptControl) {
+          return model;
+        }
+        // Drop spoken finals and skip this control sequence so later provider
+        // sequences remain contiguous after the reset.
+        return {
+          ...model,
+          finalSegments: {},
+          finalTranscript: "",
+          partialTranscript: "",
+          nextExpectedSequence: action.sequence + 1,
+        };
+      }
       if (!canAcceptOrdinary) {
         return model;
       }

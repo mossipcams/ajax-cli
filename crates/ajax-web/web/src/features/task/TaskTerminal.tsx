@@ -26,9 +26,15 @@ import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import {
   createSpeechInputModel,
+  isStandaloneStartOver,
   speechReducer,
   type SpeechInputModel,
 } from "@/shared/lib/speechState";
+import {
+  clearSpeechInserts,
+  undoPayload,
+  type SpeechInsert,
+} from "@/shared/lib/speechInsertLedger";
 import {
   createBrowserSpeechPlatform,
   createSpeechTransport,
@@ -119,6 +125,7 @@ export default function TaskTerminal({ handle }: Props) {
   );
   const [pauseCountdownSeconds, setPauseCountdownSeconds] = useState<number | undefined>();
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
+  const insertedSpeechRef = useRef<SpeechInsert[]>([]);
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
 
@@ -311,6 +318,17 @@ export default function TaskTerminal({ handle }: Props) {
       : text;
     connectionRef.current.sendInput(payload);
     return true;
+  };
+
+  const undoInsertedSpeech = () => {
+    const records = insertedSpeechRef.current;
+    if (records.length === 0) return;
+    const payload = undoPayload(records);
+    clearSpeechInserts(records);
+    // ponytail: assumes speech only appends to the current line; en-US UTF-16 .length DEL undo.
+    if (payload && connectionRef.current?.isOpen()) {
+      connectionRef.current.sendInput(payload);
+    }
   };
 
   const termTextarea = (): HTMLTextAreaElement | null => {
@@ -656,6 +674,7 @@ export default function TaskTerminal({ handle }: Props) {
     const sessionId = speechModelRef.current.sessionId;
     speechTransportRef.current?.cancel();
     speechTransportRef.current = undefined;
+    clearSpeechInserts(insertedSpeechRef.current);
     if (sessionId) {
       dispatchSpeech({ type: "cancel", sessionId });
     } else {
@@ -706,6 +725,7 @@ export default function TaskTerminal({ handle }: Props) {
     }
 
     const sessionId = newSessionId();
+    clearSpeechInserts(insertedSpeechRef.current);
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -716,8 +736,8 @@ export default function TaskTerminal({ handle }: Props) {
         onPartial: (sequence, text) =>
           dispatchSpeech({ type: "partial", sessionId, sequence, text }),
         onFinal: (sequence, text) => {
-          // Paste contiguous transcript deltas here, never inside a setState updater:
-          // StrictMode may invoke an updater twice and would double-write the PTY.
+          // Paste contiguous transcript deltas / undo here, never inside a setState
+          // updater: StrictMode may invoke an updater twice and double-write the PTY.
           const previous = speechModelRef.current;
           const action = {
             type: "final" as const,
@@ -730,13 +750,26 @@ export default function TaskTerminal({ handle }: Props) {
           if (next === previous) return;
           speechModelRef.current = next;
           setSpeechModel(next);
+
+          if (isStandaloneStartOver(text)) {
+            const canHandleControl =
+              previous.state === "listening" || previous.state === "pause_pending";
+            if (canHandleControl) {
+              undoInsertedSpeech();
+            }
+            return;
+          }
+
           if (
             next.finalTranscript !== previous.finalTranscript &&
             next.finalTranscript.startsWith(previous.finalTranscript)
           ) {
             const delta = next.finalTranscript.slice(previous.finalTranscript.length);
             if (delta) {
-              pasteThroughTerm(delta, false);
+              const bracketed = termRef.current?.modes.bracketedPasteMode ?? false;
+              if (pasteThroughTerm(delta, false)) {
+                insertedSpeechRef.current.push({ text: delta, bracketed });
+              }
             }
           }
         },
