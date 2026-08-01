@@ -174,7 +174,10 @@ pub struct IsolatedAttachPlan {
 pub const EPHEMERAL_SESSION_INFIX: &str = "-m";
 
 pub fn build_isolated_attach_plan(plan: &TerminalAttachPlan) -> IsolatedAttachPlan {
-    build_isolated_attach_plan_with_token(plan, &random_session_token())
+    // Random tokens cannot reconnect, so destroy on disconnect instead of lingering.
+    let mut isolated = build_isolated_attach_plan_with_token(plan, &random_session_token());
+    isolated.teardown = destroy_ephemeral_session_commands(&isolated.ephemeral_session);
+    isolated
 }
 
 /// Build an isolated attach plan keyed to a stable client id. Two calls with the
@@ -326,6 +329,15 @@ pub fn ephemeral_sessions_to_reap(names: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Ephemeral sessions with zero attached clients. Safe to kill while the web
+/// server is live: active browser bridges keep `session_attached >= 1`.
+pub fn ephemeral_sessions_to_reap_detached(rows: &[(String, u32)]) -> Vec<String> {
+    rows.iter()
+        .filter(|(name, attached)| is_ephemeral_session_name(name) && *attached == 0)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 /// Best-effort: list tmux sessions and kill any orphaned ephemeral grouped
 /// sessions. Never fails the caller; if tmux is absent or has no server there
 /// is nothing to reap.
@@ -344,6 +356,32 @@ pub fn reap_orphan_terminal_sessions() {
         .filter(|line| !line.is_empty())
         .collect();
     for session in ephemeral_sessions_to_reap(&names) {
+        let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
+    }
+}
+
+/// Kill detached ephemeral sessions while the server is running. Call on each
+/// terminal connect so remount/reconnect storms cannot accumulate hundreds of
+/// `-m*` sessions (linger-by-design without a live reaper).
+pub fn reap_detached_ephemeral_terminal_sessions() {
+    let listing = match run_tmux_command_blocking(&TmuxCommand::new([
+        "list-sessions",
+        "-F",
+        "#{session_name} #{session_attached}",
+    ])) {
+        Ok(output) if output.status.success() => output.stdout,
+        _ => return,
+    };
+    let rows: Vec<(String, u32)> = String::from_utf8_lossy(&listing)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let name = parts.next()?.to_string();
+            let attached = parts.next()?.parse().ok()?;
+            Some((name, attached))
+        })
+        .collect();
+    for session in ephemeral_sessions_to_reap_detached(&rows) {
         let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
     }
 }
@@ -607,6 +645,11 @@ pub async fn bridge_task_terminal_socket(
     client_id: Option<String>,
     on_operator_input: Arc<dyn Fn() + Send + Sync>,
 ) {
+    // ponytail: reap only detached ephemerals (attached==0). Ceiling: one
+    // list-sessions per connect. Upgrade: periodic background reaper if connect
+    // rate is too low to keep up.
+    let _ = tokio::task::spawn_blocking(reap_detached_ephemeral_terminal_sessions).await;
+
     let isolated = isolated_plan_for_bridge(&plan, client_id.as_deref());
 
     // Stand up the isolated grouped session before attaching so the phone's
@@ -1299,12 +1342,16 @@ mod tests {
     fn isolated_attach_cleanup_kills_ephemeral_session() {
         let plan = attach_plan("web/fix-login");
 
-        let isolated = build_isolated_attach_plan(&plan);
+        // Random (no client id): teardown destroys — token cannot be reused.
+        let random = build_isolated_attach_plan(&plan);
+        assert_eq!(
+            random.teardown,
+            destroy_ephemeral_session_commands(&random.ephemeral_session)
+        );
 
-        // Disconnect must not kill the ephemeral session: it lingers in tmux so
-        // the same client can reconnect to its own viewport. Only the explicit
-        // destroy/reaper path tears it down.
-        assert!(isolated.teardown.is_empty());
+        // Stable client id: linger empty teardown; reaper / destroy path only.
+        let client = build_isolated_attach_plan_for_client(&plan, "viewport-a");
+        assert!(client.teardown.is_empty());
         assert_eq!(
             destroy_ephemeral_session_commands("ajax-web-fix-login-m1a2b3c"),
             vec![TmuxCommand {
@@ -1315,6 +1362,23 @@ mod tests {
                     "ajax-web-fix-login-m1a2b3c".to_string(),
                 ],
             }]
+        );
+    }
+
+    #[test]
+    fn reaper_detached_skips_attached_ephemeral_sessions() {
+        let rows = vec![
+            ("ajax-web-x".to_string(), 1),
+            ("ajax-web-x-m0123456789ab".to_string(), 0),
+            ("ajax-web-y-mabcdef012345".to_string(), 2),
+            ("ajax-web-z-mdeadbeefcafe".to_string(), 0),
+        ];
+        assert_eq!(
+            ephemeral_sessions_to_reap_detached(&rows),
+            vec![
+                "ajax-web-x-m0123456789ab".to_string(),
+                "ajax-web-z-mdeadbeefcafe".to_string(),
+            ]
         );
     }
 

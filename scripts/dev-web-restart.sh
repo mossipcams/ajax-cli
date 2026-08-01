@@ -332,8 +332,11 @@ start_web() {
   : >"$LOG_FILE"
   # ponytail: tmux keeps the server alive; nohup from agent/CI shells still dies.
   # Ceiling: requires tmux. Upgrade: launchd plist if we need login-boot without tmux.
-  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT" \
-    "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"
+  if ! tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT" \
+    "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"; then
+    echo "tmux new-session failed for $TMUX_SESSION" >&2
+    return 1
+  fi
 
   sleep 2
   NEW_PID="$(/usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | /usr/bin/head -1 || true)"
@@ -372,6 +375,13 @@ fi
 if [[ -n "$WORKTREE" ]]; then
   echo "AJAX_DEV_DEPLOY_PHASE=restarting"
 fi
+OLD_PID=""
+if [[ -f "$PID_FILE" ]]; then
+  OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+fi
+if [[ -z "$OLD_PID" ]]; then
+  OLD_PID="$(/usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | /usr/bin/head -1 || true)"
+fi
 stop_tmux_session
 stop_pid_file
 stop_listener "$PORT"
@@ -391,6 +401,12 @@ if ! start_web "$BIN_PATH"; then
       exit 1
     fi
   fi
+  exit 1
+fi
+
+NEW_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+if [[ -n "$OLD_PID" && -n "$NEW_PID" && "$OLD_PID" == "$NEW_PID" ]]; then
+  echo "${PROFILE} web restart did not replace process (still pid $OLD_PID); see $LOG_FILE" >&2
   exit 1
 fi
 
