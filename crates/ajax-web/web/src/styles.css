@@ -1552,6 +1552,24 @@ header .bar h1 {
   font-weight: 600;
 }
 
+.floating-context-menu {
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+  padding: 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--paper-raised) 96%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+.floating-context-menu__item {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 .terminal-new-output {
   position: absolute;
   left: 50%;
