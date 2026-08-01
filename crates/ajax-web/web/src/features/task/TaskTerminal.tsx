@@ -42,10 +42,10 @@ import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
  * Floor is the bridge's 16ms output batch (TERMINAL_OUTPUT_FLUSH_MS) plus link
- * jitter; ~3 batches is enough to bridge seed → attach repaint without sitting
+ * jitter; ~7 batches is enough to bridge seed → attach repaint without sitting
  * on a blank plate.
  */
-const SEED_REVEAL_QUIET_MS = 48;
+const SEED_REVEAL_QUIET_MS = 120;
 /** Hard cap so a pane streaming nonstop still reveals. */
 const SEED_REVEAL_MAX_MS = 2000;
 
@@ -955,6 +955,7 @@ export default function TaskTerminal({ handle }: Props) {
     const revealSeed = () => {
       clearSeedPendingRevealTimer();
       if (!isActive() || !isSeedPending()) return;
+      scrollSync.syncSpacer();
       scrollSync.setFollowLive(true);
       scrollSync.setSyncingScroll(true);
       termRef.current?.scrollToBottom();
@@ -1474,10 +1475,16 @@ export default function TaskTerminal({ handle }: Props) {
     scrollSync.syncSpacer();
     scrollSync.refreshFollow();
 
-    const scrollDisposable = liveTerm.onScroll(scrollSync.onTermScroll);
+    const scrollDisposable = liveTerm.onScroll(() => {
+      if (isSeedPending()) return;
+      scrollSync.onTermScroll();
+    });
     const onWrapScroll = () => {
       // Undone caret reveal: never map it onto the PTY viewport.
       if (onRestorePinnedScroll()) return;
+      // Do not gate on isSeedPending: wrapper scroll must still flip followLive
+      // off so "New output" works if the user (or a test) scrolls during the
+      // quiet window. Mid-parse yank is handled by ignoring onTermScroll above.
       scrollSync.onInteractionScroll();
     };
     interactionEl.addEventListener("scroll", onWrapScroll, { passive: true });
@@ -1502,9 +1509,10 @@ export default function TaskTerminal({ handle }: Props) {
       connection = connectTaskTerminal(handle, {
         onOutput: (text) => {
           termRef.current?.write(text, () => {
-            if (isSeedPending()) {
-              scrollSync.setFollowLive(true);
-            }
+            // Mid-parse xterm onScroll is ignored while seed-pending (above), so
+            // followLive stays put across the write. Do not force-follow here —
+            // that would re-pin after a wrapper scroll during the quiet window
+            // and suppress the "New output" affordance.
             scrollSync.applyOutput();
             deferSeedReveal();
           });
