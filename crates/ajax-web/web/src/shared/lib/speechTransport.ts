@@ -5,6 +5,8 @@ const STT_PROTOCOL_VERSION = 1;
 const TARGET_SAMPLE_RATE = 16_000;
 // ~2 s of 16 kHz mono PCM16; matches server max_buffered_audio_ms default (2000).
 const MAX_BUFFERED_AUDIO_BYTES = 64_000;
+/** Server caps one audio frame at 640 PCM bytes; 320 samples of PCM16 = 20 ms. */
+const MAX_AUDIO_FRAME_SAMPLES = 320;
 const FINALIZATION_TIMEOUT_MS = 5_000;
 const DEFAULT_PAUSE_GRACE_PERIOD_MS = 9_000;
 const OPEN_READY_STATE = 1;
@@ -381,14 +383,20 @@ export function createSpeechTransport(
     if (socket.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) return;
     const pcm = floatSamplesToPcm16(samples, inputSampleRate);
     if (pcm.length === 0) return;
-    const frame = encodeSpeechAudioFrame(nextSequence, pcm);
-    try {
-      socket.send(frame);
-    } catch {
-      fail("Failed to send speech audio frame");
-      return;
+    // The server rejects any frame carrying more than MAX_AUDIO_FRAME_SAMPLES of
+    // PCM. One capture callback resamples to far more than that (a 4096-sample
+    // buffer at 48 kHz yields 1365 samples), so split it into wire-sized frames.
+    for (let offset = 0; offset < pcm.length; offset += MAX_AUDIO_FRAME_SAMPLES) {
+      const chunk = pcm.subarray(offset, offset + MAX_AUDIO_FRAME_SAMPLES);
+      const frame = encodeSpeechAudioFrame(nextSequence, chunk);
+      try {
+        socket.send(frame);
+      } catch {
+        fail("Failed to send speech audio frame");
+        return;
+      }
+      nextSequence = (nextSequence + 1) >>> 0;
     }
-    nextSequence = (nextSequence + 1) >>> 0;
   }
 
   function waitForSocketOpen(target: SpeechTransportSocket): Promise<void> {

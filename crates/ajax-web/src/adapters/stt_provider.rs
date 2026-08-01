@@ -90,9 +90,14 @@ pub fn encode_sidecar_audio_frame(sequence: u32, pcm: &[u8]) -> Result<Vec<u8>, 
     if pcm.len() > MAX_SIDECAR_AUDIO_PCM_BYTES {
         return Err(ProviderError::AudioBufferOverflow);
     }
-    let mut frame = Vec::with_capacity(1 + 4 + pcm.len());
+    // Length-prefixed like the start frame: without it the sidecar cannot tell
+    // where this frame's PCM ends and the next frame begins.
+    let len = u32::try_from(pcm.len())
+        .map_err(|_| ProviderError::Protocol("audio frame payload too large".to_string()))?;
+    let mut frame = Vec::with_capacity(1 + 4 + 4 + pcm.len());
     frame.push(SIDECAR_FRAME_KIND_AUDIO);
     frame.extend_from_slice(&sequence.to_be_bytes());
+    frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(pcm);
     Ok(frame)
 }
@@ -939,7 +944,29 @@ mod tests {
         let frame = encode_sidecar_audio_frame(42, &[1, 2, 3]).expect("encode frame");
 
         assert_eq!(&frame[..5], &[1, 0, 0, 0, 42]);
-        assert_eq!(&frame[5..], &[1, 2, 3]);
+        // Length prefix keeps consecutive audio frames delimitable on the pipe.
+        assert_eq!(&frame[5..9], &[0, 0, 0, 3]);
+        assert_eq!(&frame[9..], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn consecutive_sidecar_audio_frames_are_delimitable() {
+        let mut stream = encode_sidecar_audio_frame(0, &[7; 4]).expect("first");
+        stream.extend(encode_sidecar_audio_frame(1, &[9; 2]).expect("second"));
+
+        // Walk the stream the way a sidecar must: kind, sequence, length, payload.
+        let mut cursor = 0usize;
+        let mut decoded = Vec::new();
+        while cursor < stream.len() {
+            assert_eq!(stream[cursor], 1);
+            let sequence = u32::from_be_bytes(stream[cursor + 1..cursor + 5].try_into().unwrap());
+            let len =
+                u32::from_be_bytes(stream[cursor + 5..cursor + 9].try_into().unwrap()) as usize;
+            decoded.push((sequence, stream[cursor + 9..cursor + 9 + len].to_vec()));
+            cursor += 9 + len;
+        }
+
+        assert_eq!(decoded, vec![(0, vec![7; 4]), (1, vec![9; 2])]);
     }
 
     #[test]
