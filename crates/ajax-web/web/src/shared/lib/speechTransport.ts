@@ -5,6 +5,10 @@ const STT_PROTOCOL_VERSION = 1;
 const TARGET_SAMPLE_RATE = 16_000;
 // ~2 s of 16 kHz mono PCM16; matches server max_buffered_audio_ms default (2000).
 const MAX_BUFFERED_AUDIO_BYTES = 64_000;
+/** Client-side queue bound: ~2 s of 20 ms frames. */
+const MAX_QUEUED_AUDIO_FRAMES = 100;
+/** Fail after sustained inability to drain for this long. */
+const BACKPRESSURE_FAIL_MS = 1_500;
 /** Server caps one audio frame at 640 PCM bytes; 320 samples of PCM16 = 20 ms. */
 const MAX_AUDIO_FRAME_SAMPLES = 320;
 const FINALIZATION_TIMEOUT_MS = 5_000;
@@ -47,6 +51,8 @@ export interface SpeechTransportCallbacks {
   onSpeechEnded: () => void;
   onError: (message: string) => void;
   onClosed: () => void;
+  /** Optional visible warning before hard failure (sustained backpressure). */
+  onBackpressureWarning?: (message: string) => void;
 }
 
 export interface SpeechTransport {
@@ -252,6 +258,10 @@ export function createSpeechTransport(
   let closeListener: SocketListener | undefined;
   let finalizationComplete = false;
   let sessionFinalizationTimeoutMs = FINALIZATION_TIMEOUT_MS;
+  let pendingAudioFrames: ArrayBuffer[] = [];
+  let backpressureSinceMs: number | undefined;
+  let backpressureWarned = false;
+  let substantialAudioLoss = false;
 
   function clearFinalizationTimer() {
     if (finalizationTimer !== undefined) {
@@ -260,21 +270,49 @@ export function createSpeechTransport(
     }
   }
 
-  function completeFinalization() {
-    if (finalizationComplete) return;
-    finalizationComplete = true;
+  function clearAudioQueue() {
+    pendingAudioFrames = [];
+    backpressureSinceMs = undefined;
+    backpressureWarned = false;
+  }
+
+  /** Shared cleanup for cancel, finalize-complete, provider error, and visibility. */
+  function teardown(options: {
+    closeSocket: boolean;
+    invalidateSession: boolean;
+    notifyClosed: boolean;
+  }) {
     clearFinalizationTimer();
+    clearAudioQueue();
+    releaseCapture();
     detachSocketListeners();
-    if (socket) {
+    if (options.closeSocket && socket) {
       try {
         socket.close();
       } catch {
         // ignore close races
       }
+    }
+    if (options.closeSocket) {
       socket = undefined;
     }
-    activeSessionId = undefined;
-    callbacks.onClosed();
+    startPromise = undefined;
+    if (options.invalidateSession) {
+      activeSessionId = undefined;
+    }
+    if (options.notifyClosed) {
+      callbacks.onClosed();
+    }
+  }
+
+  function completeFinalization() {
+    if (finalizationComplete) return;
+    if (substantialAudioLoss) {
+      fail("Speech audio was delayed under backpressure; transcript may be incomplete");
+      return;
+    }
+    finalizationComplete = true;
+    teardown({ closeSocket: true, invalidateSession: true, notifyClosed: true });
   }
 
   function detachSocketListeners() {
@@ -303,26 +341,21 @@ export function createSpeechTransport(
   function releaseResources(closeSocket: boolean) {
     if (releasing) return;
     releasing = true;
-    clearFinalizationTimer();
-    releaseCapture();
-    detachSocketListeners();
-    if (closeSocket && socket) {
-      try {
-        socket.close();
-      } catch {
-        // ignore close races
-      }
-    }
-    socket = undefined;
-    startPromise = undefined;
+    teardown({
+      closeSocket,
+      invalidateSession: false,
+      notifyClosed: false,
+    });
     releasing = false;
   }
 
   function fail(message: string) {
+    if (finalizationComplete && !activeSessionId) {
+      return;
+    }
     callbacks.onError(message);
-    releaseResources(true);
-    activeSessionId = undefined;
-    callbacks.onClosed();
+    finalizationComplete = true;
+    teardown({ closeSocket: true, invalidateSession: true, notifyClosed: true });
   }
 
   function handleServerMessage(event: Event | MessageEvent) {
@@ -377,7 +410,7 @@ export function createSpeechTransport(
         callbacks.onSpeechEnded();
         break;
       case "stt.error":
-        callbacks.onError(payload.message ?? payload.code ?? "STT provider error");
+        fail(payload.message ?? payload.code ?? "STT provider error");
         break;
       case "stt.closed":
         completeFinalization();
@@ -387,9 +420,81 @@ export function createSpeechTransport(
     }
   }
 
+  function flushPendingAudio() {
+    if (!socket || socket.readyState !== OPEN_READY_STATE) return;
+    while (
+      pendingAudioFrames.length > 0 &&
+      socket.bufferedAmount <= MAX_BUFFERED_AUDIO_BYTES
+    ) {
+      const frame = pendingAudioFrames.shift();
+      if (!frame) break;
+      try {
+        socket.send(frame);
+      } catch {
+        fail("Failed to send speech audio frame");
+        return;
+      }
+    }
+    if (pendingAudioFrames.length === 0) {
+      backpressureSinceMs = undefined;
+      backpressureWarned = false;
+    }
+  }
+
+  function enqueueOrSendFrame(frame: ArrayBuffer) {
+    if (!socket || socket.readyState !== OPEN_READY_STATE) return;
+    flushPendingAudio();
+    if (
+      pendingAudioFrames.length === 0 &&
+      socket.bufferedAmount <= MAX_BUFFERED_AUDIO_BYTES
+    ) {
+      try {
+        socket.send(frame);
+      } catch {
+        fail("Failed to send speech audio frame");
+      }
+      return;
+    }
+
+    pendingAudioFrames.push(frame);
+    const now =
+      typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (backpressureSinceMs === undefined) {
+      backpressureSinceMs = now;
+    }
+    if (
+      !backpressureWarned &&
+      now - backpressureSinceMs >= BACKPRESSURE_FAIL_MS / 2
+    ) {
+      backpressureWarned = true;
+      callbacks.onBackpressureWarning?.(
+        "Speech audio is delayed; speak slower or wait for the network",
+      );
+    }
+    if (pendingAudioFrames.length > MAX_QUEUED_AUDIO_FRAMES) {
+      substantialAudioLoss = true;
+      console.warn(
+        JSON.stringify({
+          type: "stt.audio_backpressure",
+          queuedFrames: pendingAudioFrames.length,
+          dropped: true,
+        }),
+      );
+      fail(
+        "Speech audio backpressure: transcription integrity cannot be guaranteed",
+      );
+      return;
+    }
+    if (now - (backpressureSinceMs ?? now) >= BACKPRESSURE_FAIL_MS) {
+      substantialAudioLoss = true;
+      fail(
+        "Speech audio backpressure: transcription integrity cannot be guaranteed",
+      );
+    }
+  }
+
   function onSamples(samples: Float32Array, inputSampleRate = TARGET_SAMPLE_RATE) {
     if (!socket || socket.readyState !== OPEN_READY_STATE) return;
-    if (socket.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) return;
     const pcm = floatSamplesToPcm16(samples, inputSampleRate);
     if (pcm.length === 0) return;
     // The server rejects any frame carrying more than MAX_AUDIO_FRAME_SAMPLES of
@@ -398,12 +503,8 @@ export function createSpeechTransport(
     for (let offset = 0; offset < pcm.length; offset += MAX_AUDIO_FRAME_SAMPLES) {
       const chunk = pcm.subarray(offset, offset + MAX_AUDIO_FRAME_SAMPLES);
       const frame = encodeSpeechAudioFrame(nextSequence, chunk);
-      try {
-        socket.send(frame);
-      } catch {
-        fail("Failed to send speech audio frame");
-        return;
-      }
+      enqueueOrSendFrame(frame);
+      if (!activeSessionId) return;
       nextSequence = (nextSequence + 1) >>> 0;
     }
   }
@@ -467,6 +568,8 @@ export function createSpeechTransport(
       activeSessionId = injectedSessionId ?? newSessionId();
       nextSequence = 0;
       finalizationComplete = false;
+      substantialAudioLoss = false;
+      clearAudioQueue();
       sessionFinalizationTimeoutMs = FINALIZATION_TIMEOUT_MS;
 
       try {
@@ -533,12 +636,16 @@ export function createSpeechTransport(
   }
 
   function cancel() {
-    clearFinalizationTimer();
-    sendControl("stt.cancel");
     const hadSession = activeSessionId !== undefined || socket !== undefined;
-    releaseResources(true);
-    activeSessionId = undefined;
-    if (hadSession) callbacks.onClosed();
+    if (socket && activeSessionId && socket.readyState === OPEN_READY_STATE) {
+      try {
+        sendControl("stt.cancel");
+      } catch {
+        // ignore
+      }
+    }
+    finalizationComplete = true;
+    teardown({ closeSocket: true, invalidateSession: true, notifyClosed: hadSession });
   }
 
   return {

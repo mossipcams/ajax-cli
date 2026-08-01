@@ -471,9 +471,9 @@ describe("speech transport", () => {
     expect(pcm[1]).toBeLessThan(0);
   });
 
-  it("drops audio frames while the socket send buffer is over budget and resumes when it clears", async () => {
+  it("queues audio under WebSocket backpressure and flushes when the buffer clears", async () => {
     const socket = fakeSocket();
-    const { platform, capture } = platformFor(socket);
+    const { platform, capture, track } = platformFor(socket);
     const events = callbacks();
     const transport = createSpeechTransport("web/fix-login", events, platform);
     const started = transport.start();
@@ -486,15 +486,16 @@ describe("speech transport", () => {
     capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
     expect(audioFrameCount(socket.sent)).toBe(0);
 
-    socket.bufferedAmount = 64_000;
+    socket.bufferedAmount = 0;
     capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
-    expect(audioFrameCount(socket.sent)).toBe(1);
+    // Prior queued frame plus the new frame.
+    expect(audioFrameCount(socket.sent)).toBeGreaterThanOrEqual(2);
     expect(socket.sent.length).toBeGreaterThan(controlCount);
     expect(events.onError).not.toHaveBeenCalled();
-    expect(socket.close).not.toHaveBeenCalled();
+    expect(track.stop).not.toHaveBeenCalled();
   });
 
-  it("does not advance the audio sequence when a frame is dropped for backpressure", async () => {
+  it("advances sequence for queued frames so ordering stays stable after drain", async () => {
     const socket = fakeSocket();
     const { platform, capture } = platformFor(socket);
     const events = callbacks();
@@ -515,9 +516,66 @@ describe("speech transport", () => {
 
     socket.bufferedAmount = 0;
     capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
-    const secondFrame = socket.sent.filter((item) => typeof item !== "string")[1];
-    expect(secondFrame).toBeDefined();
-    expect(readFrameSequence(secondFrame!)).toBe(1);
+    const audioFrames = socket.sent.filter((item) => typeof item !== "string");
+    expect(audioFrames.length).toBeGreaterThanOrEqual(3);
+    expect(readFrameSequence(audioFrames[1]!)).toBe(1);
+    expect(readFrameSequence(audioFrames[2]!)).toBe(2);
     expect(events.onError).not.toHaveBeenCalled();
+  });
+
+  it("releases microphone resources when the provider reports stt.error", async () => {
+    const socket = fakeSocket();
+    const { platform, capture, track } = platformFor(socket);
+    const events = callbacks();
+    const transport = createSpeechTransport("web/fix-login", events, platform, {
+      sessionId: "sess-err",
+    });
+    const started = transport.start();
+    socket.readyState = 1;
+    socket.emit("open");
+    await started;
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          version: 1,
+          type: "stt.error",
+          sessionId: "sess-err",
+          code: "provider_error",
+          message: "stt sidecar exited",
+        }),
+      }),
+    );
+
+    expect(events.onError).toHaveBeenCalledWith("stt sidecar exited");
+    expect(track.stop).toHaveBeenCalled();
+    expect(capture.stop).toHaveBeenCalled();
+    expect(socket.close).toHaveBeenCalled();
+    expect(transport.sessionId()).toBeUndefined();
+  });
+
+  it("fails visibly when the client audio queue exceeds its bound", async () => {
+    const socket = fakeSocket();
+    const { platform, capture, track } = platformFor(socket);
+    const events = callbacks();
+    const transport = createSpeechTransport("web/fix-login", events, platform);
+    const started = transport.start();
+    socket.readyState = 1;
+    socket.emit("open");
+    await started;
+
+    socket.bufferedAmount = 64_001;
+    // Each emit produces one 4-sample frame after resampling at 16 kHz.
+    for (let i = 0; i < 110; i += 1) {
+      capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
+      if ((events.onError as ReturnType<typeof vi.fn>).mock.calls.length > 0) break;
+    }
+
+    expect(events.onError).toHaveBeenCalled();
+    const message = String((events.onError as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] ?? "");
+    expect(message.toLowerCase()).toContain("backpressure");
+    expect(track.stop).toHaveBeenCalled();
+    expect(socket.close).toHaveBeenCalled();
   });
 });

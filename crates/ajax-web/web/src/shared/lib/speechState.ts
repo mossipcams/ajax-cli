@@ -19,12 +19,16 @@ export interface SpeechInputModel {
   state: SpeechInputState;
   sessionId?: string;
   pauseGracePeriodMs: number;
+  /** Contiguous finalized text applied in sequence order (composer destination). */
   finalTranscript: string;
   partialTranscript: string;
   pauseDeadlineMs?: number;
   pauseTimerToken?: number;
   errorMessage?: string;
+  /** All received finals keyed by sequence (may include buffered future seqs). */
   finalSegments: Record<number, string>;
+  /** Next sequence number that may be appended to finalTranscript. */
+  nextExpectedSequence: number;
   nextPauseTimerToken: number;
 }
 
@@ -41,6 +45,7 @@ export type SpeechAction =
     }
   | { type: "speech_started"; sessionId: string }
   | { type: "pause_elapsed"; sessionId: string; timerToken: number }
+  | { type: "request_stop"; sessionId: string }
   | { type: "finalization_complete"; sessionId: string }
   | { type: "cancel"; sessionId: string }
   | { type: "error"; sessionId: string; message: string };
@@ -52,25 +57,51 @@ export function createSpeechInputModel(): SpeechInputModel {
     finalTranscript: "",
     partialTranscript: "",
     finalSegments: {},
+    nextExpectedSequence: 0,
     nextPauseTimerToken: 1,
   };
 }
 
+/** Strip trailing whitespace and terminal punctuation (ASCII + common Unicode). */
+function normalizeStandaloneCommand(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^[\s\u00a0]+|[\s\u00a0]+$/g, "")
+    .replace(/[\s.!,?…。，、；：！？｡､]+$/u, "");
+}
+
 export function isStandalonePause(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/[\s.!?]+$/, "");
-  return normalized === "pause";
+  return normalizeStandaloneCommand(text) === "pause";
 }
 
-export function isStandaloneStartOver(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/[\s.!?]+$/, "");
-  return normalized === "start over";
+function buildFinalTranscript(
+  finalSegments: Record<number, string>,
+  throughExclusive: number,
+): string {
+  const parts: string[] = [];
+  for (let sequence = 0; sequence < throughExclusive; sequence += 1) {
+    const part = finalSegments[sequence];
+    if (part !== undefined && part.length > 0) {
+      parts.push(part);
+    }
+  }
+  return parts.join(" ").trim();
 }
 
-function buildFinalTranscript(finalSegments: Record<number, string>): string {
-  const sequences = Object.keys(finalSegments)
-    .map(Number)
-    .sort((left, right) => left - right);
-  return sequences.map((sequence) => finalSegments[sequence]).join(" ").trim();
+/** Apply newly contiguous segments; returns next expected sequence. */
+export function advanceContiguousFinals(
+  finalSegments: Record<number, string>,
+  nextExpectedSequence: number,
+): { nextExpectedSequence: number; finalTranscript: string } {
+  let next = nextExpectedSequence;
+  while (finalSegments[next] !== undefined) {
+    next += 1;
+  }
+  return {
+    nextExpectedSequence: next,
+    finalTranscript: buildFinalTranscript(finalSegments, next),
+  };
 }
 
 function allowsNewStart(model: SpeechInputModel): boolean {
@@ -97,6 +128,7 @@ export function speechReducer(
         finalTranscript: "",
         partialTranscript: "",
         finalSegments: {},
+        nextExpectedSequence: 0,
         pauseDeadlineMs: undefined,
         pauseTimerToken: undefined,
         errorMessage: undefined,
@@ -141,17 +173,7 @@ export function speechReducer(
           nextPauseTimerToken: timerToken + 1,
         };
       }
-      if (isStandaloneStartOver(action.text)) {
-        if (!canAcceptControl) {
-          return model;
-        }
-        return {
-          ...model,
-          finalSegments: {},
-          finalTranscript: "",
-          partialTranscript: "",
-        };
-      }
+      // Ordinary dictation — including the words "start over" — is never a control.
       if (!canAcceptOrdinary) {
         return model;
       }
@@ -162,10 +184,12 @@ export function speechReducer(
         ...model.finalSegments,
         [action.sequence]: action.text,
       };
+      const advanced = advanceContiguousFinals(finalSegments, model.nextExpectedSequence);
       return {
         ...model,
         finalSegments,
-        finalTranscript: buildFinalTranscript(finalSegments),
+        nextExpectedSequence: advanced.nextExpectedSequence,
+        finalTranscript: advanced.finalTranscript,
         partialTranscript: "",
       };
     }
@@ -192,6 +216,20 @@ export function speechReducer(
         ...model,
         state: "finalizing",
         pauseDeadlineMs: undefined,
+      };
+
+    case "request_stop":
+      if (
+        !isActiveSession(model, action.sessionId) ||
+        (model.state !== "listening" && model.state !== "pause_pending")
+      ) {
+        return model;
+      }
+      return {
+        ...model,
+        state: "finalizing",
+        pauseDeadlineMs: undefined,
+        pauseTimerToken: undefined,
       };
 
     case "finalization_complete":

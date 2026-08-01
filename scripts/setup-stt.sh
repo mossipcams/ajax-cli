@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Install Moonshine STT host dependencies and ensure [stt] is configured for both
-# Ajax profiles on this machine:
+# Install Moonshine v2 (moonshine-voice) host dependencies and ensure [stt] is
+# configured for both Ajax profiles on this machine:
 #   stable -> ~/.config/ajax/config.toml
 #   dev    -> ~/.ajax-dev/config.toml
 #
-# Shared provider paths live under ~/.ajax-dev so one venv/sidecar serves both.
+# Shared provider paths live under ~/.ajax-dev so one venv/worker serves both.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STT_HOME="${AJAX_STT_HOME:-$HOME/.ajax-dev}"
 VENV="$STT_HOME/stt-venv"
 PYTHON="$VENV/bin/python"
-SIDECAR_SRC="$REPO_ROOT/scripts/ajax-moonshine-sidecar"
-SIDECAR_BIN="$STT_HOME/bin/ajax-moonshine-sidecar"
+WORKER_SRC="$REPO_ROOT/scripts/ajax-moonshine-sidecar"
+WORKER_BIN="$STT_HOME/bin/ajax-moonshine-sidecar"
 
 STABLE_CONFIG="${AJAX_STT_STABLE_CONFIG:-$HOME/.config/ajax/config.toml}"
 DEV_CONFIG="${AJAX_STT_DEV_CONFIG:-$STT_HOME/config.toml}"
@@ -21,9 +21,12 @@ usage() {
   cat <<'EOF'
 Usage: scripts/setup-stt.sh
 
-Installs useful-moonshine-onnx into ~/.ajax-dev/stt-venv, copies the reference
-sidecar to ~/.ajax-dev/bin/ajax-moonshine-sidecar, and ensures an [stt] block
-exists in both stable and dev Ajax config files.
+Installs Moonshine v2 (moonshine-voice) into ~/.ajax-dev/stt-venv, copies the
+reference worker to ~/.ajax-dev/bin/ajax-moonshine-sidecar, downloads the
+English Small Streaming model, and ensures an [stt] block exists in both stable
+and dev Ajax config files.
+
+Legacy useful-moonshine-onnx / moonshine/tiny is not used.
 
 Environment overrides:
   AJAX_STT_HOME          Shared STT install root (default: ~/.ajax-dev)
@@ -37,8 +40,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ ! -f "$SIDECAR_SRC" ]]; then
-  echo "setup-stt: missing sidecar at $SIDECAR_SRC" >&2
+if [[ ! -f "$WORKER_SRC" ]]; then
+  echo "setup-stt: missing worker at $WORKER_SRC" >&2
   exit 1
 fi
 
@@ -49,20 +52,21 @@ if [[ ! -x "$PYTHON" ]]; then
   python3 -m venv "$VENV"
 fi
 
-echo "Installing useful-moonshine-onnx into $VENV ..."
+echo "Installing moonshine-voice (Moonshine v2) into $VENV ..."
 "$PYTHON" -m pip install -q -U pip
-"$PYTHON" -m pip install -q useful-moonshine-onnx numpy
+# Remove legacy v1 ONNX package if present from older Ajax STT setups.
+"$PYTHON" -m pip uninstall -q -y useful-moonshine-onnx 2>/dev/null || true
+"$PYTHON" -m pip install -q 'moonshine-voice>=0.1.0' numpy
 
-install -m 755 "$SIDECAR_SRC" "$SIDECAR_BIN"
+install -m 755 "$WORKER_SRC" "$WORKER_BIN"
 
-PROVIDER_COMMAND="$PYTHON $SIDECAR_BIN"
+PROVIDER_COMMAND="$PYTHON $WORKER_BIN"
 export PROVIDER_COMMAND STABLE_CONFIG DEV_CONFIG
 
 python3 <<'PY'
 import os
 import pathlib
 import re
-import sys
 
 provider_command = os.environ["PROVIDER_COMMAND"]
 stable_config = pathlib.Path(os.environ["STABLE_CONFIG"])
@@ -70,6 +74,7 @@ dev_config = pathlib.Path(os.environ["DEV_CONFIG"])
 
 stt_block = f"""[stt]
 # Two whitespace-separated tokens: provider_command is split, not shell-parsed.
+# Persistent Moonshine v2 worker — model loads once, sessions reuse it.
 provider_command = "{provider_command}"
 language = "en-US"
 phrase_end_silence_ms = 700
@@ -79,7 +84,6 @@ finalization_timeout_ms = 5000
 """
 
 section_pattern = re.compile(r"(?:^|\n)\[stt\][\s\S]*?(?=\n\[|\Z)")
-assert section_pattern.search("[stt]\nx=1\n") is not None
 
 
 def ensure_config(path: pathlib.Path) -> None:
@@ -103,8 +107,16 @@ for config_path in (stable_config, dev_config):
     ensure_config(config_path)
 PY
 
-echo "Verifying Moonshine import ..."
-"$PYTHON" -c "from moonshine_onnx import MoonshineOnnxModel, load_tokenizer"
+echo "Verifying Moonshine v2 import and Small Streaming model ..."
+"$PYTHON" - <<'PY'
+from moonshine_voice import ModelArch, Transcriber, get_model_for_language
+
+model_path, model_arch = get_model_for_language("en", ModelArch.SMALL_STREAMING)
+assert model_arch == ModelArch.SMALL_STREAMING, model_arch
+# Constructing Transcriber confirms the ONNX assets load.
+Transcriber(model_path=model_path, model_arch=model_arch)
+print(f"setup-stt: Moonshine v2 ready ({model_arch}) at {model_path}")
+PY
 
 echo "setup-stt: ready"
 echo "  provider: $PROVIDER_COMMAND"
