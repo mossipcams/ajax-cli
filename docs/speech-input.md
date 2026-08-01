@@ -1,12 +1,12 @@
 # Speech input (Web Cockpit)
 
-Continuous speech-to-text lets an operator dictate into an editable terminal
-composer from iPhone Safari while recognition runs on the Mac that hosts Ajax.
-The phone supplies microphone audio; Ajax owns the authenticated transport,
-session supervision, and a replaceable local **persistent** provider worker.
-Finalized recognition accumulates in the composer; the operator explicitly
-Inserts into the PTY. Ajax does not auto-press Enter or execute commands.
-Partial recognition is preview-only and never written to the PTY.
+Continuous speech-to-text lets an operator dictate into the task terminal from
+iPhone Safari while recognition runs on the Mac that hosts Ajax. The phone
+supplies microphone audio; Ajax owns the authenticated transport, session
+supervision, and a replaceable local **persistent** provider worker. Finalized
+recognition auto-inserts into the active shell line through the same paste/PTY
+path as manual paste. Ajax does not auto-press Enter or execute commands.
+Partial recognition is session metadata only and is never written to the PTY.
 
 Design boundaries and ownership live in [`architecture.md`](../architecture.md)
 under **Speech Input Architecture**. This page is the operator setup and daily-use
@@ -116,7 +116,7 @@ When the local provider cannot start, crashes, or reports unavailable:
 
 - Speech enters an explicit **recoverable error** with a useful message in the
   Mic status region.
-- Finalized composer text is preserved; unstable partial text is cleared.
+- Already-inserted terminal text is preserved; unstable partial metadata is cleared.
 - Microphone tracks, audio context, processing, timers, and the STT socket are
   released through the shared teardown path.
 - The raw terminal, tmux attach, and Cockpit operations keep working. Provider
@@ -209,17 +209,17 @@ Practical behavior on Safari and on an optional Home Screen installed shell:
 
 1. Tap **Mic** once to start (one active session at a time). Status shows
    Connecting until the host is ready, then Listening.
-2. Dictate; partial text appears as a distinct preview in the composer. Each
-   finalized segment appends into the editable composer in sequence order.
+2. Dictate; each finalized segment is auto-inserted into the active shell line
+   in contiguous sequence order.
 3. Tap **Mic** again while listening or during the spoken **pause** grace
-   period to finalize the session and release the microphone, keeping composer
-   text. **Cancel voice** still abandons the session.
+   period to finalize the session and release the microphone, keeping
+   already-inserted terminal text. **Cancel voice** still abandons the session.
 4. Say standalone **`pause`** (normalized exact `pause`, including `Pause.`,
    `Pause,`, `Pause!`, `Pause?`) to enter a nine-second grace period. **Speak
    to continue** cancels the timer; if it expires, the session finalizes
    successfully (no error) and releases the mic.
-5. Review or edit the composer, then use **Insert** to paste into the terminal.
-   Press Enter from the terminal yourself when you want to submit.
+5. Edit the shell line if needed, then press Enter from the terminal yourself
+   when you want to submit.
 
 Ajax does **not** auto-press Enter or execute commands on your behalf. There is
 no spoken **start over** command — that phrase is ordinary dictated text.

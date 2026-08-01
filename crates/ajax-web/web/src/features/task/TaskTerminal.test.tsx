@@ -497,23 +497,19 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 });
 
 describe("TaskTerminal speech input", () => {
-  it("stages transcripts in TerminalComposer with Insert, and one Mic shortcut after Paste", () => {
-    expect(taskTerminalSource).toMatch(/TerminalComposer/);
+  it("auto-inserts ordered finals with no staging composer, and one Mic shortcut after Paste", () => {
+    expect(taskTerminalSource).not.toMatch(/TerminalComposer/);
+    expect(taskTerminalSource).not.toMatch(/terminal-composer/);
+    expect(taskTerminalSource).not.toMatch(/insertComposerTranscript/);
+    expect(taskTerminalSource).not.toMatch(/composerText/);
     expect(taskTerminalSource).toMatch(/createSpeechTransport/);
-    expect(taskTerminalSource).toMatch(/insertComposerTranscript/);
-    expect(taskTerminalSource).toMatch(/composerText/);
-    expect(taskTerminalSource).toMatch(/partialTranscript/);
-    expect(taskTerminalSource).toMatch(/onInsert=\{insertComposerTranscript\}/);
 
-    // Finals update composer state only — never auto-paste into the PTY from onFinal.
+    // Contiguous finalTranscript deltas paste in onFinal (outside setState).
     const onFinal = taskTerminalSource.match(/onFinal:[\s\S]*?\n {8}\},/)?.[0] ?? "";
-    expect(onFinal).toMatch(/dispatchSpeech\(\{/);
-    expect(onFinal).toMatch(/type:\s*"final"/);
-    expect(onFinal).not.toMatch(/pasteThroughTerm/);
+    expect(onFinal).toMatch(/pasteThroughTerm\(/);
+    expect(onFinal).toMatch(/finalTranscript/);
     expect(onFinal).not.toMatch(/isStandaloneStartOver/);
     expect(onFinal).not.toMatch(/undoInsertedSpeech/);
-    expect(onFinal).not.toMatch(/prepareSpeechInsert/);
-    expect(taskTerminalSource).not.toMatch(/insertedSpeechRef/);
     expect(taskTerminalSource).not.toMatch(/speechInsertLedger/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
@@ -559,13 +555,10 @@ describe("TaskTerminal speech input", () => {
   });
 
   it("never pastes partial speech into the PTY and never auto-sends Enter", () => {
-    expect(taskTerminalSource).toMatch(/partialText=\{speechModel\.partialTranscript\}/);
+    expect(taskTerminalSource).toMatch(/terminal-speech-status/);
     expect(taskTerminalSource).not.toMatch(/pasteThroughTerm\(speechModel\.partialTranscript/);
     expect(taskTerminalSource).not.toMatch(/sendInput\(["']\\r["']\)/);
     expect(taskTerminalSource).not.toMatch(/sendInput\(["']\\n["']\)/);
-    // Insert is the only speech→PTY bridge.
-    expect(taskTerminalSource).toMatch(/pasteThroughTerm\(text, false\)/);
-    expect(taskTerminalSource).toMatch(/onInsert=\{insertComposerTranscript\}/);
   });
 });
 

@@ -19,7 +19,7 @@ export interface SpeechInputModel {
   state: SpeechInputState;
   sessionId?: string;
   pauseGracePeriodMs: number;
-  /** Contiguous finalized text applied in sequence order (composer destination). */
+  /** Contiguous finalized text applied in sequence order (auto-insert destination). */
   finalTranscript: string;
   partialTranscript: string;
   pauseDeadlineMs?: number;

@@ -35,7 +35,6 @@ import {
   newSessionId,
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
-import TerminalComposer from "@/features/task/TerminalComposer";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 
 /**
@@ -119,11 +118,9 @@ export default function TaskTerminal({ handle }: Props) {
     createSpeechInputModel(),
   );
   const [pauseCountdownSeconds, setPauseCountdownSeconds] = useState<number | undefined>();
-  const [composerText, setComposerText] = useState("");
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
-  const appliedFinalTranscriptRef = useRef("");
 
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
@@ -709,7 +706,6 @@ export default function TaskTerminal({ handle }: Props) {
     }
 
     const sessionId = newSessionId();
-    appliedFinalTranscriptRef.current = "";
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -720,13 +716,29 @@ export default function TaskTerminal({ handle }: Props) {
         onPartial: (sequence, text) =>
           dispatchSpeech({ type: "partial", sessionId, sequence, text }),
         onFinal: (sequence, text) => {
-          dispatchSpeech({
-            type: "final",
+          // Paste contiguous transcript deltas here, never inside a setState updater:
+          // StrictMode may invoke an updater twice and would double-write the PTY.
+          const previous = speechModelRef.current;
+          const action = {
+            type: "final" as const,
             sessionId,
             sequence,
             text,
             nowMs: performance.now(),
-          });
+          };
+          const next = speechReducer(previous, action);
+          if (next === previous) return;
+          speechModelRef.current = next;
+          setSpeechModel(next);
+          if (
+            next.finalTranscript !== previous.finalTranscript &&
+            next.finalTranscript.startsWith(previous.finalTranscript)
+          ) {
+            const delta = next.finalTranscript.slice(previous.finalTranscript.length);
+            if (delta) {
+              pasteThroughTerm(delta, false);
+            }
+          }
         },
         onSpeechStarted: () => dispatchSpeech({ type: "speech_started", sessionId }),
         onSpeechEnded: () => {},
@@ -817,27 +829,6 @@ export default function TaskTerminal({ handle }: Props) {
     speechModel.pauseTimerToken,
     speechModel.sessionId,
   ]);
-
-  useEffect(() => {
-    const curr = speechModel.finalTranscript;
-    const prev = appliedFinalTranscriptRef.current;
-    if (curr === prev) return;
-    if (curr.startsWith(prev)) {
-      const added = curr.slice(prev.length).trim();
-      if (added) {
-        setComposerText((existing) => {
-          if (!existing) return added;
-          return /\s$/.test(existing) ? `${existing}${added}` : `${existing} ${added}`;
-        });
-      }
-    }
-    appliedFinalTranscriptRef.current = curr;
-  }, [speechModel.finalTranscript]);
-
-  const insertComposerTranscript = (text: string) => {
-    if (!text) return;
-    pasteThroughTerm(text, false);
-  };
 
   const micAriaLabel = (() => {
     switch (speechModel.state) {
@@ -1837,15 +1828,23 @@ export default function TaskTerminal({ handle }: Props) {
           </div>
         </div>
       ) : null}
-      <TerminalComposer
-        value={composerText}
-        partialText={speechModel.partialTranscript}
-        state={speechModel.state}
-        onChange={setComposerText}
-        onInsert={insertComposerTranscript}
-        pauseCountdownSeconds={pauseCountdownSeconds}
-        errorMessage={speechModel.errorMessage}
-      />
+      <div role="status" className="terminal-speech-status">
+        {speechModel.state === "connecting" ? <span>Connecting…</span> : null}
+        {speechModel.state === "listening" ? <span>Listening</span> : null}
+        {speechModel.state === "finalizing" ? <span>Finalizing…</span> : null}
+        {speechModel.state === "pause_pending" && pauseCountdownSeconds !== undefined ? (
+          <>
+            <span>Pausing in {pauseCountdownSeconds}…</span>
+            <span>Speak to continue</span>
+          </>
+        ) : null}
+        {speechModel.state === "error" && speechModel.errorMessage ? (
+          <span>{speechModel.errorMessage}</span>
+        ) : null}
+        {speechModel.state !== "error" && speechModel.errorMessage ? (
+          <span>{speechModel.errorMessage}</span>
+        ) : null}
+      </div>
       {speechModel.state !== "idle" ? (
         <div className="terminal-speech-actions">
           <button
