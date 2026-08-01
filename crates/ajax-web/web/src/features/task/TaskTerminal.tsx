@@ -32,6 +32,7 @@ import {
 import {
   createBrowserSpeechPlatform,
   createSpeechTransport,
+  newSessionId,
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
@@ -627,10 +628,7 @@ export default function TaskTerminal({ handle }: Props) {
       speechTransportRef.current = undefined;
     }
 
-    const sessionId =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `session-${Date.now().toString(36)}`;
+    const sessionId = newSessionId();
     speechPrefixRef.current = composerValue;
     dispatchSpeech({ type: "start", sessionId });
 

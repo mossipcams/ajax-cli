@@ -63,11 +63,20 @@ export function encodeSpeechAudioFrame(
   return buffer;
 }
 
-function newSessionId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+export function newSessionId(): string {
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    // randomUUID requires a secure context, and the cockpit is reachable over
+    // plain http on a LAN. getRandomValues has no such requirement.
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      return `session-${hex}`;
+    }
   }
-  return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `session-${Date.now().toString(36)}`;
 }
 
 function sttSocketUrl(handle: string): string {
