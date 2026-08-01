@@ -89,3 +89,41 @@ screenful. Authorized implement of attached plan.
 - Review gate: **ACCEPT** (scoped delta matches packet)
 - Husky pre-commit (`npm run web:build` + `npm run verify` + release build/install) — EXIT 0
 - PR: https://github.com/mossipcams/ajax-cli/pull/732
+
+## CI follow-up (e2e settle)
+
+`Delegation decision: delegated via model-router`
+
+```yaml
+ROUTING_DECISION:
+  ACTION: DELEGATE
+  LANE: pi-delegate
+  MODE: test-only
+  MODEL: opencode-go/minimax-m3
+  PACKET_STATUS: READY
+  PACKET_REBUILD_COUNT: 0
+  PACKET_CRITIQUE_COUNT: NONE
+  ALLOWED_SCOPE:
+    - crates/ajax-web/web/e2e/terminal-behavior.test.ts
+    - .planning/agent-plans/fix-seed-reveal-load-scroll.md
+  REASON: Tests-only e2e timing; 1 file exact anchors under MiniMax bound.
+  ESCALATE_IF: [needs production TaskTerminal change, empty diff]
+```
+
+Packet: `.planning/packets/fix-seed-reveal-e2e-settle.md`
+
+Escalation: MiniMax `GoUsageLimitError` → cursor-delegate / composer-2.5 (r2).
+
+### Task 5: E2E settle wait (tests-only)
+
+- [x] Add `waitForSeedRevealSettled` after `scrollInteractionSurfaceAway`
+- [x] Call after first scrollback emit in four flaky smoke tests
+- [x] Viewport scroll test: poll `viewportY() > 0` before scroll-away
+- [x] No production / seeded-open quiet e2e changes
+
+## Review gate (e2e settle)
+
+- VERDICT: ACCEPT
+- Cursor r2 delta matches packet (helper + 4 call sites + viewport poll)
+- MiniMax r1: DISCARD (GoUsageLimitError / empty diff)
+

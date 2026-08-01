@@ -136,6 +136,12 @@ async function scrollInteractionSurfaceAway(page: import("@playwright/test").Pag
   });
 }
 
+async function waitForSeedRevealSettled(page: import("@playwright/test").Page) {
+  await expect(terminalInteractionSurface(page)).not.toHaveClass(/is-seed-pending/, {
+    timeout: 5_000,
+  });
+}
+
 async function clickInteractionSurfaceCenter(page: import("@playwright/test").Page) {
   const surface = terminalInteractionSurface(page);
   const box = await surface.boundingBox();
@@ -1636,6 +1642,7 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
   expectPrimaryTouchTargets(sizes, [".terminal-expand-corner", ".terminal-keys .terminal-key"]);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
   await emitLatestTerminalOutput(page, ["more output\r\n"]);
   const newOutput = newOutputButton(page);
@@ -2383,8 +2390,10 @@ test("scrolling the interaction wrapper moves the terminal viewport", async ({ p
       return host?.__xterm?.buffer.active.viewportY ?? -1;
     });
 
+  await waitForSeedRevealSettled(page);
+
+  await expect.poll(async () => viewportY()).toBeGreaterThan(0);
   const atBottom = await viewportY();
-  expect(atBottom).toBeGreaterThan(0);
 
   await scrollInteractionSurfaceAway(page);
 
@@ -2402,6 +2411,7 @@ test("reading scrollback shows New output and restoring live output sends no PTY
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
   await expect(newOutputButton(page)).not.toBeVisible();
 
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
 
   const baseline = await inputFrameCount(page);
@@ -2430,6 +2440,7 @@ test("New output click does not refocus xterm or reopen keyboard, and direct sur
     page.evaluate(() => document.documentElement.classList.contains("keyboard-open"));
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
   await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
 
