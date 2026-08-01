@@ -210,6 +210,8 @@ pub struct Config {
     pub test_commands: Vec<TestCommand>,
     #[serde(default)]
     pub notify: Option<NotifyConfig>,
+    #[serde(default)]
+    pub stt: SttConfig,
 }
 
 impl Config {
@@ -262,6 +264,56 @@ impl ManagedRepo {
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct SttConfig {
+    #[serde(default)]
+    pub provider_command: Option<String>,
+    #[serde(default = "default_phrase_end_silence_ms")]
+    pub phrase_end_silence_ms: u64,
+    #[serde(default = "default_pause_grace_period_ms")]
+    pub pause_grace_period_ms: u64,
+    #[serde(default = "default_stt_language")]
+    pub language: String,
+    #[serde(default = "default_max_buffered_audio_ms")]
+    pub max_buffered_audio_ms: u64,
+    #[serde(default = "default_finalization_timeout_ms")]
+    pub finalization_timeout_ms: u64,
+}
+
+fn default_phrase_end_silence_ms() -> u64 {
+    700
+}
+
+fn default_pause_grace_period_ms() -> u64 {
+    9_000
+}
+
+fn default_stt_language() -> String {
+    "en-US".to_string()
+}
+
+fn default_max_buffered_audio_ms() -> u64 {
+    2_000
+}
+
+fn default_finalization_timeout_ms() -> u64 {
+    5_000
+}
+
+impl Default for SttConfig {
+    fn default() -> Self {
+        Self {
+            provider_command: None,
+            phrase_end_silence_ms: default_phrase_end_silence_ms(),
+            pause_grace_period_ms: default_pause_grace_period_ms(),
+            language: default_stt_language(),
+            max_buffered_audio_ms: default_max_buffered_audio_ms(),
+            finalization_timeout_ms: default_finalization_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NotifyConfig {
     pub webhook_url: String,
     /// Web-server notification poll interval in seconds. Absent = default,
@@ -289,7 +341,7 @@ impl TestCommand {
 mod tests {
     use super::{
         Config, ConfigParseError, ConfigPaths, ManagedRepo, NotifyConfig, RuntimePathField,
-        RuntimePathRequest, RuntimePathSource, TestCommand, WorktreePlacement,
+        RuntimePathRequest, RuntimePathSource, SttConfig, TestCommand, WorktreePlacement,
     };
     use proptest::prelude::*;
     use std::path::Path;
@@ -459,10 +511,64 @@ mod tests {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
             test_commands: vec![TestCommand::new("web", "cargo test")],
             notify: None,
+            stt: SttConfig::default(),
         };
 
         assert_eq!(config.repos[0].name, "web");
         assert_eq!(config.test_commands[0].command, "cargo test");
+    }
+
+    #[test]
+    fn stt_defaults_are_centralized_for_continuous_input() {
+        let config = Config::default();
+
+        assert_eq!(config.stt.provider_command, None);
+        assert_eq!(config.stt.phrase_end_silence_ms, 700);
+        assert_eq!(config.stt.pause_grace_period_ms, 9_000);
+        assert_eq!(config.stt.language, "en-US");
+        assert_eq!(config.stt.max_buffered_audio_ms, 2_000);
+        assert_eq!(config.stt.finalization_timeout_ms, 5_000);
+    }
+
+    #[test]
+    fn stt_configuration_loads_from_documented_toml_shape() {
+        let config = Config::from_toml_str(
+            r#"
+            [stt]
+            provider_command = "python3 -m ajax_stt"
+            phrase_end_silence_ms = 900
+            pause_grace_period_ms = 10000
+            language = "en-GB"
+            max_buffered_audio_ms = 3000
+            finalization_timeout_ms = 7000
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.stt,
+            SttConfig {
+                provider_command: Some("python3 -m ajax_stt".to_string()),
+                phrase_end_silence_ms: 900,
+                pause_grace_period_ms: 10_000,
+                language: "en-GB".to_string(),
+                max_buffered_audio_ms: 3_000,
+                finalization_timeout_ms: 7_000,
+            }
+        );
+    }
+
+    #[test]
+    fn stt_language_from_config_reaches_provider_session_shape() {
+        let config = Config::from_toml_str(
+            r#"
+            [stt]
+            language = "en-GB"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.stt.language, "en-GB");
     }
 
     proptest! {

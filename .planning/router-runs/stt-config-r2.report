@@ -1,0 +1,8 @@
+DELEGATE_REPORT:
+  STATUS: FAILED
+  CHANGED_FILES: []
+  VERIFICATION: []
+  CONCERNS:
+    - TYPE: MISSING_STRUCTURED_REPORT
+      DETAIL: delegate produced no structured report text
+      RECOMMENDED_ACTION: Inspect the preserved raw log

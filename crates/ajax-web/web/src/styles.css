@@ -1660,6 +1660,24 @@ header .bar h1 {
   vertical-align: middle;
 }
 
+.terminal-speech-status {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px 0;
+  color: var(--ink);
+  font-size: var(--text-label);
+}
+
+.terminal-speech-status:empty {
+  display: none;
+}
+
+.terminal-speech-actions {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+
 @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
   .terminal-panel .terminal-interaction-wrap {
     height: min(58vh, 560px);

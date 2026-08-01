@@ -2908,9 +2908,8 @@ test("supported Ctrl toolbar combinations send exact control codes and disarm st
   const toolbar = terminalToolbar(page);
   const ctrl = toolbar.getByRole("button", { name: "Control modifier" });
 
-  await toolbar.getByRole("button", { name: "Control C" }).click();
-  await expect(ctrl).toHaveAttribute("aria-pressed", "false");
-
+  // The dedicated ⌃C toolbar key was removed; Ctrl+C now goes through the Ctrl
+  // modifier plus a typed "c", which the last leg of this test covers.
   await ctrl.click();
   await expect(ctrl).toHaveAttribute("aria-pressed", "true");
   await toolbar.getByRole("button", { name: "Left arrow" }).click();
@@ -2927,7 +2926,7 @@ test("supported Ctrl toolbar combinations send exact control codes and disarm st
       const frames = await terminalInputFrames(page);
       return frames.slice(baseline).map((frame) => frame.data);
     })
-    .toEqual(["\x03", "\x1b[1;5D", "\x03"]);
+    .toEqual(["\x1b[1;5D", "\x03"]);
 });
 
 test("pty output corpus during delayed socket open keeps surface stable without application errors", async ({

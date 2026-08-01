@@ -91,6 +91,12 @@ pane and rejects the answer if the agent has moved on. Free-form input and other
 terminal-only interactions use the raw task terminal bridge instead of a browser
 composer or read-only snapshot viewer.
 
+In the task terminal, an editable **Terminal composer** sits beside the raw
+xterm view. **Mic** (after **Paste** in the shortcut bar) starts host-side
+continuous speech-to-text: iPhone capture, Mac recognition, explicit Insert into
+the PTY. See [`docs/speech-input.md`](docs/speech-input.md) for Moonshine host
+setup, `[stt]` configuration, iOS behavior, and recovery.
+
 Notifications are out of scope. Ajax Web Cockpit does not support Web Push,
 PushManager flows, Notification API prompts, VAPID keys, push subscriptions,
 service-worker push handlers, notification click handlers, or native/external
@@ -227,6 +233,12 @@ Notifications fire from CLI/cockpit refreshes and from a background poll inside
 open. Hooks only write status event files — they never call the webhook.
 Webhooks stay quiet while a browser is actively polling Web Cockpit.
 `poll_seconds` defaults to 30 when `[notify]` is present.
+
+Optional continuous speech-to-text for Web Cockpit uses a `[stt]` block on the
+same config file. Defaults apply when the block is omitted; speech stays
+unavailable until `provider_command` points at a local sidecar on the Ajax host.
+Operator setup, iOS behavior, and recovery are documented in
+[`docs/speech-input.md`](docs/speech-input.md).
 
 GitHub CI failure surfacing requires the `gh` CLI installed and authenticated
 (`gh auth login`) in the task worktree's repo. When `gh` is missing,
