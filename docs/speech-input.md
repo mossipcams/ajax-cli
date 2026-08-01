@@ -31,8 +31,21 @@ Configure the shell command Ajax should launch:
 ### The bundled sidecar
 
 Ajax ships a reference implementation at `scripts/ajax-moonshine-sidecar`. It
-speaks the framed protocol below and runs Moonshine ONNX locally. Set it up in
-its own virtualenv so it never touches your system Python:
+speaks the framed protocol below and runs Moonshine ONNX locally. On the Mac
+that hosts `ajax-cli web`, run the one-shot installer:
+
+```sh
+./scripts/setup-stt.sh
+```
+
+That creates `~/.ajax-dev/stt-venv`, installs `useful-moonshine-onnx`, copies
+the sidecar to `~/.ajax-dev/bin/ajax-moonshine-sidecar`, and writes a matching
+`[stt]` block into **both** stable (`~/.config/ajax/config.toml`) and dev
+(`~/.ajax-dev/config.toml`) config files. One venv and sidecar serve both
+profiles.
+
+Manual setup (if you prefer not to run the script) uses its own virtualenv so it
+never touches your system Python:
 
 ```sh
 python3 -m venv ~/.ajax-stt-venv
