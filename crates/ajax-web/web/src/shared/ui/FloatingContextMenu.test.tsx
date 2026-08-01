@@ -14,7 +14,16 @@ const stylesSource = readFileSync(
   "utf8",
 );
 
+const menuSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "FloatingContextMenu.tsx"),
+  "utf8",
+);
+
 describe("FloatingContextMenu", () => {
+  it("uses fixed positioning so clientX/Y anchors track the visual viewport", () => {
+    expect(menuSource).toMatch(/strategy:\s*["']fixed["']/);
+  });
+
   it("stacks above the expanded terminal panel", () => {
     // Expanded terminal uses z-index 45; without this the portaled Open/Copy
     // menu paints under the terminal and taps never reach the buttons (#708
@@ -93,7 +102,7 @@ describe("FloatingContextMenu", () => {
       vi.useRealTimers();
     });
 
-    it("does not call onClose on scroll during the first ~400ms after open", () => {
+    it("does not call onClose on scroll during the first ~800ms after open", () => {
       const onClose = vi.fn();
       const scroller = document.createElement("div");
       document.body.appendChild(scroller);
@@ -108,7 +117,7 @@ describe("FloatingContextMenu", () => {
       );
 
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
-      vi.advanceTimersByTime(300);
+      vi.advanceTimersByTime(700);
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
 
       expect(onClose).not.toHaveBeenCalled();
@@ -129,7 +138,7 @@ describe("FloatingContextMenu", () => {
         />,
       );
 
-      vi.advanceTimersByTime(450);
+      vi.advanceTimersByTime(850);
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
 
       expect(onClose).toHaveBeenCalled();

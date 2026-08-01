@@ -32,6 +32,27 @@ function taskTerminalStylesSection(): string {
   return stylesSource.slice(start, end);
 }
 
+describe("TaskTerminal link menu", () => {
+  it("blurs the xterm textarea when opening the link menu while the keyboard is closed", () => {
+    const onInteractionClick =
+      taskTerminalSource.match(
+        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
+      )?.[1] ?? "";
+    const onLinkActivate =
+      taskTerminalSource.match(
+        /onLinkActivate:\s*\(\{[^}]*\}\)\s*=>\s*\{([\s\S]*?)\n {6}\},/,
+      )?.[1] ?? "";
+
+    const blurWhenKeyboardClosed =
+      /if\s*\(\s*!isKeyboardOpen\(\)\s*\)\s*termTextarea\(\)\?\.blur\(\)/;
+
+    expect(onInteractionClick).toMatch(/setLinkMenu/);
+    expect(onInteractionClick).toMatch(blurWhenKeyboardClosed);
+    expect(onLinkActivate).toMatch(/setLinkMenu/);
+    expect(onLinkActivate).toMatch(blurWhenKeyboardClosed);
+  });
+});
+
 describe("TaskTerminal iOS keyboard geometry", () => {
   it("anchors the xterm helper textarea to the host bottom for iOS keyboard placement", () => {
     const textareaCss =
