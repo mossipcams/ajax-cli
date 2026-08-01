@@ -204,7 +204,7 @@ export default function DiffReview({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
-  const { swiping, style } = useSwipePageTransition(rootRef, {
+  const { swiping, style, commit } = useSwipePageTransition(rootRef, {
     onRight: () => onBackRef.current?.(),
     shouldIgnoreTarget: isDiffPanGestureTarget,
     capture: false,
@@ -293,7 +293,7 @@ export default function DiffReview({
       style={style}
     >
       <div className="detail-header" data-testid="diff-review-header">
-        <button type="button" className="back" onClick={() => onBack?.()}>
+        <button type="button" className="back" onClick={() => commit("right")}>
           ← Back
         </button>
         <h1 className="detail-title">{heading}</h1>

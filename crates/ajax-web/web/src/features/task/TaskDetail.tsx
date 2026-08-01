@@ -34,7 +34,7 @@ export default function TaskDetail({
   onOpenDiffRef.current = onOpenDiff;
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
-  const { swiping, style } = useSwipePageTransition(rootRef, {
+  const { swiping, style, commit } = useSwipePageTransition(rootRef, {
     onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
   });
@@ -56,7 +56,7 @@ export default function TaskDetail({
         data-mobile-chrome="header"
         data-testid="mobile-chrome-header"
       >
-        <button type="button" className="back" onClick={() => onBack?.()}>
+        <button type="button" className="back" onClick={() => commit("right")}>
           ← Back
         </button>
         <h1 className="detail-title">{detail.title || detail.qualified_handle}</h1>

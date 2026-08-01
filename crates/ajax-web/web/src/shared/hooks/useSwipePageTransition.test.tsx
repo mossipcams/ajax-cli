@@ -30,12 +30,15 @@ function touch(
 function Harness({
   onLeft,
   onRight,
+  commitRef,
 }: {
   onLeft?: () => void;
   onRight?: () => void;
+  commitRef?: { current: ((direction: "left" | "right") => void) | null };
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { style } = useSwipePageTransition(ref, { onLeft, onRight });
+  const { style, commit } = useSwipePageTransition(ref, { onLeft, onRight });
+  if (commitRef) commitRef.current = commit;
   return <div ref={ref} data-testid="swipe-target" style={style} />;
 }
 
@@ -80,5 +83,40 @@ describe("useSwipePageTransition", () => {
     expect(onLeft).not.toHaveBeenCalled();
     expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
+  });
+
+  it("commits right programmatically after the slide animation", async () => {
+    const onRight = vi.fn();
+    const commitRef: { current: ((direction: "left" | "right") => void) | null } = {
+      current: null,
+    };
+    render(<Harness onRight={onRight} commitRef={commitRef} />);
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    commitRef.current!("right");
+    expect(onRight).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(setSwipeEnterDirection).toHaveBeenCalledWith("right");
+    expect(onRight).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a second programmatic commit while settling", async () => {
+    const onRight = vi.fn();
+    const commitRef: { current: ((direction: "left" | "right") => void) | null } = {
+      current: null,
+    };
+    render(<Harness onRight={onRight} commitRef={commitRef} />);
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    commitRef.current!("right");
+    commitRef.current!("right");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onRight).toHaveBeenCalledOnce();
   });
 });
