@@ -1,10 +1,11 @@
 # Speech input (Web Cockpit)
 
-Continuous speech-to-text lets an operator dictate into the task terminal
-composer from iPhone Safari while recognition runs on the Mac that hosts Ajax.
+Continuous speech-to-text lets an operator dictate into the active task
+terminal from iPhone Safari while recognition runs on the Mac that hosts Ajax.
 The phone supplies microphone audio; Ajax owns the authenticated transport,
-session supervision, and a replaceable local provider process. Recognition
-output never writes to the PTY, tmux, or shell.
+session supervision, and a replaceable local provider process. Finalized
+recognition output is inserted into the active shell line via the existing
+paste/PTY input path; Ajax does not auto-press Enter or execute commands.
 
 Design boundaries and ownership live in [`architecture.md`](../architecture.md)
 under **Speech Input Architecture**. This page is the operator setup and daily-use
@@ -105,8 +106,8 @@ STT service is isolated from the PTY WebSocket and task-session failures.
 When the local provider cannot start, crashes, or reports unavailable:
 
 - Speech enters an explicit **recoverable error** with a useful message in the
-  composer status region.
-- Finalized composer text is preserved; unstable partial text is cleared.
+  Mic status region.
+- Already-inserted terminal text is preserved; unstable partial text is cleared.
 - The raw terminal, tmux attach, and Cockpit operations keep working. Provider
   failure does **not** take down the terminal or Ajax web runtime.
 - After fixing host configuration or the sidecar binary, tap **Mic** again from
@@ -180,20 +181,17 @@ Practical behavior on Safari and on an optional Home Screen installed shell:
 
 ## Normal use and transcript safety
 
-Speech is **text composition only**:
-
 1. Tap **Mic** once to start (one active session at a time).
 2. Dictate through ordinary pauses; phrase boundaries finalize segments without
-   stopping capture.
+   stopping capture. Each finalized segment is auto-inserted into the active
+   shell line through the same paste/PTY input path used for manual paste.
 3. Say standalone **`pause`** (normalized `pause`, `Pause.`, `PAUSE`) to enter a
    nine-second grace period. **Speak to continue** cancels the timer; if it
    expires, the session finalizes and releases the mic.
 4. Say standalone **`start over`** (normalized `start over`, `Start over.`,
    `START OVER`) to delete everything dictated in the current mic session from
    the terminal. The session keeps listening so you can dictate again.
-5. Edit or send from the terminal as you normally would; recognition output is
-   inserted into the active shell line as it is finalized.
+5. Edit or press Enter from the terminal as you normally would.
 
-Ajax does **not** auto-press Enter, execute commands, or write recognition
-output directly to xterm, tmux, or the PTY. Existing keyboard Ctrl+C and tmux
-behavior are unchanged.
+Ajax does **not** auto-press Enter or execute commands on your behalf. Existing
+keyboard Ctrl+C and tmux behavior are unchanged.

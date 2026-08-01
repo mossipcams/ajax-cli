@@ -119,10 +119,18 @@ export function speechReducer(
       return { ...model, partialTranscript: action.text };
 
     case "final": {
-      if (model.state !== "listening" || !isActiveSession(model, action.sessionId)) {
+      if (!isActiveSession(model, action.sessionId)) {
         return model;
       }
+
+      const canAcceptControl =
+        model.state === "listening" || model.state === "pause_pending";
+      const canAcceptOrdinary = model.state === "listening";
+
       if (isStandalonePause(action.text)) {
+        if (!canAcceptControl) {
+          return model;
+        }
         const timerToken = model.nextPauseTimerToken;
         return {
           ...model,
@@ -134,12 +142,18 @@ export function speechReducer(
         };
       }
       if (isStandaloneStartOver(action.text)) {
+        if (!canAcceptControl) {
+          return model;
+        }
         return {
           ...model,
           finalSegments: {},
           finalTranscript: "",
           partialTranscript: "",
         };
+      }
+      if (!canAcceptOrdinary) {
+        return model;
       }
       if (model.finalSegments[action.sequence] !== undefined) {
         return model;

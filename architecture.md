@@ -697,10 +697,12 @@ existing Ajax backend/core operation boundaries.
 
 ## Speech Input Architecture
 
-Speech input is a host-side text-composition capability for Web Cockpit. The
-iPhone supplies microphone audio; the MacBook hosting Ajax owns speech
-recognition. The browser never downloads a speech model, runs heavy inference,
-or writes recognition output directly to the PTY.
+Speech input is a host-side dictation capability for Web Cockpit. The iPhone
+supplies microphone audio; the MacBook hosting Ajax owns speech recognition.
+The browser never downloads a speech model or runs heavy inference locally.
+Finalized transcript text is auto-inserted into the active shell line through
+the existing paste/PTY input path; Ajax does not auto-press Enter or execute
+commands.
 
 ```text
 iOS Safari / optional standalone shell
@@ -709,21 +711,20 @@ iOS Safari / optional standalone shell
   -> ajax-web STT session service
   -> replaceable host-side streaming provider
   -> partial/final/VAD events
-  -> TaskTerminal composer
-  -> explicit user insert/send action
+  -> TaskTerminal auto-insert (paste/PTY input path)
+  -> user presses Enter or edits as usual
 ```
 
-The current Web Cockpit terminal is a raw xterm.js/tmux terminal. Its hidden
-`.xterm-helper-textarea` is keyboard and iOS input plumbing, not an editable
-composer: writing dictated text into it would send text to the PTY and violate
-terminal safety. Speech therefore uses one TaskTerminal-owned editable composer
-surface alongside the existing terminal. This is a composition surface, not a
-second terminal, registry, task model, or command workflow. Normal keyboard
-input, terminal focus, tmux attachment, and PTY behavior remain unchanged.
+The current Web Cockpit terminal is a raw xterm.js/tmux terminal. Speech
+auto-insert writes finalized text through the same paste/PTY input path the
+terminal already uses for manual paste, so dictated text appears on the active
+shell line without a separate review composer. This is not a second terminal,
+registry, task model, or command workflow. Normal keyboard input, terminal
+focus, tmux attachment, and PTY behavior remain unchanged.
 
 ### Ownership
 
-- `TaskTerminal.tsx` owns the visible Mic control, composer rendering,
+- `TaskTerminal.tsx` owns the visible Mic control, transcript auto-insert,
   accessibility, focus, and the single frontend speech state machine.
 - A small frontend STT controller owns microphone capture, PCM conversion,
   WebSocket lifecycle, local responsiveness VAD, timer identity, and transcript
@@ -833,12 +834,12 @@ speech-ended, interruption, and inactivity events used by the backend/provider
 contract. The frontend must not run a second independent stop policy.
 
 Ordinary silence may finalize a phrase and start a new provider segment, but it
-does not stop capture, close the session, finalize the whole dictation, or send
-terminal input. The frontend maintains separate `finalTranscript` and
-`partialTranscript` values. Partial text replaces the previous partial value;
-final segments carry sequence numbers, are deduplicated, and are buffered until
-ordered. Finalized text is appended to the composer with sensible whitespace;
-existing composer text is preserved.
+does not stop capture, close the session, or finalize the whole dictation. The
+frontend maintains separate `finalTranscript` and `partialTranscript` values.
+Partial text replaces the previous partial value; final segments carry sequence
+numbers, are deduplicated, and are buffered until ordered. Finalized text is
+auto-inserted into the active shell line through the paste/PTY input path with
+sensible whitespace; existing shell-line text is preserved.
 
 The standalone normalized finalized utterance `pause` is a control command.
 Only an utterance whose normalized content is exactly `pause` (including
@@ -850,14 +851,21 @@ the timer immediately and returns to `listening`, even before a partial or final
 transcript arrives. If the full grace period expires, the session enters
 `finalizing`, stops accepting new audio, flushes buffered audio, asks the
 provider to finalize, waits for pending ordered finals, releases microphone and
-audio resources, closes the STT session, cancels timers, and leaves the editable
-composer usable. No automatic Enter, PTY write, shell execution, or prompt
-submission occurs.
+audio resources, closes the STT session, cancels timers, and leaves the terminal
+usable. No automatic Enter, shell execution, or prompt submission occurs.
+
+The standalone normalized finalized utterance `start over` is a control command.
+Only an utterance whose normalized content is exactly `start over` (including
+`Start over.` and `START OVER`) triggers it. Sentence content such as `Let's
+start over from the top` remains transcript text. When triggered, the command
+is removed and all text dictated in the current mic session is deleted from the
+active shell line; the session keeps listening so the operator can dictate
+again.
 
 Manual cancel is a recovery path. It stops capture and transport, cancels the
 provider and all timers, releases browser audio resources, ignores delayed
-events, preserves finalized composer text, removes unstable partial text, and
-returns to a stable idle or explicit error state. Permission denial, unsupported
+events, preserves already-inserted terminal text, removes unstable partial text,
+and returns to a stable idle or explicit error state. Permission denial, unsupported
 browser APIs, unavailable hardware, audio interruption, background/suspension,
 WebSocket failure, provider failure, unsupported format, overflow, duplicate or
 out-of-order events, stale session events, and finalization timeout all preserve
@@ -865,12 +873,12 @@ finalized text and expose a useful recovery message.
 
 ### Terminal, authentication, and iOS boundaries
 
-Speech is text composition only. Recognition output never goes directly to
-xterm, tmux, a PTY, or an execution route. The user must review, edit, insert,
-or send it explicitly. Existing physical/software Ctrl+C continues through the
-normal xterm/PTY path. Removing the visible `^C` shortcut only removes that
-toolbar button and exclusive UI code; it does not remove the shared control-key
-infrastructure or backend SIGINT behavior.
+Finalized recognition output is auto-inserted into the active shell line via the
+paste/PTY input path. The user may edit before pressing Enter; Ajax does not
+auto-press Enter or execute commands. Existing physical/software Ctrl+C continues
+through the normal xterm/PTY path. Removing the visible `^C` shortcut only
+removes that toolbar button and exclusive UI code; it does not remove the shared
+control-key infrastructure or backend SIGINT behavior.
 
 The Mic control is in the existing shortcut bar immediately after Paste, keeps
 the visible label `Mic` in every state, and uses the existing key height,
@@ -878,7 +886,7 @@ spacing, typography, border, focus, touch, responsive, and disabled-state
 styles. It exposes an accessible label and tooltip, remains visible on the
 primary phone layout, shows active/connecting/finalizing/error state without
 becoming icon-only, prevents duplicate activation, and associates the
-`Pausing in N… Speak to continue` countdown with the Mic button and composer.
+`Pausing in N… Speak to continue` countdown with the Mic button and terminal.
 
 Microphone capture starts only from the Mic user gesture. The implementation
 handles permission denial, absent hardware, audio-route interruption,

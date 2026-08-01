@@ -25,6 +25,12 @@ import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import {
+  clearSpeechInserts,
+  prepareSpeechInsert,
+  undoPayload,
+  type SpeechInsert,
+} from "@/shared/lib/speechInsertLedger";
+import {
   createSpeechInputModel,
   isStandalonePause,
   isStandaloneStartOver,
@@ -123,7 +129,7 @@ export default function TaskTerminal({ handle }: Props) {
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
   /** Final sequences already written to the PTY, so a resend never double-inserts. */
   const insertedFinalsRef = useRef<Set<number>>(new Set());
-  const insertedSpeechCharsRef = useRef(0);
+  const insertedSpeechRef = useRef<SpeechInsert[]>([]);
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
 
@@ -319,11 +325,13 @@ export default function TaskTerminal({ handle }: Props) {
   };
 
   const undoInsertedSpeech = () => {
-    const count = insertedSpeechCharsRef.current;
-    if (count <= 0) return;
-    insertedSpeechCharsRef.current = 0;
-    if (connectionRef.current?.isOpen()) {
-      connectionRef.current.sendInput("\x7f".repeat(count));
+    const records = insertedSpeechRef.current;
+    if (records.length === 0) return;
+    const payload = undoPayload(records);
+    clearSpeechInserts(records);
+    // ponytail: assumes speech only appends to the current line; en-US UTF-16 .length DEL undo.
+    if (payload && connectionRef.current?.isOpen()) {
+      connectionRef.current.sendInput(payload);
     }
   };
 
@@ -671,7 +679,7 @@ export default function TaskTerminal({ handle }: Props) {
     speechTransportRef.current?.cancel();
     speechTransportRef.current = undefined;
     insertedFinalsRef.current.clear();
-    insertedSpeechCharsRef.current = 0;
+    clearSpeechInserts(insertedSpeechRef.current);
     if (sessionId) {
       dispatchSpeech({ type: "cancel", sessionId });
     } else {
@@ -697,7 +705,7 @@ export default function TaskTerminal({ handle }: Props) {
 
     const sessionId = newSessionId();
     insertedFinalsRef.current.clear();
-    insertedSpeechCharsRef.current = 0;
+    clearSpeechInserts(insertedSpeechRef.current);
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -710,13 +718,27 @@ export default function TaskTerminal({ handle }: Props) {
         onFinal: (sequence, text) => {
           // Insert here, never inside a setState updater: StrictMode may invoke an
           // updater twice, which would write the transcript to the PTY twice.
+          const speechState = speechModelRef.current.state;
+          const canHandleControl =
+            speechState === "listening" || speechState === "pause_pending";
           if (isStandaloneStartOver(text)) {
-            undoInsertedSpeech();
-            insertedFinalsRef.current.clear();
-          } else if (!isStandalonePause(text) && !insertedFinalsRef.current.has(sequence)) {
-            insertedFinalsRef.current.add(sequence);
-            if (pasteThroughTerm(text, false)) {
-              insertedSpeechCharsRef.current += text.length;
+            if (canHandleControl) {
+              undoInsertedSpeech();
+              insertedFinalsRef.current.clear();
+            }
+          } else if (
+            !isStandalonePause(text) &&
+            speechState === "listening" &&
+            !insertedFinalsRef.current.has(sequence)
+          ) {
+            const bracketed = termRef.current?.modes.bracketedPasteMode ?? false;
+            const { textToPaste, record } = prepareSpeechInsert(text, {
+              hasPriorInserts: insertedSpeechRef.current.length > 0,
+              bracketed,
+            });
+            if (pasteThroughTerm(textToPaste, false)) {
+              insertedSpeechRef.current.push(record);
+              insertedFinalsRef.current.add(sequence);
             }
           }
           dispatchSpeech({
