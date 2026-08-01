@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Moonshine streaming STT sidecar for `ajax web`.
+
+Speaks the framed protocol that `crates/ajax-web/src/adapters/stt_provider.rs`
+writes to a provider's stdin, and emits newline-delimited JSON events on stdout.
+
+stdin frames (big-endian lengths):
+    start     [0][u32 len][json body]
+    audio     [1][u32 sequence][u32 len][PCM16 little-endian mono]
+    finalize  [2]
+
+stdout events (one JSON object per line):
+    {"type":"stt.speech_started"}
+    {"type":"stt.partial","sequence":N,"text":"..."}
+    {"type":"stt.final","sequence":N,"text":"..."}
+    {"type":"stt.speech_ended"}
+
+One process serves exactly one session; ajax spawns a fresh one per session and
+kills it on cancel. Anything written to stderr is discarded by the parent, so
+diagnostics go to AJAX_STT_LOG when set.
+
+Requires: pip install useful-moonshine-onnx numpy
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import struct
+import sys
+import time
+
+FRAME_START = 0
+FRAME_AUDIO = 1
+FRAME_FINALIZE = 2
+
+SAMPLE_WIDTH = 2
+# Speech gate. Moonshine has no built-in VAD, so gate on short-window RMS and let
+# ajax's phraseEndSilenceMs decide when a phrase has ended.
+# ponytail: RMS gate, swap for webrtcvad/silero if noisy rooms cause false starts.
+SPEECH_RMS = 0.012
+# Re-decode at most this often while speech continues, so partials stay cheap.
+PARTIAL_INTERVAL_S = 0.45
+# Refuse to grow a single phrase past this; Moonshine targets short utterances.
+MAX_PHRASE_S = 30.0
+
+
+def _looks_degenerate(text: str) -> bool:
+    """True for ASR repetition loops such as "no, no, no, ..." repeated 100x.
+
+    These transcripts are typed straight into a live shell, so a degenerate
+    decode is worse than dropping the phrase and letting the speaker repeat it.
+    """
+    words = [word for word in text.lower().replace(",", " ").split() if word]
+    # A real loop is ~100% one token; 60% over 12+ words catches it with plenty of
+    # headroom while leaving naturally repetitive dictation alone.
+    if len(words) < 12:
+        return False
+    most_common = max(set(words), key=words.count)
+    return words.count(most_common) * 10 >= len(words) * 6
+
+
+def _log(message: str) -> None:
+    path = os.environ.get("AJAX_STT_LOG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{time.time():.3f} {message}\n")
+    except OSError:
+        pass
+
+
+def _emit(event: dict) -> None:
+    sys.stdout.write(json.dumps(event, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+def _read_exactly(stream, count: int) -> bytes | None:
+    """Read exactly `count` bytes, or return None at clean end of stream."""
+    chunks = []
+    remaining = count
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            return None
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _read_frame(stream):
+    """Yield (kind, sequence, payload) or None at end of stream."""
+    kind_byte = _read_exactly(stream, 1)
+    if kind_byte is None:
+        return None
+    kind = kind_byte[0]
+
+    if kind == FRAME_FINALIZE:
+        return (kind, None, b"")
+
+    if kind == FRAME_START:
+        raw_len = _read_exactly(stream, 4)
+        if raw_len is None:
+            return None
+        (length,) = struct.unpack(">I", raw_len)
+        body = _read_exactly(stream, length) if length else b""
+        if body is None:
+            return None
+        return (kind, None, body)
+
+    if kind == FRAME_AUDIO:
+        header = _read_exactly(stream, 8)
+        if header is None:
+            return None
+        sequence, length = struct.unpack(">II", header)
+        payload = _read_exactly(stream, length) if length else b""
+        if payload is None:
+            return None
+        return (kind, sequence, payload)
+
+    raise ValueError(f"unknown sidecar frame kind {kind}")
+
+
+def main() -> int:
+    try:
+        import numpy as np
+    except ImportError:
+        _log("numpy missing")
+        print("ajax-moonshine-sidecar: numpy is required", file=sys.stderr)
+        return 2
+
+    try:
+        from moonshine_onnx import MoonshineOnnxModel, load_tokenizer
+    except ImportError:
+        _log("useful-moonshine-onnx missing")
+        print(
+            "ajax-moonshine-sidecar: pip install useful-moonshine-onnx",
+            file=sys.stderr,
+        )
+        return 2
+
+    model_name = os.environ.get("AJAX_STT_MODEL", "moonshine/tiny")
+    model = MoonshineOnnxModel(model_name=model_name)
+    tokenizer = load_tokenizer()
+    _log(f"loaded {model_name}")
+
+    stdin = sys.stdin.buffer
+    sample_rate = 16_000
+    phrase_end_silence_s = 0.7
+
+    phrase = np.zeros(0, dtype=np.float32)
+    speaking = False
+    silence_started: float | None = None
+    last_partial = 0.0
+    last_text = ""
+    next_sequence = 0
+
+    def transcribe(audio) -> str:
+        if audio.size == 0:
+            return ""
+        tokens = model.generate(audio[np.newaxis, :].astype(np.float32))
+        text = tokenizer.decode_batch(tokens)[0].strip()
+        if _looks_degenerate(text):
+            _log(f"dropped degenerate decode: {text[:80]!r}")
+            return ""
+        return text
+
+    def flush_final() -> None:
+        nonlocal phrase, speaking, silence_started, last_text, next_sequence
+        text = transcribe(phrase)
+        if text:
+            _emit({"type": "stt.final", "sequence": next_sequence, "text": text})
+            next_sequence += 1
+        _emit({"type": "stt.speech_ended"})
+        phrase = np.zeros(0, dtype=np.float32)
+        speaking = False
+        silence_started = None
+        last_text = ""
+
+    while True:
+        try:
+            frame = _read_frame(stdin)
+        except ValueError as error:
+            _log(f"protocol error: {error}")
+            return 1
+        if frame is None:
+            break
+
+        kind, sequence, payload = frame
+
+        if kind == FRAME_START:
+            try:
+                config = json.loads(payload or b"{}")
+            except json.JSONDecodeError:
+                config = {}
+            sample_rate = int(config.get("sampleRate") or 16_000)
+            phrase_end_silence_s = float(config.get("phraseEndSilenceMs") or 700) / 1000.0
+            _log(f"start rate={sample_rate} silence={phrase_end_silence_s}s")
+            continue
+
+        if kind == FRAME_FINALIZE:
+            if speaking:
+                flush_final()
+            break
+
+        # FRAME_AUDIO
+        if not payload:
+            continue
+        usable = len(payload) - (len(payload) % SAMPLE_WIDTH)
+        block = np.frombuffer(payload[:usable], dtype="<i2").astype(np.float32) / 32768.0
+        if block.size == 0:
+            continue
+
+        now = time.monotonic()
+        loud = float(np.sqrt(np.mean(block * block))) >= SPEECH_RMS
+
+        if loud:
+            if not speaking:
+                speaking = True
+                last_partial = now
+                _emit({"type": "stt.speech_started"})
+            silence_started = None
+            phrase = np.concatenate((phrase, block))
+        elif speaking:
+            # Keep trailing silence: it carries word endings Moonshine needs.
+            phrase = np.concatenate((phrase, block))
+            if silence_started is None:
+                silence_started = now
+
+        if not speaking:
+            continue
+
+        if phrase.size >= int(MAX_PHRASE_S * sample_rate):
+            flush_final()
+            continue
+
+        ended = silence_started is not None and (now - silence_started) >= phrase_end_silence_s
+        if ended:
+            flush_final()
+            continue
+
+        if now - last_partial >= PARTIAL_INTERVAL_S:
+            last_partial = now
+            text = transcribe(phrase)
+            if text and text != last_text:
+                last_text = text
+                _emit({"type": "stt.partial", "sequence": next_sequence, "text": text})
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except BrokenPipeError:
+        sys.exit(0)

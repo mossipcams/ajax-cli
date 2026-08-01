@@ -28,10 +28,32 @@ Configure the shell command Ajax should launch:
   containing spaces will not resolve. Wrap such a command in a small launcher
   script and point `provider_command` at that instead.
 
-Install or build your Moonshine-compatible sidecar on the host using whatever
-workflow your sidecar documents. Point `provider_command` at the executable you
-trust. Ajax only supervises the process you configure; it does not download
-models to the browser or verify third-party package names.
+### The bundled sidecar
+
+Ajax ships a reference implementation at `scripts/ajax-moonshine-sidecar`. It
+speaks the framed protocol below and runs Moonshine ONNX locally. Set it up in
+its own virtualenv so it never touches your system Python:
+
+```sh
+python3 -m venv ~/.ajax-stt-venv
+~/.ajax-stt-venv/bin/pip install useful-moonshine-onnx numpy
+```
+
+Then point `provider_command` at the interpreter and the script — two
+whitespace-separated tokens, since the value is split rather than shell-parsed:
+
+```toml
+provider_command = "/Users/you/.ajax-stt-venv/bin/python /path/to/ajax/scripts/ajax-moonshine-sidecar"
+```
+
+The model (`moonshine/tiny` by default) downloads from Hugging Face on first
+run and is cached afterwards. Override it with `AJAX_STT_MODEL`, and set
+`AJAX_STT_LOG=/tmp/stt.log` to capture sidecar diagnostics — stderr is
+discarded by the parent.
+
+You may substitute any other executable that speaks the same protocol. Ajax only
+supervises the process you configure; it does not download models to the browser
+or verify third-party package names.
 
 ## `[stt]` configuration
 
@@ -96,6 +118,34 @@ Speech uses a **separate authenticated WebSocket**, not the PTY terminal socket.
 
 The phone never downloads a speech model, requires WebGPU, or runs provider
 inference locally.
+
+## Sidecar protocol
+
+Ajax writes length-prefixed binary frames to the provider's stdin. All integers
+are big-endian; PCM is little-endian signed 16-bit mono.
+
+| Frame | Layout |
+| --- | --- |
+| start | `[0][u32 length][JSON body]` |
+| audio | `[1][u32 sequence][u32 length][PCM16 bytes]` |
+| finalize | `[2]` |
+
+The start body carries `sessionId`, `sampleRate`, `channels`, `language`, and
+`phraseEndSilenceMs`. Every frame is self-delimiting, so a provider can read the
+stream without guessing payload boundaries.
+
+The provider replies on stdout with one JSON object per line:
+
+```jsonl
+{"type":"stt.speech_started"}
+{"type":"stt.partial","sequence":0,"text":"ever tried"}
+{"type":"stt.final","sequence":0,"text":"Ever tried, ever failed."}
+{"type":"stt.speech_ended"}
+```
+
+`sequence` correlates partials with the final that supersedes them. Unknown
+event types are reported as provider errors rather than ignored. One process
+serves one session; Ajax spawns a fresh one per session and kills it on cancel.
 
 ## iOS Safari and installed PWA behavior
 
