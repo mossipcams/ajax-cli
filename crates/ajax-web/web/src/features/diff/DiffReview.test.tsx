@@ -178,8 +178,49 @@ describe("DiffReview", () => {
     );
     render(<DiffReview handle="web/fix-login" />);
     expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-pr-list-error")).toHaveTextContent(
+      "Could not load pull requests — gh down",
+    );
     expect(screen.getByTestId("diff-empty")).toHaveTextContent("No file changes");
     expect(api.fetchTaskDiff).toHaveBeenCalledWith("web/fix-login", { local: true });
+  });
+
+  it("shows loading-diff copy after pull requests resolve", async () => {
+    let resolvePrs!: (value: Awaited<ReturnType<typeof api.fetchTaskPullRequests>>) => void;
+    let resolveDiff!: (value: TaskDiffView) => void;
+    vi.mocked(api.fetchTaskPullRequests).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePrs = resolve;
+        }),
+    );
+    vi.mocked(api.fetchTaskDiff).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDiff = resolve;
+        }),
+    );
+
+    render(<DiffReview handle="web/fix-login" />);
+    expect(await screen.findByTestId("diff-loading")).toHaveTextContent(
+      "Loading pull requests…",
+    );
+
+    await act(async () => {
+      resolvePrs([]);
+    });
+    expect(await screen.findByTestId("diff-loading")).toHaveTextContent("Loading diff…");
+
+    await act(async () => {
+      resolveDiff(
+        diffView({
+          source: "local",
+          pr: null,
+          files: [],
+        }),
+      );
+    });
+    expect(await screen.findByTestId("diff-pr-local")).toBeInTheDocument();
   });
 
   it("requests the first listed PR when selectedPr is unset", async () => {

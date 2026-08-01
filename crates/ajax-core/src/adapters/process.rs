@@ -1,4 +1,5 @@
 use std::{
+    io::Read,
     process::{Command, Stdio},
     sync::OnceLock,
     thread,
@@ -44,33 +45,62 @@ impl CommandRunner for ProcessCommandRunner {
     }
 }
 
+fn spawn_pipe_reader<R>(mut reader: R) -> thread::JoinHandle<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = reader.read_to_end(&mut buffer);
+        buffer
+    })
+}
+
 fn run_capture(
     mut process: Command,
     command: &CommandSpec,
 ) -> Result<CommandOutput, CommandRunError> {
     if let Some(timeout) = command.timeout {
         let mut child = process
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
 
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| CommandRunError::SpawnFailed("missing stdout pipe".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| CommandRunError::SpawnFailed("missing stderr pipe".to_string()))?;
+        let stdout_reader = spawn_pipe_reader(stdout);
+        let stderr_reader = spawn_pipe_reader(stderr);
+
         let started = Instant::now();
         loop {
-            if child
+            if let Some(status) = child
                 .try_wait()
                 .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?
-                .is_some()
             {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-                return command_output_from_process_output(output);
+                let stdout = stdout_reader.join().unwrap_or_default();
+                let stderr = stderr_reader.join().unwrap_or_default();
+                let status_code = status.code().ok_or(CommandRunError::MissingStatusCode)?;
+
+                return Ok(CommandOutput {
+                    status_code,
+                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                });
             }
 
             if started.elapsed() >= timeout {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 return Err(CommandRunError::TimedOut {
                     program: command.program.clone(),
                     timeout,
@@ -188,6 +218,21 @@ mod tests {
         let output = runner.run(&command).unwrap();
 
         assert_eq!(output.status_code, 0);
+    }
+
+    #[test]
+    fn capture_command_with_timeout_drains_large_stdout() {
+        let mut runner = ProcessCommandRunner;
+        let bytes = 256 * 1024;
+        let script = format!("import sys; sys.stdout.write('x' * {bytes})");
+        let command = CommandSpec::new("python3", ["-c", script.as_str()])
+            .with_timeout(Duration::from_secs(5));
+
+        let output = runner.run(&command).unwrap();
+
+        assert_eq!(output.status_code, 0);
+        assert_eq!(output.stdout.len(), bytes);
+        assert!(output.stdout.chars().all(|ch| ch == 'x'));
     }
 
     #[test]
