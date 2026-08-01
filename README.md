@@ -94,7 +94,7 @@ composer or read-only snapshot viewer.
 In the task terminal, an editable **Terminal composer** sits beside the raw
 xterm view. **Mic** (after **Paste** in the shortcut bar) starts host-side
 continuous speech-to-text: iPhone capture, Mac recognition, explicit Insert into
-the PTY. See [`docs/speech-input.md`](docs/speech-input.md) for Moonshine host
+the PTY. See [`docs/speech-input.md`](docs/speech-input.md) for Moonshine v2 host
 setup, `[stt]` configuration, iOS behavior, and recovery.
 
 Notifications are out of scope. Ajax Web Cockpit does not support Web Push,

@@ -21,6 +21,7 @@ pub const MAX_SIDECAR_AUDIO_PCM_BYTES: usize = 640;
 const SIDECAR_FRAME_KIND_START: u8 = 0;
 const SIDECAR_FRAME_KIND_AUDIO: u8 = 1;
 const SIDECAR_FRAME_KIND_FINALIZE: u8 = 2;
+const SIDECAR_FRAME_KIND_CANCEL: u8 = 3;
 const SIDECAR_EVENT_QUEUE_BOUND: usize = 64;
 
 /// Session parameters handed to a provider when speech capture begins.
@@ -69,18 +70,34 @@ impl std::error::Error for ProviderError {}
 /// Typed provider-side transcript and activity events.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderEvent {
-    Partial { sequence: u32, text: String },
-    Final { sequence: u32, text: String },
+    /// Sidecar can accept audio for this session (model loaded).
+    Ready,
+    Partial {
+        sequence: u32,
+        text: String,
+    },
+    Final {
+        sequence: u32,
+        text: String,
+    },
     SpeechStarted,
     SpeechEnded,
-    Error { message: String },
+    /// Successful session completion after finalize; not an error.
+    Completed,
+    Error {
+        message: String,
+    },
 }
 
 impl ProviderEvent {
     pub fn sequence(&self) -> Option<u32> {
         match self {
             Self::Partial { sequence, .. } | Self::Final { sequence, .. } => Some(*sequence),
-            Self::SpeechStarted | Self::SpeechEnded | Self::Error { .. } => None,
+            Self::Ready
+            | Self::SpeechStarted
+            | Self::SpeechEnded
+            | Self::Completed
+            | Self::Error { .. } => None,
         }
     }
 }
@@ -126,6 +143,10 @@ fn encode_sidecar_finalize_frame() -> Vec<u8> {
     vec![SIDECAR_FRAME_KIND_FINALIZE]
 }
 
+fn encode_sidecar_cancel_frame() -> Vec<u8> {
+    vec![SIDECAR_FRAME_KIND_CANCEL]
+}
+
 #[derive(Debug, Deserialize)]
 struct SidecarEventLine {
     #[serde(rename = "type")]
@@ -141,6 +162,7 @@ pub fn parse_sidecar_event_line(line: &[u8]) -> Result<ProviderEvent, ProviderEr
     let parsed: SidecarEventLine = serde_json::from_slice(line)
         .map_err(|error| ProviderError::Protocol(format!("invalid sidecar event JSON: {error}")))?;
     match parsed.event_type.as_str() {
+        "stt.ready" => Ok(ProviderEvent::Ready),
         "stt.partial" => Ok(ProviderEvent::Partial {
             sequence: parsed.sequence.ok_or_else(|| {
                 ProviderError::Protocol("stt.partial missing sequence".to_string())
@@ -159,6 +181,7 @@ pub fn parse_sidecar_event_line(line: &[u8]) -> Result<ProviderEvent, ProviderEr
         }),
         "stt.speech_started" => Ok(ProviderEvent::SpeechStarted),
         "stt.speech_ended" => Ok(ProviderEvent::SpeechEnded),
+        "stt.completed" => Ok(ProviderEvent::Completed),
         other => Err(ProviderError::Protocol(format!(
             "unknown sidecar event type `{other}`"
         ))),
@@ -242,11 +265,30 @@ fn map_spawn_error(program: &str, error: io::Error) -> ProviderError {
 }
 
 /// Supervised local Moonshine Small Streaming sidecar adapter.
+/// Persistent Moonshine worker process. Model stays loaded across sessions.
+struct PersistentWorker {
+    child: Child,
+    frame_tx: SyncSender<Vec<u8>>,
+    events: Arc<Mutex<Receiver<ProviderEvent>>>,
+    reader: Option<JoinHandle<()>>,
+    writer: Option<JoinHandle<()>>,
+}
+
+impl PersistentWorker {
+    fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+/// Supervised Moonshine Small Streaming provider with a persistent worker.
 pub struct MoonshineProvider {
     command: Option<String>,
     max_buffered_audio_ms: u64,
     phrase_end_silence_ms: u64,
     shut_down: bool,
+    worker: Option<PersistentWorker>,
+    /// How many times a worker process was spawned (reuse detection for tests).
+    worker_spawns: u32,
 }
 
 impl MoonshineProvider {
@@ -260,27 +302,35 @@ impl MoonshineProvider {
             max_buffered_audio_ms,
             phrase_end_silence_ms,
             shut_down: false,
+            worker: None,
+            worker_spawns: 0,
         }
     }
 
-    pub fn health(&self) -> ProviderHealth {
+    pub fn worker_spawns(&self) -> u32 {
+        self.worker_spawns
+    }
+
+    pub fn health(&mut self) -> ProviderHealth {
         if self.shut_down {
             return ProviderHealth::Unavailable("provider shut down".to_string());
         }
         match &self.command {
-            Some(_) => ProviderHealth::Available,
             None => ProviderHealth::Unavailable("no STT provider command configured".to_string()),
+            Some(_) => {
+                if let Some(worker) = self.worker.as_mut() {
+                    if !worker.is_alive() {
+                        return ProviderHealth::Unavailable(
+                            "STT worker process exited".to_string(),
+                        );
+                    }
+                }
+                ProviderHealth::Available
+            }
         }
     }
 
-    pub fn start_session(
-        &self,
-        mut config: ProviderSessionConfig,
-    ) -> Result<MoonshineSession, ProviderError> {
-        if self.shut_down {
-            return Err(ProviderError::Unavailable("provider shut down".to_string()));
-        }
-        config.phrase_end_silence_ms = self.phrase_end_silence_ms;
+    fn spawn_worker(&mut self) -> Result<(), ProviderError> {
         let command = self.command.as_ref().ok_or_else(|| {
             ProviderError::Unavailable("no STT provider command configured".to_string())
         })?;
@@ -296,17 +346,54 @@ impl MoonshineProvider {
         let frame_capacity = (self.max_buffered_audio_ms / 20).max(1) as usize;
         let (frame_tx, frame_rx) = sync_channel(frame_capacity);
         let writer = spawn_frame_writer(stdin, frame_rx);
-        let mut session = MoonshineSession {
-            session_id: config.session_id.clone(),
-            child: Some(child),
-            frame_tx: Some(frame_tx),
-            events: rx,
+        self.worker = Some(PersistentWorker {
+            child,
+            frame_tx,
+            events: Arc::new(Mutex::new(rx)),
             reader: Some(reader),
             writer: Some(writer),
+        });
+        self.worker_spawns = self.worker_spawns.saturating_add(1);
+        Ok(())
+    }
+
+    fn ensure_worker(&mut self) -> Result<(), ProviderError> {
+        let needs_spawn = match self.worker.as_mut() {
+            None => true,
+            Some(worker) => !worker.is_alive(),
+        };
+        if needs_spawn {
+            drop(self.worker.take());
+            self.spawn_worker()?;
+        }
+        Ok(())
+    }
+
+    pub fn start_session(
+        &mut self,
+        mut config: ProviderSessionConfig,
+    ) -> Result<MoonshineSession, ProviderError> {
+        if self.shut_down {
+            return Err(ProviderError::Unavailable("provider shut down".to_string()));
+        }
+        config.phrase_end_silence_ms = self.phrase_end_silence_ms;
+        self.command.as_ref().ok_or_else(|| {
+            ProviderError::Unavailable("no STT provider command configured".to_string())
+        })?;
+        self.ensure_worker()?;
+        let worker = self
+            .worker
+            .as_ref()
+            .ok_or_else(|| ProviderError::StartupFailed("worker missing".to_string()))?;
+        let mut session = MoonshineSession {
+            session_id: config.session_id.clone(),
+            frame_tx: Some(worker.frame_tx.clone()),
+            events: Arc::clone(&worker.events),
             next_sequence: 0,
             finalizing: false,
             closed: false,
             sidecar_ended: false,
+            completed: false,
         };
         session.write_frame(&encode_sidecar_start_frame(&config)?)?;
         Ok(session)
@@ -314,24 +401,24 @@ impl MoonshineProvider {
 
     pub fn shutdown(&mut self) {
         self.shut_down = true;
+        drop(self.worker.take());
     }
 }
 
-/// One Moonshine-backed speech session with a finite outbound frame queue.
+/// One recognition session on the persistent Moonshine worker.
 pub struct MoonshineSession {
     session_id: String,
-    child: Option<Child>,
     frame_tx: Option<SyncSender<Vec<u8>>>,
-    events: Receiver<ProviderEvent>,
-    reader: Option<JoinHandle<()>>,
-    writer: Option<JoinHandle<()>>,
+    events: Arc<Mutex<Receiver<ProviderEvent>>>,
     next_sequence: u32,
-    /// True after an idempotent finalize signal; child stays up for event drain.
+    /// True after an idempotent finalize signal; worker stays up for event drain.
     finalizing: bool,
-    /// True only after cancel/Drop tears down the supervised child.
+    /// True after cancel tears down this session (worker remains).
     closed: bool,
-    /// Latches one `stt sidecar exited` error after the event reader disconnects.
+    /// Latches terminal reader disconnect handling (error or clean completion).
     sidecar_ended: bool,
+    /// True after an explicit `stt.completed` event; exit is not an error.
+    completed: bool,
 }
 
 impl MoonshineSession {
@@ -350,20 +437,39 @@ impl MoonshineSession {
     }
 
     pub fn poll_event(&mut self) -> Option<ProviderEvent> {
-        match self.events.try_recv() {
-            Ok(event) => Some(event),
+        let events = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match events.try_recv() {
+            Ok(event) => {
+                drop(events);
+                if matches!(event, ProviderEvent::Completed) {
+                    self.completed = true;
+                }
+                Some(event)
+            }
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
+                drop(events);
                 if self.sidecar_ended {
                     None
                 } else {
                     self.sidecar_ended = true;
-                    Some(ProviderEvent::Error {
-                        message: "stt sidecar exited".to_string(),
-                    })
+                    if self.completed {
+                        None
+                    } else {
+                        Some(ProviderEvent::Error {
+                            message: "stt sidecar exited".to_string(),
+                        })
+                    }
                 }
             }
         }
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.completed
     }
 
     pub fn finalize(&mut self) -> Result<(), ProviderError> {
@@ -379,9 +485,15 @@ impl MoonshineSession {
         if self.closed {
             return;
         }
-        while self.events.try_recv().is_ok() {}
+        // Best-effort cancel frame; never kill the persistent worker here.
+        let _ = self
+            .frame_tx
+            .as_ref()
+            .map(|tx| tx.try_send(encode_sidecar_cancel_frame()));
+        if let Ok(events) = self.events.lock() {
+            while events.try_recv().is_ok() {}
+        }
         self.frame_tx.take();
-        self.stop_child();
         self.finalizing = false;
         self.closed = true;
     }
@@ -393,28 +505,22 @@ impl MoonshineSession {
             TrySendError::Disconnected(_) => ProviderError::SessionClosed,
         })
     }
-
-    fn stop_child(&mut self) {
-        self.frame_tx.take();
-        // Kill before joining the writer: a live-but-wedged sidecar leaves the
-        // writer blocked inside write_all on a full pipe, and dropping the sender
-        // cannot wake it. Killing closes the pipe so the write fails and it exits.
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(handle) = self.writer.take() {
-            let _ = handle.join();
-        }
-        if let Some(handle) = self.reader.take() {
-            let _ = handle.join();
-        }
-    }
 }
 
 impl Drop for MoonshineSession {
     fn drop(&mut self) {
         self.cancel();
+    }
+}
+
+impl Drop for PersistentWorker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // Do not join reader/writer: a wedged write_all can outlive kill briefly
+        // and hang tests/shutdown. Detach by dropping the JoinHandles.
+        let _ = self.writer.take();
+        let _ = self.reader.take();
     }
 }
 
@@ -425,35 +531,43 @@ const STT_EVENT_POLL_MS: u64 = 20;
 fn provider_event_to_server(
     session_id: &str,
     event: ProviderEvent,
-) -> crate::slices::stt::SttServerEvent {
+) -> Option<crate::slices::stt::SttServerEvent> {
     use crate::slices::stt::{SttServerEvent, STT_PROTOCOL_VERSION};
     match event {
-        ProviderEvent::Partial { sequence, text } => SttServerEvent::Partial {
+        ProviderEvent::Ready => Some(SttServerEvent::Ready {
+            version: STT_PROTOCOL_VERSION,
+            session_id: session_id.to_string(),
+            // Timing filled by the bridge from host config when forwarding Ready.
+            pause_grace_period_ms: 0,
+            finalization_timeout_ms: 0,
+        }),
+        ProviderEvent::Partial { sequence, text } => Some(SttServerEvent::Partial {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
             sequence,
             text,
-        },
-        ProviderEvent::Final { sequence, text } => SttServerEvent::Final {
+        }),
+        ProviderEvent::Final { sequence, text } => Some(SttServerEvent::Final {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
             sequence,
             text,
-        },
-        ProviderEvent::SpeechStarted => SttServerEvent::SpeechStarted {
+        }),
+        ProviderEvent::SpeechStarted => Some(SttServerEvent::SpeechStarted {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
-        },
-        ProviderEvent::SpeechEnded => SttServerEvent::SpeechEnded {
+        }),
+        ProviderEvent::SpeechEnded => Some(SttServerEvent::SpeechEnded {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
-        },
-        ProviderEvent::Error { message } => SttServerEvent::Error {
+        }),
+        ProviderEvent::Completed => None,
+        ProviderEvent::Error { message } => Some(SttServerEvent::Error {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
             code: "provider_error".to_string(),
             message,
-        },
+        }),
     }
 }
 
@@ -491,12 +605,33 @@ async fn send_stt_error(
 fn drain_provider_events(
     session: &mut MoonshineSession,
     session_id: &str,
-) -> Vec<crate::slices::stt::SttServerEvent> {
+    pause_grace_period_ms: u64,
+    finalization_timeout_ms: u64,
+) -> (Vec<crate::slices::stt::SttServerEvent>, bool) {
+    use crate::slices::stt::{SttServerEvent, STT_PROTOCOL_VERSION};
     let mut events = Vec::new();
+    let mut completed = false;
     while let Some(event) = session.poll_event() {
-        events.push(provider_event_to_server(session_id, event));
+        if matches!(event, ProviderEvent::Completed) {
+            completed = true;
+            continue;
+        }
+        if let Some(mut server_event) = provider_event_to_server(session_id, event) {
+            if let SttServerEvent::Ready {
+                pause_grace_period_ms: grace,
+                finalization_timeout_ms: timeout,
+                ..
+            } = &mut server_event
+            {
+                *grace = pause_grace_period_ms;
+                *timeout = finalization_timeout_ms;
+            }
+            // Ready must not be invented by spawn; only sidecar Ready reaches here.
+            let _ = STT_PROTOCOL_VERSION;
+            events.push(server_event);
+        }
     }
-    events
+    (events, completed || session.is_completed())
 }
 
 /// Authenticated STT WebSocket loop. Separate from the PTY terminal bridge.
@@ -522,10 +657,12 @@ pub async fn bridge_task_stt_socket(
         if let (Some(session), Some(session_id)) =
             (provider_session.as_mut(), active_session_id.as_deref())
         {
-            let events = drain_provider_events(session, session_id);
-            let drained_final = events
-                .iter()
-                .any(|event| matches!(event, SttServerEvent::Final { .. }));
+            let (events, completed) = drain_provider_events(
+                session,
+                session_id,
+                pause_grace_period_ms,
+                finalization_timeout_ms,
+            );
             for event in events {
                 if !send_stt_event(&mut socket, &event).await {
                     if let Some(mut session) = provider_session.take() {
@@ -534,23 +671,37 @@ pub async fn bridge_task_stt_socket(
                     return;
                 }
             }
-            if let Some(deadline) = finalize_deadline {
-                if drained_final || Instant::now() >= deadline {
-                    let closed_session_id = session_id.to_string();
-                    if !send_stt_event(
-                        &mut socket,
-                        &SttServerEvent::Closed {
-                            version: STT_PROTOCOL_VERSION,
-                            session_id: closed_session_id,
-                        },
-                    )
-                    .await
-                    {
-                        if let Some(mut session) = provider_session.take() {
-                            session.cancel();
-                        }
-                        return;
+            if completed {
+                let closed_session_id = session_id.to_string();
+                if !send_stt_event(
+                    &mut socket,
+                    &SttServerEvent::Closed {
+                        version: STT_PROTOCOL_VERSION,
+                        session_id: closed_session_id,
+                    },
+                )
+                .await
+                {
+                    if let Some(mut session) = provider_session.take() {
+                        session.cancel();
                     }
+                    return;
+                }
+                if let Some(mut session) = provider_session.take() {
+                    session.cancel();
+                }
+                active_session_id = None;
+                finalize_deadline = None;
+            } else if let Some(deadline) = finalize_deadline {
+                if Instant::now() >= deadline {
+                    let sid = session_id.to_string();
+                    let _ = send_stt_error(
+                        &mut socket,
+                        &sid,
+                        "finalization_timeout",
+                        "STT finalization timed out",
+                    )
+                    .await;
                     if let Some(mut session) = provider_session.take() {
                         session.cancel();
                     }
@@ -722,7 +873,7 @@ pub async fn bridge_task_stt_socket(
                     continue;
                 }
                 let started = {
-                    let provider = provider
+                    let mut provider = provider
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     provider.start_session(ProviderSessionConfig {
@@ -738,22 +889,8 @@ pub async fn bridge_task_stt_socket(
                         provider_session = Some(session);
                         active_session_id = Some(session_id.clone());
                         finalize_deadline = None;
-                        if !send_stt_event(
-                            &mut socket,
-                            &SttServerEvent::Ready {
-                                version: STT_PROTOCOL_VERSION,
-                                session_id,
-                                pause_grace_period_ms,
-                                finalization_timeout_ms,
-                            },
-                        )
-                        .await
-                        {
-                            if let Some(mut session) = provider_session.take() {
-                                session.cancel();
-                            }
-                            return;
-                        }
+                        // stt.ready is forwarded only after the sidecar emits Ready
+                        // (model loaded and audio accepted), not on process spawn.
                     }
                     Err(error) => {
                         let code = match error {
@@ -839,7 +976,7 @@ mod tests {
 
     #[test]
     fn missing_provider_command_reports_unavailable_without_panicking() {
-        let provider = MoonshineProvider::new(None, 2_000, 700);
+        let mut provider = MoonshineProvider::new(None, 2_000, 700);
 
         assert!(matches!(provider.health(), ProviderHealth::Unavailable(_)));
         assert!(matches!(
@@ -850,7 +987,7 @@ mod tests {
 
     #[test]
     fn provider_startup_failure_is_recoverable() {
-        let provider = MoonshineProvider::new(
+        let mut provider = MoonshineProvider::new(
             Some("/definitely/missing/ajax-moonshine-provider".to_string()),
             2_000,
             700,
@@ -864,7 +1001,7 @@ mod tests {
 
     #[test]
     fn push_audio_rejects_overflow_when_channel_is_full() {
-        let provider = MoonshineProvider::new(Some("cat".to_string()), 20, 700);
+        let mut provider = MoonshineProvider::new(Some("cat".to_string()), 20, 700);
         let mut session = provider.start_session(session_config()).expect("session");
         let pcm = vec![0u8; MAX_SIDECAR_AUDIO_PCM_BYTES];
         let mut overflow = false;
@@ -888,13 +1025,11 @@ mod tests {
     #[test]
     fn cancel_does_not_hang_when_the_sidecar_never_reads_stdin() {
         // `sleep` never drains stdin, so the writer thread ends up blocked inside
-        // write_all on a full pipe. Teardown must kill the child before joining it.
-        let provider = MoonshineProvider::new(Some("sleep 30".to_string()), 20, 700);
+        // write_all on a full pipe. Session cancel must not join that writer;
+        // provider shutdown kills the persistent worker to unblock it.
+        let mut provider = MoonshineProvider::new(Some("sleep 30".to_string()), 20, 700);
         let mut session = provider.start_session(session_config()).expect("session");
         let pcm = vec![0u8; MAX_SIDECAR_AUDIO_PCM_BYTES];
-        // Keep pushing past `Full` so the writer drains into the pipe until the OS
-        // pipe buffer itself fills and write_all blocks. Breaking on the first
-        // `Full` would stop after a few frames and never wedge the writer.
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
             if session.push_audio(pcm.clone()).is_err() {
@@ -912,11 +1047,12 @@ mod tests {
             done_rx.recv_timeout(Duration::from_secs(10)).is_ok(),
             "cancel() must not block on a sidecar that never reads stdin"
         );
+        provider.shutdown();
     }
 
     #[test]
     fn sidecar_exit_surfaces_one_error_then_none() {
-        let provider = MoonshineProvider::new(Some("true".to_string()), 2_000, 700);
+        let mut provider = MoonshineProvider::new(Some("true".to_string()), 2_000, 700);
         let mut session = provider.start_session(session_config()).expect("session");
         thread::sleep(Duration::from_millis(50));
         assert_eq!(
@@ -928,6 +1064,96 @@ mod tests {
         assert_eq!(session.poll_event(), None);
         assert_eq!(session.poll_event(), None);
         session.cancel();
+    }
+
+    #[test]
+    fn expected_completion_does_not_surface_sidecar_exit_error() {
+        let script = std::env::temp_dir().join(format!(
+            "ajax_stt_complete_sidecar_{}.sh",
+            std::process::id()
+        ));
+        std::fs::write(
+            &script,
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' '{\"type\":\"stt.ready\"}'\n",
+                "printf '%s\\n' '{\"type\":\"stt.completed\"}'\n",
+                // Keep stdin open briefly so the parent can finish writing the start frame.
+                "sleep 0.2\n",
+            ),
+        )
+        .expect("write script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script).expect("meta").permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script, perms).expect("chmod");
+        }
+        let mut provider =
+            MoonshineProvider::new(Some(script.to_string_lossy().into_owned()), 2_000, 700);
+        let mut session = provider.start_session(session_config()).expect("session");
+
+        let mut saw_ready = false;
+        let mut saw_completed = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline && !(saw_ready && saw_completed) {
+            match session.poll_event() {
+                Some(ProviderEvent::Ready) => saw_ready = true,
+                Some(ProviderEvent::Completed) => saw_completed = true,
+                Some(ProviderEvent::Error { message }) => {
+                    panic!("unexpected error before completion: {message}");
+                }
+                Some(other) => panic!("unexpected event: {other:?}"),
+                None => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        assert!(saw_ready, "expected stt.ready from completing sidecar");
+        assert!(
+            saw_completed,
+            "expected stt.completed from completing sidecar"
+        );
+        assert!(session.is_completed());
+
+        // Reader disconnect after completed must not become an error.
+        let drain_deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < drain_deadline {
+            match session.poll_event() {
+                Some(ProviderEvent::Error { message }) => {
+                    panic!("delayed exit must not error after completion: {message}");
+                }
+                Some(_) => {}
+                None => break,
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(session.poll_event(), None);
+        session.cancel();
+        let _ = std::fs::remove_file(&script);
+    }
+
+    #[test]
+    fn sidecar_event_lines_parse_ready_completed_final_and_speech_activity() {
+        assert_eq!(
+            parse_sidecar_event_line(br#"{"type":"stt.ready"}"#).expect("ready"),
+            ProviderEvent::Ready
+        );
+        assert_eq!(
+            parse_sidecar_event_line(br#"{"type":"stt.completed"}"#).expect("completed"),
+            ProviderEvent::Completed
+        );
+        assert_eq!(
+            parse_sidecar_event_line(br#"{"type":"stt.final","sequence":3,"text":"hello there"}"#)
+                .expect("final"),
+            ProviderEvent::Final {
+                sequence: 3,
+                text: "hello there".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_sidecar_event_line(br#"{"type":"stt.speech_started"}"#).expect("started"),
+            ProviderEvent::SpeechStarted
+        );
     }
 
     #[test]
@@ -993,31 +1219,29 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_event_lines_parse_final_and_speech_activity() {
-        assert_eq!(
-            parse_sidecar_event_line(
-                br#"{"type":"stt.final","sequence":12,"text":"Inspect the adapter."}"#,
-            )
-            .expect("final event"),
-            ProviderEvent::Final {
-                sequence: 12,
-                text: "Inspect the adapter.".to_string(),
-            }
-        );
-        assert_eq!(
-            parse_sidecar_event_line(br#"{"type":"stt.speech_started"}"#).expect("speech event"),
-            ProviderEvent::SpeechStarted
-        );
-    }
-
-    #[test]
     fn finalize_leaves_the_session_open_to_drain_final_events() {
-        let provider = MoonshineProvider::new(Some("cat".to_string()), 2_000, 700);
+        let mut provider = MoonshineProvider::new(Some("cat".to_string()), 2_000, 700);
         let mut session = provider.start_session(session_config()).expect("session");
 
         session.finalize().expect("finalize signal");
 
         assert!(!session.closed);
         session.cancel();
+    }
+
+    #[test]
+    fn second_session_reuses_the_persistent_worker_process() {
+        let mut provider = MoonshineProvider::new(Some("cat".to_string()), 2_000, 700);
+        let mut first = provider.start_session(session_config()).expect("first");
+        assert_eq!(provider.worker_spawns(), 1);
+        first.cancel();
+        let mut second = provider.start_session(session_config()).expect("second");
+        assert_eq!(
+            provider.worker_spawns(),
+            1,
+            "second session must reuse the loaded worker"
+        );
+        second.cancel();
+        provider.shutdown();
     }
 }

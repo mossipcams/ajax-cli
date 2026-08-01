@@ -25,15 +25,7 @@ import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import {
-  clearSpeechInserts,
-  prepareSpeechInsert,
-  undoPayload,
-  type SpeechInsert,
-} from "@/shared/lib/speechInsertLedger";
-import {
   createSpeechInputModel,
-  isStandalonePause,
-  isStandaloneStartOver,
   speechReducer,
   type SpeechInputModel,
 } from "@/shared/lib/speechState";
@@ -43,6 +35,7 @@ import {
   newSessionId,
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
+import TerminalComposer from "@/features/task/TerminalComposer";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 
 /**
@@ -126,12 +119,11 @@ export default function TaskTerminal({ handle }: Props) {
     createSpeechInputModel(),
   );
   const [pauseCountdownSeconds, setPauseCountdownSeconds] = useState<number | undefined>();
+  const [composerText, setComposerText] = useState("");
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
-  /** Final sequences already written to the PTY, so a resend never double-inserts. */
-  const insertedFinalsRef = useRef<Set<number>>(new Set());
-  const insertedSpeechRef = useRef<SpeechInsert[]>([]);
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
+  const appliedFinalTranscriptRef = useRef("");
 
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
@@ -322,17 +314,6 @@ export default function TaskTerminal({ handle }: Props) {
       : text;
     connectionRef.current.sendInput(payload);
     return true;
-  };
-
-  const undoInsertedSpeech = () => {
-    const records = insertedSpeechRef.current;
-    if (records.length === 0) return;
-    const payload = undoPayload(records);
-    clearSpeechInserts(records);
-    // ponytail: assumes speech only appends to the current line; en-US UTF-16 .length DEL undo.
-    if (payload && connectionRef.current?.isOpen()) {
-      connectionRef.current.sendInput(payload);
-    }
   };
 
   const termTextarea = (): HTMLTextAreaElement | null => {
@@ -678,8 +659,6 @@ export default function TaskTerminal({ handle }: Props) {
     const sessionId = speechModelRef.current.sessionId;
     speechTransportRef.current?.cancel();
     speechTransportRef.current = undefined;
-    insertedFinalsRef.current.clear();
-    clearSpeechInserts(insertedSpeechRef.current);
     if (sessionId) {
       dispatchSpeech({ type: "cancel", sessionId });
     } else {
@@ -730,8 +709,7 @@ export default function TaskTerminal({ handle }: Props) {
     }
 
     const sessionId = newSessionId();
-    insertedFinalsRef.current.clear();
-    clearSpeechInserts(insertedSpeechRef.current);
+    appliedFinalTranscriptRef.current = "";
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -742,31 +720,6 @@ export default function TaskTerminal({ handle }: Props) {
         onPartial: (sequence, text) =>
           dispatchSpeech({ type: "partial", sessionId, sequence, text }),
         onFinal: (sequence, text) => {
-          // Insert here, never inside a setState updater: StrictMode may invoke an
-          // updater twice, which would write the transcript to the PTY twice.
-          const speechState = speechModelRef.current.state;
-          const canHandleControl =
-            speechState === "listening" || speechState === "pause_pending";
-          if (isStandaloneStartOver(text)) {
-            if (canHandleControl) {
-              undoInsertedSpeech();
-              insertedFinalsRef.current.clear();
-            }
-          } else if (
-            !isStandalonePause(text) &&
-            speechState === "listening" &&
-            !insertedFinalsRef.current.has(sequence)
-          ) {
-            const bracketed = termRef.current?.modes.bracketedPasteMode ?? false;
-            const { textToPaste, record } = prepareSpeechInsert(text, {
-              hasPriorInserts: insertedSpeechRef.current.length > 0,
-              bracketed,
-            });
-            if (pasteThroughTerm(textToPaste, false)) {
-              insertedSpeechRef.current.push(record);
-              insertedFinalsRef.current.add(sequence);
-            }
-          }
           dispatchSpeech({
             type: "final",
             sessionId,
@@ -798,6 +751,14 @@ export default function TaskTerminal({ handle }: Props) {
             speechTransportRef.current = undefined;
           }
           setPauseCountdownSeconds(undefined);
+        },
+        onBackpressureWarning: (message) => {
+          // Surface via the existing status region without tearing down capture yet.
+          setSpeechModel((previous) =>
+            previous.sessionId === sessionId
+              ? { ...previous, errorMessage: message }
+              : previous,
+          );
         },
       },
       createBrowserSpeechPlatform(),
@@ -856,6 +817,51 @@ export default function TaskTerminal({ handle }: Props) {
     speechModel.pauseTimerToken,
     speechModel.sessionId,
   ]);
+
+  useEffect(() => {
+    const curr = speechModel.finalTranscript;
+    const prev = appliedFinalTranscriptRef.current;
+    if (curr === prev) return;
+    if (curr.startsWith(prev)) {
+      const added = curr.slice(prev.length).trim();
+      if (added) {
+        setComposerText((existing) => {
+          if (!existing) return added;
+          return /\s$/.test(existing) ? `${existing}${added}` : `${existing} ${added}`;
+        });
+      }
+    }
+    appliedFinalTranscriptRef.current = curr;
+  }, [speechModel.finalTranscript]);
+
+  const insertComposerTranscript = (text: string) => {
+    if (!text) return;
+    pasteThroughTerm(text, false);
+  };
+
+  const micAriaLabel = (() => {
+    switch (speechModel.state) {
+      case "connecting":
+        return "Connecting voice input";
+      case "listening":
+        return "Voice input listening";
+      case "pause_pending":
+        return pauseCountdownSeconds !== undefined
+          ? `Voice input pausing in ${pauseCountdownSeconds} seconds`
+          : "Voice input pause pending";
+      case "finalizing":
+        return "Finalizing voice input";
+      case "error":
+        return speechModel.errorMessage
+          ? `Voice input failed: ${speechModel.errorMessage}`
+          : "Voice input failed";
+      default:
+        return "Start voice input";
+    }
+  })();
+
+  const micArmed =
+    speechModel.state === "listening" || speechModel.state === "pause_pending";
 
   useEffect(() => {
     return () => {
@@ -1831,20 +1837,15 @@ export default function TaskTerminal({ handle }: Props) {
           </div>
         </div>
       ) : null}
-      <div role="status" className="terminal-speech-status">
-        {speechModel.state === "connecting" ? <span>Connecting…</span> : null}
-        {speechModel.state === "listening" ? <span>Listening</span> : null}
-        {speechModel.state === "finalizing" ? <span>Finalizing…</span> : null}
-        {speechModel.state === "pause_pending" && pauseCountdownSeconds !== undefined ? (
-          <>
-            <span>Pausing in {pauseCountdownSeconds}…</span>
-            <span>Speak to continue</span>
-          </>
-        ) : null}
-        {speechModel.state === "error" && speechModel.errorMessage ? (
-          <span>{speechModel.errorMessage}</span>
-        ) : null}
-      </div>
+      <TerminalComposer
+        value={composerText}
+        partialText={speechModel.partialTranscript}
+        state={speechModel.state}
+        onChange={setComposerText}
+        onInsert={insertComposerTranscript}
+        pauseCountdownSeconds={pauseCountdownSeconds}
+        errorMessage={speechModel.errorMessage}
+      />
       {speechModel.state !== "idle" ? (
         <div className="terminal-speech-actions">
           <button
@@ -1915,19 +1916,9 @@ export default function TaskTerminal({ handle }: Props) {
           </button>
           <button
             type="button"
-            className={`terminal-key${speechModel.state !== "idle" ? " is-armed" : ""}`}
-            aria-label={
-              speechModel.state === "listening" ||
-              speechModel.state === "pause_pending"
-                ? "Stop voice input"
-                : "Start voice input"
-            }
-            title={
-              speechModel.state === "listening" ||
-              speechModel.state === "pause_pending"
-                ? "Stop voice input"
-                : "Start voice input"
-            }
+            className={`terminal-key${micArmed ? " is-armed" : ""}`}
+            aria-label={micArmed ? "Stop voice input" : micAriaLabel}
+            title={micArmed ? "Stop voice input" : micAriaLabel}
             disabled={
               speechModel.state === "connecting" || speechModel.state === "finalizing"
             }

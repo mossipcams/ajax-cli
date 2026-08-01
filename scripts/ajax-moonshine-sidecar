@@ -1,63 +1,50 @@
 #!/usr/bin/env python3
-"""Moonshine streaming STT sidecar for `ajax web`.
+"""Persistent Moonshine v2 (Voice) STT worker for `ajax web`.
 
-Speaks the framed protocol that `crates/ajax-web/src/adapters/stt_provider.rs`
-writes to a provider's stdin, and emits newline-delimited JSON events on stdout.
+Uses moonshine-voice with ModelArch.SMALL_STREAMING by default. Speaks the
+framed protocol that `crates/ajax-web/src/adapters/stt_provider.rs` writes to
+stdin, and emits newline-delimited JSON events on stdout.
 
 stdin frames (big-endian lengths):
     start     [0][u32 len][json body]
     audio     [1][u32 sequence][u32 len][PCM16 little-endian mono]
     finalize  [2]
+    cancel    [3]
 
 stdout events (one JSON object per line):
+    {"type":"stt.ready"}
     {"type":"stt.speech_started"}
     {"type":"stt.partial","sequence":N,"text":"..."}
     {"type":"stt.final","sequence":N,"text":"..."}
     {"type":"stt.speech_ended"}
+    {"type":"stt.completed"}
 
-One process serves exactly one session; ajax spawns a fresh one per session and
-kills it on cancel. Anything written to stderr is discarded by the parent, so
-diagnostics go to AJAX_STT_LOG when set.
+One long-lived process loads the streaming model once and serves many
+recognition sessions. Cancel/finalize end a session without exiting the worker.
+Ajax kills the process only on provider shutdown. Diagnostics go to AJAX_STT_LOG.
 
-Requires: pip install useful-moonshine-onnx numpy
+Requires: pip install moonshine-voice numpy
+Does not use legacy useful-moonshine-onnx / moonshine/tiny.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import queue
 import struct
 import sys
+import threading
 import time
+from dataclasses import dataclass
 
 FRAME_START = 0
 FRAME_AUDIO = 1
 FRAME_FINALIZE = 2
+FRAME_CANCEL = 3
 
 SAMPLE_WIDTH = 2
-# Speech gate. Moonshine has no built-in VAD, so gate on short-window RMS and let
-# ajax's phraseEndSilenceMs decide when a phrase has ended.
-# ponytail: RMS gate, swap for webrtcvad/silero if noisy rooms cause false starts.
-SPEECH_RMS = 0.012
-# Re-decode at most this often while speech continues, so partials stay cheap.
-PARTIAL_INTERVAL_S = 0.45
-# Refuse to grow a single phrase past this; Moonshine targets short utterances.
-MAX_PHRASE_S = 30.0
-
-
-def _looks_degenerate(text: str) -> bool:
-    """True for ASR repetition loops such as "no, no, no, ..." repeated 100x.
-
-    These transcripts are typed straight into a live shell, so a degenerate
-    decode is worse than dropping the phrase and letting the speaker repeat it.
-    """
-    words = [word for word in text.lower().replace(",", " ").split() if word]
-    # A real loop is ~100% one token; 60% over 12+ words catches it with plenty of
-    # headroom while leaving naturally repetitive dictation alone.
-    if len(words) < 12:
-        return False
-    most_common = max(set(words), key=words.count)
-    return words.count(most_common) * 10 >= len(words) * 6
+AUDIO_QUEUE_MAX = 100
 
 
 def _log(message: str) -> None:
@@ -77,7 +64,6 @@ def _emit(event: dict) -> None:
 
 
 def _read_exactly(stream, count: int) -> bytes | None:
-    """Read exactly `count` bytes, or return None at clean end of stream."""
     chunks = []
     remaining = count
     while remaining > 0:
@@ -90,13 +76,12 @@ def _read_exactly(stream, count: int) -> bytes | None:
 
 
 def _read_frame(stream):
-    """Yield (kind, sequence, payload) or None at end of stream."""
     kind_byte = _read_exactly(stream, 1)
     if kind_byte is None:
         return None
     kind = kind_byte[0]
 
-    if kind == FRAME_FINALIZE:
+    if kind in (FRAME_FINALIZE, FRAME_CANCEL):
         return (kind, None, b"")
 
     if kind == FRAME_START:
@@ -122,6 +107,95 @@ def _read_frame(stream):
     raise ValueError(f"unknown sidecar frame kind {kind}")
 
 
+@dataclass
+class _SessionConfig:
+    sample_rate: int = 16_000
+    phrase_end_silence_s: float = 0.7
+
+
+class _SessionState:
+    def __init__(self) -> None:
+        self.active = False
+        self.config = _SessionConfig()
+        self.next_sequence = 0
+        self.speaking = False
+        self.last_partial = ""
+        self.lock = threading.Lock()
+
+
+def _resolve_streaming_arch(ModelArch, raw: str):
+    """Map AJAX_STT_MODEL to a Moonshine v2 streaming architecture only."""
+    key = (raw or "SMALL_STREAMING").strip().upper().replace("-", "_")
+    legacy = {
+        "TINY",
+        "BASE",
+        "MOONSHINE/TINY",
+        "MOONSHINE/BASE",
+        "MOONSHINE_TINY",
+        "MOONSHINE_BASE",
+    }
+    if key in legacy or key.startswith("MOONSHINE/"):
+        raise RuntimeError(
+            f"legacy Moonshine model {raw!r} is not supported; "
+            "use Moonshine v2 streaming: SMALL_STREAMING (default), "
+            "TINY_STREAMING, BASE_STREAMING, or MEDIUM_STREAMING"
+        )
+    mapping = {
+        "TINY_STREAMING": ModelArch.TINY_STREAMING,
+        "BASE_STREAMING": ModelArch.BASE_STREAMING,
+        "SMALL_STREAMING": ModelArch.SMALL_STREAMING,
+        "MEDIUM_STREAMING": ModelArch.MEDIUM_STREAMING,
+        "SMALL": ModelArch.SMALL_STREAMING,
+        "MEDIUM": ModelArch.MEDIUM_STREAMING,
+    }
+    if key not in mapping:
+        raise RuntimeError(
+            f"unknown AJAX_STT_MODEL {raw!r}; expected a Moonshine v2 streaming "
+            "arch (default SMALL_STREAMING)"
+        )
+    return mapping[key]
+
+
+def _load_stream():
+    from moonshine_voice import ModelArch, Transcriber, get_model_for_language
+    from moonshine_voice.transcriber import (
+        LineCompleted,
+        LineStarted,
+        LineTextChanged,
+    )
+
+    model_arch = _resolve_streaming_arch(
+        ModelArch, os.environ.get("AJAX_STT_MODEL", "SMALL_STREAMING")
+    )
+    language = os.environ.get("AJAX_STT_LANGUAGE", "en")
+    model_path, resolved_arch = get_model_for_language(language, model_arch)
+    if resolved_arch not in (
+        ModelArch.TINY_STREAMING,
+        ModelArch.BASE_STREAMING,
+        ModelArch.SMALL_STREAMING,
+        ModelArch.MEDIUM_STREAMING,
+    ):
+        raise RuntimeError(
+            f"resolved non-streaming Moonshine arch {resolved_arch!r}; "
+            "Ajax requires Moonshine v2 streaming models"
+        )
+    _log(f"loading Moonshine v2 {resolved_arch} from {model_path}")
+    transcriber = Transcriber(
+        model_path=str(model_path),
+        model_arch=resolved_arch,
+        update_interval=0.35,
+    )
+    stream = transcriber.create_stream(update_interval=0.35)
+    return (
+        transcriber,
+        stream,
+        LineStarted,
+        LineTextChanged,
+        LineCompleted,
+        Transcriber.MOONSHINE_FLAG_FORCE_UPDATE,
+    )
+
+
 def main() -> int:
     try:
         import numpy as np
@@ -131,52 +205,116 @@ def main() -> int:
         return 2
 
     try:
-        from moonshine_onnx import MoonshineOnnxModel, load_tokenizer
-    except ImportError:
-        _log("useful-moonshine-onnx missing")
-        print(
-            "ajax-moonshine-sidecar: pip install useful-moonshine-onnx",
-            file=sys.stderr,
-        )
+        (
+            transcriber,
+            stream,
+            LineStarted,
+            LineTextChanged,
+            LineCompleted,
+            force_update_flag,
+        ) = _load_stream()
+    except Exception as error:  # noqa: BLE001 — surface startup failure to parent
+        _log(f"model load failed: {error}")
+        print(f"ajax-moonshine-sidecar: model load failed: {error}", file=sys.stderr)
         return 2
 
-    model_name = os.environ.get("AJAX_STT_MODEL", "moonshine/tiny")
-    model = MoonshineOnnxModel(model_name=model_name)
-    tokenizer = load_tokenizer()
-    _log(f"loaded {model_name}")
+    session = _SessionState()
+    audio_q: queue.Queue[bytes | None] = queue.Queue(maxsize=AUDIO_QUEUE_MAX)
+    stop_worker = threading.Event()
+
+    def on_transcript_event(event) -> None:
+        with session.lock:
+            if not session.active:
+                return
+            line = getattr(event, "line", None)
+            text = (getattr(line, "text", None) or "").strip() if line is not None else ""
+            if isinstance(event, LineStarted):
+                if not session.speaking:
+                    session.speaking = True
+                    _emit({"type": "stt.speech_started"})
+                return
+            if isinstance(event, LineTextChanged):
+                if text and text != session.last_partial:
+                    session.last_partial = text
+                    _emit(
+                        {
+                            "type": "stt.partial",
+                            "sequence": session.next_sequence,
+                            "text": text,
+                        }
+                    )
+                return
+            if isinstance(event, LineCompleted):
+                if text:
+                    _emit(
+                        {
+                            "type": "stt.final",
+                            "sequence": session.next_sequence,
+                            "text": text,
+                        }
+                    )
+                    session.next_sequence += 1
+                session.last_partial = ""
+                if session.speaking:
+                    _emit({"type": "stt.speech_ended"})
+                    session.speaking = False
+
+    def listener(event) -> None:
+        try:
+            on_transcript_event(event)
+        except Exception as error:  # noqa: BLE001
+            _log(f"listener error: {error}")
+
+    stream.add_listener(listener)
+    stream.start()
+    _log("Moonshine v2 worker model ready")
+
+    def ingest_loop() -> None:
+        """Drain PCM into the streaming transcriber without blocking stdin reads."""
+        while not stop_worker.is_set():
+            try:
+                item = audio_q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if item is None:
+                continue
+            with session.lock:
+                if not session.active:
+                    continue
+                rate = session.config.sample_rate
+            try:
+                pcm = np.frombuffer(item, dtype="<i2").astype(np.float32) / 32768.0
+                if pcm.size == 0:
+                    continue
+                stream.add_audio(pcm.tolist(), sample_rate=rate)
+            except Exception as error:  # noqa: BLE001
+                _log(f"add_audio failed: {error}")
+
+    ingest_thread = threading.Thread(target=ingest_loop, name="stt-ingest", daemon=True)
+    ingest_thread.start()
 
     stdin = sys.stdin.buffer
-    sample_rate = 16_000
-    phrase_end_silence_s = 0.7
 
-    phrase = np.zeros(0, dtype=np.float32)
-    speaking = False
-    silence_started: float | None = None
-    last_partial = 0.0
-    last_text = ""
-    next_sequence = 0
-
-    def transcribe(audio) -> str:
-        if audio.size == 0:
-            return ""
-        tokens = model.generate(audio[np.newaxis, :].astype(np.float32))
-        text = tokenizer.decode_batch(tokens)[0].strip()
-        if _looks_degenerate(text):
-            _log(f"dropped degenerate decode: {text[:80]!r}")
-            return ""
-        return text
-
-    def flush_final() -> None:
-        nonlocal phrase, speaking, silence_started, last_text, next_sequence
-        text = transcribe(phrase)
-        if text:
-            _emit({"type": "stt.final", "sequence": next_sequence, "text": text})
-            next_sequence += 1
-        _emit({"type": "stt.speech_ended"})
-        phrase = np.zeros(0, dtype=np.float32)
-        speaking = False
-        silence_started = None
-        last_text = ""
+    def end_session(*, completed: bool) -> None:
+        with session.lock:
+            was_active = session.active
+            session.active = False
+            speaking = session.speaking
+            session.speaking = False
+            session.last_partial = ""
+        while True:
+            try:
+                audio_q.get_nowait()
+            except queue.Empty:
+                break
+        if was_active and speaking:
+            _emit({"type": "stt.speech_ended"})
+        try:
+            stream.update_transcription(force_update_flag)
+        except Exception as error:  # noqa: BLE001
+            _log(f"force update failed: {error}")
+        if completed:
+            _emit({"type": "stt.completed"})
 
     while True:
         try:
@@ -187,66 +325,70 @@ def main() -> int:
         if frame is None:
             break
 
-        kind, sequence, payload = frame
+        kind, _sequence, payload = frame
 
         if kind == FRAME_START:
             try:
                 config = json.loads(payload or b"{}")
             except json.JSONDecodeError:
                 config = {}
-            sample_rate = int(config.get("sampleRate") or 16_000)
-            phrase_end_silence_s = float(config.get("phraseEndSilenceMs") or 700) / 1000.0
-            _log(f"start rate={sample_rate} silence={phrase_end_silence_s}s")
+            with session.lock:
+                session.active = True
+                session.next_sequence = 0
+                session.speaking = False
+                session.last_partial = ""
+                session.config = _SessionConfig(
+                    sample_rate=int(config.get("sampleRate") or 16_000),
+                    phrase_end_silence_s=float(config.get("phraseEndSilenceMs") or 700)
+                    / 1000.0,
+                )
+            _log(
+                f"session start rate={session.config.sample_rate} "
+                f"silence={session.config.phrase_end_silence_s}s"
+            )
+            _emit({"type": "stt.ready"})
+            continue
+
+        if kind == FRAME_CANCEL:
+            end_session(completed=False)
             continue
 
         if kind == FRAME_FINALIZE:
-            if speaking:
-                flush_final()
-            break
+            end_session(completed=True)
+            continue
 
-        # FRAME_AUDIO
         if not payload:
             continue
         usable = len(payload) - (len(payload) % SAMPLE_WIDTH)
-        block = np.frombuffer(payload[:usable], dtype="<i2").astype(np.float32) / 32768.0
-        if block.size == 0:
+        chunk = payload[:usable]
+        if not chunk:
             continue
-
-        now = time.monotonic()
-        loud = float(np.sqrt(np.mean(block * block))) >= SPEECH_RMS
-
-        if loud:
-            if not speaking:
-                speaking = True
-                last_partial = now
-                _emit({"type": "stt.speech_started"})
-            silence_started = None
-            phrase = np.concatenate((phrase, block))
-        elif speaking:
-            # Keep trailing silence: it carries word endings Moonshine needs.
-            phrase = np.concatenate((phrase, block))
-            if silence_started is None:
-                silence_started = now
-
-        if not speaking:
+        with session.lock:
+            active = session.active
+        if not active:
             continue
+        try:
+            audio_q.put_nowait(chunk)
+        except queue.Full:
+            _log("audio queue full; dropping frame (backpressure)")
 
-        if phrase.size >= int(MAX_PHRASE_S * sample_rate):
-            flush_final()
-            continue
-
-        ended = silence_started is not None and (now - silence_started) >= phrase_end_silence_s
-        if ended:
-            flush_final()
-            continue
-
-        if now - last_partial >= PARTIAL_INTERVAL_S:
-            last_partial = now
-            text = transcribe(phrase)
-            if text and text != last_text:
-                last_text = text
-                _emit({"type": "stt.partial", "sequence": next_sequence, "text": text})
-
+    stop_worker.set()
+    try:
+        stream.stop()
+    except Exception as error:  # noqa: BLE001
+        _log(f"stream stop: {error}")
+    try:
+        stream.close()
+    except Exception:
+        pass
+    try:
+        transcriber.stop()
+    except Exception:
+        pass
+    try:
+        transcriber.close()
+    except Exception:
+        pass
     return 0
 
 
