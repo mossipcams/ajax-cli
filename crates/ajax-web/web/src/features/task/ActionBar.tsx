@@ -100,8 +100,11 @@ export default function ActionBar({
       if (result.ok) {
         onResult?.(`${action.label} completed`, result.response.output, false);
         // Drop removes the task; refreshing this detail would 404. Leave instead.
-        if (action.action === "drop") onDismiss?.();
-        else onMutated?.();
+        // If we unmounted during the undo window (operator switched tasks), commit
+        // the Drop but do not navigate — the new task view is already active.
+        if (action.action === "drop") {
+          if (mountedRef.current) onDismiss?.();
+        } else onMutated?.();
       } else {
         onResult?.(
           result.error?.message ?? "Action failed",

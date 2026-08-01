@@ -658,8 +658,9 @@ desktop. From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
-navigates with a one-shot CSS enter on the destination outlet; button and
-bottom-nav navigations stay instant.
+navigates with a one-shot CSS enter on the destination outlet; swipe-parallel
+button Back navigations use the same exit+enter contract; other chrome
+navigations may stay instant.
 Diff Review must not steal terminal horizontal pans. The browser submits only an
 Ajax task handle; `ajax-web` resolves that handle to the registered
 `tmux_session` and attaches to the fixed ` task window` target. The browser
