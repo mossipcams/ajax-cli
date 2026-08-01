@@ -476,9 +476,19 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 });
 
 describe("TaskTerminal speech input", () => {
-  it("uses the existing composer and one visible Mic shortcut after Paste", () => {
-    expect(taskTerminalSource).toMatch(/TerminalComposer/);
+  it("auto-inserts transcripts with no staging composer, and one Mic shortcut after Paste", () => {
+    // Transcripts go straight to the PTY; there is no textarea to review them in.
+    // The clipboard-fallback textareas stay; only the speech staging box is gone.
+    expect(taskTerminalSource).not.toMatch(/TerminalComposer/);
+    expect(taskTerminalSource).not.toMatch(/terminal-composer/);
     expect(taskTerminalSource).toMatch(/createSpeechTransport/);
+
+    // The insert must sit in onFinal, never inside a setState updater, or
+    // StrictMode's double-invoke would write the transcript to the PTY twice.
+    const onFinal = taskTerminalSource.match(/onFinal:[\s\S]*?\n {8}\},/)?.[0] ?? "";
+    expect(onFinal).toMatch(/isStandalonePause\(text\)/);
+    expect(onFinal).toMatch(/insertedFinalsRef\.current\.has\(sequence\)/);
+    expect(onFinal).toMatch(/pasteThroughTerm\(text, false\)/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
     const mic = taskTerminalSource.indexOf(">\n            Mic");

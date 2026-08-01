@@ -1660,41 +1660,15 @@ header .bar h1 {
   vertical-align: middle;
 }
 
-.terminal-composer {
+.terminal-speech-status {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px 4px;
-  border-top: 1px solid var(--rule);
-  background: var(--paper);
-}
-
-.terminal-composer-input {
-  width: 100%;
-  min-height: 2.75rem;
-  resize: vertical;
-  padding: 6px 8px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--paper-raised);
-  color: var(--ink);
-  font: inherit;
-}
-
-.terminal-composer-partial {
-  min-height: 1.1em;
-  color: var(--ink-muted, color-mix(in srgb, var(--ink) 55%, transparent));
-  font-style: italic;
-  font-size: var(--text-label);
-}
-
-.terminal-composer-status {
-  min-height: 1.1em;
+  gap: 8px;
+  padding: 4px 8px 0;
   color: var(--ink);
   font-size: var(--text-label);
 }
 
-.terminal-composer-status:empty {
+.terminal-speech-status:empty {
   display: none;
 }
 
@@ -1767,10 +1741,6 @@ header .bar h1 {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: clip;
-  }
-
-  .terminal-composer-input {
-    font-size: 16px; /* avoid iOS focus zoom */
   }
 
   html.keyboard-open .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {

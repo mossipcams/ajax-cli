@@ -26,6 +26,7 @@ import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import {
   createSpeechInputModel,
+  isStandalonePause,
   speechReducer,
   type SpeechInputModel,
 } from "@/shared/lib/speechState";
@@ -36,7 +37,6 @@ import {
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
-import TerminalComposer from "./TerminalComposer";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -118,10 +118,10 @@ export default function TaskTerminal({ handle }: Props) {
   const [speechModel, setSpeechModel] = useState<SpeechInputModel>(() =>
     createSpeechInputModel(),
   );
-  const [composerValue, setComposerValue] = useState("");
   const [pauseCountdownSeconds, setPauseCountdownSeconds] = useState<number | undefined>();
   const speechTransportRef = useRef<SpeechTransport | undefined>(undefined);
-  const speechPrefixRef = useRef("");
+  /** Final sequences already written to the PTY, so a resend never double-inserts. */
+  const insertedFinalsRef = useRef<Set<number>>(new Set());
   const speechModelRef = useRef(speechModel);
   speechModelRef.current = speechModel;
 
@@ -651,33 +651,15 @@ export default function TaskTerminal({ handle }: Props) {
     closePasteFallback();
   };
 
-  const joinComposerTranscript = (base: string, addition: string): string => {
-    if (!addition) return base;
-    if (!base) return addition;
-    if (/\s$/.test(base) || /^\s/.test(addition) || /^[.,!?;:]/.test(addition)) {
-      return base + addition;
-    }
-    return `${base} ${addition}`;
-  };
-
   const dispatchSpeech = (action: Parameters<typeof speechReducer>[1]) => {
-    setSpeechModel((previous) => {
-      const next = speechReducer(previous, action);
-      if (
-        action.type === "final" &&
-        next.finalTranscript !== previous.finalTranscript &&
-        next.state === "listening"
-      ) {
-        setComposerValue(joinComposerTranscript(speechPrefixRef.current, next.finalTranscript));
-      }
-      return next;
-    });
+    setSpeechModel((previous) => speechReducer(previous, action));
   };
 
   const cancelSpeechInput = () => {
     const sessionId = speechModelRef.current.sessionId;
     speechTransportRef.current?.cancel();
     speechTransportRef.current = undefined;
+    insertedFinalsRef.current.clear();
     if (sessionId) {
       dispatchSpeech({ type: "cancel", sessionId });
     } else {
@@ -702,7 +684,7 @@ export default function TaskTerminal({ handle }: Props) {
     }
 
     const sessionId = newSessionId();
-    speechPrefixRef.current = composerValue;
+    insertedFinalsRef.current.clear();
     dispatchSpeech({ type: "start", sessionId });
 
     const transport = createSpeechTransport(
@@ -712,14 +694,21 @@ export default function TaskTerminal({ handle }: Props) {
           dispatchSpeech({ type: "provider_ready", sessionId, pauseGracePeriodMs }),
         onPartial: (sequence, text) =>
           dispatchSpeech({ type: "partial", sessionId, sequence, text }),
-        onFinal: (sequence, text) =>
+        onFinal: (sequence, text) => {
+          // Insert here, never inside a setState updater: StrictMode may invoke an
+          // updater twice, which would write the transcript to the PTY twice.
+          if (!isStandalonePause(text) && !insertedFinalsRef.current.has(sequence)) {
+            insertedFinalsRef.current.add(sequence);
+            pasteThroughTerm(text, false);
+          }
           dispatchSpeech({
             type: "final",
             sessionId,
             sequence,
             text,
             nowMs: performance.now(),
-          }),
+          });
+        },
         onSpeechStarted: () => dispatchSpeech({ type: "speech_started", sessionId }),
         onSpeechEnded: () => {},
         onError: (message) => dispatchSpeech({ type: "error", sessionId, message }),
@@ -752,11 +741,6 @@ export default function TaskTerminal({ handle }: Props) {
     void transport.start().catch(() => {
       // Errors surface through onError / reducer.
     });
-  };
-
-  const insertComposerTranscript = (value: string) => {
-    if (!value) return;
-    pasteThroughTerm(value, true);
   };
 
   useEffect(() => {
@@ -1761,17 +1745,20 @@ export default function TaskTerminal({ handle }: Props) {
           </div>
         </div>
       ) : null}
-      <TerminalComposer
-        value={composerValue}
-        partialText={speechModel.partialTranscript}
-        state={speechModel.state}
-        pauseCountdownSeconds={
-          speechModel.state === "pause_pending" ? pauseCountdownSeconds : undefined
-        }
-        errorMessage={speechModel.errorMessage}
-        onChange={setComposerValue}
-        onInsert={insertComposerTranscript}
-      />
+      <div role="status" className="terminal-speech-status">
+        {speechModel.state === "connecting" ? <span>Connecting…</span> : null}
+        {speechModel.state === "listening" ? <span>Listening</span> : null}
+        {speechModel.state === "finalizing" ? <span>Finalizing…</span> : null}
+        {speechModel.state === "pause_pending" && pauseCountdownSeconds !== undefined ? (
+          <>
+            <span>Pausing in {pauseCountdownSeconds}…</span>
+            <span>Speak to continue</span>
+          </>
+        ) : null}
+        {speechModel.state === "error" && speechModel.errorMessage ? (
+          <span>{speechModel.errorMessage}</span>
+        ) : null}
+      </div>
       {speechModel.state !== "idle" ? (
         <div className="terminal-speech-actions">
           <button
