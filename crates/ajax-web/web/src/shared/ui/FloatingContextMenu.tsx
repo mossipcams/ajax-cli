@@ -90,7 +90,7 @@ function toVirtualElement(anchor: FloatingContextMenuAnchor): VirtualElement {
 }
 
 /** Ignore scroll-dismiss briefly after open so opening tap scroll does not close the menu. */
-const SCROLL_DISMISS_GRACE_MS = 400;
+const SCROLL_DISMISS_GRACE_MS = 800;
 
 export function FloatingContextMenu({
   open,
@@ -115,6 +115,7 @@ export function FloatingContextMenu({
       if (!nextOpen) onClose();
     },
     placement: "bottom-start",
+    strategy: "fixed",
     middleware: [offset(8), flip(), shift({ padding: shiftPadding })],
     whileElementsMounted: autoUpdate,
   });

@@ -1208,6 +1208,8 @@ export default function TaskTerminal({ handle }: Props) {
       );
       if (hit) {
         setLinkMenu({ url: hit.url, x: event.clientX, y: event.clientY });
+        // Keep keyboard closed so fixed menu stays on-band / tappable.
+        if (!isKeyboardOpen()) termTextarea()?.blur();
         return;
       }
 
@@ -1461,6 +1463,7 @@ export default function TaskTerminal({ handle }: Props) {
     terminalAddons = attachTerminalAddons(liveTerm, {
       onLinkActivate: ({ url, clientX, clientY }) => {
         setLinkMenu({ url, x: clientX, y: clientY });
+        if (!isKeyboardOpen()) termTextarea()?.blur();
       },
     });
     linkServiceRef.current = terminalAddons.linkService;
