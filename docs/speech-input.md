@@ -182,16 +182,19 @@ Practical behavior on Safari and on an optional Home Screen installed shell:
 ## Normal use and transcript safety
 
 1. Tap **Mic** once to start (one active session at a time).
-2. Dictate through ordinary pauses; phrase boundaries finalize segments without
+2. Tap **Mic** again while listening or during the spoken **pause** grace
+   period to finalize the session and release the microphone, keeping
+   already-inserted terminal text. **Cancel voice** still abandons the session.
+3. Dictate through ordinary pauses; phrase boundaries finalize segments without
    stopping capture. Each finalized segment is auto-inserted into the active
    shell line through the same paste/PTY input path used for manual paste.
-3. Say standalone **`pause`** (normalized `pause`, `Pause.`, `PAUSE`) to enter a
+4. Say standalone **`pause`** (normalized `pause`, `Pause.`, `PAUSE`) to enter a
    nine-second grace period. **Speak to continue** cancels the timer; if it
    expires, the session finalizes and releases the mic.
-4. Say standalone **`start over`** (normalized `start over`, `Start over.`,
+5. Say standalone **`start over`** (normalized `start over`, `Start over.`,
    `START OVER`) to delete everything dictated in the current mic session from
    the terminal. The session keeps listening so you can dictate again.
-5. Edit or press Enter from the terminal as you normally would.
+6. Edit or press Enter from the terminal as you normally would.
 
 Ajax does **not** auto-press Enter or execute commands on your behalf. Existing
 keyboard Ctrl+C and tmux behavior are unchanged.

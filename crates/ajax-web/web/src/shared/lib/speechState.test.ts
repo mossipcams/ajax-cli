@@ -226,6 +226,52 @@ describe("speech state", () => {
     ).toBe(resumed);
   });
 
+  it("finalizes on request_stop from listening or pause_pending", () => {
+    const listening = startListening();
+    const fromListening = speechReducer(listening, {
+      type: "request_stop",
+      sessionId: "session-1",
+    });
+    expect(fromListening.state).toBe("finalizing");
+    expect(fromListening.pauseDeadlineMs).toBeUndefined();
+    expect(fromListening.pauseTimerToken).toBeUndefined();
+
+    const paused = speechReducer(listening, {
+      type: "final",
+      sessionId: "session-1",
+      sequence: 1,
+      text: "pause",
+      nowMs: 1000,
+    });
+    const fromPaused = speechReducer(paused, {
+      type: "request_stop",
+      sessionId: "session-1",
+    });
+    expect(fromPaused.state).toBe("finalizing");
+    expect(fromPaused.pauseDeadlineMs).toBeUndefined();
+    expect(fromPaused.pauseTimerToken).toBeUndefined();
+  });
+
+  it("ignores request_stop from other states or stale sessions", () => {
+    const listening = startListening("session-2");
+    expect(
+      speechReducer(listening, { type: "request_stop", sessionId: "session-1" }),
+    ).toBe(listening);
+    expect(
+      speechReducer(createSpeechInputModel(), {
+        type: "request_stop",
+        sessionId: "session-1",
+      }),
+    ).toEqual(createSpeechInputModel());
+    const connecting = speechReducer(createSpeechInputModel(), {
+      type: "start",
+      sessionId: "session-1",
+    });
+    expect(
+      speechReducer(connecting, { type: "request_stop", sessionId: "session-1" }),
+    ).toBe(connecting);
+  });
+
   it("finalizes only after the active pause timer and preserves finals on cancel", () => {
     const paused = speechReducer(startListening(), {
       type: "final",

@@ -41,6 +41,7 @@ export type SpeechAction =
     }
   | { type: "speech_started"; sessionId: string }
   | { type: "pause_elapsed"; sessionId: string; timerToken: number }
+  | { type: "request_stop"; sessionId: string }
   | { type: "finalization_complete"; sessionId: string }
   | { type: "cancel"; sessionId: string }
   | { type: "error"; sessionId: string; message: string };
@@ -192,6 +193,20 @@ export function speechReducer(
         ...model,
         state: "finalizing",
         pauseDeadlineMs: undefined,
+      };
+
+    case "request_stop":
+      if (
+        !isActiveSession(model, action.sessionId) ||
+        (model.state !== "listening" && model.state !== "pause_pending")
+      ) {
+        return model;
+      }
+      return {
+        ...model,
+        state: "finalizing",
+        pauseDeadlineMs: undefined,
+        pauseTimerToken: undefined,
       };
 
     case "finalization_complete":

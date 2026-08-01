@@ -688,6 +688,32 @@ export default function TaskTerminal({ handle }: Props) {
     setPauseCountdownSeconds(undefined);
   };
 
+  const finalizeMic = () => {
+    const current = speechModelRef.current;
+    if (
+      current.state !== "listening" &&
+      current.state !== "pause_pending"
+    ) {
+      return;
+    }
+    const sessionId = current.sessionId;
+    if (!sessionId) {
+      return;
+    }
+
+    setPauseCountdownSeconds(undefined);
+    setSpeechModel((previous) => {
+      const next = speechReducer(previous, {
+        type: "request_stop",
+        sessionId,
+      });
+      if (next.state === "finalizing" && previous.state !== "finalizing") {
+        speechTransportRef.current?.stop();
+      }
+      return next;
+    });
+  };
+
   const activateMic = () => {
     if (
       !(
@@ -781,6 +807,15 @@ export default function TaskTerminal({ handle }: Props) {
     void transport.start().catch(() => {
       // Errors surface through onError / reducer.
     });
+  };
+
+  const toggleMic = () => {
+    const state = speechModelRef.current.state;
+    if (state === "listening" || state === "pause_pending") {
+      finalizeMic();
+    } else {
+      activateMic();
+    }
   };
 
   useEffect(() => {
@@ -1881,15 +1916,25 @@ export default function TaskTerminal({ handle }: Props) {
           <button
             type="button"
             className={`terminal-key${speechModel.state !== "idle" ? " is-armed" : ""}`}
-            aria-label="Start voice input"
-            title="Start voice input"
+            aria-label={
+              speechModel.state === "listening" ||
+              speechModel.state === "pause_pending"
+                ? "Stop voice input"
+                : "Start voice input"
+            }
+            title={
+              speechModel.state === "listening" ||
+              speechModel.state === "pause_pending"
+                ? "Stop voice input"
+                : "Start voice input"
+            }
             disabled={
               speechModel.state === "connecting" || speechModel.state === "finalizing"
             }
             onPointerDown={onToolbarPointerDown}
             onClick={(event) => {
               const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-              activateMic();
+              toggleMic();
               refocusTermIfOwned(ownedFocus);
             }}>
             Mic

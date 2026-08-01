@@ -523,7 +523,11 @@ describe("TaskTerminal speech input", () => {
     const mic = taskTerminalSource.indexOf(">\n            Mic");
     expect(paste).toBeGreaterThan(-1);
     expect(mic).toBeGreaterThan(paste);
-    expect(taskTerminalSource).toMatch(/aria-label=["']Start voice input["']/);
+    expect(taskTerminalSource).toMatch(/Start voice input/);
+    expect(taskTerminalSource).toMatch(/Stop voice input/);
+    expect(taskTerminalSource).toMatch(/toggleMic\s*\(\s*\)/);
+    expect(taskTerminalSource).toMatch(/request_stop/);
+    expect(taskTerminalSource).toMatch(/speechTransportRef\.current\?\.stop\(\)/);
   });
 
   it("removes only the visible toolbar Ctrl+C entry and keeps the Ctrl path", () => {
@@ -542,7 +546,7 @@ describe("TaskTerminal speech input", () => {
 
   it("allows a recoverable error to retry voice input", () => {
     expect(taskTerminalSource).toMatch(/speechModelRef\.current\.state\s*===\s*["']error["']/);
-    expect(taskTerminalSource).toMatch(/activateMic\s*\(\s*\)/);
+    expect(taskTerminalSource).toMatch(/toggleMic\s*\(\s*\)/);
   });
 
   it("surfaces an unexpected STT socket close as a recoverable error", () => {

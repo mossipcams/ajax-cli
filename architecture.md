@@ -900,6 +900,9 @@ styles. It exposes an accessible label and tooltip, remains visible on the
 primary phone layout, shows active/connecting/finalizing/error state without
 becoming icon-only, prevents duplicate activation, and associates the
 `Pausing in N… Speak to continue` countdown with the Mic button and terminal.
+A second Mic tap while listening or pause-pending finalizes the session and
+releases the microphone, keeping already-inserted terminal text; **Cancel
+voice** remains the abandon path.
 
 Microphone capture starts only from the Mic user gesture. The implementation
 handles permission denial, absent hardware, audio-route interruption,
