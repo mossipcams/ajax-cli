@@ -2990,8 +2990,8 @@ test("seeded open stays hidden until output after the seed settles, then lands a
   // arrives in a later frame. Revealing between the two is what made the
   // terminal visibly scroll a screenful on load.
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
-  // Stay under SEED_REVEAL_QUIET_MS (48) so the mid-gap assert still sees pending.
-  await page.waitForTimeout(24);
+  // Stay under SEED_REVEAL_QUIET_MS (120) so the mid-gap assert still sees pending.
+  await page.waitForTimeout(80);
   await expect(surface).toHaveClass(/is-seed-pending/);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
