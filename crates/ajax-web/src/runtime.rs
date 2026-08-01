@@ -1257,24 +1257,35 @@ where
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
         return gate_rejection_response(rejection, Some(&request_id), &task_key, "task start");
     }
-    let _lane = state.control_lane.lock().await;
-    let response = state.run_optimistic(
-        Some(&request_id),
-        "cockpit state changed while task start was running",
-        |context, runner, bridge| {
-            let result = match bridge.execute_start_task(request, context, runner) {
-                Ok(outcome) => operation_success_response(outcome, context),
-                Err(error) => operation_error_response(error, context),
-            };
-            match result {
-                Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
-                Err(error) => response_from_web_error(error, Some(&request_id)),
-            }
-        },
-    );
-    state
-        .operations()
-        .finish(Some(&request_id), &task_key, &response);
+    let error_request_id = request_id.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        let response = state.run_optimistic(
+            Some(&request_id),
+            "cockpit state changed while task start was running",
+            |context, runner, bridge| {
+                let result = match bridge.execute_start_task(request, context, runner) {
+                    Ok(outcome) => operation_success_response(outcome, context),
+                    Err(error) => operation_error_response(error, context),
+                };
+                match result {
+                    Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
+                    Err(error) => response_from_web_error(error, Some(&request_id)),
+                }
+            },
+        );
+        state
+            .operations()
+            .finish(Some(&request_id), &task_key, &response);
+        response
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("task start worker failed: {error}")),
+            Some(&error_request_id),
+        )
+    });
     response.into_axum_response()
 }
 
@@ -1355,26 +1366,40 @@ where
         "operate begin"
     );
 
-    let _lane = state.control_lane.lock().await;
-    let response = state.run_optimistic(
-        request_id.as_deref(),
-        "cockpit state changed while operation was running",
-        |context, runner, bridge| match handle_action_request(request, context, runner, bridge) {
-            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-            Err(error) => response_from_web_error(error, request_id.as_deref()),
-        },
-    );
-
-    state
-        .operations()
-        .finish(request_id.as_deref(), &task_key, &response);
+    let log_request_id = request_id.clone();
+    let log_task_key = task_key.clone();
+    let log_action = action.clone();
+    let error_request_id = request_id.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        let response = state.run_optimistic(
+            request_id.as_deref(),
+            "cockpit state changed while operation was running",
+            |context, runner, bridge| match handle_action_request(request, context, runner, bridge)
+            {
+                Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+                Err(error) => response_from_web_error(error, request_id.as_deref()),
+            },
+        );
+        state
+            .operations()
+            .finish(request_id.as_deref(), &task_key, &response);
+        response
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("operation worker failed: {error}")),
+            error_request_id.as_deref(),
+        )
+    });
 
     if response.status_code >= 400 {
         tracing::warn!(
             target: "ajax_web",
-            request_id = ?request_id,
-            task = %task_key,
-            action = %action,
+            request_id = ?log_request_id,
+            task = %log_task_key,
+            action = %log_action,
             status = response.status_code,
             outcome = "err",
             "operate end"
@@ -1382,9 +1407,9 @@ where
     } else {
         tracing::info!(
             target: "ajax_web",
-            request_id = ?request_id,
-            task = %task_key,
-            action = %action,
+            request_id = ?log_request_id,
+            task = %log_task_key,
+            action = %log_action,
             status = response.status_code,
             outcome = "ok",
             "operate end"
@@ -1598,6 +1623,7 @@ mod tests {
         operate: Option<OperateRequest>,
         operate_count: usize,
         operate_delay: Duration,
+        start_delay: Duration,
         refresh_delay: Duration,
         operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
@@ -1626,6 +1652,7 @@ mod tests {
                 operate: None,
                 operate_count: 0,
                 operate_delay: Duration::ZERO,
+                start_delay: Duration::ZERO,
                 refresh_delay: Duration::ZERO,
                 operate_result: Ok(OperateOutcome {
                     state_changed: true,
@@ -1732,6 +1759,7 @@ mod tests {
                 entered.notify_one();
             }
             wait_for_release(&self.start_release, call_index);
+            std::thread::sleep(self.start_delay);
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -3380,6 +3408,43 @@ mod tests {
             "health took {health_elapsed:?} while cockpit refresh was in flight"
         );
         assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_task_start_does_not_block_health() {
+        let state = super::WebAppState::new(
+            context_with_web_repo(),
+            OkRunner,
+            TestBridge {
+                start_delay: Duration::from_millis(400),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-start-health"),
+        );
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let health_started = Instant::now();
+
+        let (start, (health, health_elapsed)) = tokio::join!(
+            biased;
+            post_json(
+                &app,
+                &cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-health-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+            ),
+            async {
+                let response = get_public(&app, "/api/health").await;
+                (response, health_started.elapsed())
+            },
+        );
+
+        assert_eq!(start.status(), StatusCode::OK);
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while task start was in flight"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
