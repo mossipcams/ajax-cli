@@ -136,6 +136,12 @@ async function scrollInteractionSurfaceAway(page: import("@playwright/test").Pag
   });
 }
 
+async function waitForSeedRevealSettled(page: import("@playwright/test").Page) {
+  await expect(terminalInteractionSurface(page)).not.toHaveClass(/is-seed-pending/, {
+    timeout: 5_000,
+  });
+}
+
 async function clickInteractionSurfaceCenter(page: import("@playwright/test").Page) {
   const surface = terminalInteractionSurface(page);
   const box = await surface.boundingBox();
@@ -1636,6 +1642,7 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
   expectPrimaryTouchTargets(sizes, [".terminal-expand-corner", ".terminal-keys .terminal-key"]);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
   await emitLatestTerminalOutput(page, ["more output\r\n"]);
   const newOutput = newOutputButton(page);
@@ -2383,8 +2390,10 @@ test("scrolling the interaction wrapper moves the terminal viewport", async ({ p
       return host?.__xterm?.buffer.active.viewportY ?? -1;
     });
 
+  await waitForSeedRevealSettled(page);
+
+  await expect.poll(async () => viewportY()).toBeGreaterThan(0);
   const atBottom = await viewportY();
-  expect(atBottom).toBeGreaterThan(0);
 
   await scrollInteractionSurfaceAway(page);
 
@@ -2402,6 +2411,7 @@ test("reading scrollback shows New output and restoring live output sends no PTY
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
   await expect(newOutputButton(page)).not.toBeVisible();
 
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
 
   const baseline = await inputFrameCount(page);
@@ -2430,6 +2440,7 @@ test("New output click does not refocus xterm or reopen keyboard, and direct sur
     page.evaluate(() => document.documentElement.classList.contains("keyboard-open"));
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await waitForSeedRevealSettled(page);
   await scrollInteractionSurfaceAway(page);
   await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
 
@@ -3022,8 +3033,8 @@ test("seeded open stays hidden until output after the seed settles, then lands a
   // arrives in a later frame. Revealing between the two is what made the
   // terminal visibly scroll a screenful on load.
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
-  // Stay under SEED_REVEAL_QUIET_MS (48) so the mid-gap assert still sees pending.
-  await page.waitForTimeout(24);
+  // Stay under SEED_REVEAL_QUIET_MS (120) so the mid-gap assert still sees pending.
+  await page.waitForTimeout(80);
   await expect(surface).toHaveClass(/is-seed-pending/);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
