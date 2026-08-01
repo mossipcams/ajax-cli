@@ -1,7 +1,7 @@
 import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { copyText } from "@/shared/lib/clipboard";
+import { copyText, readPasteText } from "@/shared/lib/clipboard";
 import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
 import { findHttpLinkAtClient } from "@/shared/lib/terminalLinkHitTest";
 import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
@@ -389,6 +389,15 @@ export default function TaskTerminal({ handle }: Props) {
     requestAnimationFrame(clearInteractionScrollPin);
   };
 
+  const onTextareaPaste = (event: ClipboardEvent) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const text = readPasteText(event.clipboardData);
+    seedTermSentinel();
+    if (!text) return;
+    pasteThroughTerm(text);
+  };
+
   const termOwnedFocus = (): boolean => {
     const textarea = termTextarea();
     return textarea !== null && document.activeElement === textarea;
@@ -618,6 +627,9 @@ export default function TaskTerminal({ handle }: Props) {
   });
   const onInputEvent = useEffectEvent((event: Event) => {
     onTextareaInput(event);
+  });
+  const onPaste = useEffectEvent((event: ClipboardEvent) => {
+    onTextareaPaste(event);
   });
   const onSeedTermSentinel = useEffectEvent(() => {
     seedTermSentinel();
@@ -1225,6 +1237,7 @@ export default function TaskTerminal({ handle }: Props) {
     const dataDisposable = liveTerm.onData(onTermData);
     termTextarea()?.addEventListener("beforeinput", onBeforeInput);
     termTextarea()?.addEventListener("input", onInputEvent);
+    termTextarea()?.addEventListener("paste", onPaste, { capture: true });
 
     interactionEl.addEventListener("touchstart", onTouchStart, { passive: false });
     interactionEl.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -1319,6 +1332,7 @@ export default function TaskTerminal({ handle }: Props) {
       dataDisposable?.dispose();
       termTextarea()?.removeEventListener("beforeinput", onBeforeInput);
       termTextarea()?.removeEventListener("input", onInputEvent);
+      termTextarea()?.removeEventListener("paste", onPaste, { capture: true });
       termTextarea()?.removeEventListener("focus", seedSentinelFromFocus);
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();

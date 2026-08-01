@@ -761,6 +761,32 @@ test("multiline Unicode paste preserves content in one input frame", async ({ pa
   expect(frames.at(-1)?.data).toBe(MULTILINE_UNICODE_CLIPBOARD);
 });
 
+test("native uri-list-only paste sends the link URL in one input frame", async ({ page }) => {
+  await openTaskTerminal(page);
+  await clickTerminalSurfaceInterior(page);
+
+  const url = "https://example.com/a";
+  const baseline = await inputFrameCount(page);
+
+  await page.evaluate((pasteUrl) => {
+    const textarea = document.querySelector(
+      "textarea.xterm-helper-textarea",
+    ) as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error("helper textarea missing");
+    textarea.focus();
+    const data = new DataTransfer();
+    data.setData("text/uri-list", pasteUrl);
+    data.setData("text/plain", "");
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  }, url);
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  const frames = await terminalInputFrames(page);
+  expect(frames.at(-1)?.data).toBe(url);
+});
+
 test("bracketed paste wraps toolbar paste in DEC bracket mode", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
