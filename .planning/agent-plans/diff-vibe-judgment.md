@@ -49,5 +49,12 @@ npm run verify                              # passed (exit 0)
 - [x] Restore DiffReview fetch fallback after Bugbot review
 - [x] Local verify gate
 - [x] Open PR — https://github.com/mossipcams/ajax-cli/pull/726
+- [x] Rebase onto main (coexist with #728 `fell_back_from_pr` + `loadSeq`)
+- [x] Fix DiffReview test mocks missing `judgment` after rebase
 
-Status: complete.
+## Deviations
+
+- Rebase onto main after #728: kept both `judgment` and `fell_back_from_pr`.
+- Two unit mocks from main lacked `diffView()`/`judgment`; wrapped after rebase.
+
+Status: complete (rebase + test fix pending commit/push).

@@ -189,7 +189,7 @@ describe("DiffReview", () => {
   });
 
   it("ignores stale diff responses when selectedPr changes quickly", async () => {
-    const pr9Diff = {
+    const pr9Diff = diffView({
       source: "pr:9",
       pr: {
         number: 9,
@@ -209,8 +209,8 @@ describe("DiffReview", () => {
           hunks: [{ header: "@@", lines: ["+fresh"] }],
         },
       ],
-    };
-    const pr12Diff = {
+    });
+    const pr12Diff = diffView({
       source: "pr:12",
       pr: {
         number: 12,
@@ -230,9 +230,9 @@ describe("DiffReview", () => {
           hunks: [{ header: "@@", lines: ["+stale"] }],
         },
       ],
-    };
+    });
 
-    const resolvers: Array<(value: typeof pr9Diff) => void> = [];
+    const resolvers: Array<(value: TaskDiffView) => void> = [];
     vi.mocked(api.fetchTaskDiff).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -260,21 +260,23 @@ describe("DiffReview", () => {
   });
 
   it("shows a fallback banner when PR patch fell back to local diff", async () => {
-    vi.mocked(api.fetchTaskDiff).mockResolvedValue({
-      source: "local",
-      pr: null,
-      fell_back_from_pr: 12,
-      files: [
-        {
-          path: "src/a.ts",
-          status: "modified",
-          role: "signal",
-          additions: 1,
-          deletions: 0,
-          hunks: [{ header: "@@", lines: ["+new"] }],
-        },
-      ],
-    });
+    vi.mocked(api.fetchTaskDiff).mockResolvedValue(
+      diffView({
+        source: "local",
+        pr: null,
+        fell_back_from_pr: 12,
+        files: [
+          {
+            path: "src/a.ts",
+            status: "modified",
+            role: "signal",
+            additions: 1,
+            deletions: 0,
+            hunks: [{ header: "@@", lines: ["+new"] }],
+          },
+        ],
+      }),
+    );
 
     render(<DiffReview handle="web/fix-login" selectedPr={12} />);
 
