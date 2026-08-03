@@ -149,6 +149,18 @@ describe("NewTaskSheet", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("renders a network error and keeps the sheet open", async () => {
+    vi.spyOn(api, "startTask").mockRejectedValue(new Error("network"));
+    const onClose = vi.fn();
+    render(<NewTaskSheet repos={repos} onClose={onClose} />);
+    fireEvent.input(screen.getByLabelText("Title"), {
+      target: { value: "x" },
+    });
+    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    expect(await screen.findByText("Action failed — network error")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("closes when Escape is pressed on the dialog", () => {
     const onClose = vi.fn();
     render(<NewTaskSheet repos={repos} onClose={onClose} />);

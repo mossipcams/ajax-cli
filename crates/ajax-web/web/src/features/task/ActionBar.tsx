@@ -98,7 +98,10 @@ export default function ActionBar({
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {
-        onResult?.(`${action.label} completed`, result.response.output, false);
+        if (action.action !== "drop") {
+          const trimmed = result.response.output?.trim();
+          if (trimmed) onResult?.(`${action.label} completed`, result.response.output, false);
+        }
         // Drop removes the task; refreshing this detail would 404. Leave instead.
         // If we unmounted during the undo window (operator switched tasks), commit
         // the Drop but do not navigate — the new task view is already active.

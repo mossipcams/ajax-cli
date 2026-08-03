@@ -40,7 +40,6 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
       const response = await startDevDeploy(taskHandle);
       setStatus(response.deploy);
       startPolling();
-      onResult?.("Test in Dev started", null, false);
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : "Test in Dev failed to start";

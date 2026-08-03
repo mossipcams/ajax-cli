@@ -376,7 +376,6 @@ export default function App() {
           selectedProject={selectedProject}
           onClose={() => setSheetOpen(false)}
           onCockpit={applyCockpit}
-          onResult={showResult}
           onOpenTask={openTask}
         />
       )}
