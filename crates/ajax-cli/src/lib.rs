@@ -513,5 +513,5 @@ pub(crate) fn command_error(error: CommandError) -> CliError {
 }
 
 #[cfg(test)]
-#[path = "lib/tests.rs"]
+#[path = "lib/tests/mod.rs"]
 mod tests;

@@ -302,14 +302,19 @@ Slices may depend on the shared kernel: domain models, lifecycle rules, live
 status, policy, output contracts, registry traits, and command-spec ports. The
 kernel is layered by authority tier — intent, events, observations, projection
 — and is never sliced; slicing it would create a second source of task truth.
-Every type belongs to exactly one tier, and mutation flows downward: operations
-write intent and events, refresh writes observations, and projections are
-always derived. Mechanisms remain outside slices: filesystem, terminal, JSON,
-subprocess, Git, tmux, networking, SQLite, and process supervision stay in
-`adapters`, `registry/sqlite`, `ajax-web`, or `ajax-supervisor`, depending on
-the external boundary. CLI, TUI, and browser code are composition and
-presentation layers; they consume projections and typed output contracts, not
-`Task` internals, and they do not reach into private slice functions.
+On disk, `ajax-core::models` mirrors those tiers as `models::{intent, events,
+observations, projection, task}` with a stable `models` re-export surface
+(`task` holds the aggregate `Task` record). Every type belongs to exactly one
+tier, and mutation flows downward: operations write intent and events, refresh
+writes observations, and projections are always derived. Mechanisms remain
+outside slices: filesystem, terminal, JSON, subprocess, Git, tmux, networking,
+SQLite, and process supervision stay in `adapters`, `registry/sqlite`,
+`ajax-web`, or `ajax-supervisor`, depending on the external boundary. SQLite
+persistence is split under `registry/sqlite` as `load`, `save`, `row_codec`,
+`enums`, and `migrations` beside the store API. CLI, TUI, and browser code are
+composition and presentation layers; they consume projections and typed output
+contracts, not `Task` internals, and they do not reach into private slice
+functions.
 
 Hand-rolled architecture tests in each crate's `architecture.rs` enforce slice
 isolation and the operation entry-point shape. New operator verbs start as a
