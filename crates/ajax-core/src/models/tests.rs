@@ -1,0 +1,748 @@
+use super::{
+    AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, GitStatus,
+    LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo, RuntimeHealth,
+    RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt, StepReceiptIdentity, Task,
+    TaskId, TaskIntent, TaskOperationKind, TaskWindowStatus, TmuxStatus,
+};
+use proptest::prelude::*;
+use std::collections::BTreeSet;
+
+fn acknowledgment_task() -> Task {
+    Task::new(
+        TaskId::new("task-1"),
+        "web",
+        "fix-login",
+        "Fix login",
+        "ajax/fix-login",
+        "main",
+        "/tmp/worktrees/web-fix-login",
+        "ajax-web-fix-login",
+        "task",
+        AgentClient::Claude,
+    )
+}
+
+#[test]
+fn new_task_has_no_attention_acknowledgment() {
+    assert_eq!(acknowledgment_task().attention_acknowledged_at, None);
+}
+
+#[test]
+fn new_task_has_no_live_status_observation_timestamp() {
+    assert_eq!(acknowledgment_task().live_status_observed_at, None);
+}
+
+#[test]
+fn task_attention_acknowledgment_uses_latest_timestamp() {
+    let mut task = acknowledgment_task();
+    let earlier = std::time::UNIX_EPOCH + std::time::Duration::from_secs(100);
+    let later = std::time::UNIX_EPOCH + std::time::Duration::from_secs(200);
+
+    task.record_attention_acknowledgment(earlier);
+    task.record_attention_acknowledgment(later);
+    assert_eq!(task.attention_acknowledged_at, Some(later));
+
+    // An earlier acknowledgment must not override the newer one.
+    task.record_attention_acknowledgment(earlier);
+    assert_eq!(task.attention_acknowledged_at, Some(later));
+}
+
+fn text_strategy() -> impl Strategy<Value = String> {
+    "\\PC{0,64}"
+}
+
+fn side_flag_strategy() -> impl Strategy<Value = SideFlag> {
+    prop::sample::select(
+        [
+            SideFlag::Dirty,
+            SideFlag::AgentRunning,
+            SideFlag::AgentDead,
+            SideFlag::NeedsInput,
+            SideFlag::TestsFailed,
+            SideFlag::TmuxMissing,
+            SideFlag::WorktreeMissing,
+            SideFlag::TaskWindowMissing,
+            SideFlag::BranchMissing,
+            SideFlag::Stale,
+            SideFlag::Conflicted,
+            SideFlag::Unpushed,
+        ]
+        .to_vec(),
+    )
+}
+
+fn live_status_kind_strategy() -> impl Strategy<Value = LiveStatusKind> {
+    prop::sample::select(
+        [
+            LiveStatusKind::WorktreeMissing,
+            LiveStatusKind::TmuxMissing,
+            LiveStatusKind::TaskWindowMissing,
+            LiveStatusKind::ShellIdle,
+            LiveStatusKind::CommandRunning,
+            LiveStatusKind::TestsRunning,
+            LiveStatusKind::AgentRunning,
+            LiveStatusKind::WaitingForApproval,
+            LiveStatusKind::WaitingForInput,
+            LiveStatusKind::Blocked,
+            LiveStatusKind::RateLimited,
+            LiveStatusKind::AuthRequired,
+            LiveStatusKind::MergeConflict,
+            LiveStatusKind::CiFailed,
+            LiveStatusKind::ContextLimit,
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::Done,
+            LiveStatusKind::Unknown,
+        ]
+        .to_vec(),
+    )
+}
+
+fn sample_task() -> Task {
+    Task::new(
+        TaskId::new("task-generated"),
+        "web",
+        "generated",
+        "Generated task",
+        "ajax/generated",
+        "main",
+        "/tmp/worktrees/generated",
+        "ajax-web-generated",
+        "task",
+        AgentClient::Codex,
+    )
+}
+
+fn lifecycle_task_fixture(status: LifecycleStatus) -> Task {
+    let mut task = Task::new(
+        TaskId::new(format!("task-{status:?}")),
+        "web",
+        format!("{status:?}").to_ascii_lowercase(),
+        format!("{status:?} task"),
+        format!("ajax/{status:?}").to_ascii_lowercase(),
+        "main",
+        format!("/tmp/worktrees/{status:?}").to_ascii_lowercase(),
+        format!("ajax-web-{status:?}").to_ascii_lowercase(),
+        "task",
+        AgentClient::Codex,
+    );
+    task.lifecycle_status = status;
+    task
+}
+
+#[test]
+fn lifecycle_fixture_builders_create_representative_states() {
+    let provisioning = lifecycle_task_fixture(LifecycleStatus::Provisioning);
+    let active = lifecycle_task_fixture(LifecycleStatus::Active);
+    let reviewable = lifecycle_task_fixture(LifecycleStatus::Reviewable);
+    let cleanable = lifecycle_task_fixture(LifecycleStatus::Cleanable);
+    let removing = lifecycle_task_fixture(LifecycleStatus::Removing);
+    let teardown_incomplete = lifecycle_task_fixture(LifecycleStatus::TeardownIncomplete);
+    let removed = lifecycle_task_fixture(LifecycleStatus::Removed);
+    let error = lifecycle_task_fixture(LifecycleStatus::Error);
+
+    assert_eq!(provisioning.lifecycle_status, LifecycleStatus::Provisioning);
+    assert_eq!(active.lifecycle_status, LifecycleStatus::Active);
+    assert_eq!(reviewable.lifecycle_status, LifecycleStatus::Reviewable);
+    assert_eq!(cleanable.lifecycle_status, LifecycleStatus::Cleanable);
+    assert_eq!(removing.lifecycle_status, LifecycleStatus::Removing);
+    assert_eq!(
+        teardown_incomplete.lifecycle_status,
+        LifecycleStatus::TeardownIncomplete
+    );
+    assert_eq!(removed.lifecycle_status, LifecycleStatus::Removed);
+    assert_eq!(error.lifecycle_status, LifecycleStatus::Error);
+}
+
+#[test]
+fn runtime_projection_records_health_freshness_and_source() {
+    let observed_at = std::time::SystemTime::UNIX_EPOCH;
+    let projection = RuntimeProjection::new(
+        RuntimeHealth::MissingTaskWindow,
+        observed_at,
+        RuntimeObservationSource::TmuxProbe,
+    );
+
+    assert_eq!(projection.health, RuntimeHealth::MissingTaskWindow);
+    assert_eq!(projection.observed_at, observed_at);
+    assert_eq!(projection.source, RuntimeObservationSource::TmuxProbe);
+    assert!(projection.is_fresh_at(
+        observed_at + std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(30),
+    ));
+    assert!(!projection.is_fresh_at(
+        observed_at + std::time::Duration::from_secs(31),
+        std::time::Duration::from_secs(30),
+    ));
+}
+
+#[test]
+fn task_identity_maps_to_repo_handle() {
+    let task = Task::new(
+        TaskId::new("task-1"),
+        "web",
+        "fix-login",
+        "Fix login",
+        "ajax/fix-login",
+        "main",
+        "/tmp/worktrees/web-fix-login",
+        "ajax-web-fix-login",
+        "task",
+        AgentClient::Codex,
+    );
+
+    assert_eq!(task.qualified_handle(), "web/fix-login");
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Created);
+    assert_eq!(task.agent_attempts.len(), 0);
+    assert_eq!(task.selected_agent, AgentClient::Codex);
+}
+
+#[test]
+fn task_intent_contains_only_ajax_owned_expected_identity_and_resources() {
+    let mut task = Task::new(
+        TaskId::new("task-1"),
+        "web",
+        "fix-login",
+        "Fix login",
+        "ajax/fix-login",
+        "main",
+        "/tmp/worktrees/web-fix-login",
+        "ajax-web-fix-login",
+        "task",
+        AgentClient::Codex,
+    );
+    task.lifecycle_status = LifecycleStatus::Reviewable;
+    task.git_status = Some(GitStatus {
+        worktree_exists: false,
+        branch_exists: false,
+        current_branch: None,
+        dirty: true,
+        ahead: 1,
+        behind: 0,
+        merged: false,
+        untracked_files: 2,
+        unpushed_commits: 1,
+        conflicted: true,
+        last_commit: Some("abc123 Fix login".to_string()),
+    });
+    task.tmux_status = Some(TmuxStatus {
+        exists: false,
+        session_name: "ajax-web-fix-login".to_string(),
+    });
+    task.live_status = Some(LiveObservation::new(
+        LiveStatusKind::TmuxMissing,
+        "tmux missing",
+    ));
+    task.add_side_flag(SideFlag::Dirty);
+
+    assert_eq!(
+        task.intent(),
+        TaskIntent {
+            id: TaskId::new("task-1"),
+            repo: "web".to_string(),
+            handle: "fix-login".to_string(),
+            title: "Fix login".to_string(),
+            branch: "ajax/fix-login".to_string(),
+            base_branch: "main".to_string(),
+            worktree_path: std::path::PathBuf::from("/tmp/worktrees/web-fix-login"),
+            tmux_session: "ajax-web-fix-login".to_string(),
+            task_window: "task".to_string(),
+            selected_agent: AgentClient::Codex,
+        }
+    );
+}
+
+proptest! {
+    #[test]
+    fn task_identity_and_handle_preserve_generated_inputs(
+        id in text_strategy(),
+        repo in text_strategy(),
+        handle in text_strategy(),
+        title in text_strategy(),
+        branch in text_strategy(),
+        base_branch in text_strategy(),
+        worktree_path in text_strategy(),
+        tmux_session in text_strategy(),
+        task_window in text_strategy(),
+    ) {
+        let task = Task::new(
+            TaskId::new(&id),
+            &repo,
+            &handle,
+            &title,
+            &branch,
+            &base_branch,
+            &worktree_path,
+            &tmux_session,
+            &task_window,
+            AgentClient::Codex,
+        );
+
+        prop_assert_eq!(task.id.as_str(), id);
+        prop_assert_eq!(&task.repo, &repo);
+        prop_assert_eq!(&task.handle, &handle);
+        prop_assert_eq!(&task.title, &title);
+        prop_assert_eq!(&task.branch, &branch);
+        prop_assert_eq!(&task.base_branch, &base_branch);
+        prop_assert_eq!(&task.worktree_path, std::path::Path::new(&worktree_path));
+        prop_assert_eq!(&task.tmux_session, &tmux_session);
+        prop_assert_eq!(&task.task_window, &task_window);
+        prop_assert_eq!(task.qualified_handle(), format!("{repo}/{handle}"));
+    }
+
+    #[test]
+    fn repo_tmux_and_task_constructors_preserve_generated_inputs(
+        repo_name in text_strategy(),
+        repo_path in text_strategy(),
+        default_branch in text_strategy(),
+        tmux_session in text_strategy(),
+        task_window in text_strategy(),
+        task_path in text_strategy(),
+    ) {
+        let repo = Repo::new(&repo_name, &repo_path, &default_branch);
+        prop_assert_eq!(repo.name, repo_name);
+        prop_assert_eq!(repo.path, std::path::Path::new(&repo_path));
+        prop_assert_eq!(repo.default_branch, default_branch);
+
+        let tmux = TmuxStatus::present(&tmux_session);
+        prop_assert!(tmux.exists);
+        prop_assert_eq!(tmux.session_name, tmux_session);
+
+        let task = TaskWindowStatus::present(&task_window, &task_path);
+        prop_assert!(task.exists);
+        prop_assert_eq!(task.window_name, task_window);
+        prop_assert_eq!(task.current_path, std::path::Path::new(&task_path));
+        prop_assert!(task.points_at_expected_path);
+    }
+}
+
+#[test]
+fn task_tracks_advisory_side_flags() {
+    let mut task = Task::new(
+        TaskId::new("task-2"),
+        "api",
+        "add-cache",
+        "Add cache",
+        "ajax/add-cache",
+        "main",
+        "/tmp/worktrees/api-add-cache",
+        "ajax-api-add-cache",
+        "task",
+        AgentClient::Claude,
+    );
+
+    task.add_side_flag(SideFlag::Dirty);
+    task.add_side_flag(SideFlag::AgentRunning);
+
+    assert!(task.has_side_flag(SideFlag::Dirty));
+    assert!(task.has_side_flag(SideFlag::AgentRunning));
+    assert!(!task.has_side_flag(SideFlag::Conflicted));
+}
+
+proptest! {
+    #[test]
+    fn side_flags_are_unique_sorted_and_removable(
+        flags in prop::collection::vec(side_flag_strategy(), 0..32),
+        removed in side_flag_strategy(),
+    ) {
+        let mut task = sample_task();
+        let mut expected = BTreeSet::new();
+
+        for flag in flags {
+            task.add_side_flag(flag);
+            task.add_side_flag(flag);
+            expected.insert(flag);
+        }
+
+        prop_assert_eq!(task.side_flags().collect::<Vec<_>>(), expected.iter().copied().collect::<Vec<_>>());
+
+        task.remove_side_flag(removed);
+        expected.remove(&removed);
+
+        prop_assert_eq!(task.side_flags().collect::<Vec<_>>(), expected.iter().copied().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn mark_resource_missing_resets_agent_state_only_for_missing_substrate_flags(
+        flag in side_flag_strategy(),
+    ) {
+        let mut task = sample_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+
+        task.mark_resource_missing(flag);
+
+        prop_assert!(task.has_side_flag(flag));
+        if flag.is_missing_substrate() {
+            prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
+            prop_assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        } else {
+            prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+            prop_assert!(task.has_side_flag(SideFlag::AgentRunning));
+        }
+    }
+
+    #[test]
+    fn has_missing_substrate_matches_missing_flags_or_live_status(
+        flags in prop::collection::vec(side_flag_strategy(), 0..32),
+        live_kind in prop::option::of(live_status_kind_strategy()),
+    ) {
+        let mut task = sample_task();
+        let expected_from_flags = flags.iter().copied().any(SideFlag::is_missing_substrate);
+        let expected_from_live = live_kind.is_some_and(LiveStatusKind::is_missing_substrate);
+
+        for flag in flags {
+            task.add_side_flag(flag);
+        }
+        if let Some(kind) = live_kind {
+            task.live_status = Some(LiveObservation::new(kind, "generated status"));
+        }
+
+        prop_assert_eq!(task.has_missing_substrate(), expected_from_flags || expected_from_live);
+    }
+}
+
+#[test]
+fn task_marks_and_detects_missing_substrate() {
+    let mut task = Task::new(
+        TaskId::new("task-3"),
+        "web",
+        "repair-cockpit",
+        "Repair cockpit",
+        "ajax/repair-cockpit",
+        "main",
+        "/tmp/worktrees/repair-cockpit",
+        "ajax-web-repair-cockpit",
+        "task",
+        AgentClient::Codex,
+    );
+
+    task.agent_status = super::AgentRuntimeStatus::Running;
+    task.add_side_flag(SideFlag::AgentRunning);
+    task.mark_resource_missing(SideFlag::WorktreeMissing);
+
+    assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+    assert!(task.has_missing_substrate());
+    assert_eq!(task.agent_status, super::AgentRuntimeStatus::Dead);
+    assert!(!task.has_side_flag(SideFlag::AgentRunning));
+}
+
+#[test]
+fn repo_and_status_models_capture_external_reality() {
+    let repo = Repo::new("web", "/Users/matt/projects/web", "main");
+    let attempt = AgentAttempt::new(AgentClient::Codex, "tmux:%1");
+    let git = GitStatus {
+        worktree_exists: true,
+        branch_exists: true,
+        current_branch: Some("ajax/fix-login".to_string()),
+        dirty: false,
+        ahead: 1,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 1,
+        conflicted: false,
+        last_commit: Some("abc123 Fix login".to_string()),
+    };
+    let tmux = TmuxStatus::present("ajax-web-fix-login");
+    let task = TaskWindowStatus::present("task", "/Users/matt/projects/web");
+
+    assert_eq!(repo.default_branch, "main");
+    assert_eq!(attempt.agent, AgentClient::Codex);
+    assert!(git.has_unpushed_work());
+    assert!(tmux.exists);
+    assert!(task.points_at_expected_path);
+}
+
+#[test]
+fn task_window_missing_constructor_records_expected_identity() {
+    let task = TaskWindowStatus::missing("task", "/Users/matt/projects/web");
+
+    assert!(!task.exists);
+    assert_eq!(task.window_name, "task");
+    assert_eq!(
+        task.current_path,
+        std::path::PathBuf::from("/Users/matt/projects/web")
+    );
+    assert!(!task.points_at_expected_path);
+}
+
+fn git_status_for_checkout(worktree_exists: bool, current_branch: Option<&str>) -> GitStatus {
+    GitStatus {
+        worktree_exists,
+        branch_exists: true,
+        current_branch: current_branch.map(str::to_string),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    }
+}
+
+#[test]
+fn task_checkout_mismatch_requires_present_observed_worktree() {
+    let mut task = sample_task();
+    assert!(!task.has_checkout_mismatch());
+
+    task.git_status = Some(git_status_for_checkout(true, Some("ajax/generated")));
+    assert!(!task.has_checkout_mismatch());
+
+    task.git_status = Some(git_status_for_checkout(true, Some("ajax/other")));
+    assert!(task.has_checkout_mismatch());
+
+    task.git_status = Some(git_status_for_checkout(true, None));
+    assert!(task.has_checkout_mismatch());
+
+    task.git_status = Some(git_status_for_checkout(false, Some("ajax/other")));
+    assert!(!task.has_checkout_mismatch());
+}
+
+#[test]
+fn task_status_updates_refresh_runtime_projection_health() {
+    let mut task = sample_task();
+
+    assert_eq!(task.runtime_projection.health, RuntimeHealth::Unobservable);
+
+    task.apply_git_status(GitStatus {
+        worktree_exists: false,
+        branch_exists: true,
+        current_branch: Some("ajax/generated".to_string()),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    assert_eq!(
+        task.runtime_projection.health,
+        RuntimeHealth::MissingWorktree
+    );
+
+    task.apply_git_status(GitStatus {
+        worktree_exists: true,
+        branch_exists: true,
+        current_branch: Some("ajax/generated".to_string()),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    task.apply_tmux_status(Some(TmuxStatus {
+        exists: false,
+        session_name: "ajax-web-generated".to_string(),
+    }));
+    assert_eq!(
+        task.runtime_projection.health,
+        RuntimeHealth::MissingSession
+    );
+
+    task.apply_tmux_status(Some(TmuxStatus::present("ajax-web-generated")));
+    task.apply_task_window_status(Some(TaskWindowStatus {
+        exists: true,
+        window_name: "task".to_string(),
+        current_path: "/tmp/other".into(),
+        points_at_expected_path: false,
+    }));
+    assert_eq!(
+        task.runtime_projection.health,
+        RuntimeHealth::WrongTaskWindowPath
+    );
+
+    task.apply_task_window_status(Some(TaskWindowStatus::present(
+        "task",
+        "/tmp/worktrees/generated",
+    )));
+    assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
+}
+
+#[test]
+fn operator_action_labels_are_operator_facing() {
+    let labels = OperatorAction::all()
+        .iter()
+        .map(|action| action.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        labels,
+        vec!["start", "resume", "review", "ship", "drop", "repair"]
+    );
+    for label in labels {
+        assert_eq!(
+            OperatorAction::from_label(label).map(|action| action.as_str()),
+            Some(label)
+        );
+    }
+}
+
+#[test]
+fn runtime_projection_labels_are_stable_for_storage_and_json() {
+    let health_labels = [
+        (RuntimeHealth::Healthy, "healthy"),
+        (RuntimeHealth::MissingWorktree, "missing_worktree"),
+        (RuntimeHealth::MissingSession, "missing_session"),
+        (RuntimeHealth::MissingTaskWindow, "missing_task_window"),
+        (RuntimeHealth::WrongTaskWindowPath, "wrong_task_window_path"),
+        (RuntimeHealth::CheckoutMismatch, "checkout_mismatch"),
+        (RuntimeHealth::Unobservable, "unobservable"),
+    ];
+    for (health, label) in health_labels {
+        assert_eq!(health.as_str(), label);
+        assert_eq!(RuntimeHealth::from_label(label), Some(health));
+    }
+
+    let source_labels = [
+        (RuntimeObservationSource::StartupScan, "startup_scan"),
+        (
+            RuntimeObservationSource::FilesystemEvent,
+            "filesystem_event",
+        ),
+        (RuntimeObservationSource::TmuxProbe, "tmux_probe"),
+        (RuntimeObservationSource::CommandResult, "command_result"),
+        (RuntimeObservationSource::Unknown, "unknown"),
+    ];
+    for (source, label) in source_labels {
+        assert_eq!(source.as_str(), label);
+        assert_eq!(RuntimeObservationSource::from_label(label), Some(source));
+    }
+}
+
+#[test]
+fn annotation_kind_suggests_one_operator_action() {
+    let cases = [
+        (AnnotationKind::NeedsMe, OperatorAction::Resume),
+        (AnnotationKind::Broken, OperatorAction::Repair),
+        (AnnotationKind::Reviewable, OperatorAction::Review),
+        (AnnotationKind::Cleanable, OperatorAction::Drop),
+    ];
+
+    for (kind, expected_action) in cases {
+        let annotation = Annotation::new(kind, Evidence::Lifecycle(LifecycleStatus::Active));
+
+        assert_eq!(kind.suggests(), expected_action);
+        assert_eq!(annotation.suggests, expected_action);
+    }
+}
+
+#[test]
+fn task_carries_empty_annotations_by_default() {
+    let task = sample_task();
+
+    assert_eq!(task.annotations, Vec::<Annotation>::new());
+}
+
+#[test]
+fn annotation_row_label_does_not_duplicate_needs_you_for_waiting_states() {
+    let annotation = Annotation::new(
+        AnnotationKind::NeedsMe,
+        Evidence::LiveStatus(LiveStatusKind::WaitingForInput),
+    );
+
+    assert_eq!(annotation.row_label(), "waiting for input");
+
+    let annotation = Annotation::new(
+        AnnotationKind::NeedsMe,
+        Evidence::LiveStatus(LiveStatusKind::WaitingForApproval),
+    );
+
+    assert_eq!(annotation.row_label(), "waiting for approval");
+}
+
+#[test]
+fn checkout_mismatch_evidence_labels_are_specific() {
+    assert_eq!(Evidence::CheckoutMismatch.label(), "checkout mismatch");
+    assert_eq!(
+        Evidence::CheckoutMismatch.attention_label(),
+        "checkout mismatch"
+    );
+}
+
+#[test]
+fn evidence_attention_label_collapses_needs_input_variants() {
+    assert_eq!(
+        Evidence::SideFlag(SideFlag::NeedsInput).attention_label(),
+        "needs input"
+    );
+    assert_eq!(
+        Evidence::LiveStatus(LiveStatusKind::WaitingForInput).attention_label(),
+        "needs input"
+    );
+}
+
+#[rstest::rstest]
+#[case(LiveStatusKind::ShellIdle, "shell idle")]
+#[case(LiveStatusKind::CommandRunning, "command running")]
+#[case(LiveStatusKind::TestsRunning, "tests running")]
+#[case(LiveStatusKind::AgentRunning, "agent running")]
+#[case(LiveStatusKind::CiFailed, "ci failed")]
+#[case(LiveStatusKind::Done, "done")]
+#[case(LiveStatusKind::CommandFailed, "command failed")]
+#[case(LiveStatusKind::WorktreeMissing, "worktree missing")]
+fn live_status_evidence_labels_are_specific(#[case] kind: LiveStatusKind, #[case] expected: &str) {
+    assert_eq!(Evidence::LiveStatus(kind).label(), expected);
+}
+
+#[test]
+fn annotation_row_label_combines_kind_and_non_waiting_evidence() {
+    let annotation = Annotation::new(
+        AnnotationKind::NeedsMe,
+        Evidence::SideFlag(SideFlag::AgentDead),
+    );
+
+    assert_eq!(annotation.row_label(), "needs you · agent dead");
+
+    let annotation = Annotation::new(
+        AnnotationKind::Broken,
+        Evidence::Substrate(super::SubstrateGap::TmuxMissing),
+    );
+
+    assert_eq!(annotation.row_label(), "broken · tmux missing");
+}
+
+#[test]
+fn annotation_kind_has_distinct_glyphs() {
+    let glyphs = [
+        (AnnotationKind::NeedsMe, '?'),
+        (AnnotationKind::Broken, '!'),
+        (AnnotationKind::Reviewable, 'R'),
+        (AnnotationKind::Cleanable, '~'),
+    ];
+
+    let mut seen = std::collections::BTreeSet::new();
+    for (kind, expected) in glyphs {
+        assert_eq!(kind.glyph(), expected, "{kind:?}");
+        assert!(seen.insert(kind.glyph()), "glyph for {kind:?} not distinct");
+    }
+}
+
+#[test]
+fn step_receipt_identity_is_stable_for_idempotent_steps() {
+    let receipt = StepReceipt::succeeded(
+        TaskId::new("web/fix-login"),
+        TaskOperationKind::Start,
+        "worktree_created",
+        "/tmp/worktrees/ajax-fix-login",
+        r#"{"program":"git"}"#,
+    );
+
+    assert_eq!(receipt.operation.as_str(), "start");
+    assert_eq!(receipt.status.as_str(), "succeeded");
+    assert_eq!(
+        receipt.identity(),
+        StepReceiptIdentity {
+            task_id: TaskId::new("web/fix-login"),
+            operation: TaskOperationKind::Start,
+            step_key: "worktree_created".to_string(),
+            target: "/tmp/worktrees/ajax-fix-login".to_string(),
+        }
+    );
+}
