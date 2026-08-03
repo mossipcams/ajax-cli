@@ -73,7 +73,7 @@ directory already exists. Keep the file small, concrete, and current.
 Each plan must include:
 
 - scope and non-goals
-- a task checklist with the test, implementation, and verification for each task
+- a task checklist with implementation and verification for each task
 - approval status when approval is required
 - deviations discovered during execution
 - validation commands and results
@@ -83,8 +83,7 @@ failed commands or changed assumptions where they happen, and keep the checklist
 aligned with the actual work. If the plan changes materially, update the file
 before continuing and call out the change to the user.
 
-For trivial mechanical changes where new tests are not meaningful, still create
-the plan file and explicitly record why tests are skipped.
+For trivial mechanical changes, still create the plan file; keep it short.
 
 ### Planning-Only
 
@@ -108,10 +107,11 @@ Use for narrow, low-risk changes.
 
 Use when user-visible, CLI-visible, API-visible, or workflow behavior changes.
 
-- Add or update a failing behavior test first.
-- Make the test pass with the smallest implementation.
-- Refactor only after tests are green.
+- Make the smallest safe change that delivers the requested behavior.
 - Preserve existing behavior unless the task explicitly changes it.
+- Verify with the strongest practical evidence (tests, focused commands,
+  browser/manual checks). Tests are one verification method, not a required
+  red-green workflow.
 
 ### Refactor or Cleanup
 
@@ -119,7 +119,6 @@ Use when the goal is simplification, deletion, or internal restructuring.
 
 - Preserve behavior.
 - Prefer deletion over new abstraction.
-- Add characterization tests first when behavior is risky or uncovered.
 - Do not invent fake tests only to satisfy process.
 - Keep diffs reviewable.
 - Explain why behavior is unchanged.
@@ -157,7 +156,9 @@ You stay the planner, reviewer, and final approver. Strict workflow:
 1. Create or update the persistent plan.
 2. Make and record the delegation decision.
 3. When delegating implementation, create a complete
-   `tdd-implementation-packet` as the source of truth.
+   `tdd-implementation-packet` as the source of truth. The lane name is
+   historical; the packet uses outcome-based verification and does not require
+   test-first / TDD.
 4. Delegate via `model-router`; let it choose the model, lane, and tool.
 5. Review the diff.
 6. Run validation personally; do not trust the delegate's claim alone.
@@ -169,9 +170,9 @@ Delegation quality lives in the prompt. Give the delegate a work order, not a
 wish:
 
 - name the files and code paths to touch
-- state the expected behavior and the tests to add or update
+- state the expected behavior and acceptance criteria
 - state what must not change (public behavior, unrelated files, architecture)
-- include the validation commands from this file that the delegate should run
+- include a verification plan (commands or checks appropriate to the change)
 
 One bounded task per delegation. Split larger work into sequential `implement` â†’
 `resume` rounds rather than one broad prompt.
@@ -179,7 +180,8 @@ One bounded task per delegation. Split larger work into sequential `implement` â
 Review before accepting, for every delegation:
 
 1. Read the diff and check it against the requested scope.
-2. Confirm tests were added or updated when applicable.
+2. Confirm verification evidence matches the change (tests when useful, not
+   mandatory).
 3. Run validation yourself. An empty diff plus a success claim is a failure.
 4. Send unrelated or overly broad edits back via `resume` instead of quietly
    fixing them.
@@ -252,36 +254,18 @@ Do not change these without explicit approval:
 Web Cockpit should feel immediate and mobile-friendly, but correctness comes from
 backend/core contracts.
 
-## TDD and Testing Policy
+## Testing and Verification
 
-Behavior changes require behavior tests.
+Evidence that the change works is required. Test-first / TDD is not.
 
-Default loop:
-
-1. Add or update a focused failing test.
-2. Run the focused test and confirm it fails for the expected reason.
-3. Implement the smallest change.
-4. Run the focused test again.
-5. Run broader validation appropriate to the touched area.
-6. Refactor only after green.
-
-For refactors:
-
-- Confirm existing tests pass when practical.
-- Add characterization tests before touching risky uncovered behavior.
+- Prefer the strongest practical verification for the change: focused tests,
+  existing coverage, `cargo check` / clippy, browser/manual checks, or other
+  appropriate commands.
+- Add or update tests when they are the best way to lock behavior or prevent
+  regressions. Do not add tests only to satisfy process.
 - Do not add meaningless tests that assert implementation details.
-- Do not rewrite large areas without proving behavior preservation.
-
-Mechanical changes may skip new tests only when behavior cannot change, such as:
-
-- formatting
-- import cleanup
-- comments or docs
-- pure renames with compiler coverage
-- dead-code deletion proven unused
-- moving code without logic changes
-
-When skipping new tests, explain why.
+- For mechanical changes (formatting, comments, pure renames, proven dead-code
+  deletion), compiler/lint coverage is usually enough.
 
 ## Validation Commands
 
@@ -529,8 +513,7 @@ Final response must include:
 
 - what changed
 - persistent plan file path and whether all checklist items are complete
-- tests added or updated
-- validation commands run
+- verification used (tests, commands, or other evidence) and results
 - commands that failed or were skipped
 - remaining risks or follow-up work
 
