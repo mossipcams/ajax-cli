@@ -225,25 +225,7 @@ describe("ActionBar", () => {
     );
   });
 
-  it("does not surface a completion toast when Review succeeds with no output", async () => {
-    vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
-    const onResult = vi.fn();
-    render(<ActionBar actions={[review]} handle="web/x" onResult={onResult} />);
-    fireEvent.click(screen.getByText("Review"));
-    await vi.runAllTimersAsync();
-    expect(onResult).not.toHaveBeenCalled();
-  });
-
-  it("does not surface a completion toast when Review succeeds with whitespace-only output", async () => {
-    vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: { output: "   " } });
-    const onResult = vi.fn();
-    render(<ActionBar actions={[review]} handle="web/x" onResult={onResult} />);
-    fireEvent.click(screen.getByText("Review"));
-    await vi.runAllTimersAsync();
-    expect(onResult).not.toHaveBeenCalled();
-  });
-
-  it("surfaces a completion toast when Review succeeds with non-empty output", async () => {
+  it("does not surface a completion toast on successful Review, even with output", async () => {
     vi.spyOn(api, "postOperation").mockResolvedValue({
       ok: true,
       response: { output: "Review passed" },
@@ -252,7 +234,7 @@ describe("ActionBar", () => {
     render(<ActionBar actions={[review]} handle="web/x" onResult={onResult} />);
     fireEvent.click(screen.getByText("Review"));
     await vi.runAllTimersAsync();
-    expect(onResult).toHaveBeenCalledWith("Review completed", "Review passed", false);
+    expect(onResult).not.toHaveBeenCalled();
   });
 
   it("marks ordinary actions unconfirmed and runs them immediately", async () => {
