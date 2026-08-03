@@ -91,7 +91,7 @@ describe("legacy terminal removal hygiene", () => {
         "TerminalRawView.svelte",
         "XtermTerminalView.svelte",
       ]),
-      ...collectSymbolViolations("crates/ajax-web/src/runtime.rs", [
+      ...collectSymbolViolations("crates/ajax-web/src/runtime/mod.rs", [
         "/ghostty-vt.wasm",
         "axum_ghostty_wasm",
       ]),
