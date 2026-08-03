@@ -315,6 +315,10 @@ Rules:
 - Keep modules understandable without creating abstraction layers for their own
   sake.
 - Preserve public APIs unless the task explicitly changes them.
+- Keep Rust source files near **~600 LOC**; hard max **1000 LOC** per `.rs`
+  file on disk (including inline tests). When a file grows past that, peel
+  `#[cfg(test)] mod tests` into a sibling first, then split production code by
+  ownership. Do not land new features into an already over-max file.
 
 ## Search and Code Navigation
 
