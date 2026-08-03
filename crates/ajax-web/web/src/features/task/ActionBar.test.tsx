@@ -86,6 +86,8 @@ describe("ActionBar", () => {
     await vi.runAllTimersAsync();
     expect(spy).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).not.toHaveBeenCalledWith("Drop completed", expect.anything(), false);
   });
 
   it("commits a pending Drop after unmount when the undo window elapses", async () => {
@@ -221,6 +223,18 @@ describe("ActionBar", () => {
         },
       }),
     );
+  });
+
+  it("does not surface a completion toast on successful Review, even with output", async () => {
+    vi.spyOn(api, "postOperation").mockResolvedValue({
+      ok: true,
+      response: { output: "Review passed" },
+    });
+    const onResult = vi.fn();
+    render(<ActionBar actions={[review]} handle="web/x" onResult={onResult} />);
+    fireEvent.click(screen.getByText("Review"));
+    await vi.runAllTimersAsync();
+    expect(onResult).not.toHaveBeenCalled();
   });
 
   it("marks ordinary actions unconfirmed and runs them immediately", async () => {

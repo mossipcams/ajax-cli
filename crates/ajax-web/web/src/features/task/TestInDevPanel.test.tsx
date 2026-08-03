@@ -111,4 +111,55 @@ describe("TestInDevPanel", () => {
     expect(screen.queryByTestId("test-in-dev-occupant")).toBeNull();
     expect(startDevDeploy).toHaveBeenCalledWith("ajax-cli/demo");
   });
+
+  it("does not surface a success toast when deploy starts", async () => {
+    fetchDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "ready_to_deploy",
+        phase_label: "Ready to deploy",
+        shared_slot: true,
+        active: false,
+        error: null,
+        occupant: null,
+      },
+    });
+    startDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "building",
+        phase_label: "Building",
+        shared_slot: true,
+        active: true,
+        error: null,
+        occupant: null,
+      },
+    });
+    const onResult = vi.fn();
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" onResult={onResult} />);
+    await waitFor(() => expect(screen.getByTestId("test-in-dev-button")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("test-in-dev-button"));
+    await waitFor(() => expect(startDevDeploy).toHaveBeenCalled());
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error toast when deploy fails to start", async () => {
+    fetchDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "ready_to_deploy",
+        phase_label: "Ready to deploy",
+        shared_slot: true,
+        active: false,
+        error: null,
+        occupant: null,
+      },
+    });
+    startDevDeploy.mockRejectedValue(new Error("slot busy"));
+    const onResult = vi.fn();
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" onResult={onResult} />);
+    await waitFor(() => expect(screen.getByTestId("test-in-dev-button")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("test-in-dev-button"));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith("Test in Dev failed to start", null, true));
+  });
 });

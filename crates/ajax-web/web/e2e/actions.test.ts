@@ -163,7 +163,7 @@ test("new task sheet Cancel closes the sheet", async ({ page }) => {
   await expect(page.locator("[data-testid='new-task-sheet']")).toHaveCount(0);
 });
 
-test("new task sheet Start submits and reports the task started", async ({ page }) => {
+test("new task sheet Start submits and opens the task", async ({ page }) => {
   await mockFetch(page, {
     "/api/tasks": { ok: true, state_changed: true, cockpit: COCKPIT_FIXTURE, output: "started", error: null },
   });
@@ -177,7 +177,10 @@ test("new task sheet Start submits and reports the task started", async ({ page 
   await sheet.getByRole("button", { name: "Start" }).click();
 
   await expect(page.locator("[data-testid='new-task-sheet']")).toHaveCount(0, { timeout: 10_000 });
-  await expect(resultPanel(page)).toContainText("Task started");
+  await expect(resultPanel(page)).toHaveCount(0);
+  await expect(page.locator("[data-outlet='task']")).toHaveAttribute("data-handle", "web/add-logout", {
+    timeout: 10_000,
+  });
 });
 
 // Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in

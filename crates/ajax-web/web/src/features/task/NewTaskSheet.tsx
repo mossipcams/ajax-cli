@@ -12,7 +12,6 @@ interface Props {
   selectedProject?: string | null;
   onClose?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
-  onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onOpenTask?: (handle: string) => void;
 }
 
@@ -65,7 +64,6 @@ export default function NewTaskSheet({
   selectedProject = null,
   onClose,
   onCockpit,
-  onResult,
   onOpenTask,
 }: Props) {
   const [repo, setRepo] = useState(() => initialRepo(repos, selectedProject));
@@ -127,16 +125,13 @@ export default function NewTaskSheet({
       if (!result.ok) {
         const message = result.error?.message ?? "Action failed";
         setError(message);
-        onResult?.(message, result.response.output, true);
         return;
       }
       savePrefs();
-      onResult?.("Task started", result.response.output, false);
       onOpenTask?.(startTaskHandle(repo, title));
       onClose?.();
     } catch {
       setError("Action failed — network error");
-      onResult?.("Could not start task", null, true);
     } finally {
       setSubmitting(false);
     }
