@@ -17,6 +17,7 @@ const RELEASE_BRANCH = "release-please--branches--main";
 // Jobs that must never run on the generated release PR: its commits were all
 // tested on the PRs that produced them.
 const HEAVY_JOBS = [
+  "file-loc",
   "format",
   "web",
   "check",

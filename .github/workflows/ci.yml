@@ -23,6 +23,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  file-loc:
+    name: File LOC
+    runs-on: ubuntu-latest
+    needs: pr-title
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check changed file sizes
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: node scripts/check-file-loc.mjs
+
   pr-title:
     name: PR Title
     runs-on: ubuntu-latest
@@ -288,6 +306,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - pr-title
+      - file-loc
       - release-candidate
       - format
       - check
@@ -318,6 +337,7 @@ jobs:
           fi
 
           for result in \
+            "${{ needs.file-loc.result }}" \
             "${{ needs.format.result }}" \
             "${{ needs.web.result }}" \
             "${{ needs.check.result }}" \
