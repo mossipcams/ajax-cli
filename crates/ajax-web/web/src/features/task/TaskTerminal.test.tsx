@@ -350,18 +350,22 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2}\};/)?.[1] ?? "";
     expect(revealBody).not.toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
+    expect(revealBody).toMatch(/armPostRevealEraseGrace/);
+    expect(mountBody).toMatch(/POST_REVEAL_ERASE_GRACE_MS/);
 
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {6}\},/)?.[1] ?? "";
+    expect(onOutputBody).toMatch(/detectCsiEraseInDisplay/);
+    expect(onOutputBody).toMatch(/eraseCarry/);
     expect(onOutputBody).toMatch(/sawErase/);
     expect(onOutputBody).toMatch(
-      /!isSeedPending\(\)[\s\S]*?scrollOnEraseInDisplay\s*=\s*false/,
+      /!isSeedPending\(\)[\s\S]*?latchScrollOnEraseOff/,
     );
 
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {6}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(
-      /if\s*\(\s*!seeded\s*\)\s*\{[\s\S]*?scrollOnEraseInDisplay\s*=\s*false/,
+      /if\s*\(\s*!seeded\s*\)\s*\{[\s\S]*?latchScrollOnEraseOff/,
     );
     expect(onOpenBody).toMatch(
       /termRef\.current\.reset\(\)[\s\S]*?scrollOnEraseInDisplay\s*=\s*true/,

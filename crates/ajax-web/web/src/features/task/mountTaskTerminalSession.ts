@@ -19,6 +19,7 @@ import {
   terminalScrollbackLines,
 } from "@/shared/lib/terminalGeometry";
 import { createRefitController } from "@/shared/lib/terminalRefit";
+import { detectCsiEraseInDisplay } from "@/shared/lib/detectCsiEraseInDisplay";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { Terminal } from "@xterm/xterm";
 import {
@@ -38,6 +39,8 @@ import { setTerminalDoubleTapPending, setTerminalSelecting } from "@/shared/lib/
 const SEED_REVEAL_QUIET_MS = 120;
 /** Hard cap so a pane streaming nonstop still reveals. */
 const SEED_REVEAL_MAX_MS = 2000;
+/** Force scrollOnErase off if no post-reveal CSI erase is seen (split-chunk safe). */
+const POST_REVEAL_ERASE_GRACE_MS = 1000;
 
 const EXPANDED_CLASS = "terminal-expanded";
 const PINCH_ACTIVATION_PX = 12;
@@ -180,6 +183,28 @@ export function mountTaskTerminalSession(
   let selectionDragLastRow = -1;
   let seedQuietTimer: ReturnType<typeof setTimeout> | undefined;
   let seedCapTimer: ReturnType<typeof setTimeout> | undefined;
+  let postRevealEraseGraceTimer: ReturnType<typeof setTimeout> | undefined;
+  let eraseCarry = "";
+
+  const clearPostRevealEraseGraceTimer = () => {
+    if (postRevealEraseGraceTimer) clearTimeout(postRevealEraseGraceTimer);
+    postRevealEraseGraceTimer = undefined;
+  };
+
+  const latchScrollOnEraseOff = () => {
+    clearPostRevealEraseGraceTimer();
+    if (termRef.current?.options.scrollOnEraseInDisplay) {
+      termRef.current.options.scrollOnEraseInDisplay = false;
+    }
+  };
+
+  const armPostRevealEraseGrace = () => {
+    clearPostRevealEraseGraceTimer();
+    postRevealEraseGraceTimer = setTimeout(
+      latchScrollOnEraseOff,
+      POST_REVEAL_ERASE_GRACE_MS,
+    );
+  };
 
   const clearSeedPendingRevealTimer = () => {
     if (seedQuietTimer) clearTimeout(seedQuietTimer);
@@ -192,6 +217,8 @@ export function mountTaskTerminalSession(
 
   const cancelSeedPending = () => {
     clearSeedPendingRevealTimer();
+    clearPostRevealEraseGraceTimer();
+    eraseCarry = "";
     interactionEl.classList.remove("is-seed-pending");
   };
 
@@ -208,7 +235,8 @@ export function mountTaskTerminalSession(
     interactionEl.classList.remove("is-seed-pending");
     // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
     // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
-    // the first erase after reveal (see onOutput).
+    // the first post-reveal erase (onOutput) or after grace if none is seen.
+    armPostRevealEraseGrace();
   };
 
   // The seed is scrollback only; the tmux attach repaint of the visible pane
@@ -225,6 +253,8 @@ export function mountTaskTerminalSession(
   // nothing yet is an empty grid, and hiding an empty grid looks identical.
   const beginSeedPending = () => {
     clearSeedPendingRevealTimer();
+    clearPostRevealEraseGraceTimer();
+    eraseCarry = "";
     interactionEl.classList.add("is-seed-pending");
   };
 
@@ -811,10 +841,8 @@ export function mountTaskTerminalSession(
     if (disposed) return;
     connection = connectTaskTerminal(handle, {
       onOutput: (text) => {
-        // Attach CSI 2 J (and later live clears) match CSI … J. Detect before
-        // write so a split-safe single-chunk ED2 still arms the post-reveal latch.
-        // eslint-disable-next-line no-control-regex -- CSI ESC must appear in the pattern
-        const sawErase = /\x1b\[[0-9;]*J/.test(text);
+        const { sawErase, carry } = detectCsiEraseInDisplay(eraseCarry, text);
+        eraseCarry = carry;
         termRef.current?.write(text, () => {
           // Mid-parse xterm onScroll is ignored while seed-pending (above), so
           // followLive stays put across the write. Do not force-follow here —
@@ -824,12 +852,8 @@ export function mountTaskTerminalSession(
           // Latch scrollOnErase off only after seed reveal: releasing at reveal
           // raced the bridge (seed WS frame, then PTY attach ED2) and wiped
           // history when ED2 landed with the option already false.
-          if (
-            sawErase &&
-            !isSeedPending() &&
-            termRef.current?.options.scrollOnEraseInDisplay
-          ) {
-            termRef.current.options.scrollOnEraseInDisplay = false;
+          if (sawErase && !isSeedPending() && termRef.current?.options.scrollOnEraseInDisplay) {
+            latchScrollOnEraseOff();
           }
           scrollSync.applyOutput();
           deferSeedReveal();
@@ -864,9 +888,7 @@ export function mountTaskTerminalSession(
         }
         if (!seeded) {
           cancelSeedPending();
-          if (termRef.current) {
-            termRef.current.options.scrollOnEraseInDisplay = false;
-          }
+          latchScrollOnEraseOff();
         }
         scheduleImmediate(true);
       },
@@ -905,6 +927,7 @@ export function mountTaskTerminalSession(
     setTerminalSelecting(false);
     setTerminalDoubleTapPending(false);
     clearSeedPendingRevealTimer();
+    clearPostRevealEraseGraceTimer();
     keyboardClassObserver.disconnect();
     cancelExpandSettle();
     cancelLongPress();
