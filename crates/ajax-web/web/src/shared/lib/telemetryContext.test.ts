@@ -30,6 +30,11 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.stubGlobal("innerWidth", 390);
   vi.stubGlobal("innerHeight", 844);
+  vi.stubGlobal("devicePixelRatio", 2);
+  Object.defineProperty(navigator, "onLine", {
+    configurable: true,
+    value: true,
+  });
   window.location.hash = "#/";
   document.head.innerHTML = "";
 });
@@ -108,6 +113,11 @@ describe("buildEventContext", () => {
     expect(ctx.sequence).toBe(1);
     expect(ctx.app_version).toBe("1.2.3-test");
     expect(ctx.route).toBe("#/p/demo");
+    expect(ctx.route_kind).toBe("project");
+    expect(ctx.host).toBe(window.location.hostname);
+    expect(ctx.online).toBe(true);
+    expect(ctx.visibility).toBe(document.visibilityState);
+    expect(ctx.pixel_ratio).toBe(2);
     expect(ctx.viewport_w).toBe(390);
     expect(ctx.viewport_h).toBe(844);
     expect(ctx.standalone).toBe(false);
