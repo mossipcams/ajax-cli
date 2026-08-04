@@ -16,7 +16,7 @@ import {
 } from "@/shared/gestures/navigateSwipe";
 import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { captureSwipe } from "@/shared/lib/posthog";
-import { isTerminalSelecting } from "@/shared/lib/terminalSelecting";
+import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
 
 export const SWIPE_PAGE_COMMIT_MS = 220;
 
@@ -139,6 +139,12 @@ export function useSwipePageTransition(
         touchTargetRef.current = null;
         return;
       }
+      // Capture runs before terminal bubble: refuse to arm while selecting, or
+      // while a double-tap is pending on the terminal (second contact).
+      if (shouldSuppressPageSwipe(event.target)) {
+        touchTargetRef.current = null;
+        return;
+      }
       const point = readTouch(event);
       if (!point) return;
       touchTargetRef.current = event.target;
@@ -152,9 +158,7 @@ export function useSwipePageTransition(
 
     const onTouchMove = (event: TouchEvent) => {
       if (!touchTargetRef.current) return;
-      // Capture-phase swipe arms before terminal bubble selection; drop once
-      // double-tap-hold selection owns the gesture.
-      if (isTerminalSelecting()) {
+      if (shouldSuppressPageSwipe(event.target ?? touchTargetRef.current)) {
         reset();
         return;
       }
@@ -173,7 +177,7 @@ export function useSwipePageTransition(
 
     const onTouchEnd = () => {
       if (!touchTargetRef.current) return;
-      if (isTerminalSelecting()) {
+      if (shouldSuppressPageSwipe(touchTargetRef.current)) {
         reset();
         return;
       }
