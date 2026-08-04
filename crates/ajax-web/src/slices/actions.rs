@@ -5,7 +5,7 @@ use ajax_core::{
     models::OperatorAction,
     output::TaskCard,
     registry::Registry,
-    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
+    task_operations::operator_dispatch::{plan_task_command_operation, TaskCommandKind},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]

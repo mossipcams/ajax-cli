@@ -7,7 +7,7 @@ use ajax_core::{
         execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
         DropTaskCompletion,
     },
-    task_operations::task_command::{
+    task_operations::operator_dispatch::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
 };

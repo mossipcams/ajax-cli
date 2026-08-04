@@ -2,18 +2,42 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const OPERATION_SLICES: [&str; 4] = ["start", "task_command", "drop_task", "sweep_cleanup"];
+    const OPERATION_SLICES: [&str; 7] = [
+        "start",
+        "resume",
+        "review",
+        "repair",
+        "ship",
+        "drop_task",
+        "sweep_cleanup",
+    ];
 
-    // sweep_cleanup composes drop_task teardown (tidy sweeps what drop leaves); kernel is shared plumbing and exempt.
+    // sweep_cleanup composes drop_task teardown (tidy sweeps what drop leaves); kernel and
+    // operator_dispatch are shared/composition plumbing and are not operator slices.
     const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
+
+    const KERNEL_MODULES: [&str; 8] = [
+        "models",
+        "lifecycle",
+        "live",
+        "live_application",
+        "policy",
+        "output",
+        "ghost_task",
+        "validity",
+    ];
 
     #[test]
     fn task_operations_submodules_are_file_backed() {
         let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
         for name in [
             "kernel",
+            "operator_dispatch",
             "start",
-            "task_command",
+            "resume",
+            "review",
+            "repair",
+            "ship",
             "drop_task",
             "sweep_cleanup",
         ] {
@@ -26,6 +50,10 @@ mod tests {
                 "task_operations.rs should not contain an inline {name} module body"
             );
         }
+        assert!(
+            !source.contains("pub mod task_command;"),
+            "task_command is no longer an operator slice; use resume/review/repair/ship + operator_dispatch"
+        );
     }
 
     #[test]
@@ -86,8 +114,7 @@ mod tests {
     #[test]
     fn each_task_operation_slice_declares_its_operation_entry_points() {
         for slice in OPERATION_SLICES {
-            let source =
-                std::fs::read_to_string(format!("src/task_operations/{slice}.rs")).unwrap();
+            let source = slice_sources(slice).join("\n");
 
             assert!(
                 source.contains("pub fn execute_"),
@@ -100,6 +127,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn shared_kernel_does_not_depend_on_commands_or_task_operations() {
+        let forbidden = [
+            "crate::task_operations".to_string(),
+            "crate::commands".to_string(),
+            "task_operations::".to_string(),
+        ];
+        for module in KERNEL_MODULES {
+            let path = PathBuf::from("src").join(format!("{module}.rs"));
+            let dir = PathBuf::from("src").join(module);
+            if !path.exists() && !dir.exists() {
+                continue;
+            }
+            assert_module_does_not_depend_on(
+                &format!("ajax-core::{module}"),
+                &forbidden,
+                "shared kernel module",
+                module,
+            );
+        }
+    }
+
+    #[test]
+    fn adapters_do_not_depend_on_task_operations() {
+        let forbidden = [
+            "crate::task_operations".to_string(),
+            "task_operations::".to_string(),
+        ];
+        assert_module_does_not_depend_on(
+            "ajax-core::adapters",
+            &forbidden,
+            "mechanism module",
+            "adapters",
+        );
+    }
+
+    #[test]
+    fn commands_do_not_import_operator_slices() {
+        let forbidden = OPERATION_SLICES
+            .iter()
+            .flat_map(|slice| {
+                [
+                    format!("crate::task_operations::{slice}"),
+                    format!("task_operations::{slice}::"),
+                    format!("task_operations::{slice};"),
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert_module_does_not_depend_on(
+            "ajax-core::commands",
+            &forbidden,
+            "plan helper module",
+            "commands",
+        );
+    }
+
+    fn slice_sources(slice: &str) -> Vec<String> {
+        module_sources(&format!("ajax-core::task_operations::{slice}"))
+            .into_iter()
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .collect()
     }
 
     fn assert_module_does_not_depend_on(
@@ -125,7 +215,7 @@ mod tests {
     fn module_sources(module: &str) -> Vec<PathBuf> {
         let relative = module.split("::").skip(1).collect::<Vec<_>>().join("/");
         let file = PathBuf::from("src").join(format!("{relative}.rs"));
-        let dir = PathBuf::from("src").join(relative);
+        let dir = PathBuf::from("src").join(&relative);
         let mut sources = Vec::new();
         if file.exists() {
             sources.push(file);
@@ -160,6 +250,11 @@ mod tests {
         let Some((parent, child)) = dependency.rsplit_once("::") else {
             return false;
         };
+        // Only expand nested parents like `task_operations::{sibling}`. Bare
+        // `crate::{ ... }` matches too many unrelated imports.
+        if !parent.contains("::") {
+            return false;
+        }
         source.contains(&format!("{parent}::{{")) && source.contains(child)
     }
 }
