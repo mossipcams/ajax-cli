@@ -28,7 +28,7 @@ describe("cockpitRefreshIntervalMs", () => {
     expect(
       cockpitRefreshIntervalMs({ visibilityState: "visible", routeKind: "task" }),
     ).toBe(REFRESH_INTERVAL_TERMINAL_MS);
-    expect(REFRESH_INTERVAL_TERMINAL_MS).toBe(5000);
+    expect(REFRESH_INTERVAL_TERMINAL_MS).toBe(10000);
   });
 
   it("cockpitRefreshIntervalMs returns idle interval on settings route when visible", () => {
@@ -45,7 +45,34 @@ describe("cockpitRefreshIntervalMs", () => {
     expect(
       cockpitRefreshIntervalMs({ visibilityState: "visible", routeKind: "project" }),
     ).toBe(REFRESH_INTERVAL_ACTIVE_MS);
-    expect(REFRESH_INTERVAL_ACTIVE_MS).toBe(1000);
+    expect(REFRESH_INTERVAL_ACTIVE_MS).toBe(3000);
+  });
+
+  it("cockpitRefreshIntervalMs returns idle interval on quiet dashboard or project when visible", () => {
+    expect(
+      cockpitRefreshIntervalMs({
+        visibilityState: "visible",
+        routeKind: "dashboard",
+        fleetQuiet: true,
+      }),
+    ).toBe(REFRESH_INTERVAL_IDLE_MS);
+    expect(
+      cockpitRefreshIntervalMs({
+        visibilityState: "visible",
+        routeKind: "project",
+        fleetQuiet: true,
+      }),
+    ).toBe(REFRESH_INTERVAL_IDLE_MS);
+  });
+
+  it("cockpitRefreshIntervalMs returns active interval when fleet is not quiet", () => {
+    expect(
+      cockpitRefreshIntervalMs({
+        visibilityState: "visible",
+        routeKind: "dashboard",
+        fleetQuiet: false,
+      }),
+    ).toBe(REFRESH_INTERVAL_ACTIVE_MS);
   });
 });
 

@@ -729,7 +729,7 @@ export function mountTaskTerminalSession(
   const liveTerm = new Terminal({
     fontSize: initialFontSize,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    cursorBlink: true,
+    cursorBlink: false,
     scrollback: terminalScrollbackLines(),
     scrollOnEraseInDisplay: true,
     theme: {

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent, screen, within } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { act, render, fireEvent, screen, within } from "@testing-library/react";
 import TaskList from "./TaskList";
 import type { BrowserCockpitView } from "@/shared/lib/types";
 
@@ -61,6 +61,46 @@ const cockpit: BrowserCockpitView = {
 };
 
 describe("TaskList", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+  });
+
+  it("pauses the relative-time ticker while the document is hidden", () => {
+    vi.useFakeTimers();
+    const baseSecs = Math.floor(Date.now() / 1000);
+    vi.setSystemTime(baseSecs * 1000);
+
+    render(<TaskList cockpit={cockpit} />);
+    const rowB = screen.getByRole("button", { name: /web\/b/ });
+    expect(rowB).toHaveTextContent("5m ago");
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(65 * 60_000);
+    });
+    expect(rowB).toHaveTextContent("5m ago");
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(rowB).toHaveTextContent("1h ago");
+  });
+
   it("shows relative last-activity time on task rows and omits it when unset", () => {
     render(<TaskList cockpit={cockpit} />);
     const rowB = screen.getByRole("button", { name: /web\/b/ });

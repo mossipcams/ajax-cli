@@ -335,6 +335,10 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalFeatureSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
   });
 
+  it("uses a static cursor to avoid continuous blink repaints", () => {
+    expect(taskTerminalFeatureSource).toMatch(/cursorBlink:\s*false/);
+  });
+
   it("latches scrollOnErase to the seeded-open window only", () => {
     const mountBody =
       mountTaskTerminalSessionSource.match(

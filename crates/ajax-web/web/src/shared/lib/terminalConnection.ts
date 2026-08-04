@@ -176,7 +176,9 @@ export function connectTaskTerminal(
     reconnectAttempts += 1;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
-      if (!disposed) connect(false);
+      if (disposed) return;
+      if (document.visibilityState !== "visible") return; // stay reconnecting; visibility handler redials
+      connect(false);
     }, delay);
   };
 

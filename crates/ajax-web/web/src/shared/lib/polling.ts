@@ -1,7 +1,7 @@
 // Polling cadences and timeouts for the cockpit refresh and restart flows.
 
-export const REFRESH_INTERVAL_ACTIVE_MS = 1000;
-export const REFRESH_INTERVAL_TERMINAL_MS = 5000;
+export const REFRESH_INTERVAL_ACTIVE_MS = 3000;
+export const REFRESH_INTERVAL_TERMINAL_MS = 10000;
 export const REFRESH_INTERVAL_IDLE_MS = 10000;
 export const REFRESH_INTERVAL_HIDDEN_MS = 60000;
 
@@ -30,10 +30,17 @@ export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "sett
 export function cockpitRefreshIntervalMs(input: {
   visibilityState: DocumentVisibilityState;
   routeKind: PollingRouteKind;
+  fleetQuiet?: boolean;
 }): number {
   if (input.visibilityState !== "visible") return REFRESH_INTERVAL_HIDDEN_MS;
   if (input.routeKind === "task") return REFRESH_INTERVAL_TERMINAL_MS;
   if (input.routeKind === "settings" || input.routeKind === "diff") {
+    return REFRESH_INTERVAL_IDLE_MS;
+  }
+  if (
+    (input.routeKind === "dashboard" || input.routeKind === "project") &&
+    input.fleetQuiet
+  ) {
     return REFRESH_INTERVAL_IDLE_MS;
   }
   return REFRESH_INTERVAL_ACTIVE_MS;

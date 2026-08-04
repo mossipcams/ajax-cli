@@ -36,6 +36,9 @@ import {
   endTapToFeedback,
 } from "@/shared/lib/posthog";
 
+/** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
+const RESUME_DEBOUNCE_MS = 750;
+
 type ResultState = {
   message: string;
   output?: string | null;
@@ -72,6 +75,7 @@ export default function App() {
   );
   const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | null>(null);
   const outletSwipeRef = useRef<HTMLElement | null>(null);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Report what's live first, then the inventory size.
   const statusText = (() => {
@@ -128,18 +132,24 @@ export default function App() {
     void checkVersion();
     void loadCockpit({ trailing: true });
   });
+  const scheduleShellResume = useEffectEvent(() => {
+    if (resumeTimerRef.current !== null) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => {
+      resumeTimerRef.current = null;
+      onShellResume();
+    }, RESUME_DEBOUNCE_MS);
+  });
   const onShellVisibilityChange = useEffectEvent(() => {
     setDocumentVisibility(document.visibilityState);
     if (document.visibilityState === "visible") {
-      void checkVersion();
-      void loadCockpit({ trailing: true });
+      scheduleShellResume();
     }
   });
 
-  // Shell listeners — mount once; immediate poll on focus / pageshow / become-visible.
+  // Shell listeners — mount once; immediate cockpit on mount, debounced recovery on resume.
   useEffect(() => {
     const idleHandle = onShellMount();
-    const onResume = () => onShellResume();
+    const onResume = () => scheduleShellResume();
     const onVisibilityChange = () => onShellVisibilityChange();
     window.addEventListener("focus", onResume);
     window.addEventListener("pageshow", onResume);
@@ -147,6 +157,7 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelIdle(idleHandle);
+      if (resumeTimerRef.current !== null) clearTimeout(resumeTimerRef.current);
       window.removeEventListener("focus", onResume);
       window.removeEventListener("pageshow", onResume);
       window.removeEventListener("online", onResume);
@@ -157,9 +168,13 @@ export default function App() {
   // Adaptive cockpit / version intervals. Derive the scalar cadences first: an
   // inline object literal is a new value every render and could never be a
   // dependency, which is what forced the old suppression here.
+  const fleetQuiet =
+    cockpit.data !== null &&
+    cockpit.data.cards.every((card) => (card.status || "").toLowerCase() === "idle");
   const pollingInput = {
     visibilityState: documentVisibility,
     routeKind: route.kind as PollingRouteKind,
+    fleetQuiet,
   };
   const noCockpitProjection = cockpit.data === null;
   const hiddenStartupRetry = noCockpitProjection && cockpit.status === "error";
