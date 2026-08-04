@@ -4,12 +4,7 @@ use axum::http::{header, uri::Authority, HeaderMap, Request, Uri};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 use serde_json::json;
-use std::{
-    fs::{self, OpenOptions},
-    io::{ErrorKind, Write},
-    path::Path,
-    process::Stdio,
-};
+use std::{process::Stdio, sync::OnceLock};
 use tokio::{io::AsyncWriteExt, process::Command};
 use web_push_native::{
     jwt_simple::algorithms::ES256KeyPair,
@@ -17,8 +12,12 @@ use web_push_native::{
     Auth, WebPushBuilder,
 };
 
-const VAPID_KEY_FILE: &str = "web-push-vapid.key";
 const VAPID_CONTACT: &str = "mailto:ajax-prototype@localhost";
+
+/// Process-local VAPID private key bytes. Settings test re-subscribes on each
+/// click, so disk persistence is unnecessary and would trip CodeQL path-injection
+/// on the operator-owned `state_dir` the same way a request-tainted path would.
+static VAPID_PRIVATE_KEY: OnceLock<Vec<u8>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PushSubscription {
@@ -32,17 +31,16 @@ struct PushSubscriptionKeys {
     auth: String,
 }
 
-pub(crate) fn vapid_public_key_base64(state_dir: &Path) -> Result<String, String> {
-    let key_pair = load_or_create_vapid(state_dir)?;
+pub(crate) fn vapid_public_key_base64() -> Result<String, String> {
+    let key_pair = vapid_key_pair()?;
     Ok(URL_SAFE_NO_PAD.encode(vapid_public_key(&key_pair)))
 }
 
 pub(crate) async fn send_declarative_test_push(
-    state_dir: &Path,
     headers: &HeaderMap,
     subscription: PushSubscription,
 ) -> Result<(), String> {
-    let key_pair = load_or_create_vapid(state_dir)?;
+    let key_pair = vapid_key_pair()?;
     let request = build_push_request(
         subscription,
         declarative_payload(&navigation_url(headers)),
@@ -51,48 +49,17 @@ pub(crate) async fn send_declarative_test_push(
     deliver_with_curl(request).await
 }
 
+fn vapid_key_pair() -> Result<ES256KeyPair, String> {
+    let bytes = VAPID_PRIVATE_KEY.get_or_init(|| ES256KeyPair::generate().to_bytes());
+    ES256KeyPair::from_bytes(bytes).map_err(|error| format!("invalid VAPID key: {error}"))
+}
+
 fn vapid_public_key(key_pair: &ES256KeyPair) -> Vec<u8> {
     PublicKey::from_sec1_bytes(&key_pair.public_key().to_bytes())
         .expect("ES256 key pair always has a valid public key")
         .to_encoded_point(false)
         .as_bytes()
         .to_vec()
-}
-
-fn load_or_create_vapid(state_dir: &Path) -> Result<ES256KeyPair, String> {
-    let path = state_dir.join(VAPID_KEY_FILE);
-    match fs::read(&path) {
-        Ok(bytes) => ES256KeyPair::from_bytes(&bytes)
-            .map_err(|error| format!("invalid persisted VAPID key: {error}")),
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            fs::create_dir_all(state_dir)
-                .map_err(|error| format!("create state directory for VAPID key: {error}"))?;
-            let key_pair = ES256KeyPair::generate();
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            match options.open(&path) {
-                Ok(mut file) => {
-                    file.write_all(&key_pair.to_bytes())
-                        .and_then(|()| file.sync_all())
-                        .map_err(|error| format!("persist VAPID key: {error}"))?;
-                    Ok(key_pair)
-                }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => fs::read(&path)
-                    .map_err(|error| format!("read concurrently created VAPID key: {error}"))
-                    .and_then(|bytes| {
-                        ES256KeyPair::from_bytes(&bytes)
-                            .map_err(|error| format!("invalid persisted VAPID key: {error}"))
-                    }),
-                Err(error) => Err(format!("create VAPID key: {error}")),
-            }
-        }
-        Err(error) => Err(format!("read VAPID key: {error}")),
-    }
 }
 
 fn declarative_payload(navigate: &str) -> Vec<u8> {
@@ -208,7 +175,6 @@ async fn deliver_with_curl(request: Request<Vec<u8>>) -> Result<(), String> {
 mod tests {
     use super::*;
     use serde_json::Value;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use web_push_native::jwt_simple::algorithms::ES256KeyPair;
 
     const P256DH: &str =
@@ -226,19 +192,16 @@ mod tests {
     }
 
     #[test]
-    fn vapid_key_and_public_key_are_stable() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("ajax-push-{}-{unique}", std::process::id()));
-
-        let first = load_or_create_vapid(&dir).unwrap();
-        let second = load_or_create_vapid(&dir).unwrap();
+    fn vapid_key_and_public_key_are_stable_in_process() {
+        let first = vapid_key_pair().unwrap();
+        let second = vapid_key_pair().unwrap();
 
         assert_eq!(first.to_bytes(), second.to_bytes());
         assert_eq!(vapid_public_key(&first).len(), 65);
-        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(
+            vapid_public_key_base64().unwrap(),
+            URL_SAFE_NO_PAD.encode(vapid_public_key(&first))
+        );
     }
 
     #[test]

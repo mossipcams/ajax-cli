@@ -525,7 +525,7 @@ capture. Terminal surfaces are excluded from autocapture via CSS ignorelist.
 
 Browser notifications remain out of scope except for a narrow prototype: a
 Settings test may use the browser-session-protected `/api/push/vapid` and
-`/api/push/test` routes to fetch the server's persisted VAPID public key and
+`/api/push/test` routes to fetch the server's process-local VAPID public key and
 send one declarative push immediately. This carve-out does not permit service
 worker registration, offline mutation, stored subscriptions, notification
 click infrastructure, or replacement of attention delivery. Server-side

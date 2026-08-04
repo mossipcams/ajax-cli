@@ -80,8 +80,8 @@ where
         .route("/terminal.js", get(axum_terminal_js))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
-        .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
-        .route("/api/push/test", post(axum_push_test::<C, B>))
+        .route("/api/push/vapid", get(axum_push_vapid))
+        .route("/api/push/test", post(axum_push_test))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route(
@@ -333,8 +333,8 @@ async fn axum_version() -> AxumResponse {
     )
 }
 
-async fn axum_push_vapid<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
-    match push::vapid_public_key_base64(&state.state_dir) {
+async fn axum_push_vapid() -> AxumResponse {
+    match push::vapid_public_key_base64() {
         Ok(public_key) => Json(serde_json::json!({ "public_key": public_key })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -344,8 +344,7 @@ async fn axum_push_vapid<C, B>(State(state): State<WebAppState<C, B>>) -> AxumRe
     }
 }
 
-async fn axum_push_test<C, B>(
-    State(state): State<WebAppState<C, B>>,
+async fn axum_push_test(
     headers: HeaderMap,
     subscription: Result<Json<push::PushSubscription>, JsonRejection>,
 ) -> AxumResponse {
@@ -359,7 +358,7 @@ async fn axum_push_test<C, B>(
                 .into_response();
         }
     };
-    match push::send_declarative_test_push(&state.state_dir, &headers, subscription).await {
+    match push::send_declarative_test_push(&headers, subscription).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => {
             let status = if error.contains("subscription") || error.contains("endpoint") {
