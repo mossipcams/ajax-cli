@@ -5,11 +5,15 @@ pub(super) use std::{
 };
 
 pub(super) use super::{
+    apply_github_checks_observation, clear_github_ci_evidence, github_probe_is_retired,
     refresh_runtime_context, refresh_runtime_context_with_tier, AgentStatusSource,
-    CiChecksObservation, GithubChecksAdapter, NoAgentStatusSource, RefreshTier, PRIMARY_RUN_ID,
+    NoAgentStatusSource, RefreshTier, CI_PROBE_ERROR_KEY, PRIMARY_RUN_ID,
 };
 pub(super) use crate::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+    adapters::{
+        CiChecksObservation, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+        GithubChecksAdapter,
+    },
     agent_status::{
         ActivityKind, Confidence, ObservationSource, ProcessLiveness, StatusObservation,
     },
