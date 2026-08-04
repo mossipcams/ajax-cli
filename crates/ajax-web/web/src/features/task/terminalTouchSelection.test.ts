@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   isWordChar,
   wordBoundsAtCol,
   selectionRangeBetweenCells,
   selectionRangeFromWordAnchor,
 } from "./terminalTouchSelection";
+import { isTerminalSelecting, setTerminalSelecting } from "@/shared/lib/terminalSelecting";
 
 describe("isWordChar", () => {
   it("accepts alphanumerics, hyphen, underscore, and non-ascii", () => {
@@ -80,5 +81,21 @@ describe("selectionRangeFromWordAnchor", () => {
       row: 2,
       length: 24,
     });
+  });
+});
+
+describe("terminalSelecting flag", () => {
+  afterEach(() => {
+    setTerminalSelecting(false);
+  });
+
+  it("toggles the document dataset used to suppress page swipe", () => {
+    expect(isTerminalSelecting()).toBe(false);
+    setTerminalSelecting(true);
+    expect(isTerminalSelecting()).toBe(true);
+    expect(document.documentElement.dataset.ajaxTerminalSelecting).toBe("1");
+    setTerminalSelecting(false);
+    expect(isTerminalSelecting()).toBe(false);
+    expect(document.documentElement.dataset.ajaxTerminalSelecting).toBeUndefined();
   });
 });
