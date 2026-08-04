@@ -14,17 +14,37 @@ interface PushSubscriptionJson {
 
 interface PushSubscriptionLike {
   toJSON(): PushSubscriptionJson;
+  unsubscribe(): Promise<boolean>;
+}
+
+interface PushManagerLike {
+  subscribe(options: {
+    userVisibleOnly: boolean;
+    applicationServerKey: Uint8Array;
+  }): Promise<PushSubscriptionLike>;
+  getSubscription(): Promise<PushSubscriptionLike | null>;
 }
 
 declare global {
   interface Window {
-    pushManager?: {
-      subscribe(options: {
-        userVisibleOnly: boolean;
-        applicationServerKey: Uint8Array;
-      }): Promise<PushSubscriptionLike>;
-    };
+    pushManager?: PushManagerLike;
   }
+}
+
+/** Drop a stale subscription when the server VAPID key rotated after restart. */
+async function subscribeWithCurrentVapidKey(
+  applicationServerKey: Uint8Array,
+): Promise<PushSubscriptionLike> {
+  // Keep `window.pushManager.subscribe` as a property chain so the install
+  // allowlist string survives minify (a renamed local binding would not).
+  const existing = await window.pushManager!.getSubscription();
+  if (existing) {
+    await existing.unsubscribe();
+  }
+  return window.pushManager!.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey,
+  });
 }
 
 export function urlSafeBase64ToUint8Array(base64: string): Uint8Array {
@@ -65,10 +85,7 @@ export async function runPushNotificationTest(
     const applicationServerKey = urlSafeBase64ToUint8Array(public_key);
 
     onStatus("Subscribing to push…");
-    const subscription = await window.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey,
-    });
+    const subscription = await subscribeWithCurrentVapidKey(applicationServerKey);
 
     onStatus("Sending in 20s… background the app now");
     await new Promise((resolve) => setTimeout(resolve, PUSH_TEST_DELAY_MS));

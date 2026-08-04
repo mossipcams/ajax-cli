@@ -12,8 +12,6 @@ use web_push_native::{
     Auth, WebPushBuilder,
 };
 
-const VAPID_CONTACT: &str = "mailto:ajax-prototype@localhost";
-
 /// Process-local VAPID private key bytes. Settings test re-subscribes on each
 /// click, so disk persistence is unnecessary and would trip CodeQL path-injection
 /// on the operator-owned `state_dir` the same way a request-tainted path would.
@@ -41,10 +39,15 @@ pub(crate) async fn send_declarative_test_push(
     subscription: PushSubscription,
 ) -> Result<(), String> {
     let key_pair = vapid_key_pair()?;
+    let navigate = navigation_url(headers);
+    // Apple rejects VAPID JWT `sub` values like mailto:…@localhost (403 BadJwtToken).
+    // An https origin URL is a valid subject claim.
+    let vapid_subject = navigate.trim_end_matches('/').to_string();
     let request = build_push_request(
         subscription,
-        declarative_payload(&navigation_url(headers)),
+        declarative_payload(&navigate),
         &key_pair,
+        &vapid_subject,
     )?;
     deliver_with_curl(request).await
 }
@@ -100,6 +103,7 @@ fn build_push_request(
     subscription: PushSubscription,
     payload: Vec<u8>,
     vapid: &ES256KeyPair,
+    vapid_subject: &str,
 ) -> Result<Request<Vec<u8>>, String> {
     let endpoint = subscription
         .endpoint
@@ -121,7 +125,7 @@ fn build_push_request(
         .map_err(|_| "subscription auth key must decode to 16 bytes".to_string())?;
 
     WebPushBuilder::new(endpoint, public_key, Auth::from(auth))
-        .with_vapid(vapid, VAPID_CONTACT)
+        .with_vapid(vapid, vapid_subject)
         .build(payload)
         .map_err(|error| format!("build encrypted push request: {error}"))
 }
@@ -238,6 +242,7 @@ mod tests {
             subscription(AUTH),
             declarative_payload("https://localhost/"),
             &vapid,
+            "https://cockpit.example",
         )
         .unwrap();
 
@@ -245,6 +250,12 @@ mod tests {
         assert_eq!(request.uri(), "https://push.example/messages/1");
         assert_eq!(request.headers()[header::CONTENT_ENCODING], "aes128gcm");
         assert!(!request.body().is_empty());
-        assert!(build_push_request(subscription("bad"), Vec::new(), &vapid).is_err());
+        assert!(build_push_request(
+            subscription("bad"),
+            Vec::new(),
+            &vapid,
+            "https://cockpit.example"
+        )
+        .is_err());
     }
 }

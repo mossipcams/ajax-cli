@@ -14,10 +14,12 @@ const mockSubscriptionPayload = {
 function installPushManager(
   subscribe = vi.fn().mockResolvedValue({
     toJSON: () => mockSubscriptionPayload,
+    unsubscribe: vi.fn().mockResolvedValue(true),
   }),
+  getSubscription = vi.fn().mockResolvedValue(null),
 ) {
-  vi.stubGlobal("pushManager", { subscribe });
-  return subscribe;
+  vi.stubGlobal("pushManager", { subscribe, getSubscription });
+  return { subscribe, getSubscription };
 }
 
 describe("urlSafeBase64ToUint8Array", () => {
@@ -55,7 +57,7 @@ describe("runPushNotificationTest", () => {
   });
 
   it("waits 20s then posts the subscription", async () => {
-    const subscribe = installPushManager();
+    const { subscribe } = installPushManager();
     const statuses: string[] = [];
 
     const run = runPushNotificationTest((status) => statuses.push(status));
@@ -72,6 +74,29 @@ describe("runPushNotificationTest", () => {
 
     expect(api.fetchPushVapidPublicKey).toHaveBeenCalledOnce();
     expect(api.sendPushTest).toHaveBeenCalledWith(mockSubscriptionPayload);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("unsubscribes a stale subscription before resubscribing", async () => {
+    const unsubscribe = vi.fn().mockResolvedValue(true);
+    const stale = {
+      toJSON: () => mockSubscriptionPayload,
+      unsubscribe,
+    };
+    const subscribe = vi.fn().mockResolvedValue({
+      toJSON: () => mockSubscriptionPayload,
+      unsubscribe: vi.fn().mockResolvedValue(true),
+    });
+    const getSubscription = vi.fn().mockResolvedValue(stale);
+    vi.stubGlobal("pushManager", { subscribe, getSubscription });
+
+    const run = runPushNotificationTest(vi.fn());
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(getSubscription).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(PUSH_TEST_DELAY_MS);
+    const result = await run;
     expect(result).toEqual({ ok: true });
   });
 
