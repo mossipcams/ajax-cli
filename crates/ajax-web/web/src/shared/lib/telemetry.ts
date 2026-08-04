@@ -2,6 +2,7 @@ import posthog from "posthog-js";
 import type { SupportedWebVitalsMetrics } from "posthog-js";
 import {
   buildEventContext,
+  generateId,
   isStandaloneDisplay,
   readAppVersion,
 } from "./telemetryContext";
@@ -147,7 +148,7 @@ const pendingInteractions = new Map<string, PendingInteraction>();
 
 /** Start a timed tap interaction; returns an id for feedback/complete ends. */
 export function beginInteraction(control: string): string {
-  const id = `${control}:${Math.random().toString(36).slice(2, 10)}`;
+  const id = `${control}:${generateId()}`;
   pendingInteractions.set(id, {
     control,
     startedAt: performance.now(),

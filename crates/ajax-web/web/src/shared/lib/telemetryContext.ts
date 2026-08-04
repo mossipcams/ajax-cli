@@ -18,11 +18,19 @@ function safeStorageSet(storage: Storage, key: string, value: string): void {
   }
 }
 
-function generateId(): string {
+/** Opaque id for install/session/event correlation (not a secret). */
+export function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // Secure fallback when randomUUID is unavailable (non-secure contexts).
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Last resort: timestamp only — never Math.random() (CodeQL js/insecure-randomness).
+  return `ajax-${Date.now().toString(36)}`;
 }
 
 /** True when running as an installed PWA (Home Screen) rather than a browser tab. */
