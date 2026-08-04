@@ -188,9 +188,9 @@ export function mountTaskTerminalSession(
     scrollSync.setSyncingScroll(false);
     scrollSync.refreshFollow();
     interactionEl.classList.remove("is-seed-pending");
-    if (termRef.current) {
-      termRef.current.options.scrollOnEraseInDisplay = false;
-    }
+    // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
+    // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
+    // the first erase after reveal (see onOutput).
   };
 
   // The seed is scrollback only; the tmux attach repaint of the visible pane
@@ -739,11 +739,26 @@ export function mountTaskTerminalSession(
     if (disposed) return;
     connection = connectTaskTerminal(handle, {
       onOutput: (text) => {
+        // Attach CSI 2 J (and later live clears) match CSI … J. Detect before
+        // write so a split-safe single-chunk ED2 still arms the post-reveal latch.
+        // eslint-disable-next-line no-control-regex -- CSI ESC must appear in the pattern
+        const sawErase = /\x1b\[[0-9;]*J/.test(text);
         termRef.current?.write(text, () => {
           // Mid-parse xterm onScroll is ignored while seed-pending (above), so
           // followLive stays put across the write. Do not force-follow here —
           // that would re-pin after a wrapper scroll during the quiet window
           // and suppress the "New output" affordance.
+          //
+          // Latch scrollOnErase off only after seed reveal: releasing at reveal
+          // raced the bridge (seed WS frame, then PTY attach ED2) and wiped
+          // history when ED2 landed with the option already false.
+          if (
+            sawErase &&
+            !isSeedPending() &&
+            termRef.current?.options.scrollOnEraseInDisplay
+          ) {
+            termRef.current.options.scrollOnEraseInDisplay = false;
+          }
           scrollSync.applyOutput();
           deferSeedReveal();
         });
