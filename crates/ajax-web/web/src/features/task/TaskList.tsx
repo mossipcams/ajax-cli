@@ -123,8 +123,33 @@ export default function TaskList({
   const [stableOrder, setStableOrder] = useState<string[]>([]);
 
   useEffect(() => {
-    const timer = setInterval(() => setNowSecs(Math.floor(Date.now() / 1000)), 60_000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const syncNowSecs = () => setNowSecs(Math.floor(Date.now() / 1000));
+
+    const startTicker = () => {
+      if (timer !== undefined) return;
+      syncNowSecs();
+      timer = setInterval(syncNowSecs, 60_000);
+    };
+
+    const stopTicker = () => {
+      if (timer === undefined) return;
+      clearInterval(timer);
+      timer = undefined;
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") startTicker();
+      else stopTicker();
+    };
+
+    if (document.visibilityState === "visible") startTicker();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopTicker();
+    };
   }, []);
 
   const setOffset = useCallback((handle: string, offset: number) => {

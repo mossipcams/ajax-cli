@@ -438,6 +438,28 @@ describe("connectTaskTerminal", () => {
     expect(openCalls[1]).toEqual({ isReconnect: true, seeded: false });
   });
 
+  it("does not dial while hidden when reconnect timer fires; visibility redials", () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    socket.fire("close");
+    expect(statuses.at(-1)).toBe("reconnecting");
+
+    const dialsBefore = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(60_000);
+    expect(MockWebSocket.instances.length).toBe(dialsBefore);
+    expect(statuses.at(-1)).toBe("reconnecting");
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(MockWebSocket.instances.length).toBe(dialsBefore + 1);
+    expect(latestSocket().url).toContain("seed=0");
+  });
+
   it("foreground visibility reconnect dials with seed=0 (seed)", () => {
     const openCalls: Array<{ isReconnect: boolean; seeded: boolean }> = [];
     connection = connectTaskTerminal("test-handle", {

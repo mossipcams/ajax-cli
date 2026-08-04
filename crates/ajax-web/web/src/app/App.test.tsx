@@ -95,7 +95,7 @@ describe("App shell", () => {
     expect(screen.getByTestId("route-scroll")).toBeInTheDocument();
   });
 
-  it("live-dot pulses only when connected", () => {
+  it("live-dot uses accent when connected without infinite pulse", () => {
     expect(appSource).toMatch(
       /is-live[\s\S]*connection === "connected"|connection === "connected"[\s\S]*is-live/,
     );
@@ -104,7 +104,10 @@ describe("App shell", () => {
       /\.live-dot\s*\{[^}]*background:\s*var\(--ink-faint\)/,
     );
     expect(stylesSource).toMatch(
-      /\.live-dot\.is-live\s*\{[^}]*animation:\s*pulse/,
+      /\.live-dot\.is-live\s*\{[^}]*background:\s*var\(--accent\)/,
+    );
+    expect(stylesSource).not.toMatch(
+      /\.live-dot\.is-live\s*\{[^}]*animation:[^}]*pulse[^}]*infinite/,
     );
   });
 
@@ -683,7 +686,7 @@ describe("App shell", () => {
     );
     expect(cockpitFetchCalls()).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     await vi.waitFor(() => expect(cockpitFetchCalls()).toBe(2));
     releaseIntervalRetry!();
@@ -737,7 +740,8 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_001);
+      // GET timeout fires at 10s; active cadence is 3s so the next poll lands at 12s.
+      await vi.advanceTimersByTimeAsync(13_001);
       await Promise.resolve();
     });
 
@@ -963,9 +967,42 @@ describe("App shell", () => {
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
 
-    // Dashboard cadence is 1000ms: three ticks add three polls.
-    await vi.advanceTimersByTimeAsync(3000);
+    // Dashboard cadence is 3000ms: three ticks add three polls.
+    await vi.advanceTimersByTimeAsync(9000);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(4));
+  });
+
+  it("polls the cockpit on the idle cadence when every card is idle", async () => {
+    vi.useFakeTimers();
+    const quietCockpit = {
+      ...cockpit,
+      cards: cockpit.cards.map((card) => ({ ...card, status: "idle" })),
+    };
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          return Promise.resolve(jsonResponse(quietCockpit));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    // Quiet fleet cadence is 10s: 3s active would add a poll here.
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(cockpitCalls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(7000);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(2));
   });
 
   it("reschedules the cockpit interval when the route cadence changes", async () => {
@@ -976,17 +1013,17 @@ describe("App shell", () => {
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
 
-    // Task route slows the cadence to 5000ms. If the old 1000ms interval were
-    // left running, 4000ms would add four polls instead of none.
+    // Task route slows the cadence to 10000ms. If the old 3000ms interval were
+    // left running, 4000ms would add one poll instead of none.
     await act(async () => {
       setHash(taskHash("web/a"));
     });
     // Guard: a wrong prefix would silently leave the route on dashboard and the
-    // 1000ms cadence would look correct.
+    // 3000ms cadence would look correct.
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
     const afterRouteChange = cockpitCalls();
 
-    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(9000);
     expect(cockpitCalls()).toBe(afterRouteChange);
 
     await vi.advanceTimersByTimeAsync(1000);
@@ -1005,10 +1042,11 @@ describe("App shell", () => {
     const focusRegistrations = addSpy.mock.calls.filter(([type]) => type === "focus").length;
     expect(focusRegistrations).toBe(1);
 
-    // A focus resume triggers exactly one extra cockpit load, not one per
-    // re-render that has happened since mount.
+    // A focus resume triggers exactly one extra cockpit load after debounce, not
+    // one per re-render that has happened since mount.
     const beforeFocus = cockpitCalls();
     window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(750);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(beforeFocus + 1));
     await vi.advanceTimersByTimeAsync(0);
     expect(cockpitCalls()).toBe(beforeFocus + 1);
@@ -1060,6 +1098,8 @@ describe("App shell", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(cockpitCalls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(750);
 
     await act(async () => {
       rejectFirst(new Error("network error"));
@@ -1125,7 +1165,7 @@ describe("App shell", () => {
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
     await vi.waitFor(() => expect(resumeCalls).toBe(1));
 
-    // Task-route cadence is 5000ms; drive three polls, each with a changed payload.
+    // Task-route cadence is 10000ms; drive polls, each with a changed payload.
     const pollsAtStart = cockpitCalls;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15000);
