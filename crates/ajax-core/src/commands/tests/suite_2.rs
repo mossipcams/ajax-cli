@@ -10,7 +10,6 @@ fn doctor_reports_repo_config_problems() {
             ManagedRepo::new("api", "/missing/api", "main"),
         ],
         test_commands: vec![TestCommand::new("web", "cargo test")],
-        notify: None,
         ..Config::default()
     };
     let context = CommandContext::new(config, InMemoryRegistry::default());

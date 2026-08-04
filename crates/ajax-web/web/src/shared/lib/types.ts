@@ -212,6 +212,20 @@ export interface VersionResponse {
   test_in_stable?: boolean;
 }
 
+export interface PushVapidResponse {
+  public_key: string;
+}
+
+export interface PushTestSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  /** Server waits this long before delivering so the PWA can be fully quit. */
+  delay_ms?: number;
+}
+
 export type DevDeployPhase =
   | "ready_to_deploy"
   | "building"

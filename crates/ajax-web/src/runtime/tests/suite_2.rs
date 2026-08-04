@@ -132,37 +132,6 @@ async fn notify_refresh_path_delivers_when_browser_disconnected() {
     assert_eq!(bridge.deliver_notifications_flags, vec![true]);
 }
 
-#[test]
-fn notify_poll_interval_maps_config() {
-    use ajax_core::config::NotifyConfig;
-
-    assert_eq!(super::notify_poll_interval(None), None);
-
-    let base = NotifyConfig {
-        webhook_url: "https://ntfy.sh/topic".to_string(),
-        poll_seconds: None,
-    };
-    assert_eq!(
-        super::notify_poll_interval(Some(&base)),
-        Some(Duration::from_secs(30))
-    );
-
-    let disabled = NotifyConfig {
-        poll_seconds: Some(0),
-        ..base.clone()
-    };
-    assert_eq!(super::notify_poll_interval(Some(&disabled)), None);
-
-    let custom = NotifyConfig {
-        poll_seconds: Some(90),
-        ..base
-    };
-    assert_eq!(
-        super::notify_poll_interval(Some(&custom)),
-        Some(Duration::from_secs(90))
-    );
-}
-
 #[tokio::test]
 async fn refresh_cockpit_and_cache_refreshes_once_and_caches() {
     let (state, _cookie, _app) = app_with(

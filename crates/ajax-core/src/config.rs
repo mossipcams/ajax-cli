@@ -209,14 +209,26 @@ pub struct Config {
     #[serde(default)]
     pub test_commands: Vec<TestCommand>,
     #[serde(default)]
-    pub notify: Option<NotifyConfig>,
-    #[serde(default)]
     pub stt: SttConfig,
 }
 
 impl Config {
     pub fn from_toml_str(input: &str) -> Result<Self, ConfigParseError> {
-        toml::from_str(input).map_err(|error| ConfigParseError::Toml(error.to_string()))
+        toml::from_str(input).map_err(|error| {
+            let message = error.to_string();
+            if input.contains("[notify]")
+                || message.contains("`notify`")
+                || message.contains("'notify'")
+            {
+                ConfigParseError::Toml(
+                    "unknown field `notify`: remove the [notify] webhook block; \
+                     enable push notifications in Web Cockpit Settings instead"
+                        .to_string(),
+                )
+            } else {
+                ConfigParseError::Toml(message)
+            }
+        })
     }
 }
 
@@ -313,16 +325,6 @@ impl Default for SttConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NotifyConfig {
-    pub webhook_url: String,
-    /// Web-server notification poll interval in seconds. Absent = default,
-    /// 0 = disable the background tick.
-    #[serde(default)]
-    pub poll_seconds: Option<u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TestCommand {
     pub repo: String,
     pub command: String,
@@ -340,8 +342,8 @@ impl TestCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, ConfigParseError, ConfigPaths, ManagedRepo, NotifyConfig, RuntimePathField,
-        RuntimePathRequest, RuntimePathSource, SttConfig, TestCommand, WorktreePlacement,
+        Config, ConfigParseError, ConfigPaths, ManagedRepo, RuntimePathField, RuntimePathRequest,
+        RuntimePathSource, SttConfig, TestCommand, WorktreePlacement,
     };
     use proptest::prelude::*;
     use std::path::Path;
@@ -510,7 +512,6 @@ mod tests {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
             test_commands: vec![TestCommand::new("web", "cargo test")],
-            notify: None,
             stt: SttConfig::default(),
         };
 
@@ -592,45 +593,34 @@ mod tests {
     }
 
     #[test]
-    fn config_parses_optional_notify_webhook() {
-        let config = Config::from_toml_str(
+    fn leftover_notify_block_is_rejected_with_push_guidance() {
+        let error = Config::from_toml_str(
             r#"
             [notify]
-            webhook_url = "https://ntfy.sh/topic"
+            webhook_url = "https://example.invalid/topic"
             "#,
         )
-        .unwrap();
-
-        assert_eq!(
-            config.notify,
-            Some(NotifyConfig {
-                webhook_url: "https://ntfy.sh/topic".to_string(),
-                poll_seconds: None,
-            })
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("notify") && message.contains("Settings"),
+            "expected push migration guidance, got {message}"
         );
-        assert_eq!(Config::from_toml_str("").unwrap().notify, None);
     }
 
     #[test]
-    fn notify_poll_seconds_parses_and_defaults() {
-        let config = Config::from_toml_str(
+    fn unknown_config_tables_are_rejected() {
+        let error = Config::from_toml_str(
             r#"
-            [notify]
-            webhook_url = "https://ntfy.sh/topic"
-            poll_seconds = 60
+            [not_a_real_table]
+            value = 1
             "#,
         )
-        .unwrap();
-        assert_eq!(config.notify.unwrap().poll_seconds, Some(60));
-
-        let config = Config::from_toml_str(
-            r#"
-            [notify]
-            webhook_url = "https://ntfy.sh/topic"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(config.notify.unwrap().poll_seconds, None);
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("unknown field"),
+            "expected unknown field rejection, got {error}"
+        );
     }
 
     #[test]

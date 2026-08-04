@@ -39,9 +39,9 @@ where
     }
 }
 
-/// Refresh the cockpit projection and cache the response, firing attention
-/// notifications through the bridge as a side effect. The cockpit handler,
-/// the background notify tick, and task mutations/task starts all serialize on
+/// Refresh the cockpit projection and cache the response, delivering
+/// declarative push as a side effect when requested. The cockpit handler,
+/// the background push tick, and task mutations/task starts all serialize on
 /// the same control lane, so a mutation cannot race an in-flight refresh and
 /// discard its committed state.
 pub(crate) async fn refresh_cockpit_and_cache<C, B>(
@@ -86,6 +86,12 @@ where
         tier,
         deliver_notifications,
     );
+    if deliver_notifications
+        && result.is_ok()
+        && crate::slices::push::deliver_attention_pushes(&mut context, &state.push)
+    {
+        let _ = bridge.persist_registry_snapshot(&mut context);
+    }
     let cached_response = match &result {
         Ok(response) => Some(response.clone()),
         Err(_) => None,

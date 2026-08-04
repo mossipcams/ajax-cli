@@ -19,7 +19,7 @@ pub const NOTIFY_CANDIDATE_SINCE_KEY: &str = "notify_candidate_since";
 // ponytail: 30s constant; gate on tmux client activity if still too chatty.
 const EPISODE_CLEAR_DWELL: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long any actionable Waiting/Error must persist before the first webhook
+/// How long any actionable Waiting/Error must persist before the first push
 /// in an episode. Shared across status classes so flaps do not reset the clock.
 pub const NOTIFY_CONFIRMATION_DWELL: std::time::Duration = std::time::Duration::from_secs(15);
 
@@ -32,7 +32,7 @@ pub struct AttentionTransition {
     pub client: String,
 }
 
-/// Episode detector for operator attention webhooks. Fires once when a task
+/// Episode detector for operator attention push. Fires once when a task
 /// enters actionable Waiting (needs input) or Error; lifecycle-only
 /// "Ready for review" stays inbox-visible but does not phone-ping. In-flight
 /// drop (`Removing` / `Removed`) never pings — teardown substrate gaps are
@@ -104,8 +104,8 @@ pub fn take_attention_transition_at(
     }
 }
 
-/// Mark the current attention episode as already notified so ack/open stops
-/// further webhook deliveries until new actionable evidence appears.
+/// Mark the current attention episode as already delivered so ack/open stops
+/// further push deliveries until new actionable evidence appears.
 pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
     let operator_status = derive_operator_status(task);
     if !is_actionable_attention(&operator_status) {

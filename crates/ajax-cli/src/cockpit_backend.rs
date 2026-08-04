@@ -381,8 +381,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     let refreshed =
         refresh_runtime_context_with_tier(context, runner, source.as_ref(), RefreshTier::Full)
             .map_err(crate::command_error)?;
-    let notified = crate::notify::notify_attention_transitions(context, runner);
-    Ok(refreshed || notified)
+    Ok(refreshed)
 }
 
 fn cached_snapshot_needs_rebuild(

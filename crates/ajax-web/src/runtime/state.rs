@@ -9,7 +9,7 @@ use crate::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
         stt_provider::MoonshineProvider,
     },
-    slices::dev_deploy,
+    slices::{dev_deploy, push::PushHub},
     WebError,
 };
 use ajax_core::{
@@ -23,7 +23,6 @@ use std::{
 };
 
 pub(crate) const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
-pub(crate) const DEFAULT_NOTIFY_POLL_SECONDS: u64 = 30;
 pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
@@ -41,6 +40,7 @@ pub struct WebAppState<C, B> {
     pub(crate) operations: Arc<Mutex<OperationCoordinator>>,
     pub(crate) control_lane: Arc<tokio::sync::Mutex<()>>,
     pub(crate) state_dir: Arc<PathBuf>,
+    pub(crate) push: Arc<PushHub>,
     pub(crate) browser_session: Arc<BrowserSession>,
     pub(crate) cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
     pub(crate) last_browser_cockpit_at: Arc<Mutex<Option<Instant>>>,
@@ -74,6 +74,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             operations: Arc::clone(&self.operations),
             control_lane: Arc::clone(&self.control_lane),
             state_dir: Arc::clone(&self.state_dir),
+            push: Arc::clone(&self.push),
             browser_session: Arc::clone(&self.browser_session),
             cloudflare_access: Arc::clone(&self.cloudflare_access),
             last_browser_cockpit_at: Arc::clone(&self.last_browser_cockpit_at),
@@ -206,6 +207,7 @@ impl<C, B> WebAppState<C, B> {
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             control_lane: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
+            push: PushHub::ephemeral(),
             browser_session: Arc::new(BrowserSession::test_default()),
             cloudflare_access: Arc::new(None),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
@@ -247,6 +249,7 @@ impl<C, B> WebAppState<C, B> {
         state_dir: PathBuf,
     ) -> Result<Self, WebError> {
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
+        let push = PushHub::load_or_create(&state_dir).map_err(WebError::CommandFailed)?;
         let cloudflare_access = CloudflareAccessConfig::from_env()?;
         let stt_provider = moonshine_provider_from_config(&context.config);
         let stt_finalization_timeout_ms = context.config.stt.finalization_timeout_ms;
@@ -264,6 +267,7 @@ impl<C, B> WebAppState<C, B> {
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             control_lane: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
+            push,
             browser_session: Arc::new(browser_session),
             cloudflare_access: Arc::new(cloudflare_access),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),

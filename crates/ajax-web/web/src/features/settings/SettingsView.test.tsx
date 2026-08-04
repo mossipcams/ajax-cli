@@ -5,6 +5,7 @@ import * as api from "@/shared/lib/api";
 import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
 import * as telemetry from "@/shared/lib/telemetry";
+import * as pushTest from "./pushTest";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
 vi.mock("@/shared/lib/telemetry", async () => {
@@ -178,5 +179,63 @@ describe("SettingsView", () => {
 
     fireEvent.click(screen.getByTestId("telemetry-diagnostic"));
     expect(telemetry.captureTelemetryDiagnostic).toHaveBeenCalledOnce();
+  });
+
+  it("runs the declarative push test flow from the Actions button", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    const runSpy = vi.spyOn(pushTest, "runPushNotificationTest").mockImplementation(
+      async (onStatus) => {
+        onStatus("Scheduled — close or background the app now");
+        return { ok: true };
+      },
+    );
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Test push notification" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notification scheduled.")).toBeInTheDocument(),
+    );
+    expect(runSpy).toHaveBeenCalledOnce();
+  });
+
+  it("enables and disables push from Settings", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(pushTest, "enablePushNotifications").mockResolvedValue({ ok: true });
+    vi.spyOn(pushTest, "disablePushNotifications").mockResolvedValue({ ok: true });
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable push notifications" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notifications enabled.")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Disable push notifications" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notifications disabled.")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows push test errors from the helper", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(pushTest, "runPushNotificationTest").mockResolvedValue({
+      ok: false,
+      error: "Declarative push is not supported in this browser.",
+    });
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Test push notification" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText("Declarative push is not supported in this browser."),
+      ).toBeInTheDocument(),
+    );
   });
 });
