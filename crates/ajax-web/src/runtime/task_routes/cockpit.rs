@@ -88,7 +88,7 @@ where
     );
     if deliver_notifications
         && result.is_ok()
-        && crate::slices::push::deliver_attention_pushes(&mut context, &state.state_dir)
+        && crate::slices::push::deliver_attention_pushes(&mut context, &state.push)
     {
         let _ = bridge.persist_registry_snapshot(&mut context);
     }

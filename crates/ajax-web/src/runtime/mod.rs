@@ -134,6 +134,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
+        push::spawn_push_flusher(Arc::clone(&state.push));
         spawn_push_tick(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
@@ -167,7 +168,7 @@ where
         loop {
             interval.tick().await;
             let deliver_notifications =
-                push::has_subscriptions(&tick_state.state_dir) && !tick_state.browser_connected();
+                tick_state.push.has_subscriptions() && !tick_state.browser_connected();
             let _ =
                 refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, deliver_notifications)
                     .await;
@@ -327,7 +328,7 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    match push::vapid_public_key_base64(&state.state_dir) {
+    match state.push.vapid_public_key_base64() {
         Ok(public_key) => Json(serde_json::json!({ "public_key": public_key })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -366,7 +367,7 @@ where
                 .into_response();
         }
     };
-    match push::upsert_subscription(&state.state_dir, subscription, &navigate) {
+    match state.push.upsert_subscription(subscription, &navigate) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => {
             let status = if error.contains("subscription")
@@ -406,7 +407,7 @@ where
                 .into_response();
         }
     };
-    match push::apply_unsubscribe(&state.state_dir, &request) {
+    match state.push.apply_unsubscribe(&request) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -435,7 +436,7 @@ where
                 .into_response();
         }
     };
-    match push::schedule_test_push(&state.state_dir, &headers, request) {
+    match push::schedule_test_push(&state.push, &headers, request) {
         Ok(()) => (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({ "ok": true, "scheduled": true })),
