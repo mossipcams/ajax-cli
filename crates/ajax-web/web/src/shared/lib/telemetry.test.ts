@@ -89,7 +89,7 @@ describe("initTelemetry", () => {
     expect(isTelemetryInitialized()).toBe(true);
   });
 
-  it("initializes PostHog Cloud with env key, TTFB vitals, and replay off", () => {
+  it("initializes PostHog Cloud with env key, web vitals, and replay off", () => {
     document.head.innerHTML =
       '<meta name="ajax-app-version" content="9.8.7">';
     initTelemetry();
@@ -104,7 +104,7 @@ describe("initTelemetry", () => {
       },
       capture_performance: {
         web_vitals: true,
-        web_vitals_allowed_metrics: ["LCP", "CLS", "FCP", "INP", "TTFB"],
+        web_vitals_allowed_metrics: ["LCP", "CLS", "FCP", "INP"],
       },
       disable_session_recording: true,
       capture_exceptions: false,

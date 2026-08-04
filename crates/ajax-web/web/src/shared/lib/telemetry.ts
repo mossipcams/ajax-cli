@@ -31,7 +31,6 @@ const WEB_VITALS_METRICS = [
   "CLS",
   "FCP",
   "INP",
-  "TTFB",
 ] as unknown as SupportedWebVitalsMetrics[];
 
 function resolvePostHogKey(): string | undefined {

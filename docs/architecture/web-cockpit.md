@@ -394,6 +394,13 @@ exception: the Ajax Web Cockpit listener remains private (WireGuard / equivalent
 no public-server exposure model). Operators need outbound HTTPS from the browser
 to PostHog; blocked egress fails soft and does not change live-control authority.
 
+**CSP allowlist (US hosts only):** Web Cockpit responses set
+`Content-Security-Policy` in `crates/ajax-web/src/adapters/http.rs`. PostHog
+egress requires exact host entries — no reverse proxy, no `https:` wildcard:
+
+- `connect-src`: `https://us.i.posthog.com` (ingest / `$web_vitals` and other API traffic)
+- `script-src`: `https://us-assets.i.posthog.com` (PostHog remote config / assets)
+
 #### Initialization (env-gated)
 
 | Variable | Required | Default | Behavior |
@@ -409,7 +416,7 @@ Boot calls `initTelemetry()` once with SDK `defaults: '2026-05-30'`. On success:
 - **Exception autocapture:** off.
 - **Autocapture:** on with CSS ignorelist for terminal surfaces, sensitive
   attributes, and `.ph-no-autocapture` targets.
-- **Web Vitals:** LCP, CLS, FCP, INP, and **TTFB** via `capture_performance`
+- **Web Vitals:** LCP, CLS, FCP, and INP via `capture_performance`
   (`web_vitals_allowed_metrics`).
 
 #### Standalone vs browser tab
