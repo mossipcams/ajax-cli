@@ -1050,6 +1050,9 @@ export default function TaskTerminal({ handle }: Props) {
       scrollSync.setSyncingScroll(false);
       scrollSync.refreshFollow();
       interactionEl.classList.remove("is-seed-pending");
+      if (termRef.current) {
+        termRef.current.options.scrollOnEraseInDisplay = false;
+      }
     };
 
     // The seed is scrollback only; the tmux attach repaint of the visible pane
@@ -1626,6 +1629,7 @@ export default function TaskTerminal({ handle }: Props) {
               setHasUnseenOutput(false);
               scrollSync.setSyncingScroll(true);
               termRef.current.reset();
+              termRef.current.options.scrollOnEraseInDisplay = true;
               scrollSync.syncSpacer();
               termRef.current.scrollToBottom();
               scrollSync.scrollInteractionToBottom();
@@ -1635,6 +1639,9 @@ export default function TaskTerminal({ handle }: Props) {
           }
           if (!seeded) {
             cancelSeedPending();
+            if (termRef.current) {
+              termRef.current.options.scrollOnEraseInDisplay = false;
+            }
           }
           scheduleImmediate(true);
         },

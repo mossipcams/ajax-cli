@@ -329,6 +329,26 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
   });
 
+  it("latches scrollOnErase to the seeded-open window only", () => {
+    const mountBody =
+      taskTerminalSource.match(
+        /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
+      )?.[1] ?? "";
+
+    const revealBody =
+      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+    expect(revealBody).toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
+
+    const onOpenBody =
+      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+    expect(onOpenBody).toMatch(
+      /if\s*\(\s*!seeded\s*\)\s*\{[\s\S]*?scrollOnEraseInDisplay\s*=\s*false/,
+    );
+    expect(onOpenBody).toMatch(
+      /termRef\.current\.reset\(\)[\s\S]*?scrollOnEraseInDisplay\s*=\s*true/,
+    );
+  });
+
   it("names terminal control keys for assistive tech", () => {
     expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
     // Visible ⌃C toolbar entry removed; keyboard Ctrl+C remains via Control modifier.
