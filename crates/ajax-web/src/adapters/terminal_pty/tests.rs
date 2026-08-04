@@ -92,6 +92,23 @@ fn tmux_attach_target_never_uses_browser_handle() {
 }
 
 #[test]
+fn task_window_probe_targets_ephemeral_session_window() {
+    let command = task_window_probe_command("ajax-web-fix-login-m1a2b3c", "task");
+
+    assert_eq!(command.program, "tmux");
+    assert_eq!(
+        command.args,
+        vec![
+            "display-message".to_string(),
+            "-p".to_string(),
+            "-t".to_string(),
+            "ajax-web-fix-login-m1a2b3c:task".to_string(),
+            "#{window_id}".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn tmux_attach_command_uses_clear_capable_terminal_type() {
     let plan = attach_plan("web/fix-login");
     let command_plan = build_tmux_attach_command_plan(&plan);
