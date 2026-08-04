@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen, act } from "@testing-library/react";
 import ActionBar from "./ActionBar";
 import * as api from "@/shared/lib/api";
+import * as telemetry from "@/shared/lib/telemetry";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
 import type { WebAction } from "@/shared/lib/types";
 
@@ -110,6 +111,7 @@ describe("ActionBar", () => {
 
   it("Undo cancels the pending Drop without calling the API", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
     const onResult = vi.fn();
     const onDismiss = vi.fn();
     render(
@@ -119,6 +121,10 @@ describe("ActionBar", () => {
     fireEvent.click(screen.getByText("Tap to confirm"));
     const options = onResult.mock.calls[0][3] as { onUndo: () => void };
     options.onUndo();
+    expect(completeSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ok: false, op: "drop", error_kind: "undo" }),
+    );
     vi.advanceTimersByTime(DROP_UNDO_MS);
     await vi.runAllTimersAsync();
     expect(spy).not.toHaveBeenCalled();
@@ -127,6 +133,7 @@ describe("ActionBar", () => {
 
   it("expires the confirmation after the timeout", async () => {
     const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
     render(<ActionBar actions={[drop]} handle="web/x" />);
     fireEvent.click(screen.getByText("Drop"));
     expect(screen.getByText("Tap to confirm")).toBeInTheDocument();
@@ -134,7 +141,23 @@ describe("ActionBar", () => {
       vi.advanceTimersByTime(8000);
     });
     expect(screen.queryByText("Tap to confirm")).toBeNull();
+    expect(completeSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ok: false, error_kind: "confirm_timeout" }),
+    );
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("reuses the confirm interaction id on the second tap", async () => {
+    vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const beginSpy = vi.spyOn(telemetry, "beginInteraction");
+    render(<ActionBar actions={[drop]} handle="web/x" />);
+    fireEvent.click(screen.getByText("Drop"));
+    expect(beginSpy).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText("Tap to confirm"));
+    expect(beginSpy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(DROP_UNDO_MS);
+    await vi.runAllTimersAsync();
   });
 
   it("routes to dismiss instead of refresh after a successful drop", async () => {

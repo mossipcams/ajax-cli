@@ -27,6 +27,7 @@ vi.mock("posthog-js", () => ({
   default: {
     init: vi.fn(),
     identify: vi.fn(),
+    register: vi.fn(),
     capture: vi.fn(),
   },
 }));
@@ -40,6 +41,7 @@ beforeEach(() => {
   sessionStorage.clear();
   mockedPosthog.init.mockReset();
   mockedPosthog.identify.mockReset();
+  mockedPosthog.register.mockReset();
   mockedPosthog.capture.mockReset();
   document.head.innerHTML = "";
   vi.stubEnv("VITE_POSTHOG_KEY", "phc_test_key");
@@ -132,6 +134,20 @@ describe("initTelemetry", () => {
     });
   });
 
+  it("registers super-properties for automatic events", () => {
+    document.head.innerHTML =
+      '<meta name="ajax-app-version" content="4.5.6">';
+    initTelemetry();
+    expect(mockedPosthog.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        standalone: expect.any(Boolean),
+        install_id: expect.any(String),
+        host: window.location.hostname,
+        app_version: "4.5.6",
+      }),
+    );
+  });
+
   it("only initializes once", () => {
     initTelemetry();
     initTelemetry();
@@ -171,6 +187,11 @@ describe("track", () => {
         install_id: expect.any(String),
         sequence: expect.any(Number),
         route: expect.any(String),
+        route_kind: expect.any(String),
+        host: expect.any(String),
+        online: expect.any(Boolean),
+        visibility: expect.any(String),
+        pixel_ratio: expect.any(Number),
         viewport_w: expect.any(Number),
         viewport_h: expect.any(Number),
         standalone: expect.any(Boolean),
@@ -186,6 +207,7 @@ describe("track", () => {
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_tap_to_feedback",
       expect.objectContaining({
+        interaction_id: id,
         control: "drop",
         feedback_kind: "confirm",
         duration_ms: expect.any(Number),
@@ -194,10 +216,47 @@ describe("track", () => {
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_tap_to_operation_complete",
       expect.objectContaining({
+        interaction_id: id,
         control: "drop",
         op: "drop",
         ok: true,
+        outcome: "success",
+        feedback_kind: "confirm",
+        feedback_ms: expect.any(Number),
         duration_ms: expect.any(Number),
+      }),
+    );
+  });
+
+  it("classifies cancelled and failed operation outcomes", () => {
+    initTelemetry();
+    const cancelled = beginInteraction("drop");
+    endTapToFeedback(cancelled, "confirm");
+    endTapToOperationComplete(cancelled, {
+      ok: false,
+      op: "drop",
+      error_kind: "undo",
+    });
+    const failed = beginInteraction("review");
+    endTapToOperationComplete(failed, {
+      ok: false,
+      op: "review",
+      error_kind: "network",
+    });
+    expect(mockedPosthog.capture).toHaveBeenCalledWith(
+      "ajax_tap_to_operation_complete",
+      expect.objectContaining({
+        control: "drop",
+        outcome: "cancelled",
+        error_kind: "undo",
+      }),
+    );
+    expect(mockedPosthog.capture).toHaveBeenCalledWith(
+      "ajax_tap_to_operation_complete",
+      expect.objectContaining({
+        control: "review",
+        outcome: "failed",
+        error_kind: "network",
       }),
     );
   });
@@ -243,6 +302,7 @@ describe("captureSwipe", () => {
       direction: "left",
       duration_ms: 180,
       distance_px: 120,
+      page_width_px: 390,
       velocity_px_per_ms: 0.667,
       completed: true,
       cancelled: false,
@@ -252,6 +312,7 @@ describe("captureSwipe", () => {
       direction: "right",
       duration_ms: 90,
       distance_px: 40,
+      page_width_px: 390,
       velocity_px_per_ms: 0.444,
       completed: false,
       cancelled: true,
@@ -259,11 +320,23 @@ describe("captureSwipe", () => {
     });
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_swipe",
-      expect.objectContaining({ completed: true, cancelled: false }),
+      expect.objectContaining({
+        completed: true,
+        cancelled: false,
+        page_width_px: 390,
+        progress: 0.308,
+        outcome: "completed",
+      }),
     );
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_swipe",
-      expect.objectContaining({ completed: false, cancelled: true }),
+      expect.objectContaining({
+        completed: false,
+        cancelled: true,
+        page_width_px: 390,
+        progress: 0.103,
+        outcome: "cancelled",
+      }),
     );
   });
 });
@@ -271,24 +344,52 @@ describe("captureSwipe", () => {
 describe("route and PWA helpers", () => {
   it("captures route visible after navigation start", () => {
     initTelemetry();
-    markNavigationStart("#/");
-    captureRouteVisible({ to_route: "#/task/h1" });
+    markNavigationStart("#/", "hash");
+    captureRouteVisible({ to_route: "#/t/h1" });
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_route_visible",
       expect.objectContaining({
         from_route: "#/",
-        to_route: "#/task/h1",
+        to_route: "#/t/h1",
+        nav_trigger: "hash",
+        route_kind: "task",
         duration_ms: expect.any(Number),
       }),
     );
     expect(isNavigationPending()).toBe(false);
   });
 
+  it("captures PWA launch with navigation timing when available", () => {
+    initTelemetry();
+    const navEntry = {
+      type: "navigate",
+      domInteractive: 1234.7,
+    } as PerformanceNavigationTiming;
+    vi.spyOn(performance, "getEntriesByType").mockReturnValue([navEntry]);
+    capturePwaLaunch(500);
+    expect(mockedPosthog.capture).toHaveBeenCalledWith(
+      "ajax_pwa_launch",
+      expect.objectContaining({
+        duration_ms: 500,
+        nav_type: "navigate",
+        dom_interactive_ms: 1235,
+      }),
+    );
+    vi.mocked(performance.getEntriesByType).mockRestore();
+  });
+
   it("captures PWA launch once and resume timing", () => {
     initTelemetry();
     capturePwaLaunch(500);
     capturePwaLaunch(900);
-    capturePwaResume({ duration_ms: 1200 });
+    capturePwaResume({
+      hidden_ms: 1200,
+      resume_to_visible_ms: 40,
+      resume_to_cockpit_ms: 900,
+      resume_debounce_ms: 750,
+      online: true,
+      cockpit_ok: true,
+    });
     expect(mockedPosthog.capture).toHaveBeenCalledTimes(2);
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_pwa_launch",
@@ -296,11 +397,18 @@ describe("route and PWA helpers", () => {
     );
     expect(mockedPosthog.capture).toHaveBeenCalledWith(
       "ajax_pwa_resume",
-      expect.objectContaining({ duration_ms: 1200 }),
+      expect.objectContaining({
+        hidden_ms: 1200,
+        resume_to_visible_ms: 40,
+        resume_to_cockpit_ms: 900,
+        resume_debounce_ms: 750,
+        online: true,
+        cockpit_ok: true,
+      }),
     );
   });
 
-  it("emits telemetry diagnostic with status", () => {
+  it("emits telemetry diagnostic with status and context fields", () => {
     initTelemetry();
     captureTelemetryDiagnostic();
     expect(getTelemetryStatus()).toEqual({
@@ -312,6 +420,12 @@ describe("route and PWA helpers", () => {
       expect.objectContaining({
         initialized: true,
         standalone: expect.any(Boolean),
+        online: expect.any(Boolean),
+        visibility: expect.any(String),
+        route: expect.any(String),
+        route_kind: expect.any(String),
+        sequence: expect.any(Number),
+        host: expect.any(String),
       }),
     );
   });

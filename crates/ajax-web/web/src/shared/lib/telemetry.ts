@@ -1,10 +1,13 @@
 import posthog from "posthog-js";
 import type { SupportedWebVitalsMetrics } from "posthog-js";
+import { parseRoute } from "@/shared/lib/routes";
 import {
   buildEventContext,
   generateId,
+  getInstallId,
   isStandaloneDisplay,
   readAppVersion,
+  readHost,
 } from "./telemetryContext";
 import { sanitizeTelemetryProps, type TelemetryProps } from "./telemetryFilter";
 
@@ -57,6 +60,7 @@ export function resetTelemetryForTests(): void {
   initialized = false;
   navigationStartedAt = null;
   navigationFromRoute = null;
+  navigationTrigger = null;
   pwaLaunchCaptured = false;
 }
 
@@ -111,6 +115,13 @@ export function initTelemetry(): void {
       ...(appVersion ? { app_version: appVersion } : {}),
     });
 
+    posthog.register({
+      standalone: isStandaloneDisplay(),
+      install_id: getInstallId(),
+      host: readHost(),
+      ...(appVersion ? { app_version: appVersion } : {}),
+    });
+
     initialized = true;
   } catch (error) {
     console.warn("[ajax] telemetry init failed", error);
@@ -125,8 +136,17 @@ export function track(event: string, properties?: TelemetryProps): void {
   try {
     const context = buildEventContext();
     const sanitized = sanitizeTelemetryProps(properties ?? {});
-    // Context wins — callers must not override event_id/sequence/standalone/etc.
-    posthog.capture(event, { ...sanitized, ...context });
+    // Event props may override observational context (e.g. destination route_kind);
+    // identity and sequence fields always win.
+    posthog.capture(event, {
+      ...context,
+      ...sanitized,
+      event_id: context.event_id,
+      session_id: context.session_id,
+      install_id: context.install_id,
+      sequence: context.sequence,
+      standalone: context.standalone,
+    });
   } catch (error) {
     console.warn("[ajax] telemetry capture failed", error);
   }
@@ -141,7 +161,25 @@ type PendingInteraction = {
   control: string;
   startedAt: number;
   feedbackSent: boolean;
+  feedbackAt?: number;
+  feedbackKind?: string;
 };
+
+type TapOutcome = "success" | "failed" | "cancelled";
+
+function resolveTapOutcome(ok: boolean, error_kind?: string): TapOutcome {
+  if (ok) {
+    return "success";
+  }
+  if (
+    error_kind === "confirm_timeout" ||
+    error_kind === "undo" ||
+    error_kind === "unmount"
+  ) {
+    return "cancelled";
+  }
+  return "failed";
+}
 
 const pendingInteractions = new Map<string, PendingInteraction>();
 
@@ -166,7 +204,10 @@ export function endTapToFeedback(
     return;
   }
   pending.feedbackSent = true;
+  pending.feedbackAt = performance.now();
+  pending.feedbackKind = feedbackKind;
   track("ajax_tap_to_feedback", {
+    interaction_id: id,
     control: pending.control,
     feedback_kind: feedbackKind,
     duration_ms: Math.round(performance.now() - pending.startedAt),
@@ -185,11 +226,19 @@ export function endTapToOperationComplete(
   pendingInteractions.delete(id);
   const { ok, op, error_kind, ...extra } = props;
   track("ajax_tap_to_operation_complete", {
+    interaction_id: id,
     control: pending.control,
     op: op ?? pending.control,
     ok,
+    outcome: resolveTapOutcome(ok, error_kind),
     ...(error_kind ? { error_kind } : {}),
     duration_ms: Math.round(performance.now() - pending.startedAt),
+    ...(pending.feedbackAt !== undefined
+      ? { feedback_ms: Math.round(pending.feedbackAt - pending.startedAt) }
+      : {}),
+    ...(pending.feedbackKind !== undefined
+      ? { feedback_kind: pending.feedbackKind }
+      : {}),
     ...extra,
   });
 }
@@ -202,6 +251,7 @@ export type SwipeTelemetryProps = {
   direction: "left" | "right";
   duration_ms: number;
   distance_px: number;
+  page_width_px: number;
   velocity_px_per_ms: number;
   completed: boolean;
   cancelled: boolean;
@@ -211,17 +261,32 @@ export type SwipeTelemetryProps = {
 };
 
 export function captureSwipe(props: SwipeTelemetryProps): void {
-  track("ajax_swipe", props);
+  const page_width_px = props.page_width_px;
+  const progress =
+    page_width_px <= 0
+      ? 0
+      : Math.min(1, props.distance_px / page_width_px);
+  const progressRounded = Math.round(progress * 1000) / 1000;
+  const outcome = props.completed ? "completed" : "cancelled";
+  track("ajax_swipe", {
+    ...props,
+    progress: progressRounded,
+    outcome,
+  });
 }
 
 let navigationStartedAt: number | null = null;
 let navigationFromRoute: string | null = null;
+let navigationTrigger: string | null = null;
 let pwaLaunchCaptured = false;
 
 /** Mark navigation start for route-visible timing (before hash change). */
-export function markNavigationStart(fromRoute?: string): void {
+export function markNavigationStart(fromRoute?: string, trigger?: string): void {
   navigationStartedAt = performance.now();
   navigationFromRoute = fromRoute ?? window.location.hash;
+  if (trigger !== undefined) {
+    navigationTrigger = trigger;
+  }
 }
 
 export function isNavigationPending(): boolean {
@@ -238,15 +303,20 @@ export function captureRouteVisible(props?: {
     (navigationStartedAt !== null
       ? Math.round(performance.now() - navigationStartedAt)
       : 0);
+  const to_route = props?.to_route ?? window.location.hash;
+  const route_kind = parseRoute(to_route).kind;
   track("ajax_route_visible", {
     duration_ms,
+    route_kind,
     ...(navigationFromRoute || props?.from_route
       ? { from_route: props?.from_route ?? navigationFromRoute }
       : {}),
     ...(props?.to_route ? { to_route: props.to_route } : {}),
+    ...(navigationTrigger ? { nav_trigger: navigationTrigger } : {}),
   });
   navigationStartedAt = null;
   navigationFromRoute = null;
+  navigationTrigger = null;
 }
 
 /** Once per cold boot — duration from navigation start to first shell visibility. */
@@ -255,12 +325,30 @@ export function capturePwaLaunch(duration_ms?: number): void {
     return;
   }
   pwaLaunchCaptured = true;
+  const navigationEntry = performance.getEntriesByType("navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
   track("ajax_pwa_launch", {
     duration_ms: duration_ms ?? Math.round(performance.now()),
+    ...(navigationEntry
+      ? {
+          nav_type: navigationEntry.type,
+          dom_interactive_ms: Math.round(navigationEntry.domInteractive),
+        }
+      : {}),
   });
 }
 
-export function capturePwaResume(props: { duration_ms: number }): void {
+export type PwaResumeTelemetryProps = {
+  hidden_ms: number;
+  resume_to_visible_ms: number;
+  resume_to_cockpit_ms: number;
+  resume_debounce_ms: number;
+  online: boolean;
+  cockpit_ok: boolean;
+};
+
+export function capturePwaResume(props: PwaResumeTelemetryProps): void {
   track("ajax_pwa_resume", props);
 }
 

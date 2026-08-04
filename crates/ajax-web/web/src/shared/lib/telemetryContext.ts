@@ -1,3 +1,5 @@
+import { parseRoute } from "@/shared/lib/routes";
+
 const INSTALL_ID_KEY = "ajax:telemetry:install_id";
 const SESSION_ID_KEY = "ajax:telemetry:session_id";
 const SEQUENCE_KEY = "ajax:telemetry:sequence";
@@ -134,6 +136,49 @@ export function readAppVersion(): string | undefined {
   return version;
 }
 
+export function readHost(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.location.hostname;
+}
+
+export function readRouteKind(): string {
+  return parseRoute(readRoute()).kind;
+}
+
+export function readOnline(): boolean {
+  if (typeof navigator === "undefined") {
+    return true;
+  }
+  return navigator.onLine;
+}
+
+export function readVisibility(): DocumentVisibilityState {
+  if (typeof document === "undefined") {
+    return "visible";
+  }
+  return document.visibilityState;
+}
+
+export function readConnectionType(): string | undefined {
+  if (typeof navigator === "undefined") {
+    return undefined;
+  }
+  const connection = (navigator as Navigator & {
+    connection?: { effectiveType?: string };
+  }).connection;
+  const effectiveType = connection?.effectiveType?.trim();
+  return effectiveType || undefined;
+}
+
+export function readPixelRatio(): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  return Math.round(window.devicePixelRatio * 100) / 100;
+}
+
 export interface EventContext {
   event_id: string;
   session_id: string;
@@ -141,6 +186,12 @@ export interface EventContext {
   sequence: number;
   app_version?: string;
   route: string;
+  route_kind: string;
+  host: string;
+  online: boolean;
+  visibility: DocumentVisibilityState;
+  connection_type?: string;
+  pixel_ratio: number;
   ios_version?: string;
   viewport_w: number;
   viewport_h: number;
@@ -151,6 +202,7 @@ export function buildEventContext(): EventContext {
   const { viewport_w, viewport_h } = readViewport();
   const app_version = readAppVersion();
   const ios_version = readIosVersion();
+  const connection_type = readConnectionType();
   return {
     event_id: generateId(),
     session_id: getSessionId(),
@@ -158,6 +210,12 @@ export function buildEventContext(): EventContext {
     sequence: nextSequence(),
     ...(app_version ? { app_version } : {}),
     route: readRoute(),
+    route_kind: readRouteKind(),
+    host: readHost(),
+    online: readOnline(),
+    visibility: readVisibility(),
+    ...(connection_type ? { connection_type } : {}),
+    pixel_ratio: readPixelRatio(),
     ...(ios_version ? { ios_version } : {}),
     viewport_w,
     viewport_h,

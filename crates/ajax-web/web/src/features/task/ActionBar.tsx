@@ -4,7 +4,6 @@ import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "@/shared/lib/polling";
 import { postOperation, requestId } from "@/shared/lib/api";
 import {
   beginInteraction,
-  cancelInteraction,
   endTapToFeedback,
   endTapToOperationComplete,
 } from "@/shared/lib/telemetry";
@@ -71,7 +70,10 @@ export default function ActionBar({
     return () => {
       mountedRef.current = false;
       if (interactionRef.current) {
-        cancelInteraction(interactionRef.current);
+        endTapToOperationComplete(interactionRef.current, {
+          ok: false,
+          error_kind: "unmount",
+        });
         interactionRef.current = null;
       }
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
@@ -86,10 +88,13 @@ export default function ActionBar({
     setPendingAction(null);
   }, []);
 
-  const clearConfirmAndInteraction = useCallback(() => {
+  const expireConfirm = useCallback(() => {
     clearConfirm();
     if (interactionRef.current) {
-      cancelInteraction(interactionRef.current);
+      endTapToOperationComplete(interactionRef.current, {
+        ok: false,
+        error_kind: "confirm_timeout",
+      });
       interactionRef.current = null;
     }
   }, [clearConfirm]);
@@ -177,7 +182,11 @@ export default function ActionBar({
       dropResolvedRef.current = true;
       clearDropTimer();
       if (interactionId) {
-        cancelInteraction(interactionId);
+        endTapToOperationComplete(interactionId, {
+          ok: false,
+          op: action.action,
+          error_kind: "undo",
+        });
         interactionRef.current = null;
       }
       if (mountedRef.current) setRunningAction(null);
@@ -195,13 +204,16 @@ export default function ActionBar({
       interactionRef.current = interactionId;
       setPendingAction(action);
       endTapToFeedback(interactionId, "confirm");
-      confirmTimerRef.current = setTimeout(clearConfirmAndInteraction, CONFIRM_TIMEOUT_MS);
+      confirmTimerRef.current = setTimeout(expireConfirm, CONFIRM_TIMEOUT_MS);
       return;
     }
-    const retained = pendingAction?.action === action.action ? pendingAction : action;
+    const confirmingSecondTap = pendingAction?.action === action.action;
+    const retained = confirmingSecondTap ? pendingAction : action;
     clearConfirm();
-    const interactionId = beginInteraction(retained.action);
-    interactionRef.current = interactionId;
+    if (!confirmingSecondTap) {
+      const interactionId = beginInteraction(retained.action);
+      interactionRef.current = interactionId;
+    }
     // Only Drop is delayed for pre-commit undo; other actions run immediately.
     if (retained.action === "drop") {
       armDrop(retained);

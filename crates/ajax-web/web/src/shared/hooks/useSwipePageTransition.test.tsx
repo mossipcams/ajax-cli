@@ -89,6 +89,7 @@ describe("useSwipePageTransition", () => {
         direction: "left",
         completed: true,
         cancelled: false,
+        page_width_px: 390,
         settle_ms: expect.any(Number),
         distance_px: expect.any(Number),
       }),
@@ -114,6 +115,7 @@ describe("useSwipePageTransition", () => {
       expect.objectContaining({
         completed: false,
         cancelled: true,
+        page_width_px: expect.any(Number),
         settle_ms: expect.any(Number),
       }),
     );

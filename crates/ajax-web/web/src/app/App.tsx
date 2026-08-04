@@ -32,11 +32,11 @@ import {
 } from "@/shared/lib/swipeEnter";
 import {
   beginInteraction,
-  cancelInteraction,
   capturePwaLaunch,
   capturePwaResume,
   captureRouteVisible,
   endTapToFeedback,
+  endTapToOperationComplete,
   isNavigationPending,
   markNavigationStart,
 } from "@/shared/lib/telemetry";
@@ -80,9 +80,16 @@ export default function App() {
   );
   const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | null>(null);
   const outletSwipeRef = useRef<HTMLElement | null>(null);
+  const cockpitRef = useRef(cockpit);
+  cockpitRef.current = cockpit;
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pwaLaunchCapturedRef = useRef(false);
   const hiddenAtRef = useRef<number | null>(null);
+  const pendingPwaResumeRef = useRef<{
+    hidden_ms: number;
+    visibleAt: number;
+    resumeToVisibleMs: number | null;
+  } | null>(null);
   // Report what's live first, then the inventory size.
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
@@ -112,18 +119,18 @@ export default function App() {
   }
 
   function go(hash: string) {
-    if (location.hash !== hash) {
-      markNavigationStart();
+    if (location.hash !== hash && !isNavigationPending()) {
+      markNavigationStart(undefined, "hash");
     }
     location.hash = hash;
   }
 
   function openTask(handle: string) {
     const interactionId = beginInteraction("open_task");
-    markNavigationStart();
+    markNavigationStart(undefined, "open_task");
     navigateHashWithEnter(taskHash(handle), "left");
     endTapToFeedback(interactionId, "nav_start");
-    cancelInteraction(interactionId);
+    endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });
   }
 
   const pullToRefreshRef = usePullToRefresh({
@@ -138,15 +145,38 @@ export default function App() {
     void loadCockpit();
     return whenIdle(() => void checkVersion());
   });
-  const onShellResume = useEffectEvent(() => {
+  const emitPendingPwaResume = useEffectEvent((cockpit_ok: boolean) => {
+    const pending = pendingPwaResumeRef.current;
+    if (!pending) {
+      return;
+    }
+    const resume_to_cockpit_ms = Math.round(performance.now() - pending.visibleAt);
+    capturePwaResume({
+      hidden_ms: pending.hidden_ms,
+      resume_to_visible_ms: pending.resumeToVisibleMs ?? resume_to_cockpit_ms,
+      resume_to_cockpit_ms,
+      resume_debounce_ms: RESUME_DEBOUNCE_MS,
+      online: navigator.onLine,
+      cockpit_ok,
+    });
+    pendingPwaResumeRef.current = null;
+  });
+  const onShellResume = useEffectEvent(async () => {
     void checkVersion();
-    void loadCockpit({ trailing: true });
+    await loadCockpit({ trailing: true });
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    const c = cockpitRef.current;
+    const cockpit_ok =
+      c.status === "ready" || (c.status === "stale" && c.data !== null);
+    emitPendingPwaResume(cockpit_ok);
   });
   const scheduleShellResume = useEffectEvent(() => {
     if (resumeTimerRef.current !== null) clearTimeout(resumeTimerRef.current);
     resumeTimerRef.current = setTimeout(() => {
       resumeTimerRef.current = null;
-      onShellResume();
+      void onShellResume();
     }, RESUME_DEBOUNCE_MS);
   });
   const onShellVisibilityChange = useEffectEvent(() => {
@@ -157,10 +187,24 @@ export default function App() {
     }
     setDocumentVisibility(document.visibilityState);
     if (nowVisible && wasHidden && hiddenAtRef.current !== null) {
-      capturePwaResume({
-        duration_ms: Math.round(performance.now() - hiddenAtRef.current),
-      });
+      const visibleAt = performance.now();
+      const hidden_ms = Math.round(visibleAt - hiddenAtRef.current);
       hiddenAtRef.current = null;
+      pendingPwaResumeRef.current = {
+        hidden_ms,
+        visibleAt,
+        resumeToVisibleMs: null,
+      };
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const pending = pendingPwaResumeRef.current;
+          if (pending) {
+            pending.resumeToVisibleMs = Math.round(
+              performance.now() - pending.visibleAt,
+            );
+          }
+        });
+      });
     }
     if (nowVisible) {
       scheduleShellResume();
