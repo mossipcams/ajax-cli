@@ -105,7 +105,7 @@ export default function SettingsView({
     const result = await runPushNotificationTest(setPushTestStatus);
     setTestingPush(false);
     if (result.ok) {
-      setPushTestStatus("Push notification sent.");
+      setPushTestStatus("Push notification scheduled.");
       return;
     }
     setPushTestStatus(result.error);

@@ -196,7 +196,7 @@ describe("SettingsView", () => {
     render(<SettingsView />);
     fireEvent.click(screen.getByRole("button", { name: "Test push notification" }));
     await vi.waitFor(() =>
-      expect(screen.getByText("Push notification sent.")).toBeInTheDocument(),
+      expect(screen.getByText("Push notification scheduled.")).toBeInTheDocument(),
     );
     expect(runSpy).toHaveBeenCalledOnce();
   });
