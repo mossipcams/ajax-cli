@@ -7,12 +7,12 @@ use ajax_core::task_operations::kernel::execute_external_plan_with_success;
 use ajax_core::{
     adapters::environment::{local_branch_exists, origin_fetch_age},
     registry::InMemoryRegistry,
+    task_operations::operator_dispatch::TaskCommandKind,
     task_operations::start::{
         execute_start_task_operation, execute_start_task_operation_with_checkpoint,
         plan_start_task_operation_with_observation,
     },
     task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
-    task_operations::task_command::TaskCommandKind,
 };
 use ajax_core::{models::LifecycleStatus, registry::Registry};
 use ajax_core::{

@@ -7,10 +7,10 @@ use ajax_core::{
     registry::{InMemoryRegistry, Registry},
     remediation::{self, RemediationError},
     task_operations::drop_task::plan_drop_confirmation,
-    task_operations::start::plan_start_task_operation_with_observation,
-    task_operations::task_command::{
+    task_operations::operator_dispatch::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
+    task_operations::start::plan_start_task_operation_with_observation,
 };
 
 use crate::execution_dispatch::start_plan_observation;

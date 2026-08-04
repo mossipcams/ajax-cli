@@ -7,7 +7,7 @@ use ajax_core::{
     output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
     task_operations::drop_task::plan_drop_confirmation,
-    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
+    task_operations::operator_dispatch::{plan_task_command_operation, TaskCommandKind},
 };
 use clap::ArgMatches;
 
