@@ -1,8 +1,8 @@
 //! Declarative Web Push attention delivery for Web Cockpit.
 //!
 //! Uses `window.pushManager` on the client (no service worker). Server loads
-//! VAPID keys and subscriptions under `state_dir` at process start into
-//! [`PushHub`], encrypts with `web-push-native`, and delivers via `curl`.
+//! VAPID keys and subscriptions under `state_dir` at process start into an
+//! in-memory push hub, encrypts with `web-push-native`, and delivers via `curl`.
 //! HTTP handlers mutate in-memory state only; a background flusher persists
 //! (avoids CodeQL `rust/path-injection` on remote-reachable `state_dir` joins).
 
@@ -31,9 +31,9 @@ const VAPID_KEY_FILE: &str = "web-push-vapid.key";
 const SUBSCRIPTIONS_FILE: &str = "web-push-subscriptions.json";
 pub(crate) const DEFAULT_PUSH_POLL_SECONDS: u64 = 30;
 
-/// Process-local push persistence. Disk I/O happens in [`PushHub::load_or_create`]
-/// and [`PushHub::flush_if_dirty`] (background only) — not from HTTP handlers.
-pub struct PushHub {
+/// Process-local push persistence. Disk I/O happens in `PushHub::load_or_create`
+/// and `PushHub::flush_if_dirty` (background only) — not from HTTP handlers.
+pub(crate) struct PushHub {
     inner: Mutex<PushInner>,
     disk: Option<PushDiskPaths>,
     flush_notify: Notify,
