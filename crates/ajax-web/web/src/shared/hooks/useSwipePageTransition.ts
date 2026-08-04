@@ -15,7 +15,7 @@ import {
   type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
 import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
-import { captureSwipe } from "@/shared/lib/telemetry";
+import { captureSwipe, markNavigationStart } from "@/shared/lib/telemetry";
 import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
 export const SWIPE_PAGE_COMMIT_MS = 220;
 
@@ -117,10 +117,12 @@ export function useSwipePageTransition(
         window.clearTimeout(timer);
         const settle_ms = Math.round(performance.now() - settleStartedAt);
         if (swipeOutcome) {
+          const page_width_px = pageWidth();
           captureSwipe({
             direction: swipeOutcome.direction,
             duration_ms: swipeOutcome.duration_ms,
             distance_px: swipeOutcome.distance_px,
+            page_width_px,
             velocity_px_per_ms: swipeVelocity(
               swipeOutcome.distance_px,
               swipeOutcome.duration_ms,
@@ -134,6 +136,7 @@ export function useSwipePageTransition(
         }
         if (direction) setSwipeEnterDirection(direction);
         if (then) {
+          markNavigationStart(readFromRoute(), "swipe");
           // Navigating unmounts this surface; skip reset to avoid a snap-back flash.
           then();
         } else {

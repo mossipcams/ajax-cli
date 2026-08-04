@@ -412,6 +412,9 @@ Boot calls `initTelemetry()` once with SDK `defaults: '2026-05-30'`. On success:
 
 - **Identify:** `ajax:${window.location.hostname}` with person properties
   `host`, `origin`, and optional `app_version`.
+- **Super-properties:** `posthog.register` with `standalone`, `install_id`, `host`,
+  and optional `app_version` so automatic events (`$web_vitals`, `$pageview`) inherit
+  Ajax dimensions.
 - **Session replay:** off (`disable_session_recording: true`).
 - **Exception autocapture:** off.
 - **Autocapture:** on with CSS ignorelist for terminal surfaces, sensitive
@@ -447,6 +450,12 @@ Merged onto every `track` / `captureEvent` call (context wins over caller props)
 | `sequence` | number | Monotonic counter per install |
 | `app_version` | string? | `meta[name="ajax-app-version"]` when set |
 | `route` | string | Current `location.hash` |
+| `route_kind` | string | `parseRoute(hash).kind` from `@/shared/lib/routes` |
+| `host` | string | `location.hostname` |
+| `online` | boolean | `navigator.onLine` at capture |
+| `visibility` | string | `document.visibilityState` at capture |
+| `connection_type` | string? | `navigator.connection.effectiveType` when present |
+| `pixel_ratio` | number | `window.devicePixelRatio` rounded to 2 decimals |
 | `ios_version` | string? | Parsed from user agent on iOS |
 | `viewport_w`, `viewport_h` | number | `window.innerWidth` / `innerHeight` |
 | `standalone` | boolean | PWA standalone display mode |
@@ -460,6 +469,7 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
+| `interaction_id` | string | yes | Id from `beginInteraction` |
 | `control` | string | yes | Control identifier from `beginInteraction` |
 | `feedback_kind` | string | yes | Feedback classification |
 | `duration_ms` | number | yes | Rounded ms from interaction start |
@@ -468,11 +478,15 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
+| `interaction_id` | string | yes | Id from `beginInteraction` |
 | `control` | string | yes | Control identifier |
 | `op` | string | yes | Operation name (defaults to `control`) |
 | `ok` | boolean | yes | Success flag |
-| `error_kind` | string | no | Present when `ok` is false |
+| `outcome` | `"success"` \| `"failed"` \| `"cancelled"` | yes | Derived from `ok` and `error_kind` |
+| `error_kind` | string | no | Present when `ok` is false (`confirm_timeout`, `undo`, `unmount`, `operation_failed`, `network`, …) |
 | `duration_ms` | number | yes | Rounded ms from interaction start |
+| `feedback_ms` | number | no | Rounded ms from interaction start to first feedback when feedback was sent |
+| `feedback_kind` | string | no | `feedback_kind` from `endTapToFeedback` when available |
 
 **`ajax_swipe`** — swipe gesture commit
 
@@ -481,6 +495,9 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 | `direction` | `"left"` \| `"right"` | yes | Swipe direction |
 | `duration_ms` | number | yes | Gesture duration |
 | `distance_px` | number | yes | Travel distance |
+| `page_width_px` | number | yes | Page width used for commit threshold |
+| `progress` | number | yes | `min(1, distance_px / page_width_px)` rounded to 3 decimals |
+| `outcome` | `"completed"` \| `"cancelled"` | yes | Derived from `completed` / `cancelled` |
 | `velocity_px_per_ms` | number | yes | Average velocity |
 | `completed` | boolean | yes | Reached completion threshold |
 | `cancelled` | boolean | yes | Gesture cancelled |
@@ -493,6 +510,8 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `duration_ms` | number | yes | From `markNavigationStart` or caller override |
+| `route_kind` | string | yes | Destination route kind (`parseRoute(to_route).kind`) |
+| `nav_trigger` | string | no | Stored trigger from `markNavigationStart` (`hash`, `swipe`, `open_task`, …) |
 | `from_route` | string | no | Origin route |
 | `to_route` | string | no | Destination route |
 
@@ -501,12 +520,19 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `duration_ms` | number | yes | Navigation start → first shell visibility |
+| `nav_type` | string | no | `performance.getEntriesByType("navigation")[0].type` when present |
+| `dom_interactive_ms` | number | no | Rounded `domInteractive` from navigation timing when present |
 
 **`ajax_pwa_resume`** — resume from background
 
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `duration_ms` | number | yes | Background → interactive resume |
+| `hidden_ms` | number | yes | Time document was hidden before this resume |
+| `resume_to_visible_ms` | number | yes | Ms from `visibilitychange` → visible until double `requestAnimationFrame` (first paint opportunity) |
+| `resume_to_cockpit_ms` | number | yes | Ms from visible until debounced cockpit recovery (`loadCockpit`) finishes |
+| `resume_debounce_ms` | number | yes | Debounce constant (`RESUME_DEBOUNCE_MS`, 750) before recovery poll |
+| `online` | boolean | yes | `navigator.onLine` at emit |
+| `cockpit_ok` | boolean | yes | True when cockpit is `ready` or `stale` with data after `loadCockpit`; false on hard error |
 
 **`ajax_telemetry_diagnostic`** — Settings diagnostics snapshot
 
@@ -515,6 +541,12 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 | `initialized` | boolean | yes | Whether `initTelemetry` succeeded |
 | `standalone` | boolean | yes | Current display mode |
 | `app_version` | string | no | When available from meta tag |
+| `online` | boolean | yes | From shared context |
+| `visibility` | string | yes | From shared context |
+| `route` | string | yes | From shared context |
+| `route_kind` | string | yes | From shared context |
+| `sequence` | number | yes | From shared context |
+| `host` | string | yes | From shared context |
 
 #### Privacy guardrails
 
