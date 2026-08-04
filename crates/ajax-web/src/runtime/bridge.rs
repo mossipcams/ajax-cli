@@ -78,10 +78,10 @@ pub(crate) fn handle_refreshed_cockpit_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
+    tier: RefreshTier,
     deliver_notifications: bool,
 ) -> Result<Response, WebError> {
-    let _state_changed =
-        bridge.refresh_cockpit(context, runner, RefreshTier::Live, deliver_notifications)?;
+    let _state_changed = bridge.refresh_cockpit(context, runner, tier, deliver_notifications)?;
     json_response(
         200,
         serde_json::to_value(cockpit::browser_cockpit_view(context))

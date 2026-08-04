@@ -179,14 +179,22 @@ function createBrowserAudioCapture(
     const input = event.inputBuffer.getChannelData(0);
     onSamples(new Float32Array(input), context.sampleRate);
   };
+  const muteGain = context.createGain();
+  muteGain.gain.value = 0;
   source.connect(processor);
-  processor.connect(context.destination);
+  processor.connect(muteGain);
+  muteGain.connect(context.destination);
   void context.resume();
   return {
     stop() {
       processor.onaudioprocess = null;
       try {
         processor.disconnect();
+      } catch {
+        // already disconnected
+      }
+      try {
+        muteGain.disconnect();
       } catch {
         // already disconnected
       }

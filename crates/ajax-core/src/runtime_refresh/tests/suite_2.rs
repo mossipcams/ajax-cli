@@ -433,6 +433,86 @@ fn steady_state_refresh_operation_budget() {
 }
 
 #[test]
+fn process_alive_stamp_inserted_when_process_alive() {
+    let mut context = context_with_unchanged_running_task();
+    seed_fresh_ci_probe(&mut context);
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(!agent_process_is_alive(task));
+    let mut runner = GitSkippingRunner::default();
+    let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+        alive: true,
+        observed_at: SystemTime::now(),
+    });
+
+    let changed =
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+            .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(changed);
+    assert_eq!(
+        task.metadata.get(AGENT_PROCESS_ALIVE_KEY),
+        Some(&"1".to_string())
+    );
+    assert!(agent_process_is_alive(task));
+}
+
+#[test]
+fn process_alive_stamp_stable_when_already_present() {
+    let mut context = context_with_unchanged_running_task();
+    seed_fresh_ci_probe(&mut context);
+    context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap()
+        .metadata
+        .insert(AGENT_PROCESS_ALIVE_KEY.to_string(), "1".to_string());
+    let mut runner = GitSkippingRunner::default();
+    let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+        alive: true,
+        observed_at: SystemTime::now(),
+    });
+
+    let changed =
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+            .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(!changed, "alive stamp must not rewrite on every refresh");
+    assert_eq!(
+        task.metadata.get(AGENT_PROCESS_ALIVE_KEY),
+        Some(&"1".to_string())
+    );
+    assert!(agent_process_is_alive(task));
+}
+
+#[test]
+fn process_alive_stamp_removed_when_process_not_alive() {
+    let mut context = context_with_unchanged_running_task();
+    seed_fresh_ci_probe(&mut context);
+    context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap()
+        .metadata
+        .insert(AGENT_PROCESS_ALIVE_KEY.to_string(), "1".to_string());
+    let mut runner = GitSkippingRunner::default();
+
+    let changed = refresh_runtime_context_with_tier(
+        &mut context,
+        &mut runner,
+        &NoAgentStatusSource,
+        RefreshTier::Live,
+    )
+    .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(changed);
+    assert!(!task.metadata.contains_key(AGENT_PROCESS_ALIVE_KEY));
+    assert!(!agent_process_is_alive(task));
+}
+
+#[test]
 fn steady_state_refresh_skips_branch_refresh_when_git_state_is_fresh() {
     let mut context = context_with_unchanged_running_task();
     seed_fresh_ci_probe(&mut context);

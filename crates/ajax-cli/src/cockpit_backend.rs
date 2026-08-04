@@ -377,9 +377,10 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let source = AgentStatusFiles::from_runtime_cache(&context.runtime_paths.cache_dir);
-    let refreshed = refresh_runtime_context_with_tier(context, runner, &source, RefreshTier::Full)
-        .map_err(crate::command_error)?;
+    let source = AgentStatusFiles::shared_from_runtime_cache(&context.runtime_paths.cache_dir);
+    let refreshed =
+        refresh_runtime_context_with_tier(context, runner, source.as_ref(), RefreshTier::Full)
+            .map_err(crate::command_error)?;
     let notified = crate::notify::notify_attention_transitions(context, runner);
     Ok(refreshed || notified)
 }
