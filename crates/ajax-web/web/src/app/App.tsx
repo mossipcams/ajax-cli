@@ -30,6 +30,11 @@ import {
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
+import {
+  beginInteraction,
+  cancelInteraction,
+  endTapToFeedback,
+} from "@/shared/lib/posthog";
 
 type ResultState = {
   message: string;
@@ -101,7 +106,10 @@ export default function App() {
   }
 
   function openTask(handle: string) {
+    const interactionId = beginInteraction("open_task");
     navigateHashWithEnter(taskHash(handle), "left");
+    endTapToFeedback(interactionId, "nav_start");
+    cancelInteraction(interactionId);
   }
 
   const pullToRefreshRef = usePullToRefresh({

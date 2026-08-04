@@ -377,6 +377,31 @@ state database and default web port, while dev uses the development state
 database and dev web port. The browser shell must not merge profile state in
 browser storage.
 
+### PostHog Cloud telemetry
+
+Web Cockpit may send approved outbound product telemetry to **PostHog Cloud US**
+(`https://us.i.posthog.com`) via `posthog-js` initialized at boot with the
+project write key and SDK `defaults: '2026-05-30'`. This is an approved
+**browser egress** exception: the Ajax Web Cockpit listener remains private
+(WireGuard / equivalent; no public-server exposure model). Operators need
+outbound HTTPS from the browser to PostHog; blocked egress fails soft and does
+not change live-control authority.
+
+Operators are identified by host (`ajax:${hostname}`) with person properties for
+host/origin/app version. Session Replay and exception autocapture stay off.
+Autocapture and Web Vitals (LCP, CLS, FCP, INP) are enabled with ignorelists for
+terminal surfaces and sensitive UI. Custom latency events cover swipe commits
+(`ajax_swipe`), tap→first feedback (`ajax_tap_to_feedback`), and tap→mutation
+complete (`ajax_tap_to_operation_complete`).
+
+Telemetry must never capture prompts, PTY input, terminal buffer content, or
+other operator secrets. PostHog may use SDK-default analytics persistence
+(localStorage/cookie, including distinct id and related session/super
+properties). That analytics state is allowed alongside other non-operational UI
+prefs (for example remembered new-task agent/repo and terminal font size). It
+must not store task truth, API payloads, offline mutation queues, or replayable
+operational state — those remain forbidden under the browser-storage ban above.
+
 Browser notifications are out of scope. Ajax Web Cockpit must not implement Web
 Push, PushManager flows, Notification API prompts, VAPID keys, push
 subscriptions, service-worker push handlers, notification click handlers, or
