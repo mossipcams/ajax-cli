@@ -101,3 +101,9 @@ npm run web:check  # PASS
   - permanent-on (old bug): prior frames retained (`f0/f1/f3/f4>0`) → **PASS**
     (reproduces overwrite dump; confirms latch is the fix)
 - Physical-phone busy-agent scroll feel still optional follow-up.
+
+## Follow-up: File LOC peel (PR #749)
+
+`Delegation decision: not delegated because R-SIZE-SPLIT`
+
+Peel ledger: `.planning/agent-plans/task-terminal-file-loc-peel.md`

@@ -3,6 +3,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import taskTerminalSource from "./TaskTerminal.tsx?raw";
+import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
+import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
+
+/** Shell + peeled mount/speech modules for source-contract asserts. */
+const taskTerminalFeatureSource =
+  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}`;
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -35,11 +41,11 @@ function taskTerminalStylesSection(): string {
 describe("TaskTerminal link menu", () => {
   it("blurs the xterm textarea when opening the link menu while the keyboard is closed", () => {
     const onInteractionClick =
-      taskTerminalSource.match(
-        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
+      taskTerminalFeatureSource.match(
+        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {2,4}\};/,
       )?.[1] ?? "";
     const onLinkActivate =
-      taskTerminalSource.match(
+      taskTerminalFeatureSource.match(
         /onLinkActivate:\s*\(\{[^}]*\}\)\s*=>\s*\{([\s\S]*?)\n {6}\},/,
       )?.[1] ?? "";
 
@@ -63,7 +69,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(textareaCss).toMatch(/bottom:\s*0/);
     expect(textareaCss).toMatch(/left:\s*0/);
     expect(textareaCss).not.toMatch(/left:\s*-9999/);
-    expect(taskTerminalSource).toMatch(/style\.bottom\s*=\s*["']0["']/);
+    expect(taskTerminalFeatureSource).toMatch(/style\.bottom\s*=\s*["']0["']/);
   });
 
   it("softens textarea clip/opacity so iOS treats it as an edit target", () => {
@@ -74,20 +80,20 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
     expect(textareaCss).toMatch(/opacity:\s*0\.01/);
     expect(textareaCss).toMatch(/clip-path:\s*none/);
-    expect(taskTerminalSource).toMatch(/opacity\s*=\s*["']0\.01["']/);
-    expect(taskTerminalSource).toMatch(/clip-path["'],\s*["']none["']/);
+    expect(taskTerminalFeatureSource).toMatch(/opacity\s*=\s*["']0\.01["']/);
+    expect(taskTerminalFeatureSource).toMatch(/clip-path["'],\s*["']none["']/);
   });
 
   it("resets document scroll before focusing the terminal textarea", () => {
     // Path-agnostic by design: this import has been spelled "../viewport",
     // "@/viewport" and now "@/shared/lib/viewport" across slices 9's rounds. What
     // matters is that resetDocumentScroll comes from the viewport module.
-    expect(taskTerminalSource).toMatch(
+    expect(taskTerminalFeatureSource).toMatch(
       /import\s*\{[^}]*resetDocumentScroll[^}]*\}\s*from\s*["'][^"']*\/viewport["']/,
     );
 
-    const onInteractionClick = taskTerminalSource.match(
-      /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
+    const onInteractionClick = taskTerminalFeatureSource.match(
+      /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {2,4}\};/,
     )?.[1] ?? "";
 
     expect(onInteractionClick).toMatch(/resetDocumentScroll\s*\(\s*\)/);
@@ -98,9 +104,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("re-fits through the expand settle window with discrete intent", () => {
-    expect(taskTerminalSource).toMatch(/const EXPAND_REWRAP_MS\s*=\s*280/);
+    expect(taskTerminalFeatureSource).toMatch(/const EXPAND_REWRAP_MS\s*=\s*280/);
     const settleBody =
-      taskTerminalSource.match(
+      taskTerminalFeatureSource.match(
         /const scheduleBandSettle\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/,
       )?.[1] ?? "";
 
@@ -148,18 +154,18 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\) \.task-detail \.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
 
-    expect(taskTerminalSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
-    expect(taskTerminalSource).toMatch(
+    expect(taskTerminalFeatureSource).toMatch(/const syncHostToWrap\s*=\s*\(\)\s*=>/);
+    expect(taskTerminalFeatureSource).toMatch(
       /classList\.contains\(["']keyboard-open["']\)/,
     );
-    expect(taskTerminalSource).toMatch(/hostEl\.style\.height\s*=\s*next/);
-    expect(taskTerminalSource).toMatch(/syncHostToWrap\(\)/);
+    expect(taskTerminalFeatureSource).toMatch(/hostEl\.style\.height\s*=\s*next/);
+    expect(taskTerminalFeatureSource).toMatch(/syncHostToWrap\(\)/);
   });
 
   it("skips fits while a terminal selection is active", () => {
     const scheduleFitBody =
-      taskTerminalSource.match(
-        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
+      taskTerminalFeatureSource.match(
+        /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {2,4}\};/,
       )?.[1] ?? "";
 
     // discreteIntent must not bypass: open-path scheduleImmediate(true) can
@@ -223,18 +229,18 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("omits the hotbar Hide keyboard control", () => {
-    expect(taskTerminalSource).not.toMatch(/aria-label="Hide keyboard"/);
-    expect(taskTerminalSource).not.toMatch(
+    expect(taskTerminalFeatureSource).not.toMatch(/aria-label="Hide keyboard"/);
+    expect(taskTerminalFeatureSource).not.toMatch(
       /className="terminal-key"[\s\S]*?⌄/,
     );
-    expect(taskTerminalSource).toMatch(/aria-label="Expand terminal"/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label="Expand terminal"/);
   });
 
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {
     const observerBody = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const keyboardClassObserver\s*=\s*new MutationObserver/,
-      /\n {4}keyboardClassObserver\.observe/,
+      /\n {2,4}keyboardClassObserver\.observe/,
     );
 
     expect(observerBody).toMatch(/MutationObserver/);
@@ -245,25 +251,25 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(observerBody).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(observerBody).not.toMatch(/EXPANDED_CLASS/);
     expect(observerBody).not.toMatch(/nowOpen\s*&&\s*!wasKeyboardOpen/);
-    expect(taskTerminalSource).toMatch(
+    expect(taskTerminalFeatureSource).toMatch(
       /keyboardClassObserver\.observe\(\s*document\.documentElement[\s\S]*?attributeFilter:\s*\[["']class["']\]/,
     );
   });
 
   it("settles the band on expand enter, expand exit, and tap-focus", () => {
     const toggleBody =
-      taskTerminalSource.match(/const toggleExpanded\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/)?.[1] ??
+      taskTerminalFeatureSource.match(/const toggleExpanded\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/)?.[1] ??
       "";
 
     expect(toggleBody).toMatch(/if\s*\(\s*!entering\s*\)\s*\{[\s\S]*?scheduleBandSettle\s*\(\s*\)[\s\S]*?return/);
     expect(toggleBody).toMatch(/scheduleBandSettle\s*\(\s*\)\s*;\s*$/);
     expect(toggleBody.match(/scheduleBandSettle\s*\(\s*\)/g)?.length).toBe(2);
     expect(toggleBody).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
-    expect(taskTerminalSource).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
+    expect(taskTerminalFeatureSource).not.toMatch(/schedulePostLayoutRef(?:\.current)?\?\.\(false\)/);
 
     const onInteractionClick =
-      taskTerminalSource.match(
-        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4}\};/,
+      taskTerminalFeatureSource.match(
+        /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {2,4}\};/,
       )?.[1] ?? "";
     expect(onInteractionClick).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(onInteractionClick).not.toMatch(/EXPANDED_CLASS/);
@@ -288,7 +294,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("shows Copy beside expand on the panel, not centered in the scroll wrap", () => {
     const cornerMarkup = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /className="terminal-corner-actions"/,
       /<\/div>\s*<div\s+className="terminal-status"/,
     );
@@ -326,21 +332,21 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("enables scroll-on-erase so attach ED2 pushes seeded viewport into scrollback", () => {
-    expect(taskTerminalSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
+    expect(taskTerminalFeatureSource).toMatch(/scrollOnEraseInDisplay:\s*true/);
   });
 
   it("latches scrollOnErase to the seeded-open window only", () => {
     const mountBody =
-      taskTerminalSource.match(
-        /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
+      mountTaskTerminalSessionSource.match(
+        /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
     const revealBody =
-      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2}\};/)?.[1] ?? "";
     expect(revealBody).toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
 
     const onOpenBody =
-      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {6}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(
       /if\s*\(\s*!seeded\s*\)\s*\{[\s\S]*?scrollOnEraseInDisplay\s*=\s*false/,
     );
@@ -350,24 +356,24 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("names terminal control keys for assistive tech", () => {
-    expect(taskTerminalSource).toMatch(/ariaLabel:\s*"Escape"/);
+    expect(taskTerminalFeatureSource).toMatch(/ariaLabel:\s*"Escape"/);
     // Visible ⌃C toolbar entry removed; keyboard Ctrl+C remains via Control modifier.
-    expect(taskTerminalSource).toMatch(/aria-label="Control modifier"/);
-    expect(taskTerminalSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
-    expect(taskTerminalSource).toMatch(/aria-label="Paste"/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label="Control modifier"/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label="Paste"/);
   });
 
   it("includes Backspace in CONTROL_KEYS with DEL payload", () => {
     const controlKeysBlock =
-      taskTerminalSource.match(/const CONTROL_KEYS\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+      taskTerminalFeatureSource.match(/const CONTROL_KEYS\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
     expect(controlKeysBlock).toMatch(/ariaLabel:\s*"Backspace"/);
     expect(controlKeysBlock).toMatch(/data:\s*"\\x7f"/);
   });
 
   it("marks Backspace and arrows as repeatable hotbar keys only", () => {
-    expect(taskTerminalSource).toMatch(/REPEATABLE_KEY_DATA|isRepeatableKey/);
+    expect(taskTerminalFeatureSource).toMatch(/REPEATABLE_KEY_DATA|isRepeatableKey/);
     const repeatableBlock =
-      taskTerminalSource.match(
+      taskTerminalFeatureSource.match(
         /(?:REPEATABLE_KEY_DATA|repeatableKeyData)\s*=\s*(?:new Set\(\[|Set\(\[)([\s\S]*?)\]\)/,
       )?.[1] ?? "";
     expect(repeatableBlock).toMatch(/\\x7f/);
@@ -382,9 +388,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("skips xterm Backspace keydown so iOS can key-repeat", () => {
     const backspaceBranch = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /liveTerm\.attachCustomKeyEventHandler\(\(event\) => \{/,
-      /\n {6}if \(event\.key !== " "/,
+      /\n {4,6}if \(event\.key !== " "/,
     );
 
     expect(backspaceBranch).toMatch(
@@ -394,10 +400,10 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("seeds a zero-width space so iOS has deletable content", () => {
-    expect(taskTerminalSource).toMatch(/const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/);
+    expect(taskTerminalFeatureSource).toMatch(/const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/);
 
     const hardenTextarea = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const hardenMobileTextarea\s*=\s*\(\)\s*=>\s*\{/,
       /\n {2}\};/,
     );
@@ -407,7 +413,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("sends DEL from beforeinput deleteContentBackward", () => {
     const beforeInput = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const onTextareaBeforeInput\s*=\s*\(event:\s*InputEvent\)\s*=>\s*\{/,
       /\n {2}\};/,
     );
@@ -421,7 +427,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     // the rest of the hold, which is what "hold backspace does nothing" looked
     // like in the app.
     const payloads = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const deleteInputPayload\s*=\s*\(inputType:\s*string\)/,
       /\n {2}\};/,
     );
@@ -431,7 +437,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("blocks xterm empty paste without preventDefault and recovers from textarea input", () => {
     const onPaste = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const onTextareaPaste\s*=\s*\(event:\s*ClipboardEvent\)\s*=>\s*\{/,
       /\n {2}\};/,
     );
@@ -447,7 +453,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(emptyBranch).not.toMatch(/preventDefault/);
 
     const onInput = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const onTextareaInput\s*=\s*\(event:\s*Event\)\s*=>\s*\{/,
       /\n {2}\};/,
     );
@@ -461,7 +467,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {
     const onInput = extractBlock(
-      taskTerminalSource,
+      taskTerminalFeatureSource,
       /const onTextareaInput\s*=\s*\(event:\s*Event\)\s*=>\s*\{/,
       /\n {2}\};/,
     );
@@ -471,15 +477,15 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     // The microtask checkpoint runs before the browser applies the deletion, so
     // a beforeinput-scheduled reseed always sees the sentinel still there, does
     // nothing, and leaves the field empty for the next repeat tick.
-    expect(taskTerminalSource).not.toMatch(/queueMicrotask\(\s*\w*[Ss]entinel\s*\)/);
-    expect(taskTerminalSource).toMatch(/addEventListener\("input",\s*\w+\)/);
+    expect(taskTerminalFeatureSource).not.toMatch(/queueMicrotask\(\s*\w*[Ss]entinel\s*\)/);
+    expect(taskTerminalFeatureSource).toMatch(/addEventListener\("input",\s*\w+\)/);
   });
 
   it("removes the beforeinput and focus listeners with the identities it registered", () => {
     const cleanup = extractBlock(
-      taskTerminalSource,
-      /return \(\) => \{\n {6}disposed = true/,
-      /\n {4}\};\n {2}\}, \[handle\]\);/,
+      mountTaskTerminalSessionSource,
+      /return \(\) => \{\n {4}disposed = true/,
+      /\n {2}\};\n\}\s*$/,
     );
 
     // Matching names are not enough. hardenMobileTextarea runs through an
@@ -488,12 +494,12 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     // different functions and the listener is never removed. Each handler must
     // be stable: declared at module scope, or via useEffectEvent.
     const registeredFocus =
-      taskTerminalSource.match(/addEventListener\("focus",\s*(\w+)\)/)?.[1] ?? "add-missing";
+      taskTerminalFeatureSource.match(/addEventListener\("focus",\s*(\w+)\)/)?.[1] ?? "add-missing";
     const registeredBeforeInput =
-      taskTerminalSource.match(/addEventListener\("beforeinput",\s*(\w+)\)/)?.[1] ??
+      taskTerminalFeatureSource.match(/addEventListener\("beforeinput",\s*(\w+)\)/)?.[1] ??
       "add-missing";
     const registeredInput =
-      taskTerminalSource.match(/addEventListener\("input",\s*(\w+)\)/)?.[1] ?? "add-missing";
+      taskTerminalFeatureSource.match(/addEventListener\("input",\s*(\w+)\)/)?.[1] ?? "add-missing";
 
     expect(cleanup).toMatch(
       new RegExp(`removeEventListener\\("beforeinput",\\s*${registeredBeforeInput}\\)`),
@@ -510,7 +516,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       const moduleScope = new RegExp(`^const ${handler}\\s*=`, "m");
       const effectEvent = new RegExp(`const ${handler}\\s*=\\s*useEffectEvent\\(`);
       expect(
-        moduleScope.test(taskTerminalSource) || effectEvent.test(taskTerminalSource),
+        moduleScope.test(taskTerminalFeatureSource) || effectEvent.test(taskTerminalFeatureSource),
       ).toBe(true);
     }
   });
@@ -518,17 +524,17 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
 describe("TaskTerminal speech input", () => {
   it("auto-inserts ordered finals with no staging composer, and one Mic shortcut after Paste", () => {
-    expect(taskTerminalSource).not.toMatch(/TerminalComposer/);
-    expect(taskTerminalSource).not.toMatch(/terminal-composer/);
-    expect(taskTerminalSource).not.toMatch(/insertComposerTranscript/);
-    expect(taskTerminalSource).not.toMatch(/composerText/);
-    expect(taskTerminalSource).toMatch(/createSpeechTransport/);
-    expect(taskTerminalSource).toMatch(/speechInsertLedger/);
-    expect(taskTerminalSource).toMatch(/undoInsertedSpeech/);
-    expect(taskTerminalSource).toMatch(/isStandaloneStartOver/);
+    expect(taskTerminalFeatureSource).not.toMatch(/TerminalComposer/);
+    expect(taskTerminalFeatureSource).not.toMatch(/terminal-composer/);
+    expect(taskTerminalFeatureSource).not.toMatch(/insertComposerTranscript/);
+    expect(taskTerminalFeatureSource).not.toMatch(/composerText/);
+    expect(taskTerminalFeatureSource).toMatch(/createSpeechTransport/);
+    expect(taskTerminalFeatureSource).toMatch(/speechInsertLedger/);
+    expect(taskTerminalFeatureSource).toMatch(/undoInsertedSpeech/);
+    expect(taskTerminalFeatureSource).toMatch(/isStandaloneStartOver/);
 
     // Contiguous finalTranscript deltas paste in onFinal (outside setState).
-    const onFinal = taskTerminalSource.match(/onFinal:[\s\S]*?\n {8}\},/)?.[0] ?? "";
+    const onFinal = taskTerminalFeatureSource.match(/onFinal:[\s\S]*?\n {4,8}\},/)?.[0] ?? "";
     expect(onFinal).toMatch(/pasteThroughTerm\(/);
     expect(onFinal).toMatch(/finalTranscript/);
     expect(onFinal).toMatch(/isStandaloneStartOver\(text\)/);
@@ -538,49 +544,49 @@ describe("TaskTerminal speech input", () => {
     const mic = taskTerminalSource.indexOf(">\n            Mic");
     expect(paste).toBeGreaterThan(-1);
     expect(mic).toBeGreaterThan(paste);
-    expect(taskTerminalSource).toMatch(/Start voice input/);
-    expect(taskTerminalSource).toMatch(/Stop voice input/);
-    expect(taskTerminalSource).toMatch(/micArmed/);
-    expect(taskTerminalSource).toMatch(/toggleMic\s*\(\s*\)/);
-    expect(taskTerminalSource).toMatch(/request_stop/);
-    expect(taskTerminalSource).toMatch(/speechTransportRef\.current\?\.stop\(\)/);
+    expect(taskTerminalFeatureSource).toMatch(/Start voice input/);
+    expect(taskTerminalFeatureSource).toMatch(/Stop voice input/);
+    expect(taskTerminalFeatureSource).toMatch(/micArmed/);
+    expect(taskTerminalFeatureSource).toMatch(/toggleMic\s*\(\s*\)/);
+    expect(taskTerminalFeatureSource).toMatch(/request_stop/);
+    expect(taskTerminalFeatureSource).toMatch(/speechTransportRef\.current\?\.stop\(\)/);
   });
 
   it("removes only the visible toolbar Ctrl+C entry and keeps the Ctrl path", () => {
-    expect(taskTerminalSource).not.toMatch(/label:\s*["']⌃C["']/);
-    expect(taskTerminalSource).toMatch(/aria-label=["']Control modifier["']/);
-    expect(taskTerminalSource).toMatch(/sendKey\(consumeCtrl\(data\)\)/);
+    expect(taskTerminalFeatureSource).not.toMatch(/label:\s*["']⌃C["']/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label=["']Control modifier["']/);
+    expect(taskTerminalFeatureSource).toMatch(/sendKey\(consumeCtrl\(data\)\)/);
   });
 
   it("keeps Mic text visible across active speech states", () => {
     // Mic stays the fixed toolbar label (JSX text child); states only arm styling.
-    expect(taskTerminalSource).toMatch(/>\n\s*Mic\n/);
-    expect(taskTerminalSource).toMatch(/pause_pending/);
-    expect(taskTerminalSource).toMatch(/finalizing/);
-    expect(taskTerminalSource).toMatch(/is-armed/);
-    expect(taskTerminalSource).toMatch(
+    expect(taskTerminalFeatureSource).toMatch(/>\n\s*Mic\n/);
+    expect(taskTerminalFeatureSource).toMatch(/pause_pending/);
+    expect(taskTerminalFeatureSource).toMatch(/finalizing/);
+    expect(taskTerminalFeatureSource).toMatch(/is-armed/);
+    expect(taskTerminalFeatureSource).toMatch(
       /speechModel\.state === "listening" \|\| speechModel\.state === "pause_pending"/,
     );
   });
 
   it("allows a recoverable error to retry voice input", () => {
-    expect(taskTerminalSource).toMatch(/speechModelRef\.current\.state\s*===\s*["']error["']/);
-    expect(taskTerminalSource).toMatch(/toggleMic\s*\(\s*\)/);
+    expect(taskTerminalFeatureSource).toMatch(/speechModelRef\.current\.state\s*===\s*["']error["']/);
+    expect(taskTerminalFeatureSource).toMatch(/toggleMic\s*\(\s*\)/);
   });
 
   it("surfaces an unexpected STT socket close as a recoverable error", () => {
     const closeBody =
-      taskTerminalSource.match(/onClosed:\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\},/)?.[1] ?? "";
+      taskTerminalFeatureSource.match(/onClosed:\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\},/)?.[1] ?? "";
 
     expect(closeBody).toMatch(/current\.state\s*!==\s*["']finalizing["']/);
     expect(closeBody).toMatch(/Speech connection closed/);
   });
 
   it("never pastes partial speech into the PTY and never auto-sends Enter", () => {
-    expect(taskTerminalSource).toMatch(/terminal-speech-status/);
-    expect(taskTerminalSource).not.toMatch(/pasteThroughTerm\(speechModel\.partialTranscript/);
-    expect(taskTerminalSource).not.toMatch(/sendInput\(["']\\r["']\)/);
-    expect(taskTerminalSource).not.toMatch(/sendInput\(["']\\n["']\)/);
+    expect(taskTerminalFeatureSource).toMatch(/terminal-speech-status/);
+    expect(taskTerminalFeatureSource).not.toMatch(/pasteThroughTerm\(speechModel\.partialTranscript/);
+    expect(taskTerminalFeatureSource).not.toMatch(/sendInput\(["']\\r["']\)/);
+    expect(taskTerminalFeatureSource).not.toMatch(/sendInput\(["']\\n["']\)/);
   });
 });
 
@@ -595,26 +601,26 @@ describe("TaskTerminal seeded history reveal", () => {
       /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
     );
 
-    expect(taskTerminalSource).toMatch(/SEED_REVEAL_QUIET_MS\s*=\s*120/);
-    expect(taskTerminalSource).toMatch(/SEED_REVEAL_MAX_MS\s*=\s*2000/);
-    expect(taskTerminalSource).toMatch(/~\s*7 batches/);
-    expect(taskTerminalSource).not.toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
+    expect(taskTerminalFeatureSource).toMatch(/SEED_REVEAL_QUIET_MS\s*=\s*120/);
+    expect(taskTerminalFeatureSource).toMatch(/SEED_REVEAL_MAX_MS\s*=\s*2000/);
+    expect(taskTerminalFeatureSource).toMatch(/~\s*7 batches/);
+    expect(taskTerminalFeatureSource).not.toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
 
     const mountBody =
-      taskTerminalSource.match(
-        /useEffect\(\(\)\s*=>\s*\{([\s\S]*?)\n {2}\},\s*\[handle\]\);/,
+      mountTaskTerminalSessionSource.match(
+        /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
     // Hiding starts at the seeded open, not on a byte-size guess about the frame.
     const onOpenBody =
-      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+      mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)\s*\{\s*\n\s*beginSeedPending\(\)/);
     expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)\s*\{\s*\n\s*cancelSeedPending\(\)/);
 
     // Every write restarts the quiet window: the seed is scrollback only, and the
     // tmux attach repaint of the visible pane lands in later frames.
     const onOutputBody =
-      mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {8}\},/)?.[1] ?? "";
+      mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
     expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
     expect(onOutputBody).not.toMatch(/setFollowLive\(true\)/);
@@ -622,7 +628,7 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
 
     const revealBody =
-      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+      mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(revealBody).not.toMatch(/isFollowingLive\(\)/);
     expect(revealBody).toMatch(/scrollSync\.syncSpacer\(\)/);
     expect(revealBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
@@ -644,7 +650,7 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(removeIndex).toBeGreaterThan(snapIndex);
 
     const deferBody =
-      mountBody.match(/const deferSeedReveal = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+      mountBody.match(/const deferSeedReveal = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(deferBody).toMatch(/clearTimeout\(seedQuietTimer\)/);
     expect(deferBody).toMatch(/setTimeout\(revealSeed, SEED_REVEAL_QUIET_MS\)/);
     expect(deferBody).toMatch(/seedCapTimer \?\?= setTimeout\(revealSeed, SEED_REVEAL_MAX_MS\)/);
@@ -652,7 +658,7 @@ describe("TaskTerminal seeded history reveal", () => {
     // Timers start at the first write, not at open, so a silent socket never
     // reveals a still-empty grid on a wall-clock deadline.
     const beginBody =
-      mountBody.match(/const beginSeedPending = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+      mountBody.match(/const beginSeedPending = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(beginBody).toMatch(/classList\.add\(["']is-seed-pending["']\)/);
     expect(beginBody).not.toMatch(/setTimeout/);
 
@@ -662,7 +668,7 @@ describe("TaskTerminal seeded history reveal", () => {
       /onScroll\(\(\)\s*=>\s*\{[\s\S]*?if\s*\(\s*isSeedPending\(\)\s*\)\s*return;[\s\S]*?scrollSync\.onTermScroll\(\)/,
     );
     const wrapScrollBody =
-      mountBody.match(/const onWrapScroll = \(\) => \{([\s\S]*?)\n {4}\};/)?.[1] ?? "";
+      mountBody.match(/const onWrapScroll = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(wrapScrollBody).toMatch(/onRestorePinnedScroll\(\)/);
     expect(wrapScrollBody).toMatch(/scrollSync\.onInteractionScroll\(\)/);
     expect(wrapScrollBody).not.toMatch(/isSeedPending\(\)/);
