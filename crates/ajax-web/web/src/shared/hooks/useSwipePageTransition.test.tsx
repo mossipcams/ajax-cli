@@ -7,6 +7,17 @@ import {
   setTerminalDoubleTapPending,
   setTerminalSelecting,
 } from "@/shared/lib/terminalSelecting";
+import * as telemetry from "@/shared/lib/telemetry";
+
+vi.mock("@/shared/lib/telemetry", async () => {
+  const actual = await vi.importActual<typeof import("@/shared/lib/telemetry")>(
+    "@/shared/lib/telemetry",
+  );
+  return {
+    ...actual,
+    captureSwipe: vi.fn(actual.captureSwipe),
+  };
+});
 
 vi.mock("@/shared/lib/swipeEnter", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
@@ -50,6 +61,7 @@ describe("useSwipePageTransition", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.mocked(setSwipeEnterDirection).mockClear();
+    vi.mocked(telemetry.captureSwipe).mockClear();
   });
 
   afterEach(() => {
@@ -72,6 +84,15 @@ describe("useSwipePageTransition", () => {
     });
     expect(setSwipeEnterDirection).toHaveBeenCalledWith("left");
     expect(onLeft).toHaveBeenCalledOnce();
+    expect(telemetry.captureSwipe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "left",
+        completed: true,
+        cancelled: false,
+        settle_ms: expect.any(Number),
+        distance_px: expect.any(Number),
+      }),
+    );
   });
 
   it("springs back without navigation on a short drag", async () => {
@@ -89,6 +110,13 @@ describe("useSwipePageTransition", () => {
     expect(onLeft).not.toHaveBeenCalled();
     expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
+    expect(telemetry.captureSwipe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        completed: false,
+        cancelled: true,
+        settle_ms: expect.any(Number),
+      }),
+    );
   });
 
   it("commits right programmatically after the slide animation", async () => {

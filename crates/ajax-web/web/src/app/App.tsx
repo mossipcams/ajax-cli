@@ -33,8 +33,13 @@ import {
 import {
   beginInteraction,
   cancelInteraction,
+  capturePwaLaunch,
+  capturePwaResume,
+  captureRouteVisible,
   endTapToFeedback,
-} from "@/shared/lib/posthog";
+  isNavigationPending,
+  markNavigationStart,
+} from "@/shared/lib/telemetry";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -76,7 +81,8 @@ export default function App() {
   const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | null>(null);
   const outletSwipeRef = useRef<HTMLElement | null>(null);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const pwaLaunchCapturedRef = useRef(false);
+  const hiddenAtRef = useRef<number | null>(null);
   // Report what's live first, then the inventory size.
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
@@ -106,11 +112,15 @@ export default function App() {
   }
 
   function go(hash: string) {
+    if (location.hash !== hash) {
+      markNavigationStart();
+    }
     location.hash = hash;
   }
 
   function openTask(handle: string) {
     const interactionId = beginInteraction("open_task");
+    markNavigationStart();
     navigateHashWithEnter(taskHash(handle), "left");
     endTapToFeedback(interactionId, "nav_start");
     cancelInteraction(interactionId);
@@ -140,12 +150,22 @@ export default function App() {
     }, RESUME_DEBOUNCE_MS);
   });
   const onShellVisibilityChange = useEffectEvent(() => {
+    const wasHidden = documentVisibility === "hidden";
+    const nowVisible = document.visibilityState === "visible";
+    if (document.visibilityState === "hidden") {
+      hiddenAtRef.current = performance.now();
+    }
     setDocumentVisibility(document.visibilityState);
-    if (document.visibilityState === "visible") {
+    if (nowVisible && wasHidden && hiddenAtRef.current !== null) {
+      capturePwaResume({
+        duration_ms: Math.round(performance.now() - hiddenAtRef.current),
+      });
+      hiddenAtRef.current = null;
+    }
+    if (nowVisible) {
       scheduleShellResume();
     }
   });
-
   // Shell listeners — mount once; immediate cockpit on mount, debounced recovery on resume.
   useEffect(() => {
     const idleHandle = onShellMount();
@@ -206,6 +226,25 @@ export default function App() {
       document.title = "Ajax";
     }
   }, [route]);
+
+  useEffect(() => {
+    const kind = route.kind;
+    const contentReady =
+      kind === "settings" ||
+      (kind === "task" && detail.status !== "loading" && detail.data) ||
+      kind === "diff" ||
+      cockpit.data !== null;
+    if (!contentReady) {
+      return;
+    }
+    if (isNavigationPending()) {
+      captureRouteVisible({ to_route: window.location.hash });
+    }
+    if (!pwaLaunchCapturedRef.current) {
+      pwaLaunchCapturedRef.current = true;
+      capturePwaLaunch();
+    }
+  }, [route, detail.status, detail.data, cockpit.data]);
 
   useEffect(() => {
     // Always consume: clears leftover enter class on button / bottom-nav navigations.

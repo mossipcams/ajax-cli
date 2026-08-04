@@ -4,7 +4,20 @@ import SettingsView from "./SettingsView";
 import * as api from "@/shared/lib/api";
 import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
+import * as telemetry from "@/shared/lib/telemetry";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
+
+vi.mock("@/shared/lib/telemetry", async () => {
+  const actual = await vi.importActual<typeof import("@/shared/lib/telemetry")>(
+    "@/shared/lib/telemetry",
+  );
+  return {
+    ...actual,
+    captureTelemetryDiagnostic: vi.fn(actual.captureTelemetryDiagnostic),
+    getTelemetryQueueStatus: vi.fn(actual.getTelemetryQueueStatus),
+    isTelemetryInitialized: vi.fn(actual.isTelemetryInitialized),
+  };
+});
 
 afterEach(() => {
   localStorage.clear();
@@ -148,5 +161,28 @@ describe("SettingsView", () => {
     expect(debug).toHaveTextContent("0.42.0-test");
 
     meta.remove();
+  });
+
+  it("shows telemetry status and emits diagnostic on button click", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.mocked(telemetry.isTelemetryInitialized).mockReturnValue(true);
+    vi.mocked(telemetry.getTelemetryQueueStatus).mockResolvedValue({
+      pending: 2,
+      initialized: true,
+    });
+
+    render(<SettingsView />);
+    const telemetrySection = await vi.waitFor(() => {
+      const section = screen.getByTestId("dev-settings-telemetry");
+      expect(section).toHaveTextContent("2");
+      return section;
+    });
+    expect(telemetrySection).toHaveTextContent("yes");
+
+    fireEvent.click(screen.getByTestId("telemetry-diagnostic"));
+    expect(telemetry.captureTelemetryDiagnostic).toHaveBeenCalledOnce();
   });
 });

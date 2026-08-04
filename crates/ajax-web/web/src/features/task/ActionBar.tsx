@@ -7,7 +7,7 @@ import {
   cancelInteraction,
   endTapToFeedback,
   endTapToOperationComplete,
-} from "@/shared/lib/posthog";
+} from "@/shared/lib/telemetry";
 
 interface Props {
   actions: WebAction[];

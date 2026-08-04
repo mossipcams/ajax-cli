@@ -162,6 +162,43 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
 Detailed task-authority, registry, live-status, and Web Cockpit rules live in
 the focused docs below.
 
+## Web Cockpit telemetry
+
+Web Cockpit may send approved outbound product telemetry to PostHog Cloud using
+the Ajax project write key by default (`phc_…` in `@/shared/lib/telemetry`).
+`VITE_POSTHOG_KEY` overrides that key at build time; set it to `off` / `0` /
+`disabled` to disable telemetry. Session replay stays off. Full init, storage
+carve-outs, durable queue behavior, and property schemas live in
+[`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) (PostHog
+section).
+
+Every **explicit** custom event (`track` / `captureEvent`) merges caller
+properties with shared context (context wins on collision):
+
+| Property | Type | Notes |
+| --- | --- | --- |
+| `event_id` | string | UUID per capture |
+| `session_id` | string | Tab session (`sessionStorage`) |
+| `install_id` | string | Stable install (`localStorage`) |
+| `sequence` | number | Monotonic per install |
+| `app_version` | string | Optional; from `meta[name="ajax-app-version"]` |
+| `route` | string | Current hash route |
+| `ios_version` | string | Optional; parsed from UA |
+| `viewport_w` / `viewport_h` | number | Inner window size |
+| `standalone` | boolean | Installed PWA vs browser tab (observational only) |
+
+Custom event names (plus PostHog Web Vitals autocapture when initialized):
+
+| Event | Purpose |
+| --- | --- |
+| `ajax_tap_to_feedback` | Tap → first visible feedback |
+| `ajax_tap_to_operation_complete` | Tap → completed operation |
+| `ajax_swipe` | Swipe gesture metrics |
+| `ajax_route_visible` | Navigation → visible content |
+| `ajax_pwa_launch` | Cold launch timing (once per boot) |
+| `ajax_pwa_resume` | Resume from background |
+| `ajax_telemetry_diagnostic` | Settings diagnostics snapshot |
+
 ## Agent Context Capsules
 
 Optimize for minimizing the files an agent must inspect for a routine change:
