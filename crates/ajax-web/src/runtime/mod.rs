@@ -7,6 +7,7 @@ use crate::{
     slices::{dev_deploy, install},
     WebError,
 };
+pub(crate) use ajax_core::runtime_refresh::RefreshTier;
 use ajax_core::{adapters::CommandRunner, config::NotifyConfig};
 use axum::{
     body::Bytes,
@@ -154,9 +155,9 @@ pub(crate) fn notify_poll_interval(notify: Option<&NotifyConfig>) -> Option<Dura
     }
 }
 
-/// Background attention poll: keeps webhook notifications firing while no
-/// browser is polling `/api/cockpit`. Webhooks stay quiet while a browser is
-/// connected.
+/// Background attention poll: keeps Full-tier refresh (CI probes, rediscovery)
+/// on the same interval as webhook delivery. Webhooks stay quiet while a browser
+/// is connected; the tick still refreshes with `deliver_notifications = false`.
 fn spawn_notify_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -175,10 +176,10 @@ where
         interval.tick().await; // consume the immediate first tick
         loop {
             interval.tick().await;
-            if tick_state.browser_connected() {
-                continue;
-            }
-            let _ = refresh_cockpit_and_cache(&tick_state, true).await;
+            let deliver_notifications = !tick_state.browser_connected();
+            let _ =
+                refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, deliver_notifications)
+                    .await;
         }
     });
 }
@@ -572,8 +573,6 @@ fn static_asset_response(path: &str) -> AxumResponse {
 
 #[cfg(test)]
 pub(crate) use crate::adapters::cloudflare_access::CloudflareAccessConfig;
-#[cfg(test)]
-pub(crate) use ajax_core::runtime_refresh::RefreshTier;
 #[cfg(test)]
 pub(crate) use bridge::operation_success_response;
 #[cfg(test)]

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createBrowserSpeechPlatform,
   createSpeechTransport,
   encodeSpeechAudioFrame,
   floatSamplesToPcm16,
@@ -553,6 +554,63 @@ describe("speech transport", () => {
     expect(capture.stop).toHaveBeenCalled();
     expect(socket.close).toHaveBeenCalled();
     expect(transport.sessionId()).toBeUndefined();
+  });
+
+  it("mutes ScriptProcessor output via a zero-gain node before destination", () => {
+    const destination = { connect: vi.fn() };
+    const muteGain = {
+      gain: { value: 1 },
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const processor = {
+      onaudioprocess: null as null | (() => void),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const source = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const context = {
+      destination,
+      sampleRate: 48_000,
+      createMediaStreamSource: vi.fn(() => source),
+      createScriptProcessor: vi.fn(() => processor),
+      createGain: vi.fn(() => muteGain),
+      resume: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    };
+    const originalAudioContext = window.AudioContext;
+    class MockAudioContext {
+      destination = context.destination;
+      sampleRate = context.sampleRate;
+      createMediaStreamSource = context.createMediaStreamSource;
+      createScriptProcessor = context.createScriptProcessor;
+      createGain = context.createGain;
+      resume = context.resume;
+      close = context.close;
+    }
+    window.AudioContext = MockAudioContext as unknown as typeof AudioContext;
+
+    try {
+      const stream = { getTracks: () => [] } as unknown as MediaStream;
+      const capture = createBrowserSpeechPlatform().createAudioCapture(stream, vi.fn());
+
+      expect(muteGain.gain.value).toBe(0);
+      expect(source.connect).toHaveBeenCalledWith(processor);
+      expect(processor.connect).toHaveBeenCalledWith(muteGain);
+      expect(muteGain.connect).toHaveBeenCalledWith(destination);
+
+      capture.stop();
+
+      expect(processor.disconnect).toHaveBeenCalled();
+      expect(muteGain.disconnect).toHaveBeenCalled();
+      expect(source.disconnect).toHaveBeenCalled();
+      expect(context.close).toHaveBeenCalled();
+    } finally {
+      window.AudioContext = originalAudioContext;
+    }
   });
 
   it("fails visibly when the client audio queue exceeds its bound", async () => {

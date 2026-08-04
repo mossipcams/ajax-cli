@@ -505,6 +505,23 @@ fn github_failed_check_does_not_overwrite_merge_conflict() {
 }
 
 #[test]
+fn live_refresh_skips_github_ci_probes() {
+    let mut context = context_with_active_task();
+    let stdout = ci_failed_stdout("lint");
+    let mut runner = CiChecksRunner::with_gh(&stdout, "", 1);
+
+    refresh_runtime_context_with_tier(
+        &mut context,
+        &mut runner,
+        &NoAgentStatusSource,
+        RefreshTier::Live,
+    )
+    .unwrap();
+
+    assert_eq!(runner.gh_command_count(), 0);
+}
+
+#[test]
 fn steady_state_fresh_projections_skip_orphan_git_scan_on_live_tier() {
     let mut context = context_with_unchanged_running_task();
     let mut runner = OrphanRecoveryRunner::default();

@@ -184,8 +184,9 @@ structured activity toward Waiting under the gates above.
 Liveness is supplied separately from observations and is never activity: a fresh
 heartbeat rules out `Unknown` (the process demonstrably exists, so the task is
 at rest) but can only ever project `Idle`. Refresh stamps
-`ui_state::AGENT_PROCESS_ALIVE_KEY` while the heartbeat is inside its window and
-removes it once stale, which keeps `derive_operator_status` a pure projection
+`ui_state::AGENT_PROCESS_ALIVE_KEY` (presence-only marker `"1"`, not a freshness
+clock) while the heartbeat is inside its window and removes it once stale, which
+keeps `derive_operator_status` a pure projection
 with no notion of "now". Confirmed wrapper exit is a terminal fallback where
 native evidence is absent: `Starting`/`Running` yield only liveness, never
 activity, and an `Exited*` observation can only exist once the supervised
@@ -451,7 +452,8 @@ Passing or pending checks clear GitHub-sourced CI evidence and drop `TestsFailed
 unless the live status is a local check failure (`CiFailed` with summary
 `check failed`). Probes are rate-limited by the per-task `ci_checks_probed_at`
 metadata timestamp: 30 seconds while the live status is a GitHub-sourced CI
-failure (`ci failed: …`), otherwise 300 seconds, shared by Live and Full tiers. Unobservable probes
+failure (`ci failed: …`), otherwise 300 seconds. Probes run on `RefreshTier::Full` only, not
+`RefreshTier::Live`. Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
 never project the task to Error. Notification dedup keys on operator status
 class only (`Waiting` / `Error`), so explanation churn inside one class stays
@@ -1064,12 +1066,13 @@ the crate:
   When `[notify]` is configured it also spawns a background notify tick that
   reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
   and revision-checked commit) so attention webhooks fire without a browser
-  polling; the interval comes from `[notify] poll_seconds`. The tick skips
-  webhook delivery while a browser has polled `/api/cockpit` within the last
-  90 seconds. Presence is refreshed not only by `/api/cockpit` polls but also
-  by recent terminal-WebSocket attaches and operate/action requests that pass
-  their origin/JSON-parse gates, so the tick stays suppressed while the operator
-  is actively using the PWA terminal or submitting actions.
+  polling; the interval comes from `[notify] poll_seconds`. The tick always
+  refreshes at `RefreshTier::Full` (CI probes and Full-only rediscovery) but
+  skips webhook delivery while a browser has polled `/api/cockpit` within the
+  last 90 seconds. Presence is refreshed not only by `/api/cockpit` polls but
+  also by recent terminal-WebSocket attaches and operate/action requests that
+  pass their origin/JSON-parse gates, so webhook delivery stays suppressed while
+  the operator is actively using the PWA terminal or submitting actions.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 

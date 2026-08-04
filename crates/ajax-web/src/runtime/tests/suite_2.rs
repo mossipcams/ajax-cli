@@ -80,19 +80,56 @@ async fn refresh_cockpit_and_cache_passes_deliver_notifications_flag() {
         "deliver-notifications-flag",
     );
 
-    super::refresh_cockpit_and_cache(&state, false).await;
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Live, false).await;
     assert_eq!(
         state.shared().bridge.deliver_notifications_flags,
         vec![false]
     );
+    assert_eq!(state.shared().bridge.refresh_tier, Some(RefreshTier::Live));
 
     tokio::time::sleep(super::COCKPIT_REFRESH_CACHE_TTL + Duration::from_millis(50)).await;
 
-    super::refresh_cockpit_and_cache(&state, true).await;
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
     assert_eq!(
         state.shared().bridge.deliver_notifications_flags,
         vec![false, true]
     );
+    assert_eq!(state.shared().bridge.refresh_tier, Some(RefreshTier::Full));
+}
+
+#[tokio::test]
+async fn notify_refresh_path_uses_full_tier_and_suppresses_delivery_while_connected() {
+    let (state, _cookie, _app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "notify-full-connected",
+    );
+
+    state.mark_browser_cockpit_seen();
+    assert!(state.browser_connected());
+
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Full, !state.browser_connected()).await;
+
+    let bridge = &state.shared().bridge;
+    assert_eq!(bridge.refresh_tier, Some(RefreshTier::Full));
+    assert_eq!(bridge.deliver_notifications_flags, vec![false]);
+}
+
+#[tokio::test]
+async fn notify_refresh_path_delivers_when_browser_disconnected() {
+    let (state, _cookie, _app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "notify-full-disconnected",
+    );
+
+    assert!(!state.browser_connected());
+
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Full, !state.browser_connected()).await;
+
+    let bridge = &state.shared().bridge;
+    assert_eq!(bridge.refresh_tier, Some(RefreshTier::Full));
+    assert_eq!(bridge.deliver_notifications_flags, vec![true]);
 }
 
 #[test]
@@ -134,11 +171,11 @@ async fn refresh_cockpit_and_cache_refreshes_once_and_caches() {
         "tick-refresh-cache",
     );
 
-    super::refresh_cockpit_and_cache(&state, true).await;
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
     assert_eq!(state.shared().bridge.refresh_count, 1);
 
     // Within the cache TTL the tick shares the handler's cached response.
-    super::refresh_cockpit_and_cache(&state, true).await;
+    super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
     assert_eq!(state.shared().bridge.refresh_count, 1);
 }
 
