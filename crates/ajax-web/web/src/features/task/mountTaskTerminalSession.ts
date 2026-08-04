@@ -27,7 +27,7 @@ import {
   selectWordAtClient,
   wordBoundsAtCol,
 } from "./terminalTouchSelection";
-import { setTerminalSelecting } from "@/shared/lib/terminalSelecting";
+import { setTerminalDoubleTapPending, setTerminalSelecting } from "@/shared/lib/terminalSelecting";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -512,6 +512,7 @@ export function mountTaskTerminalSession(
 
   const armSelectionDrag = (touch: Touch, event: TouchEvent) => {
     pendingTapAt = 0;
+    setTerminalDoubleTapPending(false);
     selectionDragActive = true;
     setTerminalSelecting(true);
     cancelLongPress();
@@ -550,7 +551,10 @@ export function mountTaskTerminalSession(
       ) {
         armSelectionDrag(touch, event);
       } else {
-        if (pendingTapAt > 0) pendingTapAt = 0;
+        if (pendingTapAt > 0) {
+          pendingTapAt = 0;
+          setTerminalDoubleTapPending(false);
+        }
         longPressStartX = touch.clientX;
         longPressStartY = touch.clientY;
         longPressStartedAt = performance.now();
@@ -563,6 +567,7 @@ export function mountTaskTerminalSession(
       }
     } else {
       pendingTapAt = 0;
+      setTerminalDoubleTapPending(false);
       cancelLongPress();
       clearDirectionalGesture();
       if (selectionDragActive) {
@@ -636,6 +641,8 @@ export function mountTaskTerminalSession(
         if (!holdMatured) {
           if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
         } else {
+          // Lock page swipe once the hold owns the finger (select or arrows).
+          setTerminalSelecting(true);
           const absDx = Math.abs(dx);
           const absDy = Math.abs(dy);
           if (Math.max(absDx, absDy) >= DIRECTIONAL_DRAG_THRESHOLD_PX) {
@@ -674,6 +681,7 @@ export function mountTaskTerminalSession(
     if (selectionDragActive) {
       selectionDragActive = false;
       setTerminalSelecting(false);
+      setTerminalDoubleTapPending(false);
       cancelLongPress();
       clearDirectionalGesture();
     } else {
@@ -688,6 +696,7 @@ export function mountTaskTerminalSession(
         performance.now() - longPressStartedAt >= LONG_PRESS_MS
       ) {
         fireLongPressSelect(longPressStartX, longPressStartY);
+        setTerminalSelecting(false);
       } else if (
         !directionalArmed &&
         longPressActive &&
@@ -698,6 +707,11 @@ export function mountTaskTerminalSession(
         pendingTapX = longPressStartX;
         pendingTapY = longPressStartY;
         pendingTapAt = performance.now();
+        setTerminalDoubleTapPending(true);
+        setTerminalSelecting(false);
+      } else {
+        setTerminalSelecting(false);
+        setTerminalDoubleTapPending(false);
       }
       cancelLongPress();
       clearDirectionalGesture();
@@ -889,6 +903,7 @@ export function mountTaskTerminalSession(
     disposed = true;
     selectionDragActive = false;
     setTerminalSelecting(false);
+    setTerminalDoubleTapPending(false);
     clearSeedPendingRevealTimer();
     keyboardClassObserver.disconnect();
     cancelExpandSettle();

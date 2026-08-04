@@ -5,7 +5,14 @@ import {
   selectionRangeBetweenCells,
   selectionRangeFromWordAnchor,
 } from "./terminalTouchSelection";
-import { isTerminalSelecting, setTerminalSelecting } from "@/shared/lib/terminalSelecting";
+import {
+  isTerminalDoubleTapPending,
+  isTerminalSelecting,
+  isTerminalTouchTarget,
+  setTerminalDoubleTapPending,
+  setTerminalSelecting,
+  shouldSuppressPageSwipe,
+} from "@/shared/lib/terminalSelecting";
 
 describe("isWordChar", () => {
   it("accepts alphanumerics, hyphen, underscore, and non-ascii", () => {
@@ -87,6 +94,7 @@ describe("selectionRangeFromWordAnchor", () => {
 describe("terminalSelecting flag", () => {
   afterEach(() => {
     setTerminalSelecting(false);
+    setTerminalDoubleTapPending(false);
   });
 
   it("toggles the document dataset used to suppress page swipe", () => {
@@ -97,5 +105,24 @@ describe("terminalSelecting flag", () => {
     setTerminalSelecting(false);
     expect(isTerminalSelecting()).toBe(false);
     expect(document.documentElement.dataset.ajaxTerminalSelecting).toBeUndefined();
+  });
+
+  it("suppresses swipe for pending double-tap only on terminal targets", () => {
+    const host = document.createElement("div");
+    host.className = "terminal-host";
+    const outside = document.createElement("div");
+    expect(isTerminalTouchTarget(host)).toBe(true);
+    expect(isTerminalTouchTarget(outside)).toBe(false);
+
+    setTerminalDoubleTapPending(true);
+    expect(isTerminalDoubleTapPending()).toBe(true);
+    expect(shouldSuppressPageSwipe(host)).toBe(true);
+    expect(shouldSuppressPageSwipe(outside)).toBe(false);
+
+    setTerminalDoubleTapPending(false);
+    expect(shouldSuppressPageSwipe(host)).toBe(false);
+
+    setTerminalSelecting(true);
+    expect(shouldSuppressPageSwipe(outside)).toBe(true);
   });
 });

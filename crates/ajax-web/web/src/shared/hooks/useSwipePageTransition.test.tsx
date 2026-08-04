@@ -3,6 +3,10 @@ import { render, screen, act } from "@testing-library/react";
 import { useRef } from "react";
 import { useSwipePageTransition, SWIPE_PAGE_COMMIT_MS } from "./useSwipePageTransition";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import {
+  setTerminalDoubleTapPending,
+  setTerminalSelecting,
+} from "@/shared/lib/terminalSelecting";
 
 vi.mock("@/shared/lib/swipeEnter", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
@@ -51,6 +55,7 @@ describe("useSwipePageTransition", () => {
   afterEach(() => {
     vi.useRealTimers();
     delete document.documentElement.dataset.ajaxTerminalSelecting;
+    delete document.documentElement.dataset.ajaxTerminalDoubleTapPending;
   });
 
   it("commits left after the slide animation", async () => {
@@ -128,7 +133,7 @@ describe("useSwipePageTransition", () => {
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
-    document.documentElement.dataset.ajaxTerminalSelecting = "1";
+    setTerminalSelecting(true);
     node.dispatchEvent(touch("touchmove", 120, 42, node));
     node.dispatchEvent(touch("touchend", 120, 42, node));
     await act(async () => {
@@ -137,6 +142,29 @@ describe("useSwipePageTransition", () => {
     expect(onLeft).not.toHaveBeenCalled();
     expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
-    delete document.documentElement.dataset.ajaxTerminalSelecting;
+    setTerminalSelecting(false);
+  });
+
+  it("does not arm swipe on terminal when a double-tap is pending", async () => {
+    const onLeft = vi.fn();
+    render(<Harness onLeft={onLeft} />);
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    const host = document.createElement("div");
+    host.className = "terminal-host";
+    node.appendChild(host);
+
+    setTerminalDoubleTapPending(true);
+    host.dispatchEvent(touch("touchstart", 200, 40, host));
+    host.dispatchEvent(touch("touchmove", 120, 42, host));
+    host.dispatchEvent(touch("touchend", 120, 42, host));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe("");
+    setTerminalDoubleTapPending(false);
   });
 });
