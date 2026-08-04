@@ -341,9 +341,18 @@ describe("TaskTerminal iOS keyboard geometry", () => {
         /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
+    // Reveal must NOT latch off: attach ED2 can still be in flight after the
+    // quiet window. Latch on the first post-reveal erase instead.
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2}\};/)?.[1] ?? "";
-    expect(revealBody).toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
+    expect(revealBody).not.toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
+
+    const onOutputBody =
+      mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {6}\},/)?.[1] ?? "";
+    expect(onOutputBody).toMatch(/sawErase/);
+    expect(onOutputBody).toMatch(
+      /!isSeedPending\(\)[\s\S]*?scrollOnEraseInDisplay\s*=\s*false/,
+    );
 
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {6}\},/)?.[1] ?? "";

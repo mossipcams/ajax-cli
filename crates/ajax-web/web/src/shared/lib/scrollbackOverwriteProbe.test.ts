@@ -124,4 +124,18 @@ describe("scrollOnErase bootstrap latch", () => {
     term.dispose();
     host.remove();
   });
+
+  it("latching off before the first ED2 wipes seed instead of preserving it", async () => {
+    const { term, host } = await openTerm({ scrollOnEraseInDisplay: true });
+    await seedHistory(term, 8);
+    // Premature reveal-time latch (the race): ED2 then clears without scrollback push.
+    term.options.scrollOnEraseInDisplay = false;
+    await write(term, "\x1b[H\x1b[2J");
+    await write(term, "LIVE-WIPED\r\n");
+    const lines = collectNonEmpty(term);
+    expect(lines.some((l) => l.includes("SEED-08"))).toBe(false);
+    expect(lines.some((l) => l.includes("LIVE-WIPED"))).toBe(true);
+    term.dispose();
+    host.remove();
+  });
 });
