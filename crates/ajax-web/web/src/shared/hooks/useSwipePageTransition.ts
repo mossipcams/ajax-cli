@@ -16,6 +16,7 @@ import {
 } from "@/shared/gestures/navigateSwipe";
 import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { captureSwipe } from "@/shared/lib/posthog";
+import { isTerminalSelecting } from "@/shared/lib/terminalSelecting";
 
 export const SWIPE_PAGE_COMMIT_MS = 220;
 
@@ -151,6 +152,12 @@ export function useSwipePageTransition(
 
     const onTouchMove = (event: TouchEvent) => {
       if (!touchTargetRef.current) return;
+      // Capture-phase swipe arms before terminal bubble selection; drop once
+      // double-tap-hold selection owns the gesture.
+      if (isTerminalSelecting()) {
+        reset();
+        return;
+      }
       const point = readTouch(event);
       if (!point) return;
       const dx = point.x - originRef.current.x;
@@ -166,6 +173,10 @@ export function useSwipePageTransition(
 
     const onTouchEnd = () => {
       if (!touchTargetRef.current) return;
+      if (isTerminalSelecting()) {
+        reset();
+        return;
+      }
       const direction = navigateSwipeEnd(swipeRef.current);
       const width = pageWidth();
 

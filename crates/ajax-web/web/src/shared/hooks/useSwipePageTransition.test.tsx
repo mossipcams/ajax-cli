@@ -50,6 +50,7 @@ describe("useSwipePageTransition", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    delete document.documentElement.dataset.ajaxTerminalSelecting;
   });
 
   it("commits left after the slide animation", async () => {
@@ -118,5 +119,24 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onRight).toHaveBeenCalledOnce();
+  });
+
+  it("aborts an in-flight swipe when terminal text selecting becomes active", async () => {
+    const onLeft = vi.fn();
+    render(<Harness onLeft={onLeft} />);
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    document.documentElement.dataset.ajaxTerminalSelecting = "1";
+    node.dispatchEvent(touch("touchmove", 120, 42, node));
+    node.dispatchEvent(touch("touchend", 120, 42, node));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe("");
+    delete document.documentElement.dataset.ajaxTerminalSelecting;
   });
 });

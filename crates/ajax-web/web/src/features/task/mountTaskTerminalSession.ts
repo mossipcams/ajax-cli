@@ -27,6 +27,7 @@ import {
   selectWordAtClient,
   wordBoundsAtCol,
 } from "./terminalTouchSelection";
+import { setTerminalSelecting } from "@/shared/lib/terminalSelecting";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -512,6 +513,7 @@ export function mountTaskTerminalSession(
   const armSelectionDrag = (touch: Touch, event: TouchEvent) => {
     pendingTapAt = 0;
     selectionDragActive = true;
+    setTerminalSelecting(true);
     cancelLongPress();
     clearDirectionalGesture();
     const term = termRef.current;
@@ -563,7 +565,10 @@ export function mountTaskTerminalSession(
       pendingTapAt = 0;
       cancelLongPress();
       clearDirectionalGesture();
-      if (selectionDragActive) selectionDragActive = false;
+      if (selectionDragActive) {
+        selectionDragActive = false;
+        setTerminalSelecting(false);
+      }
     }
 
     if (event.touches.length !== 2) {
@@ -581,6 +586,7 @@ export function mountTaskTerminalSession(
     if (selectionDragActive) {
       if (event.touches.length !== 1) {
         selectionDragActive = false;
+        setTerminalSelecting(false);
       } else if (event.cancelable) {
         event.preventDefault();
         const touch = event.touches[0];
@@ -667,6 +673,7 @@ export function mountTaskTerminalSession(
   const onTouchEnd = () => {
     if (selectionDragActive) {
       selectionDragActive = false;
+      setTerminalSelecting(false);
       cancelLongPress();
       clearDirectionalGesture();
     } else {
@@ -880,6 +887,8 @@ export function mountTaskTerminalSession(
 
   return () => {
     disposed = true;
+    selectionDragActive = false;
+    setTerminalSelecting(false);
     clearSeedPendingRevealTimer();
     keyboardClassObserver.disconnect();
     cancelExpandSettle();
