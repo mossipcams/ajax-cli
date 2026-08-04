@@ -6,11 +6,11 @@ pub(super) use super::drop_task::{
     plan_drop_task_operation, DropExecutionDecision, DropTaskCompletion,
 };
 pub(super) use super::kernel::execute_external_plan;
-pub(super) use super::start::{execute_start_task_operation, plan_start_task_operation};
-pub(super) use super::sweep_cleanup::execute_sweep_cleanup_operation;
-pub(super) use super::task_command::{
+pub(super) use super::operator_dispatch::{
     execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
 };
+pub(super) use super::start::{execute_start_task_operation, plan_start_task_operation};
+pub(super) use super::sweep_cleanup::execute_sweep_cleanup_operation;
 pub(super) use crate::commands::DropOp;
 pub(super) use crate::models::StepReceipt;
 pub(super) use crate::{

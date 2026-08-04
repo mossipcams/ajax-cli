@@ -8,9 +8,9 @@ recognition auto-inserts into the active shell line through the same paste/PTY
 path as manual paste. Ajax does not auto-press Enter or execute commands.
 Partial recognition is session metadata only and is never written to the PTY.
 
-Design boundaries and ownership live in [`architecture.md`](../architecture.md)
-under **Speech Input Architecture**. This page is the operator setup and daily-use
-guide.
+Design boundaries and ownership live in
+[`docs/architecture/web-cockpit.md`](architecture/web-cockpit.md) (Speech Input
+Architecture). This page is the operator setup and daily-use guide.
 
 ## Host provider (Moonshine v2 Small Streaming)
 

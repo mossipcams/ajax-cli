@@ -11,7 +11,8 @@ Follow instructions in this order:
 
 1. Explicit user instruction
 2. This `AGENTS.md`
-3. `architecture.md`
+3. Root `architecture.md`, then the focused doc under `docs/architecture/` for
+   the subsystem being changed
 4. Existing code and tests
 5. Generated summaries, code maps, Graphify output, or prior plans
 
@@ -25,7 +26,7 @@ authorize.
 Before editing, inspect the relevant source files and tests. Do not rely only on
 summaries.
 
-Read `architecture.md` before work involving:
+Read root `architecture.md` before work involving:
 
 - task lifecycle
 - registry truth
@@ -37,9 +38,14 @@ Read `architecture.md` before work involving:
 - security assumptions
 - cross-crate boundaries
 - public CLI or API behavior
+- operator-slice layout, shared-kernel admission, or dependency direction
 
-`architecture.md` is the source of truth for system design. Do not duplicate
-large architecture explanations here.
+Then open only the focused doc under `docs/architecture/` for the subsystem you
+touch (see the navigation map in `architecture.md`). Prefer the owning operator
+slice and its tests over loading sibling slices.
+
+Root `architecture.md` plus those focused docs are the source of truth for
+system design. Do not duplicate large architecture explanations here.
 
 ## Local RTK Guidance
 
@@ -269,9 +275,18 @@ Evidence that the change works is required. Test-first / TDD is not.
 
 ## Validation Commands
 
-Prefer focused validation first, then broader checks.
+Prefer focused validation first, then broader checks. For routine slice work,
+prefer slice-local commands before full-workspace verify (see
+`architecture.md` → Validation):
 
-Common commands:
+```bash
+npm run verify:arch
+npm run verify:core
+npm run verify:slice -- repair
+npm run verify:slice -- operate
+```
+
+Common full-suite commands:
 
 ```bash
 cargo fmt --check
@@ -280,7 +295,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-features
 ```
 
-Use narrower commands when appropriate:
+Use narrower crate commands when appropriate:
 
 ```bash
 cargo nextest run -p ajax-core
@@ -316,9 +331,14 @@ Rules:
   sake.
 - Preserve public APIs unless the task explicitly changes them.
 - Keep Rust source files near **~600 LOC**; hard max **1000 LOC** per `.rs`
-  file on disk (including inline tests). When a file grows past that, peel
-  `#[cfg(test)] mod tests` into a sibling first, then split production code by
-  ownership. Do not land new features into an already over-max file.
+  file on disk (including inline tests). Split by cohesive responsibility only
+  — never arbitrary LOC chunks or generic util/helper modules. When a file
+  grows past the limit, peel `#[cfg(test)] mod tests` into a sibling first,
+  then split production code by ownership. Large operator slices may become
+  directories with focused modules (`plan`, `execute`, `reduce`, `validation`).
+  Do not land new features into an already over-max file. Shared-kernel
+  admission and layer rules live in `architecture.md`; do not dump
+  verb-specific or one-off code into the kernel.
 
 ## Search and Code Navigation
 
@@ -396,7 +416,8 @@ Use the right destination:
 
 | Content | Destination |
 | --- | --- |
-| architecture and ownership | `architecture.md` |
+| durable architecture, layers, invariants | `architecture.md` |
+| subsystem architecture detail | `docs/architecture/*` |
 | repo-wide agent rules | `AGENTS.md` |
 | contributor workflow | `CONTRIBUTING.md` |
 | user-facing behavior | `README` or relevant docs |

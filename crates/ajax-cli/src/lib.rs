@@ -17,7 +17,7 @@ mod task_session;
 mod web_backend;
 
 #[cfg(test)]
-pub(crate) use ajax_core::task_operations::task_command::TaskCommandKind;
+pub(crate) use ajax_core::task_operations::operator_dispatch::TaskCommandKind;
 #[cfg(test)]
 pub(crate) use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
