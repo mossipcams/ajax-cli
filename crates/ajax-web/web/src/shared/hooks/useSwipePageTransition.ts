@@ -15,6 +15,7 @@ import {
   type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
 import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import { captureSwipe } from "@/shared/lib/posthog";
 
 export const SWIPE_PAGE_COMMIT_MS = 220;
 
@@ -50,6 +51,7 @@ export function useSwipePageTransition(
   optsRef.current = options;
   const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
   const originRef = useRef({ x: 0, y: 0 });
+  const touchStartedAtRef = useRef(0);
   const touchTargetRef = useRef<EventTarget | null>(null);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -107,6 +109,10 @@ export function useSwipePageTransition(
 
     commitRef.current = (direction: SwipePageCommitDirection) => {
       if (direction === "left" && optsRef.current.onLeft) {
+        captureSwipe({
+          direction: "left",
+          duration_ms: Math.round(performance.now() - (touchStartedAtRef.current || performance.now())),
+        });
         animateTo(
           navigateSwipeCommitOffset("left", pageWidth()),
           "left",
@@ -115,6 +121,10 @@ export function useSwipePageTransition(
         return;
       }
       if (direction === "right" && optsRef.current.onRight) {
+        captureSwipe({
+          direction: "right",
+          duration_ms: Math.round(performance.now() - (touchStartedAtRef.current || performance.now())),
+        });
         animateTo(
           navigateSwipeCommitOffset("right", pageWidth()),
           "right",
@@ -132,6 +142,7 @@ export function useSwipePageTransition(
       if (!point) return;
       touchTargetRef.current = event.target;
       originRef.current = point;
+      touchStartedAtRef.current = performance.now();
       swipeRef.current = navigateSwipeStart();
       setDragging(false);
       setSettling(false);
@@ -159,6 +170,10 @@ export function useSwipePageTransition(
       const width = pageWidth();
 
       if (direction === "left" && optsRef.current.onLeft) {
+        captureSwipe({
+          direction: "left",
+          duration_ms: Math.round(performance.now() - touchStartedAtRef.current),
+        });
         animateTo(
           navigateSwipeCommitOffset("left", width),
           "left",
@@ -167,6 +182,10 @@ export function useSwipePageTransition(
         return;
       }
       if (direction === "right" && optsRef.current.onRight) {
+        captureSwipe({
+          direction: "right",
+          duration_ms: Math.round(performance.now() - touchStartedAtRef.current),
+        });
         animateTo(
           navigateSwipeCommitOffset("right", width),
           "right",
