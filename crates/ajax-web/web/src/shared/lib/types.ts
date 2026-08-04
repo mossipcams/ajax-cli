@@ -222,6 +222,8 @@ export interface PushTestSubscription {
     p256dh: string;
     auth: string;
   };
+  /** Server waits this long before delivering so the PWA can be fully quit. */
+  delay_ms?: number;
 }
 
 export type DevDeployPhase =

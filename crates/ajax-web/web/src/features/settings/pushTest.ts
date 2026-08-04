@@ -1,5 +1,6 @@
 import { ApiError, fetchPushVapidPublicKey, sendPushTest } from "@/shared/lib/api";
 
+/** Server waits this long before curl delivery so the PWA can be fully quit. */
 export const PUSH_TEST_DELAY_MS = 20_000;
 
 export type PushTestStatusCallback = (status: string) => void;
@@ -87,9 +88,9 @@ export async function runPushNotificationTest(
     onStatus("Subscribing to push…");
     const subscription = await subscribeWithCurrentVapidKey(applicationServerKey);
 
-    onStatus("Sending in 20s… background the app now");
-    await new Promise((resolve) => setTimeout(resolve, PUSH_TEST_DELAY_MS));
-
+    // POST immediately with a server-side delay. A client setTimeout dies when
+    // the PWA is fully closed, so the push would never be requested.
+    onStatus("Scheduled — close or background the app now");
     const payload = subscription.toJSON();
     await sendPushTest({
       endpoint: payload.endpoint,
@@ -97,6 +98,7 @@ export async function runPushNotificationTest(
         p256dh: payload.keys.p256dh,
         auth: payload.keys.auth,
       },
+      delay_ms: PUSH_TEST_DELAY_MS,
     });
 
     return { ok: true };

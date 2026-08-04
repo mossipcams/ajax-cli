@@ -31,7 +31,6 @@ describe("urlSafeBase64ToUint8Array", () => {
 
 describe("runPushNotificationTest", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.spyOn(api, "fetchPushVapidPublicKey").mockResolvedValue({
       public_key: "AQID",
     });
@@ -43,7 +42,6 @@ describe("runPushNotificationTest", () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -56,24 +54,22 @@ describe("runPushNotificationTest", () => {
     });
   });
 
-  it("waits 20s then posts the subscription", async () => {
+  it("posts the subscription immediately with a server-side delay", async () => {
     const { subscribe } = installPushManager();
     const statuses: string[] = [];
 
-    const run = runPushNotificationTest((status) => statuses.push(status));
-    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+    const result = await runPushNotificationTest((status) => statuses.push(status));
+
     expect(subscribe).toHaveBeenCalledWith({
       userVisibleOnly: true,
       applicationServerKey: urlSafeBase64ToUint8Array("AQID"),
     });
-    expect(statuses).toContain("Sending in 20s… background the app now");
-    expect(api.sendPushTest).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(PUSH_TEST_DELAY_MS);
-    const result = await run;
-
+    expect(statuses).toContain("Scheduled — close or background the app now");
     expect(api.fetchPushVapidPublicKey).toHaveBeenCalledOnce();
-    expect(api.sendPushTest).toHaveBeenCalledWith(mockSubscriptionPayload);
+    expect(api.sendPushTest).toHaveBeenCalledWith({
+      ...mockSubscriptionPayload,
+      delay_ms: PUSH_TEST_DELAY_MS,
+    });
     expect(result).toEqual({ ok: true });
   });
 
@@ -90,13 +86,10 @@ describe("runPushNotificationTest", () => {
     const getSubscription = vi.fn().mockResolvedValue(stale);
     vi.stubGlobal("pushManager", { subscribe, getSubscription });
 
-    const run = runPushNotificationTest(vi.fn());
-    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+    const result = await runPushNotificationTest(vi.fn());
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(getSubscription).toHaveBeenCalledOnce();
-
-    await vi.advanceTimersByTimeAsync(PUSH_TEST_DELAY_MS);
-    const result = await run;
+    expect(subscribe).toHaveBeenCalledOnce();
     expect(result).toEqual({ ok: true });
   });
 
@@ -105,9 +98,7 @@ describe("runPushNotificationTest", () => {
     vi.stubGlobal("Notification", { permission: "default", requestPermission });
     installPushManager();
 
-    const run = runPushNotificationTest(vi.fn());
-    await vi.advanceTimersByTimeAsync(PUSH_TEST_DELAY_MS);
-    const result = await run;
+    const result = await runPushNotificationTest(vi.fn());
 
     expect(requestPermission).toHaveBeenCalledOnce();
     expect(result).toEqual({ ok: true });
@@ -131,9 +122,7 @@ describe("runPushNotificationTest", () => {
     installPushManager();
     vi.mocked(api.sendPushTest).mockRejectedValue(new api.ApiError("http", "HTTP 502"));
 
-    const run = runPushNotificationTest(vi.fn());
-    await vi.advanceTimersByTimeAsync(PUSH_TEST_DELAY_MS);
-    const result = await run;
+    const result = await runPushNotificationTest(vi.fn());
 
     expect(result).toEqual({ ok: false, error: "HTTP 502" });
   });

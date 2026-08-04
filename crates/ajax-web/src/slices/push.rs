@@ -4,13 +4,17 @@ use axum::http::{header, uri::Authority, HeaderMap, Request, Uri};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 use serde_json::json;
-use std::{process::Stdio, sync::OnceLock};
+use std::{process::Stdio, sync::OnceLock, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
 use web_push_native::{
     jwt_simple::algorithms::ES256KeyPair,
     p256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey},
     Auth, WebPushBuilder,
 };
+
+/// Default delay so the operator can fully quit the PWA before delivery.
+pub(crate) const DEFAULT_PUSH_TEST_DELAY_MS: u64 = 20_000;
+const MAX_PUSH_TEST_DELAY_MS: u64 = 60_000;
 
 /// Process-local VAPID private key bytes. Settings test re-subscribes on each
 /// click, so disk persistence is unnecessary and would trip CodeQL path-injection
@@ -21,6 +25,14 @@ static VAPID_PRIVATE_KEY: OnceLock<Vec<u8>> = OnceLock::new();
 pub(crate) struct PushSubscription {
     endpoint: String,
     keys: PushSubscriptionKeys,
+    /// Milliseconds to wait before curl delivery. Defaults to 20s so a fully
+    /// closed PWA still receives the notification (client-side waits die with JS).
+    #[serde(default = "default_push_test_delay_ms")]
+    delay_ms: u64,
+}
+
+fn default_push_test_delay_ms() -> u64 {
+    DEFAULT_PUSH_TEST_DELAY_MS
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,14 +46,16 @@ pub(crate) fn vapid_public_key_base64() -> Result<String, String> {
     Ok(URL_SAFE_NO_PAD.encode(vapid_public_key(&key_pair)))
 }
 
-pub(crate) async fn send_declarative_test_push(
+/// Validate + encrypt now, then deliver after `delay_ms` on a detached task so
+/// killing the browser mid-wait cannot cancel the push.
+pub(crate) fn schedule_declarative_test_push(
     headers: &HeaderMap,
     subscription: PushSubscription,
 ) -> Result<(), String> {
+    let delay_ms = subscription.delay_ms.min(MAX_PUSH_TEST_DELAY_MS);
     let key_pair = vapid_key_pair()?;
     let navigate = navigation_url(headers);
     // Apple rejects VAPID JWT `sub` values like mailto:…@localhost (403 BadJwtToken).
-    // An https origin URL is a valid subject claim.
     let vapid_subject = navigate.trim_end_matches('/').to_string();
     let request = build_push_request(
         subscription,
@@ -49,7 +63,15 @@ pub(crate) async fn send_declarative_test_push(
         &key_pair,
         &vapid_subject,
     )?;
-    deliver_with_curl(request).await
+    tokio::spawn(async move {
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        if let Err(error) = deliver_with_curl(request).await {
+            eprintln!("declarative push test delivery failed: {error}");
+        }
+    });
+    Ok(())
 }
 
 fn vapid_key_pair() -> Result<ES256KeyPair, String> {
@@ -192,7 +214,17 @@ mod tests {
                 p256dh: P256DH.to_string(),
                 auth: auth.to_string(),
             },
+            delay_ms: 0,
         }
+    }
+
+    #[test]
+    fn missing_delay_ms_defaults_to_twenty_seconds() {
+        let parsed: PushSubscription = serde_json::from_str(
+            r#"{"endpoint":"https://push.example/messages/1","keys":{"p256dh":"x","auth":"y"}}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.delay_ms, DEFAULT_PUSH_TEST_DELAY_MS);
     }
 
     #[test]

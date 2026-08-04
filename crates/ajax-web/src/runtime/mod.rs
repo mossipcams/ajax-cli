@@ -358,8 +358,14 @@ async fn axum_push_test(
                 .into_response();
         }
     };
-    match push::send_declarative_test_push(&headers, subscription).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+    match push::schedule_declarative_test_push(&headers, subscription) {
+        // 202: delivery is delayed on a detached task so fully closing the PWA
+        // cannot cancel the push by aborting this request.
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "ok": true, "scheduled": true })),
+        )
+            .into_response(),
         Err(error) => {
             // Never return 502 here: Cloudflare surfaces origin 502 as a host
             // Bad Gateway HTML page, which looks like the Cockpit is down.

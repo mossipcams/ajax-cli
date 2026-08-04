@@ -188,7 +188,7 @@ describe("SettingsView", () => {
     });
     const runSpy = vi.spyOn(pushTest, "runPushNotificationTest").mockImplementation(
       async (onStatus) => {
-        onStatus("Sending in 20s… background the app now");
+        onStatus("Scheduled — close or background the app now");
         return { ok: true };
       },
     );
