@@ -523,12 +523,14 @@ other operator secrets. Sensitive property keys (terminal, token, password,
 command, buffer, diff, etc.) and suspicious string values are stripped before
 capture. Terminal surfaces are excluded from autocapture via CSS ignorelist.
 
-Browser notifications are out of scope. Ajax Web Cockpit must not implement Web
-Push, PushManager flows, Notification API prompts, VAPID keys, push
-subscriptions, service-worker push handlers, notification click handlers, or
-notification infrastructure. Server-side webhook delivery through the CLI
-notify adapter (`[notify]` config) is the supported notification channel; the
-web runtime only hosts its background poll.
+Browser notifications remain out of scope except for a narrow prototype: a
+Settings test may use the browser-session-protected `/api/push/vapid` and
+`/api/push/test` routes to fetch the server's persisted VAPID public key and
+send one declarative push immediately. This carve-out does not permit service
+worker registration, offline mutation, stored subscriptions, notification
+click infrastructure, or replacement of attention delivery. Server-side
+webhook delivery through the CLI notify adapter (`[notify]` config) remains the
+supported attention channel; the web runtime still hosts its background poll.
 
 The notify adapter fires once per actionable episode and only for statuses
 the operator can act on. Actionable Waiting is allowlisted to `Waiting for

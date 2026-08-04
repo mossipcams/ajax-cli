@@ -4,20 +4,20 @@ use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessError, server, tls,
     },
-    slices::{dev_deploy, install},
+    slices::{dev_deploy, install, push},
     WebError,
 };
 pub(crate) use ajax_core::runtime_refresh::RefreshTier;
 use ajax_core::{adapters::CommandRunner, config::NotifyConfig};
 use axum::{
     body::Bytes,
-    extract::{Request as AxumRequest, State},
-    http::Uri,
+    extract::{rejection::JsonRejection, Request as AxumRequest, State},
+    http::{HeaderMap, StatusCode, Uri},
     middleware::{from_fn_with_state, Next},
-    response::Response as AxumResponse,
+    response::{IntoResponse, Response as AxumResponse},
     routing::{get, post},
     serve::Listener,
-    Router,
+    Json, Router,
 };
 use serde::Deserialize;
 use std::{
@@ -80,6 +80,8 @@ where
         .route("/terminal.js", get(axum_terminal_js))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
+        .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
+        .route("/api/push/test", post(axum_push_test::<C, B>))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route(
@@ -329,6 +331,49 @@ async fn axum_version() -> AxumResponse {
             "test_in_stable": server::test_in_stable_enabled_from_env(),
         }),
     )
+}
+
+async fn axum_push_vapid<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
+    match push::vapid_public_key_base64(&state.state_dir) {
+        Ok(public_key) => Json(serde_json::json!({ "public_key": public_key })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn axum_push_test<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    headers: HeaderMap,
+    subscription: Result<Json<push::PushSubscription>, JsonRejection>,
+) -> AxumResponse {
+    let Json(subscription) = match subscription {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error.body_text() })),
+            )
+                .into_response();
+        }
+    };
+    match push::send_declarative_test_push(&state.state_dir, &headers, subscription).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(error) => {
+            let status = if error.contains("subscription") || error.contains("endpoint") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            (
+                status,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn axum_server_restart() -> AxumResponse {

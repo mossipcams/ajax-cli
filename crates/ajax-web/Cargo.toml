@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 ajax-core = { path = "../ajax-core", version = "0.11.0" }
 axum = { workspace = true }
+base64 = { workspace = true }
 portable-pty = { workspace = true }
 getrandom = { workspace = true }
 jsonwebtoken = { workspace = true }
@@ -20,9 +21,10 @@ rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "net", "time"] }
 tokio-rustls = { workspace = true }
 tower-http = { workspace = true, features = ["compression-gzip"] }
+web-push-native = { version = "0.5.0", default-features = false, features = ["vapid"] }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

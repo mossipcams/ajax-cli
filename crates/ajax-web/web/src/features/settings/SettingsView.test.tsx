@@ -5,6 +5,7 @@ import * as api from "@/shared/lib/api";
 import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
 import * as telemetry from "@/shared/lib/telemetry";
+import * as pushTest from "./pushTest";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
 vi.mock("@/shared/lib/telemetry", async () => {
@@ -178,5 +179,44 @@ describe("SettingsView", () => {
 
     fireEvent.click(screen.getByTestId("telemetry-diagnostic"));
     expect(telemetry.captureTelemetryDiagnostic).toHaveBeenCalledOnce();
+  });
+
+  it("runs the declarative push test flow from the Actions button", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    const runSpy = vi.spyOn(pushTest, "runPushNotificationTest").mockImplementation(
+      async (onStatus) => {
+        onStatus("Sending in 20s… background the app now");
+        return { ok: true };
+      },
+    );
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Test push notification" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notification sent.")).toBeInTheDocument(),
+    );
+    expect(runSpy).toHaveBeenCalledOnce();
+  });
+
+  it("shows push test errors from the helper", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(pushTest, "runPushNotificationTest").mockResolvedValue({
+      ok: false,
+      error: "Declarative push is not supported in this browser.",
+    });
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Test push notification" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText("Declarative push is not supported in this browser."),
+      ).toBeInTheDocument(),
+    );
   });
 });

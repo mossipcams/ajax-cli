@@ -212,6 +212,18 @@ export interface VersionResponse {
   test_in_stable?: boolean;
 }
 
+export interface PushVapidResponse {
+  public_key: string;
+}
+
+export interface PushTestSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
 export type DevDeployPhase =
   | "ready_to_deploy"
   | "building"

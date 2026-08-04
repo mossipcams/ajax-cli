@@ -186,6 +186,7 @@ mod tests {
         for endpoint in [
             "/api/cockpit",
             "/api/operations",
+            "/api/push",
             "/api/server/test-in-stable",
             "#/settings",
             "request_id",
@@ -196,21 +197,27 @@ mod tests {
                 "app.js missing API usage {endpoint}"
             );
         }
+        assert!(
+            app.contains("pushManager.subscribe"),
+            "app.js missing declarative push subscribe"
+        );
         // xterm must stay deferred — not in the boot shell.
         assert!(
             !app.contains("FitAddon"),
             "app.js must not embed the xterm FitAddon (belongs in terminal.js)"
         );
-        // Safari-first: never register a service worker, never use push —
-        // scan both embedded scripts.
+        // Safari-first: never register a service worker — scan both embedded scripts.
         for script in [app, term] {
             assert!(!script.contains("serviceWorker"));
-            assert!(!script.contains("pushManager.subscribe"));
-            assert!(!script.contains("/api/push"));
             // The legacy polling pane bridge was removed in favor of the live
             // terminal websocket; its endpoints must not survive in the bundle.
             assert!(!script.contains("/answer"));
             assert!(!script.contains("/input"));
         }
+        // Declarative push lives in the boot shell only.
+        assert!(
+            !term.contains("pushManager.subscribe"),
+            "terminal.js must not embed declarative push subscribe"
+        );
     }
 }

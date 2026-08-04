@@ -15,6 +15,7 @@ import {
   readAppVersion,
 } from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
+import { runPushNotificationTest } from "./pushTest";
 
 interface Props {
   detailHandle?: string | null;
@@ -33,6 +34,8 @@ export default function SettingsView({
   const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
   const [testingInStable, setTestingInStable] = useState(false);
   const [diagnosticsOutput, setDiagnosticsOutput] = useState<string | null>(null);
+  const [pushTestStatus, setPushTestStatus] = useState<string | null>(null);
+  const [testingPush, setTestingPush] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -94,6 +97,18 @@ export default function SettingsView({
     setDiagnosticsOutput(text);
     const copied = await copyText(text);
     onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
+  }
+
+  async function testPushNotification() {
+    setTestingPush(true);
+    setPushTestStatus(null);
+    const result = await runPushNotificationTest(setPushTestStatus);
+    setTestingPush(false);
+    if (result.ok) {
+      setPushTestStatus("Push notification sent.");
+      return;
+    }
+    setPushTestStatus(result.error);
   }
 
   const appVersion =
@@ -172,6 +187,15 @@ export default function SettingsView({
         <Button type="button" variant="secondary" onClick={copyDiagnostics}>
           Copy Diagnostics
         </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={testingPush}
+          onClick={testPushNotification}
+        >
+          Test push notification
+        </Button>
+        {pushTestStatus ? <p className="settings-status">{pushTestStatus}</p> : null}
         {testInStableAvailable ? (
           <>
             <p className="settings-note">

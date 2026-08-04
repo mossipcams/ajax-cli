@@ -16,6 +16,8 @@ import type {
   OperationRequest,
   OperationResponse,
   PullRequestView,
+  PushTestSubscription,
+  PushVapidResponse,
   StartTaskRequest,
   TaskDiffView,
   VersionResponse,
@@ -219,6 +221,30 @@ export async function fetchTaskDiff(
 export async function fetchVersion(): Promise<VersionResponse> {
   const value = await getJson("/api/version");
   return value as VersionResponse;
+}
+
+export async function fetchPushVapidPublicKey(): Promise<PushVapidResponse> {
+  const value = await getJson("/api/push/vapid");
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("public_key" in value) ||
+    typeof (value as PushVapidResponse).public_key !== "string"
+  ) {
+    throw new ApiError("incompatible", "invalid push vapid payload");
+  }
+  return value as PushVapidResponse;
+}
+
+export async function sendPushTest(subscription: PushTestSubscription): Promise<void> {
+  const { response, payload } = await postJson("/api/push/test", subscription);
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
 }
 
 async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {

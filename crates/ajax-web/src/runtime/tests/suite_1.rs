@@ -23,6 +23,8 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("GET", "/api/session"),
         ("GET", "/api/cockpit"),
         ("GET", "/api/version"),
+        ("GET", "/api/push/vapid"),
+        ("POST", "/api/push/test"),
         ("POST", "/api/server/restart"),
         ("POST", "/api/server/test-in-stable"),
         ("GET", "/api/dev-deploy"),
