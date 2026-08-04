@@ -4,6 +4,7 @@
  * keeps attach seed preservation without polluting history.
  */
 import { beforeAll, describe, expect, it } from "vitest";
+import { detectCsiEraseInDisplay } from "@/shared/lib/detectCsiEraseInDisplay";
 import { Terminal } from "@xterm/xterm";
 
 beforeAll(() => {
@@ -137,5 +138,52 @@ describe("scrollOnErase bootstrap latch", () => {
     expect(lines.some((l) => l.includes("LIVE-WIPED"))).toBe(true);
     term.dispose();
     host.remove();
+  });
+});
+
+describe("detectCsiEraseInDisplay", () => {
+  it("detects a complete CSI erase in one chunk", () => {
+    const r = detectCsiEraseInDisplay("", "\x1b[2J");
+    expect(r.sawErase).toBe(true);
+    expect(r.carry).toBe("");
+  });
+
+  it("detects CSI erase split across chunk boundaries", () => {
+    let carry = "";
+    let r = detectCsiEraseInDisplay(carry, "\x1b[");
+    expect(r.sawErase).toBe(false);
+    carry = r.carry;
+    expect(carry).toBe("\x1b[");
+
+    r = detectCsiEraseInDisplay(carry, "2J");
+    expect(r.sawErase).toBe(true);
+    expect(r.carry).toBe("");
+  });
+
+  it("retains lone ESC for a trailing split", () => {
+    const r = detectCsiEraseInDisplay("", "prompt\x1b");
+    expect(r.sawErase).toBe(false);
+    expect(r.carry).toBe("\x1b");
+  });
+
+  it("completes erase when ESC and bracket arrive in separate chunks", () => {
+    let r = detectCsiEraseInDisplay("", "\x1b");
+    expect(r.carry).toBe("\x1b");
+    r = detectCsiEraseInDisplay(r.carry, "[2J");
+    expect(r.sawErase).toBe(true);
+    expect(r.carry).toBe("");
+  });
+
+  it("does not carry non-CSI ESC sequences", () => {
+    const r = detectCsiEraseInDisplay("", "\x1bO");
+    expect(r.sawErase).toBe(false);
+    expect(r.carry).toBe("");
+  });
+
+  it("caps carry length for garbage after ESC", () => {
+    const garbage = "\x1b[" + "9".repeat(32);
+    const r = detectCsiEraseInDisplay("", garbage);
+    expect(r.sawErase).toBe(false);
+    expect(r.carry.length).toBeLessThanOrEqual(16);
   });
 });
