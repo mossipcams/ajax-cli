@@ -361,10 +361,12 @@ async fn axum_push_test(
     match push::send_declarative_test_push(&headers, subscription).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => {
+            // Never return 502 here: Cloudflare surfaces origin 502 as a host
+            // Bad Gateway HTML page, which looks like the Cockpit is down.
             let status = if error.contains("subscription") || error.contains("endpoint") {
                 StatusCode::BAD_REQUEST
             } else {
-                StatusCode::BAD_GATEWAY
+                StatusCode::INTERNAL_SERVER_ERROR
             };
             (
                 status,
