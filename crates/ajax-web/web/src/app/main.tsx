@@ -2,10 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "@/shared/ui/ErrorBoundary";
-import { initPostHog } from "@/shared/lib/posthog";
+import { initTelemetry } from "@/shared/lib/telemetry";
 import "../styles.css";
 
-initPostHog();
+initTelemetry();
 
 const el = document.getElementById("app");
 if (el) {

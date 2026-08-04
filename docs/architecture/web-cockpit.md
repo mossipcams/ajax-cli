@@ -367,9 +367,17 @@ endpoints, WebSocket/SSE endpoints, or any future `/api/*` endpoint.
 
 Browser storage is intentionally limited. The browser shell must not use
 IndexedDB, background sync, local task queues, offline mutation replay, or
-cached operational/API data. No browser WASM runtime asset is currently shipped;
-the shell must not add Yew, Trunk, or a large frontend architecture unless the
-project explicitly adopts those elsewhere.
+cached operational/API data.
+
+PostHog SDK analytics persistence (localStorage/cookie for distinct id and
+related session properties) and telemetry identity keys (`install_id`,
+`sequence` in `localStorage`; `session_id` in `sessionStorage`) are allowed as
+non-operational observability state alongside other UI prefs. They must not
+store prompts, terminal content, tokens, or task truth.
+
+No browser WASM runtime asset is currently shipped; the shell must not add Yew,
+Trunk, or a large frontend architecture unless the project explicitly adopts
+those elsewhere.
 
 Stable and dev runtime profiles remain separated by the host-native
 `ajax-cli web` process and explicit runtime context. Stable uses the stable
@@ -379,28 +387,134 @@ browser storage.
 
 ### PostHog Cloud telemetry
 
-Web Cockpit may send approved outbound product telemetry to **PostHog Cloud US**
-(`https://us.i.posthog.com`) via `posthog-js` initialized at boot with the
-project write key and SDK `defaults: '2026-05-30'`. This is an approved
-**browser egress** exception: the Ajax Web Cockpit listener remains private
-(WireGuard / equivalent; no public-server exposure model). Operators need
-outbound HTTPS from the browser to PostHog; blocked egress fails soft and does
-not change live-control authority.
+Web Cockpit may send approved outbound product telemetry to **PostHog Cloud**
+via `posthog-js` wrapped by `@/shared/lib/telemetry`. Callers must use the
+wrapper — not import `posthog-js` directly. This is an approved **browser egress**
+exception: the Ajax Web Cockpit listener remains private (WireGuard / equivalent;
+no public-server exposure model). Operators need outbound HTTPS from the browser
+to PostHog; blocked egress fails soft and does not change live-control authority.
 
-Operators are identified by host (`ajax:${hostname}`) with person properties for
-host/origin/app version. Session Replay and exception autocapture stay off.
-Autocapture and Web Vitals (LCP, CLS, FCP, INP) are enabled with ignorelists for
-terminal surfaces and sensitive UI. Custom latency events cover swipe commits
-(`ajax_swipe`), tap→first feedback (`ajax_tap_to_feedback`), and tap→mutation
-complete (`ajax_tap_to_operation_complete`).
+#### Initialization (env-gated)
+
+| Variable | Required | Default | Behavior |
+| --- | --- | --- | --- |
+| `VITE_POSTHOG_KEY` | no | Ajax project write key in source | Overrides the default browser write key. Set to `off`, `0`, or `disabled` to disable `initTelemetry()` / `track`. |
+| `VITE_POSTHOG_HOST` | no | `https://us.i.posthog.com` | PostHog ingest host |
+
+Boot calls `initTelemetry()` once with SDK `defaults: '2026-05-30'`. On success:
+
+- **Identify:** `ajax:${window.location.hostname}` with person properties
+  `host`, `origin`, and optional `app_version`.
+- **Session replay:** off (`disable_session_recording: true`).
+- **Exception autocapture:** off.
+- **Autocapture:** on with CSS ignorelist for terminal surfaces, sensitive
+  attributes, and `.ph-no-autocapture` targets.
+- **Web Vitals:** LCP, CLS, FCP, INP, and **TTFB** via `capture_performance`
+  (`web_vitals_allowed_metrics`).
+
+#### Standalone vs browser tab
+
+`standalone` on every explicit event reflects installed PWA display mode
+(`display-mode: standalone` or `navigator.standalone`). It is **observational
+only** — Web Cockpit does not require Home Screen install and functions in a
+normal Safari tab. `ajax_pwa_launch` and `ajax_pwa_resume` record launch/resume
+timing when applicable; they do not gate features.
+
+#### Delivery
+
+Explicit events call `posthog.capture` directly through the typed wrapper after
+sanitizing props and merging shared context. There is no IndexedDB or local
+event queue — delivery uses the PostHog JS SDK’s normal in-memory/network path
+(and its own localStorage/cookie identity persistence). Soft-fail on errors;
+never block Cockpit.
+
+#### Common properties (every explicit event)
+
+Merged onto every `track` / `captureEvent` call (context wins over caller props):
+
+| Property | Type | Source |
+| --- | --- | --- |
+| `event_id` | string | UUID per capture |
+| `session_id` | string | `sessionStorage` tab session |
+| `install_id` | string | `localStorage` stable install id |
+| `sequence` | number | Monotonic counter per install |
+| `app_version` | string? | `meta[name="ajax-app-version"]` when set |
+| `route` | string | Current `location.hash` |
+| `ios_version` | string? | Parsed from user agent on iOS |
+| `viewport_w`, `viewport_h` | number | `window.innerWidth` / `innerHeight` |
+| `standalone` | boolean | PWA standalone display mode |
+
+#### Custom event schemas
+
+All events below are emitted via `track` and include the common properties above.
+Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
+
+**`ajax_tap_to_feedback`** — tap → first visible feedback
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `control` | string | yes | Control identifier from `beginInteraction` |
+| `feedback_kind` | string | yes | Feedback classification |
+| `duration_ms` | number | yes | Rounded ms from interaction start |
+
+**`ajax_tap_to_operation_complete`** — tap → completed operation
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `control` | string | yes | Control identifier |
+| `op` | string | yes | Operation name (defaults to `control`) |
+| `ok` | boolean | yes | Success flag |
+| `error_kind` | string | no | Present when `ok` is false |
+| `duration_ms` | number | yes | Rounded ms from interaction start |
+
+**`ajax_swipe`** — swipe gesture commit
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `direction` | `"left"` \| `"right"` | yes | Swipe direction |
+| `duration_ms` | number | yes | Gesture duration |
+| `distance_px` | number | yes | Travel distance |
+| `velocity_px_per_ms` | number | yes | Average velocity |
+| `completed` | boolean | yes | Reached completion threshold |
+| `cancelled` | boolean | yes | Gesture cancelled |
+| `settle_ms` | number | yes | Post-release settle time |
+| `from_route` | string | no | Origin hash route |
+| `to_route` | string | no | Destination hash route |
+
+**`ajax_route_visible`** — navigation → visible content
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `duration_ms` | number | yes | From `markNavigationStart` or caller override |
+| `from_route` | string | no | Origin route |
+| `to_route` | string | no | Destination route |
+
+**`ajax_pwa_launch`** — cold launch (once per boot)
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `duration_ms` | number | yes | Navigation start → first shell visibility |
+
+**`ajax_pwa_resume`** — resume from background
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `duration_ms` | number | yes | Background → interactive resume |
+
+**`ajax_telemetry_diagnostic`** — Settings diagnostics snapshot
+
+| Property | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `initialized` | boolean | yes | Whether `initTelemetry` succeeded |
+| `standalone` | boolean | yes | Current display mode |
+| `app_version` | string | no | When available from meta tag |
+
+#### Privacy guardrails
 
 Telemetry must never capture prompts, PTY input, terminal buffer content, or
-other operator secrets. PostHog may use SDK-default analytics persistence
-(localStorage/cookie, including distinct id and related session/super
-properties). That analytics state is allowed alongside other non-operational UI
-prefs (for example remembered new-task agent/repo and terminal font size). It
-must not store task truth, API payloads, offline mutation queues, or replayable
-operational state — those remain forbidden under the browser-storage ban above.
+other operator secrets. Sensitive property keys (terminal, token, password,
+command, buffer, diff, etc.) and suspicious string values are stripped before
+capture. Terminal surfaces are excluded from autocapture via CSS ignorelist.
 
 Browser notifications are out of scope. Ajax Web Cockpit must not implement Web
 Push, PushManager flows, Notification API prompts, VAPID keys, push

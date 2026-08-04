@@ -8,6 +8,12 @@ import {
 import { buildDiagnosticsReport } from "./diagnostics";
 import { copyText } from "@/shared/lib/clipboard";
 import { CONFIRM_TIMEOUT_MS } from "@/shared/lib/polling";
+import {
+  captureTelemetryDiagnostic,
+  isStandaloneDisplay,
+  isTelemetryInitialized,
+  readAppVersion,
+} from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
 
 interface Props {
@@ -91,7 +97,11 @@ export default function SettingsView({
   }
 
   const appVersion =
-    document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ?? "—";
+    readAppVersion() ??
+    document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ??
+    "—";
+  const telemetryInitialized = isTelemetryInitialized();
+  const telemetryStandalone = isStandaloneDisplay();
   const origin = window.location.origin;
   const online = navigator.onLine;
   const truncatedUa =
@@ -110,6 +120,30 @@ export default function SettingsView({
 
       <div className="settings-section" data-testid="dev-settings">
         <h3>Diagnostics</h3>
+
+        <h4 className="settings-subheading">Telemetry</h4>
+        <dl className="settings-debug" data-testid="dev-settings-telemetry">
+          <div>
+            <dt>Initialized</dt>
+            <dd>{telemetryInitialized ? "yes" : "no"}</dd>
+          </div>
+          <div>
+            <dt>Standalone</dt>
+            <dd>{telemetryStandalone ? "yes" : "no"}</dd>
+          </div>
+          <div>
+            <dt>App version</dt>
+            <dd>{appVersion}</dd>
+          </div>
+        </dl>
+        <Button
+          type="button"
+          variant="secondary"
+          data-testid="telemetry-diagnostic"
+          onClick={() => captureTelemetryDiagnostic()}
+        >
+          Emit telemetry diagnostic
+        </Button>
 
         <h4 className="settings-subheading">Debug info</h4>
         <dl className="settings-debug" data-testid="dev-settings-debug">
