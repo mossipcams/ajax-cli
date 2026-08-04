@@ -21,6 +21,12 @@ import {
 import { createRefitController } from "@/shared/lib/terminalRefit";
 import { createTerminalScrollSync } from "@/shared/lib/terminalScrollSync";
 import { Terminal } from "@xterm/xterm";
+import {
+  clientToBufferCell,
+  selectRangeFromWordAnchor,
+  selectWordAtClient,
+  wordBoundsAtCol,
+} from "./terminalTouchSelection";
 
 /**
  * Quiet time after the last seeded-open write before the terminal is revealed.
@@ -38,6 +44,8 @@ const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_CANCEL_PX = 8;
 const DIRECTIONAL_DRAG_THRESHOLD_PX = 24;
 const DIRECTIONAL_REPEAT_INTERVAL_MS = 75;
+const DOUBLE_TAP_WINDOW_MS = 350;
+const DOUBLE_TAP_SLOP_PX = 24;
 
 function loadPersistedFontSize(): number {
   try {
@@ -160,6 +168,15 @@ export function mountTaskTerminalSession(
   let directionalArmed = false;
   let directionalArrow: string | undefined;
   let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
+  let pendingTapX = 0;
+  let pendingTapY = 0;
+  let pendingTapAt = 0;
+  let selectionDragActive = false;
+  let selectionAnchorCol = 0;
+  let selectionAnchorRow = 0;
+  let selectionAnchorWordEnd = 0;
+  let selectionDragLastCol = -1;
+  let selectionDragLastRow = -1;
   let seedQuietTimer: ReturnType<typeof setTimeout> | undefined;
   let seedCapTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -486,75 +503,67 @@ export function mountTaskTerminalSession(
   };
 
   const fireLongPressSelect = (clientX: number, clientY: number) => {
-    if (longPressSelected) return;
-    selectWordAtClient(clientX, clientY);
-    longPressSelected = true;
+    if (longPressSelected || !termRef.current || !hostEl) return;
+    if (selectWordAtClient(termRef.current, clientX, clientY, hostEl)) {
+      longPressSelected = true;
+    }
   };
 
-  const isWordChar = (ch: string) => {
-    if (!ch) return false;
-    const code = ch.charCodeAt(0);
-    return (
-      (code >= 48 && code <= 57) ||
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122) ||
-      code === 45 ||
-      code === 95 ||
-      code > 127
-    );
-  };
-
-  const selectWordAtClient = (clientX: number, clientY: number) => {
-    if (!termRef.current || !hostEl) return;
-    const termEl = termRef.current.element;
-    if (!termEl || termRef.current.cols <= 0 || termRef.current.rows <= 0) return;
-
-    const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
-    const bounds = screenEl?.getBoundingClientRect() ?? hostEl.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-
-    const relX = clientX - bounds.left;
-    const relY = clientY - bounds.top;
-    if (relX < 0 || relY < 0 || relX > bounds.width || relY > bounds.height) return;
-
-    const cellWidth = bounds.width / termRef.current.cols;
-    const cellHeight = bounds.height / termRef.current.rows;
-    const col = Math.min(termRef.current.cols - 1, Math.max(0, Math.floor(relX / cellWidth)));
-    const rowInView = Math.min(termRef.current.rows - 1, Math.max(0, Math.floor(relY / cellHeight)));
-    const bufferRow = termRef.current.buffer.active.viewportY + rowInView;
-    const line = termRef.current.buffer.active.getLine(bufferRow);
-    if (!line) return;
-
-    const lineStr = line.translateToString(false);
-    const trimmed = lineStr.trimEnd();
-    if (!trimmed || col >= trimmed.length) return;
-
-    let start = col;
-    while (start > 0 && isWordChar(trimmed[start - 1] ?? "")) start -= 1;
-    let end = col;
-    while (end < trimmed.length && isWordChar(trimmed[end] ?? "")) end += 1;
-
-    const length = end - start;
-    if (length <= 0) return;
-    termRef.current.select(start, bufferRow, length);
+  const armSelectionDrag = (touch: Touch, event: TouchEvent) => {
+    pendingTapAt = 0;
+    selectionDragActive = true;
+    cancelLongPress();
+    clearDirectionalGesture();
+    const term = termRef.current;
+    if (term && hostEl) {
+      selectWordAtClient(term, touch.clientX, touch.clientY, hostEl);
+      const cell = clientToBufferCell(term, touch.clientX, touch.clientY, hostEl);
+      if (cell) {
+        const line = term.buffer.active.getLine(cell.row);
+        const bounds = line ? wordBoundsAtCol(line.translateToString(false), cell.col) : null;
+        if (bounds) {
+          selectionAnchorCol = bounds.start;
+          selectionAnchorRow = cell.row;
+          selectionAnchorWordEnd = bounds.end;
+        } else {
+          selectionAnchorCol = cell.col;
+          selectionAnchorRow = cell.row;
+          selectionAnchorWordEnd = cell.col + 1;
+        }
+        selectionDragLastCol = cell.col;
+        selectionDragLastRow = cell.row;
+      }
+    }
+    if (event.cancelable) event.preventDefault();
   };
 
   const onTouchStart = (event: TouchEvent) => {
     if (event.touches.length === 1) {
       clearDirectionalGesture();
       const touch = event.touches[0];
-      longPressStartX = touch.clientX;
-      longPressStartY = touch.clientY;
-      longPressStartedAt = performance.now();
-      longPressActive = true;
-      longPressSelected = false;
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = undefined;
+      if (
+        pendingTapAt > 0 &&
+        performance.now() - pendingTapAt <= DOUBLE_TAP_WINDOW_MS &&
+        Math.hypot(touch.clientX - pendingTapX, touch.clientY - pendingTapY) <= DOUBLE_TAP_SLOP_PX
+      ) {
+        armSelectionDrag(touch, event);
+      } else {
+        if (pendingTapAt > 0) pendingTapAt = 0;
+        longPressStartX = touch.clientX;
+        longPressStartY = touch.clientY;
+        longPressStartedAt = performance.now();
+        longPressActive = true;
+        longPressSelected = false;
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = undefined;
+        }
       }
     } else {
+      pendingTapAt = 0;
       cancelLongPress();
       clearDirectionalGesture();
+      if (selectionDragActive) selectionDragActive = false;
     }
 
     if (event.touches.length !== 2) {
@@ -569,7 +578,33 @@ export function mountTaskTerminalSession(
   };
 
   const onTouchMove = (event: TouchEvent) => {
-    if (directionalArmed) {
+    if (selectionDragActive) {
+      if (event.touches.length !== 1) {
+        selectionDragActive = false;
+      } else if (event.cancelable) {
+        event.preventDefault();
+        const touch = event.touches[0];
+        const term = termRef.current;
+        if (term && hostEl) {
+          const cell = clientToBufferCell(term, touch.clientX, touch.clientY, hostEl);
+          if (
+            cell &&
+            (cell.col !== selectionDragLastCol || cell.row !== selectionDragLastRow)
+          ) {
+            selectionDragLastCol = cell.col;
+            selectionDragLastRow = cell.row;
+            selectRangeFromWordAnchor(
+              term,
+              selectionAnchorCol,
+              selectionAnchorWordEnd,
+              cell.col,
+              cell.row,
+              selectionAnchorRow,
+            );
+          }
+        }
+      }
+    } else if (directionalArmed) {
       if (event.touches.length !== 1) {
         clearDirectionalGesture();
         cancelLongPress();
@@ -630,20 +665,36 @@ export function mountTaskTerminalSession(
   };
 
   const onTouchEnd = () => {
-    // CI WebKit can delay the 500ms timer past a short hold; still select when
-    // the finger lifted after a qualifying hold without movement cancel or
-    // directional drag.
-    if (
-      !directionalArmed &&
-      longPressActive &&
-      !longPressSelected &&
-      longPressStartedAt > 0 &&
-      performance.now() - longPressStartedAt >= LONG_PRESS_MS
-    ) {
-      fireLongPressSelect(longPressStartX, longPressStartY);
+    if (selectionDragActive) {
+      selectionDragActive = false;
+      cancelLongPress();
+      clearDirectionalGesture();
+    } else {
+      // CI WebKit can delay the 500ms timer past a short hold; still select when
+      // the finger lifted after a qualifying hold without movement cancel or
+      // directional drag.
+      if (
+        !directionalArmed &&
+        longPressActive &&
+        !longPressSelected &&
+        longPressStartedAt > 0 &&
+        performance.now() - longPressStartedAt >= LONG_PRESS_MS
+      ) {
+        fireLongPressSelect(longPressStartX, longPressStartY);
+      } else if (
+        !directionalArmed &&
+        longPressActive &&
+        !longPressSelected &&
+        longPressStartedAt > 0 &&
+        performance.now() - longPressStartedAt < DOUBLE_TAP_WINDOW_MS
+      ) {
+        pendingTapX = longPressStartX;
+        pendingTapY = longPressStartY;
+        pendingTapAt = performance.now();
+      }
+      cancelLongPress();
+      clearDirectionalGesture();
     }
-    cancelLongPress();
-    clearDirectionalGesture();
     if (pinchStartDistance > 0 && pinchEngaged && termRef.current) {
       persistFontSize(termRef.current.options.fontSize ?? DEFAULT_FONT_SIZE);
       resetDedupe();
