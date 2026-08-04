@@ -99,6 +99,11 @@ pub fn tmux_attach_target(session: &str, task_window: &str) -> String {
     format!("{session}:{task_window}")
 }
 
+pub(crate) fn task_window_probe_command(ephemeral_session: &str, task_window: &str) -> TmuxCommand {
+    let target = tmux_attach_target(ephemeral_session, task_window);
+    TmuxCommand::new(["display-message", "-p", "-t", &target, "#{window_id}"])
+}
+
 pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCommandPlan {
     let target = tmux_attach_target(&plan.tmux_session, &plan.task_window);
     TmuxAttachCommandPlan {

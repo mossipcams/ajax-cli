@@ -304,6 +304,29 @@ pub async fn bridge_task_terminal_socket(
         return;
     }
 
+    let probe = task_window_probe_command(&isolated.ephemeral_session, &plan.task_window);
+    let probe_failure = match run_tmux_command_blocking(&probe) {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            Some(if detail.is_empty() {
+                "window probe failed".to_string()
+            } else {
+                detail.to_string()
+            })
+        }
+        Err(error) => Some(error.to_string()),
+    };
+    if let Some(failure) = probe_failure {
+        send_error_and_close(
+            &mut socket,
+            format!("failed to find terminal task window: {failure}"),
+        )
+        .await;
+        return;
+    }
+
     let command_plan = isolated.attach.clone();
     let pty_system = native_pty_system();
     let pty_pair = match pty_system.openpty(PtySize {

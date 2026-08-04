@@ -38,6 +38,7 @@ export interface TerminalConnection {
 
 const RECONNECT_MAX_DELAY_MS = 15000;
 const IMMEDIATE_FAILURE_LIMIT = 5;
+const STABLE_OPEN_MS = 1000;
 
 export function connectTaskTerminal(
   handle: string,
@@ -50,6 +51,8 @@ export function connectTaskTerminal(
   // Did *this* dial's socket open? A dial that never opened is a rejected
   // handshake (possibly 401); an established socket dropping is not.
   let dialOpened = false;
+  let dialOpenedAt: number | undefined;
+  let unstableOpenFailures = 0;
   // One session renewal per disconnected episode; reset on every open.
   let sessionRenewTried = false;
   let attachFailed = false;
@@ -162,11 +165,11 @@ export function connectTaskTerminal(
     })();
   };
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (stableOpen = false) => {
     if (disposed) return;
     setStatus("reconnecting");
     const immediateAfterOpen =
-      everOpened && document.visibilityState === "visible" && reconnectAttempts === 0;
+      stableOpen && document.visibilityState === "visible" && reconnectAttempts === 0;
     const delay = immediateAfterOpen
       ? 0
       : Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
@@ -189,11 +192,15 @@ export function connectTaskTerminal(
     connect(seedHistory);
   };
 
-  const reconnectNow = () => redialNow(true);
+  const reconnectNow = () => {
+    unstableOpenFailures = 0;
+    redialNow(true);
+  };
 
   function connect(seedHistory: boolean) {
     lastDialSeeded = seedHistory;
     dialOpened = false;
+    dialOpenedAt = undefined;
     const priorSocket = socket;
     const dialSocket = openTaskTerminalSocket(handle, seedHistory, clientId);
     socket = dialSocket;
@@ -205,14 +212,13 @@ export function connectTaskTerminal(
     }
     dialSocket.addEventListener("open", () => {
       if (socket !== dialSocket) return;
-      // A successful open resets the backoff. A fresh tmux attach repaints the
-      // pane and the resize-on-open makes tmux redraw at the real size, so no
-      // explicit refresh frame is needed on reconnect.
+      // A fresh tmux attach repaints the pane and the resize-on-open makes tmux
+      // redraw at the real size, so no explicit refresh frame is needed.
       const isReconnect = everOpened;
       everOpened = true;
       dialOpened = true;
+      dialOpenedAt = Date.now();
       sessionRenewTried = false;
-      reconnectAttempts = 0;
       attachFailed = false;
       setStatus("connected");
       events.onOpen(isReconnect, lastDialSeeded);
@@ -230,6 +236,20 @@ export function connectTaskTerminal(
       if (attachFailed) {
         setStatus("unavailable");
         return;
+      }
+      const stableOpen =
+        dialOpenedAt !== undefined && Date.now() - dialOpenedAt >= STABLE_OPEN_MS;
+      if (dialOpened) {
+        if (stableOpen) {
+          unstableOpenFailures = 0;
+          reconnectAttempts = 0;
+        } else {
+          unstableOpenFailures += 1;
+          if (unstableOpenFailures >= IMMEDIATE_FAILURE_LIMIT) {
+            setStatus("unavailable");
+            return;
+          }
+        }
       }
       // The browser WebSocket API hides the handshake status, so a 401 from a
       // stale session cookie is indistinguishable from any other failed dial.
@@ -254,7 +274,7 @@ export function connectTaskTerminal(
         setStatus("unavailable");
         return;
       }
-      scheduleReconnect();
+      scheduleReconnect(stableOpen);
     });
   }
 

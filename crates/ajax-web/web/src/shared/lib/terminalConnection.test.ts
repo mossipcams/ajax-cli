@@ -208,21 +208,31 @@ describe("connectTaskTerminal", () => {
     expect(renewBrowserSession).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps reconnecting after a socket has opened", () => {
+  it("backs off and gives up after repeated unstable opens", () => {
     createConnection();
-    let socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
-
-    for (let i = 0; i < 20; i += 1) {
-      socket.fire("close");
-      vi.runOnlyPendingTimers();
-      expect(statuses.at(-1)).toBe("reconnecting");
-      expect(statuses).not.toContain("unavailable");
-      socket = latestSocket();
+    for (let i = 0; i < IMMEDIATE_FAILURE_LIMIT - 1; i += 1) {
+      const socket = latestSocket();
       socket.readyState = MockWebSocket.OPEN;
       socket.fire("open");
+
+      const dialsBefore = MockWebSocket.instances.length;
+      socket.fire("close");
+
+      expect(statuses.at(-1)).toBe("reconnecting");
+      vi.advanceTimersByTime(0);
+      expect(MockWebSocket.instances).toHaveLength(dialsBefore);
+      vi.advanceTimersByTime(1000 * 2 ** i);
+      expect(MockWebSocket.instances).toHaveLength(dialsBefore + 1);
     }
+
+    const last = latestSocket();
+    last.readyState = MockWebSocket.OPEN;
+    last.fire("open");
+    const dialsBeforeLatch = MockWebSocket.instances.length;
+    last.fire("close");
+    expect(statuses.at(-1)).toBe("unavailable");
+    vi.advanceTimersByTime(60_000);
+    expect(MockWebSocket.instances).toHaveLength(dialsBeforeLatch);
   });
 
   it("treats a server error frame as unavailable", () => {
@@ -330,6 +340,7 @@ describe("connectTaskTerminal", () => {
     const socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
     socket.fire("open");
+    vi.advanceTimersByTime(1000);
 
     socket.fire("close");
     expect(statuses.at(-1)).toBe("reconnecting");
@@ -349,6 +360,8 @@ describe("connectTaskTerminal", () => {
     const socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
     socket.fire("open");
+    // Stable open so the first drop still uses delay-0 reconnect.
+    vi.advanceTimersByTime(1000);
 
     socket.fire("close");
     vi.advanceTimersByTime(0);
