@@ -523,30 +523,31 @@ other operator secrets. Sensitive property keys (terminal, token, password,
 command, buffer, diff, etc.) and suspicious string values are stripped before
 capture. Terminal surfaces are excluded from autocapture via CSS ignorelist.
 
-Browser notifications remain out of scope except for a narrow prototype: a
-Settings test may use the browser-session-protected `/api/push/vapid` and
-`/api/push/test` routes to fetch the server's process-local VAPID public key and
-schedule one declarative push (server delays ~20s on a detached task so a fully
-closed PWA still receives it). This carve-out does not permit service
-worker registration, offline mutation, stored subscriptions, notification
-click infrastructure, or replacement of attention delivery. Server-side
-webhook delivery through the CLI notify adapter (`[notify]` config) remains the
-supported attention channel; the web runtime still hosts its background poll.
+Declarative Web Push is the supported attention channel when the operator has
+enabled notifications from an installed Home Screen web app on a Declarative
+Web Push–capable browser (for example iOS Safari 18.4+). Settings uses
+`window.pushManager` (no service worker) with browser-session-protected
+`/api/push/vapid`, `/api/push/subscribe`, and `/api/push/test`. The server
+persists VAPID keys and subscriptions under `state_dir` and delivers
+`web_push: 8030` payloads via encrypted curl. Cockpit remains usable without
+Home Screen install; without install/subscribe there is no phone ping. This
+does not permit service worker registration, offline mutation, or browser-owned
+task truth.
 
-The notify adapter fires once per actionable episode and only for statuses
+Attention delivery fires once per actionable episode and only for statuses
 the operator can act on. Actionable Waiting is allowlisted to `Waiting for
 input` / `Waiting for approval` (structured hooks/lifecycle events); all other
 Waiting explanations stay inbox-visible but silent. `Error`-class evidence
 (CI failed, merge conflict, command failed, blocked, runtime probe failure)
-each fire a single webhook after the same shared 15-second confirmation dwell
+each fire a single push after the same shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient `Rate limited` Waiting,
 lifecycle-only "Ready for review", turn-settled "Response ready" (`Done` from
 Cursor `stop` / Claude·Codex·Pi settle), and auth/context waits do **not**
 phone-ping — Pi has no native wait/ask, so settle must not look like
-actionable attention. Episode dedup is status-class only; the webhook body still
+actionable attention. Episode dedup is status-class only; the notification body
 includes the agent client and explanation
-(`repo/handle: Waiting (codex) — …`). Delivery stays on CLI/cockpit refresh
-and the web background tick — hooks only write event files and must stay
+(`repo/handle: Waiting (codex) — …`). Delivery stays on the web background tick
+when subscriptions exist — hooks only write event files and must stay
 instant. Returning to `Running`/`Idle` arms the next episode only after a
 quiet window (`EPISODE_CLEAR_DWELL`, 30s) of sustained clear evidence, so a
 turn boundary inside one episode delivers one ping. Opening a task records
@@ -568,15 +569,15 @@ the crate:
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
-  When `[notify]` is configured it also spawns a background notify tick that
-  reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
-  and revision-checked commit) so attention webhooks fire without a browser
-  polling; the interval comes from `[notify] poll_seconds`. The tick always
+  When at least one push subscription is stored it also runs a background tick
+  that reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
+  and revision-checked commit) so attention push fires without a browser
+  polling; the interval is 30 seconds. The tick always
   refreshes at `RefreshTier::Full` (CI probes and Full-only rediscovery) but
-  skips webhook delivery while a browser has polled `/api/cockpit` within the
+  skips push delivery while a browser has polled `/api/cockpit` within the
   last 90 seconds. Presence is refreshed not only by `/api/cockpit` polls but
   also by recent terminal-WebSocket attaches and operate/action requests that
-  pass their origin/JSON-parse gates, so webhook delivery stays suppressed while
+  pass their origin/JSON-parse gates, so push delivery stays suppressed while
   the operator is actively using the PWA terminal or submitting actions.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.

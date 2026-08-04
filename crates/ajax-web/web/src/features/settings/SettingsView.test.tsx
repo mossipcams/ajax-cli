@@ -201,6 +201,25 @@ describe("SettingsView", () => {
     expect(runSpy).toHaveBeenCalledOnce();
   });
 
+  it("enables and disables push from Settings", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(pushTest, "enablePushNotifications").mockResolvedValue({ ok: true });
+    vi.spyOn(pushTest, "disablePushNotifications").mockResolvedValue({ ok: true });
+
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable push notifications" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notifications enabled.")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Disable push notifications" }));
+    await vi.waitFor(() =>
+      expect(screen.getByText("Push notifications disabled.")).toBeInTheDocument(),
+    );
+  });
+
   it("shows push test errors from the helper", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",

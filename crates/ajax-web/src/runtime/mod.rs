@@ -7,15 +7,15 @@ use crate::{
     slices::{dev_deploy, install, push},
     WebError,
 };
+use ajax_core::adapters::CommandRunner;
 pub(crate) use ajax_core::runtime_refresh::RefreshTier;
-use ajax_core::{adapters::CommandRunner, config::NotifyConfig};
 use axum::{
     body::Bytes,
     extract::{rejection::JsonRejection, Request as AxumRequest, State},
     http::{HeaderMap, StatusCode, Uri},
     middleware::{from_fn_with_state, Next},
     response::{IntoResponse, Response as AxumResponse},
-    routing::{get, post},
+    routing::{delete, get, post},
     serve::Listener,
     Json, Router,
 };
@@ -47,8 +47,8 @@ use task_routes::{
 };
 
 pub use bridge::{ActionFailure, RuntimeBridge};
+use state::TLS_HANDSHAKE_TIMEOUT;
 pub use state::{operator_input_sink, WebAppState};
-use state::{DEFAULT_NOTIFY_POLL_SECONDS, TLS_HANDSHAKE_TIMEOUT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApiAccess {
@@ -80,8 +80,10 @@ where
         .route("/terminal.js", get(axum_terminal_js))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
-        .route("/api/push/vapid", get(axum_push_vapid))
-        .route("/api/push/test", post(axum_push_test))
+        .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
+        .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
+        .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
+        .route("/api/push/test", post(axum_push_test::<C, B>))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route(
@@ -132,7 +134,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
-        spawn_notify_tick(&state);
+        spawn_push_tick(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
             .await
@@ -150,35 +152,22 @@ where
     })
 }
 
-pub(crate) fn notify_poll_interval(notify: Option<&NotifyConfig>) -> Option<Duration> {
-    match notify?.poll_seconds.unwrap_or(DEFAULT_NOTIFY_POLL_SECONDS) {
-        0 => None,
-        seconds => Some(Duration::from_secs(seconds)),
-    }
-}
-
-/// Background attention poll: keeps Full-tier refresh (CI probes, rediscovery)
-/// on the same interval as webhook delivery. Webhooks stay quiet while a browser
-/// is connected; the tick still refreshes with `deliver_notifications = false`.
-fn spawn_notify_tick<C, B>(state: &WebAppState<C, B>)
+/// Background Full refresh. Always refreshes; push delivery only when
+/// subscriptions exist and no browser is connected.
+fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let period = {
-        let guard = state.shared();
-        notify_poll_interval(guard.context.config.notify.as_ref())
-    };
-    let Some(period) = period else {
-        return;
-    };
+    let period = Duration::from_secs(push::DEFAULT_PUSH_POLL_SECONDS);
     let tick_state = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(period);
         interval.tick().await; // consume the immediate first tick
         loop {
             interval.tick().await;
-            let deliver_notifications = !tick_state.browser_connected();
+            let deliver_notifications =
+                push::has_subscriptions(&tick_state.state_dir) && !tick_state.browser_connected();
             let _ =
                 refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, deliver_notifications)
                     .await;
@@ -333,8 +322,12 @@ async fn axum_version() -> AxumResponse {
     )
 }
 
-async fn axum_push_vapid() -> AxumResponse {
-    match push::vapid_public_key_base64() {
+async fn axum_push_vapid<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    match push::vapid_public_key_base64(&state.state_dir) {
         Ok(public_key) => Json(serde_json::json!({ "public_key": public_key })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -344,11 +337,16 @@ async fn axum_push_vapid() -> AxumResponse {
     }
 }
 
-async fn axum_push_test(
+async fn axum_push_subscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
     headers: HeaderMap,
-    subscription: Result<Json<push::PushSubscription>, JsonRejection>,
-) -> AxumResponse {
-    let Json(subscription) = match subscription {
+    body: Result<Json<push::PushSubscription>, JsonRejection>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let Json(subscription) = match body {
         Ok(subscription) => subscription,
         Err(error) => {
             return (
@@ -358,17 +356,93 @@ async fn axum_push_test(
                 .into_response();
         }
     };
-    match push::schedule_declarative_test_push(&headers, subscription) {
-        // 202: delivery is delayed on a detached task so fully closing the PWA
-        // cannot cancel the push by aborting this request.
+    let navigate = match push::navigation_url(&headers) {
+        Ok(navigate) => navigate,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response();
+        }
+    };
+    match push::upsert_subscription(&state.state_dir, subscription, &navigate) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(error) => {
+            let status = if error.contains("subscription")
+                || error.contains("endpoint")
+                || error.contains("Origin")
+                || error.contains("Host")
+                || error.contains("navigate")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn axum_push_unsubscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Result<Json<push::UnsubscribeRequest>, JsonRejection>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let Json(request) = match body {
+        Ok(request) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error.body_text() })),
+            )
+                .into_response();
+        }
+    };
+    match push::apply_unsubscribe(&state.state_dir, &request) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn axum_push_test<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    headers: HeaderMap,
+    body: Result<Json<push::PushTestRequest>, JsonRejection>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let Json(request) = match body {
+        Ok(request) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error.body_text() })),
+            )
+                .into_response();
+        }
+    };
+    match push::schedule_test_push(&state.state_dir, &headers, request) {
         Ok(()) => (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({ "ok": true, "scheduled": true })),
         )
             .into_response(),
         Err(error) => {
-            // Never return 502 here: Cloudflare surfaces origin 502 as a host
-            // Bad Gateway HTML page, which looks like the Cockpit is down.
+            // Never return 502: Cloudflare surfaces origin 502 as a host error page.
             let status = if error.contains("subscription") || error.contains("endpoint") {
                 StatusCode::BAD_REQUEST
             } else {

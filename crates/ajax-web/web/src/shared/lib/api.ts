@@ -236,6 +236,46 @@ export async function fetchPushVapidPublicKey(): Promise<PushVapidResponse> {
   return value as PushVapidResponse;
 }
 
+export async function sendPushSubscribe(subscription: PushTestSubscription): Promise<void> {
+  const { response, payload } = await postJson("/api/push/subscribe", {
+    endpoint: subscription.endpoint,
+    keys: subscription.keys,
+  });
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
+}
+
+export async function sendPushUnsubscribe(
+  endpoint?: string,
+  options: { all?: boolean } = {},
+): Promise<void> {
+  const body = options.all
+    ? { all: true }
+    : endpoint
+      ? { endpoint }
+      : { all: true };
+  const response = await fetchProtectedWithSessionRenewal("/api/push/subscribe", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const payload = await readJson(response);
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
+}
+
 export async function sendPushTest(subscription: PushTestSubscription): Promise<void> {
   const { response, payload } = await postJson("/api/push/test", subscription);
   if (!response.ok) {

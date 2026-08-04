@@ -59,7 +59,7 @@ pub fn apply_trusted_observation_at(
 ///
 /// Records the acknowledgment time without erasing runtime evidence or changing
 /// lifecycle. Projection and refresh compare evidence time with this timestamp.
-/// Also silences the current notify episode so opening a task stops webhook
+/// Also silences the current attention episode so opening a task stops push
 /// re-fires until newer actionable evidence appears.
 pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
     crate::attention::silence_notify_episode(task, at);

@@ -191,49 +191,6 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("ajax-web-be-{tag}-{}-{nanos}", std::process::id()))
 }
 
-#[test]
-fn push_endpoints_are_not_supported() {
-    let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-    let mut runner = OkRunner;
-    let dir = scratch_dir("push");
-    let paths = CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
-
-    let config = handle_http_request_with_runner_and_paths(
-        "GET",
-        "/api/push/config",
-        "",
-        &mut context,
-        &mut runner,
-        Some(&paths),
-    )
-    .unwrap();
-    assert_eq!(config.status_code, 404);
-
-    let subscribe = handle_http_request_with_runner_and_paths(
-        "POST",
-        "/api/push/subscribe",
-        r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
-        &mut context,
-        &mut runner,
-        Some(&paths),
-    )
-    .unwrap();
-    assert_eq!(subscribe.status_code, 404);
-
-    let unsubscribe = handle_http_request_with_runner_and_paths(
-        "POST",
-        "/api/push/unsubscribe",
-        r#"{"endpoint":"https://push.example/x"}"#,
-        &mut context,
-        &mut runner,
-        Some(&paths),
-    )
-    .unwrap();
-    assert_eq!(unsubscribe.status_code, 404);
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
 #[derive(Clone)]
 struct OkRunner;
 

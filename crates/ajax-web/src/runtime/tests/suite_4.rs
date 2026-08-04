@@ -334,30 +334,48 @@ async fn action_endpoint_keeps_start_out_of_bridge() {
 }
 
 #[tokio::test]
-async fn push_path_does_not_start_nested_runtime() {
+async fn push_subscribe_and_unsubscribe_round_trip() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-    let (_state, cookie, app) = app_with(context, TestBridge::default(), "push-runtime");
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "push-subscribe");
 
     let config = get(&app, &cookie, "/api/push/config").await;
     assert_eq!(config.status(), StatusCode::NOT_FOUND);
 
-    let subscribe = post_json(
-        &app,
-        &cookie,
-        "/api/push/subscribe",
-        r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
-    )
-    .await;
-    assert_eq!(subscribe.status(), StatusCode::NOT_FOUND);
+    let vapid = get(&app, &cookie, "/api/push/vapid").await;
+    assert_eq!(vapid.status(), StatusCode::OK);
 
-    let unsubscribe = post_json(
-        &app,
-        &cookie,
-        "/api/push/unsubscribe",
-        r#"{"endpoint":"https://push.example/x"}"#,
-    )
-    .await;
-    assert_eq!(unsubscribe.status(), StatusCode::NOT_FOUND);
+    let subscribe = app
+        .clone()
+        .oneshot(
+            AxumRequest::builder()
+                .method("POST")
+                .uri("/api/push/subscribe")
+                .header("cookie", cookie.as_str())
+                .header("content-type", "application/json")
+                .header("host", "cockpit.example")
+                .body(Body::from(
+                    r#"{"endpoint":"https://web.push.apple.com/x","keys":{"p256dh":"BLn9b-VR0ca83knDNZ32dCHGyjJp-1riX9ZTN40MqV8K_LpQmLqxC_DoHvqvFXO_nGdAB4W9dogZb_sM-uV4JbY","auth":"_ordMnz7uTCmrpBTeUV4Bw"}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(subscribe.status(), StatusCode::OK);
+
+    let unsubscribe = app
+        .clone()
+        .oneshot(
+            AxumRequest::builder()
+                .method("DELETE")
+                .uri("/api/push/subscribe")
+                .header("cookie", cookie.as_str())
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"all":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsubscribe.status(), StatusCode::OK);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

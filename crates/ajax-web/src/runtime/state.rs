@@ -23,7 +23,6 @@ use std::{
 };
 
 pub(crate) const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
-pub(crate) const DEFAULT_NOTIFY_POLL_SECONDS: u64 = 30;
 pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;

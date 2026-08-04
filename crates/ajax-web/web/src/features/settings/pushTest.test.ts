@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as api from "@/shared/lib/api";
+import * as telemetry from "@/shared/lib/telemetry";
 import {
   PUSH_TEST_DELAY_MS,
   runPushNotificationTest,
+  enablePushNotifications,
+  disablePushNotifications,
   urlSafeBase64ToUint8Array,
 } from "./pushTest";
 
@@ -34,7 +37,9 @@ describe("runPushNotificationTest", () => {
     vi.spyOn(api, "fetchPushVapidPublicKey").mockResolvedValue({
       public_key: "AQID",
     });
+    vi.spyOn(api, "sendPushSubscribe").mockResolvedValue();
     vi.spyOn(api, "sendPushTest").mockResolvedValue();
+    vi.spyOn(telemetry, "isStandaloneDisplay").mockReturnValue(true);
     vi.stubGlobal("Notification", {
       permission: "granted",
       requestPermission: vi.fn().mockResolvedValue("granted"),
@@ -54,6 +59,15 @@ describe("runPushNotificationTest", () => {
     });
   });
 
+  it("prompts for Home Screen when not installed", async () => {
+    vi.mocked(telemetry.isStandaloneDisplay).mockReturnValue(false);
+    const result = await runPushNotificationTest(vi.fn());
+    expect(result).toEqual({
+      ok: false,
+      error: "Add Ajax to the Home Screen, then enable notifications here.",
+    });
+  });
+
   it("posts the subscription immediately with a server-side delay", async () => {
     const { subscribe } = installPushManager();
     const statuses: string[] = [];
@@ -66,6 +80,7 @@ describe("runPushNotificationTest", () => {
     });
     expect(statuses).toContain("Scheduled — close or background the app now");
     expect(api.fetchPushVapidPublicKey).toHaveBeenCalledOnce();
+    expect(api.sendPushSubscribe).toHaveBeenCalledWith(mockSubscriptionPayload);
     expect(api.sendPushTest).toHaveBeenCalledWith({
       ...mockSubscriptionPayload,
       delay_ms: PUSH_TEST_DELAY_MS,
@@ -125,5 +140,49 @@ describe("runPushNotificationTest", () => {
     const result = await runPushNotificationTest(vi.fn());
 
     expect(result).toEqual({ ok: false, error: "HTTP 502" });
+  });
+});
+
+describe("enablePushNotifications", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "fetchPushVapidPublicKey").mockResolvedValue({ public_key: "AQID" });
+    vi.spyOn(api, "sendPushSubscribe").mockResolvedValue();
+    vi.spyOn(telemetry, "isStandaloneDisplay").mockReturnValue(true);
+    vi.stubGlobal("Notification", {
+      permission: "granted",
+      requestPermission: vi.fn().mockResolvedValue("granted"),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("persists the subscription on the server", async () => {
+    installPushManager();
+    const result = await enablePushNotifications(vi.fn());
+    expect(api.sendPushSubscribe).toHaveBeenCalledWith(mockSubscriptionPayload);
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("disablePushNotifications", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("clears the server store even without a local subscription", async () => {
+    vi.spyOn(api, "sendPushUnsubscribe").mockResolvedValue();
+    vi.stubGlobal("pushManager", {
+      subscribe: vi.fn(),
+      getSubscription: vi.fn().mockResolvedValue(null),
+    });
+
+    const result = await disablePushNotifications(vi.fn());
+
+    expect(api.sendPushUnsubscribe).toHaveBeenCalledWith(undefined, { all: true });
+    expect(result).toEqual({ ok: true });
   });
 });

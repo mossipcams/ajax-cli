@@ -15,7 +15,7 @@ import {
   readAppVersion,
 } from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
-import { runPushNotificationTest } from "./pushTest";
+import { runPushNotificationTest, enablePushNotifications, disablePushNotifications } from "./pushTest";
 
 interface Props {
   detailHandle?: string | null;
@@ -97,6 +97,22 @@ export default function SettingsView({
     setDiagnosticsOutput(text);
     const copied = await copyText(text);
     onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
+  }
+
+  async function enablePush() {
+    setTestingPush(true);
+    setPushTestStatus(null);
+    const result = await enablePushNotifications(setPushTestStatus);
+    setTestingPush(false);
+    setPushTestStatus(result.ok ? "Push notifications enabled." : result.error);
+  }
+
+  async function disablePush() {
+    setTestingPush(true);
+    setPushTestStatus(null);
+    const result = await disablePushNotifications(setPushTestStatus);
+    setTestingPush(false);
+    setPushTestStatus(result.ok ? "Push notifications disabled." : result.error);
   }
 
   async function testPushNotification() {
@@ -186,6 +202,22 @@ export default function SettingsView({
         </Button>
         <Button type="button" variant="secondary" onClick={copyDiagnostics}>
           Copy Diagnostics
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={testingPush}
+          onClick={enablePush}
+        >
+          Enable push notifications
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={testingPush}
+          onClick={disablePush}
+        >
+          Disable push notifications
         </Button>
         <Button
           type="button"

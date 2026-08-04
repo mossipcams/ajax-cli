@@ -1,10 +1,23 @@
-//! Prototype declarative Web Push delivery for the Settings test action.
+//! Declarative Web Push attention delivery for Web Cockpit.
+//!
+//! Uses `window.pushManager` on the client (no service worker). Server persists
+//! VAPID keys and subscriptions under `state_dir`, encrypts with
+//! `web-push-native`, and delivers via `curl`.
 
+use ajax_core::attention::{take_attention_transition, AttentionTransition};
+use ajax_core::commands::CommandContext;
+use ajax_core::registry::{InMemoryRegistry, Registry};
 use axum::http::{header, uri::Authority, HeaderMap, Request, Uri};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{process::Stdio, sync::OnceLock, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 use tokio::{io::AsyncWriteExt, process::Command};
 use web_push_native::{
     jwt_simple::algorithms::ES256KeyPair,
@@ -12,74 +25,251 @@ use web_push_native::{
     Auth, WebPushBuilder,
 };
 
-/// Default delay so the operator can fully quit the PWA before delivery.
-pub(crate) const DEFAULT_PUSH_TEST_DELAY_MS: u64 = 20_000;
-const MAX_PUSH_TEST_DELAY_MS: u64 = 60_000;
+const VAPID_KEY_FILE: &str = "web-push-vapid.key";
+const SUBSCRIPTIONS_FILE: &str = "web-push-subscriptions.json";
+pub(crate) const DEFAULT_PUSH_POLL_SECONDS: u64 = 30;
 
-/// Process-local VAPID private key bytes. Settings test re-subscribes on each
-/// click, so disk persistence is unnecessary and would trip CodeQL path-injection
-/// on the operator-owned `state_dir` the same way a request-tainted path would.
-static VAPID_PRIVATE_KEY: OnceLock<Vec<u8>> = OnceLock::new();
+static VAPID_CACHE: OnceLock<Mutex<Option<CachedVapid>>> = OnceLock::new();
+
+struct CachedVapid {
+    state_dir: PathBuf,
+    key_pair_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct PushSubscription {
+    pub(crate) endpoint: String,
+    pub(crate) keys: PushSubscriptionKeys,
+    /// Absolute https cockpit URL for declarative `navigate` (set server-side).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) navigate: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct PushSubscriptionKeys {
+    pub(crate) p256dh: String,
+    pub(crate) auth: String,
+}
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct PushSubscription {
-    endpoint: String,
-    keys: PushSubscriptionKeys,
-    /// Milliseconds to wait before curl delivery. Defaults to 20s so a fully
-    /// closed PWA still receives the notification (client-side waits die with JS).
-    #[serde(default = "default_push_test_delay_ms")]
+pub(crate) struct UnsubscribeRequest {
+    #[serde(default)]
+    pub(crate) endpoint: Option<String>,
+    /// Clear every stored subscription (Settings Disable with no local sub).
+    #[serde(default)]
+    pub(crate) all: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PushTestRequest {
+    #[serde(flatten)]
+    subscription: PushSubscription,
+    /// Optional delay before delivery (Settings closed-app smoke test).
+    #[serde(default)]
     delay_ms: u64,
 }
 
-fn default_push_test_delay_ms() -> u64 {
-    DEFAULT_PUSH_TEST_DELAY_MS
+const MAX_PUSH_TEST_DELAY_MS: u64 = 60_000;
+
+#[derive(Default, Serialize, Deserialize)]
+struct SubscriptionStore {
+    #[serde(default)]
+    subscriptions: Vec<PushSubscription>,
 }
 
-#[derive(Debug, Deserialize)]
-struct PushSubscriptionKeys {
-    p256dh: String,
-    auth: String,
+pub(crate) fn vapid_public_key_base64(state_dir: &Path) -> Result<String, String> {
+    let key_pair = load_or_create_vapid(state_dir)?;
+    Ok(URL_SAFE_NO_PAD.encode(vapid_public_key_bytes(&key_pair)))
 }
 
-pub(crate) fn vapid_public_key_base64() -> Result<String, String> {
-    let key_pair = vapid_key_pair()?;
-    Ok(URL_SAFE_NO_PAD.encode(vapid_public_key(&key_pair)))
+pub(crate) fn has_subscriptions(state_dir: &Path) -> bool {
+    load_store(state_dir)
+        .map(|store| !store.subscriptions.is_empty())
+        .unwrap_or(false)
 }
 
-/// Validate + encrypt now, then deliver after `delay_ms` on a detached task so
-/// killing the browser mid-wait cannot cancel the push.
-pub(crate) fn schedule_declarative_test_push(
-    headers: &HeaderMap,
-    subscription: PushSubscription,
+pub(crate) fn upsert_subscription(
+    state_dir: &Path,
+    mut subscription: PushSubscription,
+    navigate: &str,
 ) -> Result<(), String> {
-    let delay_ms = subscription.delay_ms.min(MAX_PUSH_TEST_DELAY_MS);
-    let key_pair = vapid_key_pair()?;
-    let navigate = navigation_url(headers);
-    // Apple rejects VAPID JWT `sub` values like mailto:…@localhost (403 BadJwtToken).
+    validate_subscription(&subscription)?;
+    validate_navigate_url(navigate)?;
+    // Single-operator Cockpit: latest subscribe replaces the store so VAPID
+    // rotation / re-enable cannot accumulate stale endpoints.
+    subscription.navigate = Some(navigate.to_string());
+    let store = SubscriptionStore {
+        subscriptions: vec![subscription],
+    };
+    save_store(state_dir, &store)
+}
+
+pub(crate) fn remove_subscription(state_dir: &Path, endpoint: &str) -> Result<(), String> {
+    let mut store = load_store(state_dir)?;
+    store.subscriptions.retain(|item| item.endpoint != endpoint);
+    save_store(state_dir, &store)
+}
+
+pub(crate) fn clear_subscriptions(state_dir: &Path) -> Result<(), String> {
+    save_store(state_dir, &SubscriptionStore::default())
+}
+
+pub(crate) fn apply_unsubscribe(
+    state_dir: &Path,
+    request: &UnsubscribeRequest,
+) -> Result<(), String> {
+    if request.all || request.endpoint.as_deref().is_none_or(str::is_empty) {
+        clear_subscriptions(state_dir)
+    } else {
+        remove_subscription(state_dir, request.endpoint.as_deref().unwrap_or_default())
+    }
+}
+
+/// Take attention transitions and fan-out declarative push. Returns true when
+/// any task metadata stamp changed (caller should persist registry).
+pub(crate) fn deliver_attention_pushes(
+    context: &mut CommandContext<InMemoryRegistry>,
+    state_dir: &Path,
+) -> bool {
+    let Ok(store) = load_store(state_dir) else {
+        return false;
+    };
+    if store.subscriptions.is_empty() {
+        return false;
+    }
+    let Ok(key_pair) = load_or_create_vapid(state_dir) else {
+        return false;
+    };
+    let task_ids: Vec<_> = context
+        .registry
+        .list_tasks()
+        .iter()
+        .map(|task| task.id.clone())
+        .collect();
+    let mut fired = false;
+    let mut dead_endpoints = Vec::new();
+    for task_id in task_ids {
+        let Some(task) = context.registry.get_task_mut(&task_id) else {
+            continue;
+        };
+        let Some(transition) = take_attention_transition(task) else {
+            continue;
+        };
+        fired = true;
+        for subscription in &store.subscriptions {
+            let navigate = subscription
+                .navigate
+                .as_deref()
+                .unwrap_or("https://localhost/");
+            let vapid_subject = navigate.trim_end_matches('/').to_string();
+            let payload = attention_payload(&transition, navigate);
+            match build_push_request(subscription.clone(), payload, &key_pair, &vapid_subject) {
+                Ok(request) => match deliver_with_curl_blocking(request) {
+                    Ok(()) => {}
+                    Err(error) if is_gone_endpoint(&error) => {
+                        dead_endpoints.push(subscription.endpoint.clone());
+                    }
+                    Err(error) => {
+                        eprintln!("declarative push delivery failed: {error}");
+                    }
+                },
+                Err(error) => {
+                    eprintln!("declarative push build failed: {error}");
+                }
+            }
+        }
+    }
+    if !dead_endpoints.is_empty() {
+        let _ = prune_endpoints(state_dir, &dead_endpoints);
+    }
+    fired
+}
+
+pub(crate) fn schedule_test_push(
+    state_dir: &Path,
+    headers: &HeaderMap,
+    request: PushTestRequest,
+) -> Result<(), String> {
+    validate_subscription(&request.subscription)?;
+    let delay_ms = request.delay_ms.min(MAX_PUSH_TEST_DELAY_MS);
+    let key_pair = load_or_create_vapid(state_dir)?;
+    let navigate = navigation_url(headers)?;
     let vapid_subject = navigate.trim_end_matches('/').to_string();
-    let request = build_push_request(
-        subscription,
-        declarative_payload(&navigate),
-        &key_pair,
-        &vapid_subject,
-    )?;
+    let payload = test_payload(&navigate);
+    let http_request =
+        build_push_request(request.subscription, payload, &key_pair, &vapid_subject)?;
     tokio::spawn(async move {
         if delay_ms > 0 {
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
-        if let Err(error) = deliver_with_curl(request).await {
+        if let Err(error) = deliver_with_curl(http_request).await {
             eprintln!("declarative push test delivery failed: {error}");
         }
     });
     Ok(())
 }
 
-fn vapid_key_pair() -> Result<ES256KeyPair, String> {
-    let bytes = VAPID_PRIVATE_KEY.get_or_init(|| ES256KeyPair::generate().to_bytes());
-    ES256KeyPair::from_bytes(bytes).map_err(|error| format!("invalid VAPID key: {error}"))
+/// Build navigate URL from Host; when Origin is present it must match Host.
+pub(crate) fn navigation_url(headers: &HeaderMap) -> Result<String, String> {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|host| host.parse::<Authority>().ok())
+        .ok_or_else(|| "missing or invalid Host header for navigate URL".to_string())?;
+    if let Some(origin_authority) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|origin| origin.parse::<Uri>().ok())
+        .and_then(|uri| uri.authority().cloned())
+    {
+        if origin_authority.host() != host.host() || origin_authority.port() != host.port() {
+            return Err("Origin does not match Host".to_string());
+        }
+    }
+    Ok(format!("https://{host}/"))
 }
 
-fn vapid_public_key(key_pair: &ES256KeyPair) -> Vec<u8> {
+fn load_or_create_vapid(state_dir: &Path) -> Result<ES256KeyPair, String> {
+    let cache = VAPID_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache
+        .lock()
+        .map_err(|_| "vapid cache lock poisoned".to_string())?;
+    if let Some(cached) = guard.as_ref() {
+        if cached.state_dir == state_dir {
+            return ES256KeyPair::from_bytes(&cached.key_pair_bytes)
+                .map_err(|error| format!("invalid VAPID key: {error}"));
+        }
+    }
+    let path = state_dir.join(VAPID_KEY_FILE);
+    let bytes = if path.is_file() {
+        let bytes = fs::read(&path).map_err(|error| format!("read VAPID key: {error}"))?;
+        ES256KeyPair::from_bytes(&bytes)
+            .map_err(|error| format!("invalid VAPID key file: {error}"))?;
+        bytes
+    } else {
+        fs::create_dir_all(state_dir).map_err(|error| format!("create state dir: {error}"))?;
+        let generated = ES256KeyPair::generate().to_bytes();
+        write_private_file(&path, &generated)?;
+        generated
+    };
+    *guard = Some(CachedVapid {
+        state_dir: state_dir.to_path_buf(),
+        key_pair_bytes: bytes.clone(),
+    });
+    ES256KeyPair::from_bytes(&bytes).map_err(|error| format!("invalid VAPID key: {error}"))
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn vapid_public_key_bytes(key_pair: &ES256KeyPair) -> Vec<u8> {
     PublicKey::from_sec1_bytes(&key_pair.public_key().to_bytes())
         .expect("ES256 key pair always has a valid public key")
         .to_encoded_point(false)
@@ -87,38 +277,129 @@ fn vapid_public_key(key_pair: &ES256KeyPair) -> Vec<u8> {
         .to_vec()
 }
 
-fn declarative_payload(navigate: &str) -> Vec<u8> {
+fn load_store(state_dir: &Path) -> Result<SubscriptionStore, String> {
+    let path = state_dir.join(SUBSCRIPTIONS_FILE);
+    if !path.is_file() {
+        return Ok(SubscriptionStore::default());
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| format!("read subscriptions: {error}"))?;
+    serde_json::from_str(&raw).map_err(|error| format!("parse subscriptions: {error}"))
+}
+
+fn save_store(state_dir: &Path, store: &SubscriptionStore) -> Result<(), String> {
+    fs::create_dir_all(state_dir).map_err(|error| format!("create state dir: {error}"))?;
+    let path = state_dir.join(SUBSCRIPTIONS_FILE);
+    let raw = serde_json::to_string_pretty(store)
+        .map_err(|error| format!("serialize subscriptions: {error}"))?;
+    write_private_file(&path, raw.as_bytes())
+}
+
+fn prune_endpoints(state_dir: &Path, endpoints: &[String]) -> Result<(), String> {
+    let mut store = load_store(state_dir)?;
+    store
+        .subscriptions
+        .retain(|item| !endpoints.contains(&item.endpoint));
+    save_store(state_dir, &store)
+}
+
+fn validate_subscription(subscription: &PushSubscription) -> Result<(), String> {
+    let endpoint = subscription
+        .endpoint
+        .parse::<Uri>()
+        .map_err(|error| format!("invalid push endpoint: {error}"))?;
+    if endpoint.scheme_str() != Some("https") || endpoint.authority().is_none() {
+        return Err("push endpoint must be an absolute https URL".to_string());
+    }
+    if !push_endpoint_host_allowed(&endpoint) {
+        return Err("push endpoint host is not an allowed Web Push service".to_string());
+    }
+    let _ = URL_SAFE_NO_PAD
+        .decode(&subscription.keys.p256dh)
+        .map_err(|error| format!("invalid subscription p256dh key: {error}"))?;
+    let auth_bytes = URL_SAFE_NO_PAD
+        .decode(&subscription.keys.auth)
+        .map_err(|error| format!("invalid subscription auth key: {error}"))?;
+    if auth_bytes.len() != 16 {
+        return Err("subscription auth key must decode to 16 bytes".to_string());
+    }
+    Ok(())
+}
+
+fn validate_navigate_url(navigate: &str) -> Result<(), String> {
+    let uri = navigate
+        .parse::<Uri>()
+        .map_err(|error| format!("invalid navigate URL: {error}"))?;
+    if uri.scheme_str() != Some("https") || uri.authority().is_none() {
+        return Err("navigate must be an absolute https URL".to_string());
+    }
+    Ok(())
+}
+
+/// Allow only known browser push services — blocks SSRF to RFC1918/metadata.
+fn push_endpoint_host_allowed(endpoint: &Uri) -> bool {
+    let Some(authority) = endpoint.authority() else {
+        return false;
+    };
+    let host = authority.host();
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    let host = host.to_ascii_lowercase();
+    const EXACT: &[&str] = &[
+        "web.push.apple.com",
+        "fcm.googleapis.com",
+        "fcmregistrations.googleapis.com",
+        "android.googleapis.com",
+        "updates.push.services.mozilla.com",
+        "push.services.mozilla.com",
+    ];
+    if EXACT.iter().any(|allowed| host == *allowed) {
+        return true;
+    }
+    host.ends_with(".push.apple.com")
+        || host.ends_with(".notify.windows.com")
+        || host.ends_with(".push.services.mozilla.com")
+}
+
+fn attention_payload(transition: &AttentionTransition, navigate: &str) -> Vec<u8> {
+    let mut body = format!(
+        "{}/{}: {} ({})",
+        transition.repo,
+        transition.handle,
+        transition.status.as_str(),
+        transition.client
+    );
+    if let Some(explanation) = transition.explanation.as_deref() {
+        body.push_str(" — ");
+        body.push_str(explanation);
+    }
     serde_json::to_vec(&json!({
         "web_push": 8030,
         "notification": {
             "title": "Ajax Cockpit",
             "lang": "en-US",
             "dir": "ltr",
-            "body": "Declarative push prototype",
+            "body": body,
             "navigate": navigate,
             "silent": false
         }
     }))
-    .expect("fixed declarative push payload is serializable")
+    .expect("attention declarative push payload is serializable")
 }
 
-fn navigation_url(headers: &HeaderMap) -> String {
-    if let Some(authority) = headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|origin| origin.parse::<Uri>().ok())
-        .and_then(|uri| uri.authority().cloned())
-    {
-        return format!("https://{authority}/");
-    }
-    if let Some(authority) = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|host| host.parse::<Authority>().ok())
-    {
-        return format!("https://{authority}/");
-    }
-    "https://localhost/".to_string()
+fn test_payload(navigate: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "web_push": 8030,
+        "notification": {
+            "title": "Ajax Cockpit",
+            "lang": "en-US",
+            "dir": "ltr",
+            "body": "Push notification test",
+            "navigate": navigate,
+            "silent": false
+        }
+    }))
+    .expect("test declarative push payload is serializable")
 }
 
 fn build_push_request(
@@ -131,9 +412,6 @@ fn build_push_request(
         .endpoint
         .parse::<Uri>()
         .map_err(|error| format!("invalid push endpoint: {error}"))?;
-    if endpoint.scheme_str() != Some("https") || endpoint.authority().is_none() {
-        return Err("push endpoint must be an absolute https URL".to_string());
-    }
     let public_bytes = URL_SAFE_NO_PAD
         .decode(subscription.keys.p256dh)
         .map_err(|error| format!("invalid subscription p256dh key: {error}"))?;
@@ -152,6 +430,59 @@ fn build_push_request(
         .map_err(|error| format!("build encrypted push request: {error}"))
 }
 
+fn is_gone_endpoint(error: &str) -> bool {
+    error.contains("404")
+        || error.contains("410")
+        || error.contains("HTTP/2 404")
+        || error.contains("HTTP/2 410")
+}
+
+fn deliver_with_curl_blocking(request: Request<Vec<u8>>) -> Result<(), String> {
+    let (parts, body) = request.into_parts();
+    let mut command = std::process::Command::new("curl");
+    command
+        .args(["-sS", "--fail", "--max-time", "10", "-X"])
+        .arg(parts.method.as_str());
+    for (name, value) in &parts.headers {
+        command.arg("-H").arg(format!(
+            "{name}: {}",
+            value
+                .to_str()
+                .map_err(|error| format!("invalid push request header: {error}"))?
+        ));
+    }
+    let mut child = command
+        .args(["--data-binary", "@-"])
+        .arg(parts.uri.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start curl push delivery: {error}"))?;
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "open curl stdin for push delivery".to_string())?
+            .write_all(&body)
+            .map_err(|error| format!("write encrypted push payload to curl: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("wait for curl push delivery: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "push delivery failed with {}: {}",
+            output.status,
+            detail.trim()
+        ))
+    }
+}
+
 async fn deliver_with_curl(request: Request<Vec<u8>>) -> Result<(), String> {
     let (parts, body) = request.into_parts();
     let mut command = Command::new("curl");
@@ -163,7 +494,7 @@ async fn deliver_with_curl(request: Request<Vec<u8>>) -> Result<(), String> {
             "{name}: {}",
             value
                 .to_str()
-                .map_err(|error| { format!("invalid push request header: {error}") })?
+                .map_err(|error| format!("invalid push request header: {error}"))?
         ));
     }
     let mut child = command
@@ -200,94 +531,166 @@ async fn deliver_with_curl(request: Request<Vec<u8>>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ajax_core::lifecycle::mark_active;
+    use ajax_core::models::{AgentClient, SideFlag, Task, TaskId};
     use serde_json::Value;
-    use web_push_native::jwt_simple::algorithms::ES256KeyPair;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     const P256DH: &str =
         "BLn9b-VR0ca83knDNZ32dCHGyjJp-1riX9ZTN40MqV8K_LpQmLqxC_DoHvqvFXO_nGdAB4W9dogZb_sM-uV4JbY";
     const AUTH: &str = "_ordMnz7uTCmrpBTeUV4Bw";
 
-    fn subscription(auth: &str) -> PushSubscription {
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ajax-push-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn sample_subscription() -> PushSubscription {
         PushSubscription {
-            endpoint: "https://push.example/messages/1".to_string(),
+            endpoint: "https://web.push.apple.com/messages/1".to_string(),
             keys: PushSubscriptionKeys {
                 p256dh: P256DH.to_string(),
-                auth: auth.to_string(),
+                auth: AUTH.to_string(),
             },
-            delay_ms: 0,
+            navigate: None,
         }
     }
 
     #[test]
-    fn missing_delay_ms_defaults_to_twenty_seconds() {
-        let parsed: PushSubscription = serde_json::from_str(
-            r#"{"endpoint":"https://push.example/messages/1","keys":{"p256dh":"x","auth":"y"}}"#,
-        )
-        .unwrap();
-        assert_eq!(parsed.delay_ms, DEFAULT_PUSH_TEST_DELAY_MS);
+    fn vapid_persists_across_load() {
+        let dir = scratch_dir("vapid");
+        let first = vapid_public_key_base64(&dir).unwrap();
+        let path = dir.join(VAPID_KEY_FILE);
+        assert!(path.is_file());
+        let bytes = fs::read(&path).unwrap();
+        let key = ES256KeyPair::from_bytes(&bytes).unwrap();
+        assert_eq!(first, URL_SAFE_NO_PAD.encode(vapid_public_key_bytes(&key)));
+        let second = vapid_public_key_base64(&dir).unwrap();
+        assert_eq!(first, second);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn vapid_key_and_public_key_are_stable_in_process() {
-        let first = vapid_key_pair().unwrap();
-        let second = vapid_key_pair().unwrap();
-
-        assert_eq!(first.to_bytes(), second.to_bytes());
-        assert_eq!(vapid_public_key(&first).len(), 65);
+    fn subscription_store_replace_and_clear() {
+        let dir = scratch_dir("store");
+        assert!(!has_subscriptions(&dir));
+        upsert_subscription(&dir, sample_subscription(), "https://cockpit.example/").unwrap();
+        assert!(has_subscriptions(&dir));
         assert_eq!(
-            vapid_public_key_base64().unwrap(),
-            URL_SAFE_NO_PAD.encode(vapid_public_key(&first))
+            load_store(&dir).unwrap().subscriptions[0]
+                .navigate
+                .as_deref(),
+            Some("https://cockpit.example/")
         );
+        let mut second = sample_subscription();
+        second.endpoint = "https://fcm.googleapis.com/fcm/send/abc".to_string();
+        upsert_subscription(&dir, second, "https://cockpit.example/").unwrap();
+        assert_eq!(load_store(&dir).unwrap().subscriptions.len(), 1);
+        assert!(load_store(&dir).unwrap().subscriptions[0]
+            .endpoint
+            .contains("fcm.googleapis.com"));
+        clear_subscriptions(&dir).unwrap();
+        assert!(!has_subscriptions(&dir));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn payload_has_declarative_shape_and_https_navigation() {
+    fn rejects_non_push_service_endpoints() {
+        let mut bad = sample_subscription();
+        bad.endpoint = "https://127.0.0.1/steal".to_string();
+        assert!(validate_subscription(&bad).is_err());
+        bad.endpoint = "https://evil.example/push".to_string();
+        assert!(validate_subscription(&bad).is_err());
+    }
+
+    #[test]
+    fn navigation_url_requires_matching_origin_and_host() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            header::ORIGIN,
-            "http://cockpit.example:8443".parse().unwrap(),
-        );
-        let payload: Value =
-            serde_json::from_slice(&declarative_payload(&navigation_url(&headers))).unwrap();
-
+        headers.insert(header::HOST, "cockpit.example".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://attacker.example".parse().unwrap());
+        assert!(navigation_url(&headers).is_err());
+        headers.insert(header::ORIGIN, "https://cockpit.example".parse().unwrap());
         assert_eq!(
-            payload,
-            json!({
-                "web_push": 8030,
-                "notification": {
-                    "title": "Ajax Cockpit",
-                    "lang": "en-US",
-                    "dir": "ltr",
-                    "body": "Declarative push prototype",
-                    "navigate": "https://cockpit.example:8443/",
-                    "silent": false
-                }
-            })
+            navigation_url(&headers).unwrap(),
+            "https://cockpit.example/"
         );
-        assert_eq!(navigation_url(&HeaderMap::new()), "https://localhost/");
     }
 
     #[test]
-    fn valid_subscription_builds_encrypted_request_and_invalid_auth_is_rejected() {
+    fn payload_has_declarative_shape() {
+        let transition = AttentionTransition {
+            repo: "web".to_string(),
+            handle: "fix-login".to_string(),
+            status: ajax_core::ui_state::TaskStatus::Waiting,
+            explanation: Some("Waiting for input".to_string()),
+            client: "codex".to_string(),
+        };
+        let payload: Value =
+            serde_json::from_slice(&attention_payload(&transition, "https://cockpit.example/"))
+                .unwrap();
+        assert_eq!(payload["web_push"], 8030);
+        assert_eq!(
+            payload["notification"]["body"],
+            "web/fix-login: Waiting (codex) — Waiting for input"
+        );
+        assert_eq!(
+            payload["notification"]["navigate"],
+            "https://cockpit.example/"
+        );
+    }
+
+    #[test]
+    fn valid_subscription_builds_encrypted_request() {
         let vapid = ES256KeyPair::generate();
         let request = build_push_request(
-            subscription(AUTH),
-            declarative_payload("https://localhost/"),
+            sample_subscription(),
+            test_payload("https://localhost/"),
             &vapid,
             "https://cockpit.example",
         )
         .unwrap();
-
         assert_eq!(request.method(), "POST");
-        assert_eq!(request.uri(), "https://push.example/messages/1");
+        assert_eq!(request.uri(), "https://web.push.apple.com/messages/1");
         assert_eq!(request.headers()[header::CONTENT_ENCODING], "aes128gcm");
-        assert!(!request.body().is_empty());
-        assert!(build_push_request(
-            subscription("bad"),
-            Vec::new(),
-            &vapid,
-            "https://cockpit.example"
-        )
-        .is_err());
+    }
+
+    #[test]
+    fn deliver_attention_pushes_without_subscriptions_is_noop() {
+        let dir = scratch_dir("deliver-empty");
+        let mut task = Task::new(
+            TaskId::new("web/wait"),
+            "web",
+            "wait",
+            "Wait",
+            "ajax/wait",
+            "main",
+            "/tmp/w",
+            "ajax-web-wait",
+            "task",
+            AgentClient::Codex,
+        );
+        mark_active(&mut task).unwrap();
+        task.add_side_flag(SideFlag::NeedsInput);
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        task.metadata.insert(
+            ajax_core::attention::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+            (now_secs.saturating_sub(20)).to_string(),
+        );
+        let mut registry = InMemoryRegistry::default();
+        registry.create_task(task).unwrap();
+        let mut context = CommandContext::new(ajax_core::config::Config::default(), registry);
+        assert!(!deliver_attention_pushes(&mut context, &dir));
+        let _ = fs::remove_dir_all(dir);
     }
 }

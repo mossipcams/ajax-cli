@@ -239,16 +239,14 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        let notified = if deliver_notifications {
-            crate::notify::notify_attention_transitions(context, runner)
-        } else {
-            false
-        };
-        if reloaded || state_changed || notified {
+        // Attention delivery is owned by ajax-web declarative push.
+        // CLI must not take_attention_transition or it would stamp without pushing.
+        let _ = deliver_notifications;
+        if reloaded || state_changed {
             self.persist_changed_state(context)
                 .map_err(web_error_from_cli)?;
         }
-        Ok(reloaded || state_changed || notified)
+        Ok(reloaded || state_changed)
     }
 
     fn execute_operate(

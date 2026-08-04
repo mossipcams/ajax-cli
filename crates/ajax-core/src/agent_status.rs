@@ -28,7 +28,7 @@ pub const EXPLANATION_DELEGATED_STILL_ACTIVE: &str = "Delegated runs still activ
 
 /// True when a live/operator waiting summary means the parent is blocked on
 /// children rather than on the operator. These must not set `NeedsInput` or
-/// fire attention webhooks.
+/// fire attention push.
 pub fn is_delegated_waiting_summary(summary: &str) -> bool {
     operator_explanation_for_summary(summary).is_some()
 }

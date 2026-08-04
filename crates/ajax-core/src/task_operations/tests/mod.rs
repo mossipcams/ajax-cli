@@ -179,7 +179,6 @@ pub(super) fn context_with_reviewable_task() -> CommandContext<InMemoryRegistry>
         Config {
             repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
             test_commands: vec![TestCommand::new("web", "cargo nextest run")],
-            notify: None,
             ..Config::default()
         },
         InMemoryRegistry::default(),
