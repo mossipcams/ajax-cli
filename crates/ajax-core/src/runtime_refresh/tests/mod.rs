@@ -22,7 +22,9 @@ pub(super) use crate::{
         TaskWindowStatus, TmuxStatus,
     },
     registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
-    ui_state::{derive_operator_status, TaskStatus},
+    ui_state::{
+        agent_process_is_alive, derive_operator_status, TaskStatus, AGENT_PROCESS_ALIVE_KEY,
+    },
 };
 
 pub(super) struct ObsSource {

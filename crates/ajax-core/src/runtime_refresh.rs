@@ -370,10 +370,15 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let previous = task.clone();
             if projection.process_alive {
-                task.metadata.insert(
-                    crate::ui_state::AGENT_PROCESS_ALIVE_KEY.to_string(),
-                    unix_seconds(now).to_string(),
-                );
+                if !task
+                    .metadata
+                    .contains_key(crate::ui_state::AGENT_PROCESS_ALIVE_KEY)
+                {
+                    task.metadata.insert(
+                        crate::ui_state::AGENT_PROCESS_ALIVE_KEY.to_string(),
+                        "1".to_string(),
+                    );
+                }
             } else {
                 task.metadata
                     .remove(crate::ui_state::AGENT_PROCESS_ALIVE_KEY);
@@ -509,14 +514,16 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         )?;
     }
 
-    refresh_github_check_evidence(
-        context,
-        runner,
-        SystemTime::now(),
-        &registered_runtime_tasks,
-        &github_ci_failure_at_refresh_start,
-        &mut changed,
-    );
+    if tier == RefreshTier::Full {
+        refresh_github_check_evidence(
+            context,
+            runner,
+            SystemTime::now(),
+            &registered_runtime_tasks,
+            &github_ci_failure_at_refresh_start,
+            &mut changed,
+        );
+    }
 
     Ok(changed)
 }

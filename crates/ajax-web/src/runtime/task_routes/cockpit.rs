@@ -9,7 +9,7 @@ use crate::{
     slices::cockpit,
     WebError,
 };
-use ajax_core::adapters::CommandRunner;
+use ajax_core::{adapters::CommandRunner, runtime_refresh::RefreshTier};
 use axum::{
     extract::{Path as AxumPath, Request as AxumRequest, State},
     response::Response as AxumResponse,
@@ -29,7 +29,7 @@ where
     }
 
     if let Ok(_refresh_guard) = state.control_lane.try_lock() {
-        return refresh_cockpit_and_cache_locked(&state, false);
+        return refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false);
     }
 
     let guard = state.shared();
@@ -46,6 +46,7 @@ where
 /// discard its committed state.
 pub(crate) async fn refresh_cockpit_and_cache<C, B>(
     state: &WebAppState<C, B>,
+    tier: RefreshTier,
     deliver_notifications: bool,
 ) -> AxumResponse
 where
@@ -53,11 +54,12 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let _refresh_guard = state.control_lane.lock().await;
-    refresh_cockpit_and_cache_locked(state, deliver_notifications)
+    refresh_cockpit_and_cache_locked(state, tier, deliver_notifications)
 }
 
 pub(crate) fn refresh_cockpit_and_cache_locked<C, B>(
     state: &WebAppState<C, B>,
+    tier: RefreshTier,
     deliver_notifications: bool,
 ) -> AxumResponse
 where
@@ -81,6 +83,7 @@ where
         &mut context,
         &mut runner,
         &mut bridge,
+        tier,
         deliver_notifications,
     );
     let cached_response = match &result {

@@ -198,10 +198,15 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     runner: &mut C,
     tier: RefreshTier,
 ) -> Result<bool, ajax_core::commands::CommandError> {
-    let source = crate::agent_status_cache::AgentStatusFiles::from_runtime_cache(
+    let source = crate::agent_status_cache::AgentStatusFiles::shared_from_runtime_cache(
         &context.runtime_paths.cache_dir,
     );
-    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &source, tier)
+    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(
+        context,
+        runner,
+        source.as_ref(),
+        tier,
+    )
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
