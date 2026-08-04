@@ -366,22 +366,14 @@ must never intercept or cache live Ajax endpoints, including `/api/cockpit`,
 endpoints, WebSocket/SSE endpoints, or any future `/api/*` endpoint.
 
 Browser storage is intentionally limited. The browser shell must not use
-background sync, local task queues, offline mutation replay, or cached
-operational/API data. **IndexedDB is forbidden for task truth, API payloads,
-offline mutation queues, or any replayable operational state.**
-
-The only approved IndexedDB use is a **narrow telemetry exception**: the
-explicit-event durable queue in `@/shared/lib/telemetry` (`ajax-telemetry`
-database, `events` object store). That queue holds sanitized PostHog event
-records awaiting upload — not task records, not pending mutations, not cached
-cockpit/API responses. If IndexedDB is unavailable, events still attempt direct
-PostHog capture.
+IndexedDB, background sync, local task queues, offline mutation replay, or
+cached operational/API data.
 
 PostHog SDK analytics persistence (localStorage/cookie for distinct id and
 related session properties) and telemetry identity keys (`install_id`,
-`sequence` in `localStorage`; `session_id` in `sessionStorage`) are also
-allowed as non-operational observability state alongside other UI prefs. They
-must not store prompts, terminal content, tokens, or task truth.
+`sequence` in `localStorage`; `session_id` in `sessionStorage`) are allowed as
+non-operational observability state alongside other UI prefs. They must not
+store prompts, terminal content, tokens, or task truth.
 
 No browser WASM runtime asset is currently shipped; the shell must not add Yew,
 Trunk, or a large frontend architecture unless the project explicitly adopts
@@ -428,24 +420,13 @@ only** — Web Cockpit does not require Home Screen install and functions in a
 normal Safari tab. `ajax_pwa_launch` and `ajax_pwa_resume` record launch/resume
 timing when applicable; they do not gate features.
 
-#### Durable queue (IndexedDB exception)
+#### Delivery
 
-Explicit custom events flow through a durable queue before PostHog delivery:
-
-1. **Enqueue:** `track` merges sanitized caller props with shared context, then
-   writes a record to the IndexedDB `ajax-telemetry` / `events` store (see
-   browser-storage carve-out above).
-2. **Batch upload:** `flushTelemetryQueue` reads up to **20** ready records
-   (FIFO by `created_at`), calls `posthog.capture` for each, and **deletes only
-   after successful delivery**.
-3. **Backoff retry:** failed captures increment `attempts` and set
-   `next_attempt_at` with exponential backoff (base **1 s**, cap **5 min**).
-4. **Fallback:** when IndexedDB is unavailable, events capture directly to
-   PostHog without queuing.
-
-Queued records contain event name + merged properties only — never prompts, PTY
-content, terminal buffers, tokens, or task/API payloads. `sanitizeTelemetryProps`
-drops sensitive keys and suspicious string values before enqueue.
+Explicit events call `posthog.capture` directly through the typed wrapper after
+sanitizing props and merging shared context. There is no IndexedDB or local
+event queue — delivery uses the PostHog JS SDK’s normal in-memory/network path
+(and its own localStorage/cookie identity persistence). Soft-fail on errors;
+never block Cockpit.
 
 #### Common properties (every explicit event)
 
@@ -525,7 +506,6 @@ Additional caller properties pass through `sanitizeTelemetryProps` unless noted.
 | Property | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `initialized` | boolean | yes | Whether `initTelemetry` succeeded |
-| `pending` | number | yes | IndexedDB queue depth |
 | `standalone` | boolean | yes | Current display mode |
 | `app_version` | string | no | When available from meta tag |
 

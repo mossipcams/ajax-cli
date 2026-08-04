@@ -6,13 +6,6 @@ import {
   readAppVersion,
 } from "./telemetryContext";
 import { sanitizeTelemetryProps, type TelemetryProps } from "./telemetryFilter";
-import {
-  createMemoryTelemetryStore,
-  openIndexedDbTelemetryStore,
-  type TelemetryQueuedEvent,
-  type TelemetryStore,
-} from "./telemetryStore";
-import { flushTelemetryQueue } from "./telemetryUpload";
 
 /** Custom ignorelist replaces SDK defaults — include `.ph-no-autocapture` explicitly. */
 export const POSTHOG_AUTOCAPTURE_IGNORELIST = [
@@ -52,9 +45,6 @@ function resolvePostHogKey(): string | undefined {
 }
 
 let initialized = false;
-let storeOverride: TelemetryStore | null = null;
-let idbStorePromise: Promise<TelemetryStore | null> | null = null;
-let flushPromise: Promise<void> | null = null;
 
 export type { TelemetryProps };
 
@@ -65,18 +55,9 @@ export function isTelemetryInitialized(): boolean {
 /** Test seam: reset module init guard between unit tests. */
 export function resetTelemetryForTests(): void {
   initialized = false;
-  storeOverride = null;
-  idbStorePromise = null;
-  flushPromise = null;
   navigationStartedAt = null;
   navigationFromRoute = null;
   pwaLaunchCaptured = false;
-}
-
-/** Test seam: inject an in-memory telemetry store. */
-export function setTelemetryStoreForTests(store: TelemetryStore | null): void {
-  storeOverride = store;
-  idbStorePromise = null;
 }
 
 export { isStandaloneDisplay, readAppVersion };
@@ -85,75 +66,14 @@ export function telemetryDistinctId(): string {
   return `ajax:${window.location.hostname}`;
 }
 
-function ensureStore(): Promise<TelemetryStore | null> {
-  if (storeOverride) {
-    return Promise.resolve(storeOverride);
-  }
-  if (typeof indexedDB === "undefined") {
-    return Promise.resolve(null);
-  }
-  if (!idbStorePromise) {
-    idbStorePromise = openIndexedDbTelemetryStore().catch((error) => {
-      console.warn("[ajax] telemetry store open failed", error);
-      return null;
-    });
-  }
-  return idbStorePromise;
-}
-
-function captureQueuedEvent(
-  event: string,
-  properties: Record<string, string | number | boolean>,
-): void {
-  posthog.capture(event, properties);
-}
-
-async function runFlush(store: TelemetryStore): Promise<void> {
-  let hasMore = true;
-  while (hasMore) {
-    hasMore = await flushTelemetryQueue(store, captureQueuedEvent);
-  }
-}
-
-function scheduleFlush(): void {
-  if (!initialized) {
-    return;
-  }
-  void ensureStore()
-    .then((store) => {
-      if (!store) {
-        return;
-      }
-      if (flushPromise) {
-        return flushPromise.then(() => runFlush(store));
-      }
-      flushPromise = runFlush(store).finally(() => {
-        flushPromise = null;
-      });
-      return flushPromise;
-    })
-    .catch((error) => {
-      console.warn("[ajax] telemetry flush failed", error);
-    });
-}
-
-export async function getTelemetryQueueStatus(): Promise<{
-  pending: number;
+export function getTelemetryStatus(): {
   initialized: boolean;
-}> {
-  if (!initialized) {
-    return { pending: 0, initialized: false };
-  }
-  try {
-    const store = await ensureStore();
-    if (!store) {
-      return { pending: 0, initialized: true };
-    }
-    return { pending: await store.countPending(), initialized: true };
-  } catch (error) {
-    console.warn("[ajax] telemetry queue status failed", error);
-    return { pending: 0, initialized: true };
-  }
+  standalone: boolean;
+} {
+  return {
+    initialized,
+    standalone: isStandaloneDisplay(),
+  };
 }
 
 export function initTelemetry(): void {
@@ -192,7 +112,6 @@ export function initTelemetry(): void {
     });
 
     initialized = true;
-    scheduleFlush();
   } catch (error) {
     console.warn("[ajax] telemetry init failed", error);
   }
@@ -207,33 +126,7 @@ export function track(event: string, properties?: TelemetryProps): void {
     const context = buildEventContext();
     const sanitized = sanitizeTelemetryProps(properties ?? {});
     // Context wins — callers must not override event_id/sequence/standalone/etc.
-    const merged = { ...sanitized, ...context };
-    const record: TelemetryQueuedEvent = {
-      event_id: context.event_id,
-      event_name: event,
-      properties: merged,
-      created_at: Date.now(),
-      attempts: 0,
-      next_attempt_at: 0,
-    };
-    void ensureStore()
-      .then(async (store) => {
-        if (!store) {
-          // IndexedDB unavailable — still deliver directly so metrics are not lost.
-          captureQueuedEvent(event, merged);
-          return;
-        }
-        await store.put(record);
-        scheduleFlush();
-      })
-      .catch((error) => {
-        console.warn("[ajax] telemetry enqueue failed", error);
-        try {
-          captureQueuedEvent(event, merged);
-        } catch (captureError) {
-          console.warn("[ajax] telemetry capture fallback failed", captureError);
-        }
-      });
+    posthog.capture(event, { ...sanitized, ...context });
   } catch (error) {
     console.warn("[ajax] telemetry capture failed", error);
   }
@@ -372,20 +265,11 @@ export function capturePwaResume(props: { duration_ms: number }): void {
 }
 
 export function captureTelemetryDiagnostic(): void {
-  void getTelemetryQueueStatus()
-    .then((status) => {
-      const appVersion = readAppVersion();
-      track("ajax_telemetry_diagnostic", {
-        initialized: status.initialized,
-        pending: status.pending,
-        standalone: isStandaloneDisplay(),
-        ...(appVersion ? { app_version: appVersion } : {}),
-      });
-    })
-    .catch((error) => {
-      console.warn("[ajax] telemetry diagnostic failed", error);
-    });
+  const status = getTelemetryStatus();
+  const appVersion = readAppVersion();
+  track("ajax_telemetry_diagnostic", {
+    initialized: status.initialized,
+    standalone: status.standalone,
+    ...(appVersion ? { app_version: appVersion } : {}),
+  });
 }
-
-/** Test helper: create a memory store with optional shared backing. */
-export { createMemoryTelemetryStore };

@@ -14,7 +14,6 @@ vi.mock("@/shared/lib/telemetry", async () => {
   return {
     ...actual,
     captureTelemetryDiagnostic: vi.fn(actual.captureTelemetryDiagnostic),
-    getTelemetryQueueStatus: vi.fn(actual.getTelemetryQueueStatus),
     isTelemetryInitialized: vi.fn(actual.isTelemetryInitialized),
   };
 });
@@ -169,17 +168,12 @@ describe("SettingsView", () => {
       test_in_stable: false,
     });
     vi.mocked(telemetry.isTelemetryInitialized).mockReturnValue(true);
-    vi.mocked(telemetry.getTelemetryQueueStatus).mockResolvedValue({
-      pending: 2,
-      initialized: true,
-    });
 
     render(<SettingsView />);
-    const telemetrySection = await vi.waitFor(() => {
-      const section = screen.getByTestId("dev-settings-telemetry");
-      expect(section).toHaveTextContent("2");
-      return section;
-    });
+    const telemetrySection = await vi.waitFor(() =>
+      screen.getByTestId("dev-settings-telemetry"),
+    );
+    expect(telemetrySection).toHaveTextContent("Initialized");
     expect(telemetrySection).toHaveTextContent("yes");
 
     fireEvent.click(screen.getByTestId("telemetry-diagnostic"));

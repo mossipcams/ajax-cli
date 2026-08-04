@@ -10,7 +10,6 @@ import { copyText } from "@/shared/lib/clipboard";
 import { CONFIRM_TIMEOUT_MS } from "@/shared/lib/polling";
 import {
   captureTelemetryDiagnostic,
-  getTelemetryQueueStatus,
   isStandaloneDisplay,
   isTelemetryInitialized,
   readAppVersion,
@@ -34,20 +33,7 @@ export default function SettingsView({
   const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
   const [testingInStable, setTestingInStable] = useState(false);
   const [diagnosticsOutput, setDiagnosticsOutput] = useState<string | null>(null);
-  const [telemetryPending, setTelemetryPending] = useState<number | null>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getTelemetryQueueStatus().then((status) => {
-      if (!cancelled) {
-        setTelemetryPending(status.pending);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,10 +130,6 @@ export default function SettingsView({
           <div>
             <dt>Standalone</dt>
             <dd>{telemetryStandalone ? "yes" : "no"}</dd>
-          </div>
-          <div>
-            <dt>Pending queue</dt>
-            <dd>{telemetryPending ?? "—"}</dd>
           </div>
           <div>
             <dt>App version</dt>

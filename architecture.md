@@ -168,7 +168,7 @@ Web Cockpit may send approved outbound product telemetry to PostHog Cloud using
 the Ajax project write key by default (`phc_…` in `@/shared/lib/telemetry`).
 `VITE_POSTHOG_KEY` overrides that key at build time; set it to `off` / `0` /
 `disabled` to disable telemetry. Session replay stays off. Full init, storage
-carve-outs, durable queue behavior, and property schemas live in
+rules, and property schemas live in
 [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) (PostHog
 section).
 
