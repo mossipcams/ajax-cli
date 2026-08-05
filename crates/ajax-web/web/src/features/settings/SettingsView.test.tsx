@@ -6,6 +6,7 @@ import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
 import * as telemetry from "@/shared/lib/telemetry";
 import * as pushTest from "./pushTest";
+import { setAjaxWebSessionEnabled } from "@/shared/lib/ajaxWebSessionSetting";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
 vi.mock("@/shared/lib/telemetry", async () => {
@@ -259,5 +260,41 @@ describe("SettingsView", () => {
         screen.getByText("Declarative push is not supported in this browser."),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("renders the Ajax Web Session toggle defaulting off", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    const toggle = screen.getByTestId("ajax-web-session-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Ajax Web Session")).toBeInTheDocument();
+  });
+
+  it("persists Ajax Web Session when the toggle is clicked", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    const toggle = screen.getByTestId("ajax-web-session-toggle");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("ajax.webSession")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("ajax.webSession")).toBe("false");
+  });
+
+  it("reflects a persisted Ajax Web Session flag on mount", async () => {
+    setAjaxWebSessionEnabled(true);
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    expect(screen.getByTestId("ajax-web-session-toggle")).toHaveAttribute("aria-checked", "true");
   });
 });

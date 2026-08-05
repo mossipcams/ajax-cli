@@ -149,6 +149,64 @@ where
     })
 }
 
+pub(crate) async fn axum_task_web_session<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    if !req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    {
+        return text_axum_response(400, "websocket upgrade required");
+    }
+    if !websocket_origin_allowed(req.headers()) {
+        return text_axum_response(403, "websocket origin forbidden");
+    }
+
+    let plan = {
+        let guard = state.shared();
+        match crate::slices::web_session::prepare_web_session(&guard.context, &handle) {
+            Ok(plan) => plan,
+            Err(crate::slices::web_session::WebSessionRouteError::TaskNotFound) => {
+                return json_value_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": "task not found" }),
+                );
+            }
+            Err(crate::slices::web_session::WebSessionRouteError::WorktreeMissing) => {
+                return json_value_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": "worktree missing" }),
+                );
+            }
+            Err(crate::slices::web_session::WebSessionRouteError::AgentNotSupported) => {
+                return json_value_response(
+                    422,
+                    serde_json::json!({ "ok": false, "error": "ajax web session requires cursor agent" }),
+                );
+            }
+        }
+    };
+
+    let worktree = plan.worktree_path;
+    let (mut parts, body) = req.into_parts();
+    let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(upgrade) => upgrade,
+        Err(_) => return text_axum_response(400, "websocket upgrade required"),
+    };
+    let _ = body;
+    upgrade.on_upgrade(move |socket| async move {
+        crate::adapters::web_session_rpc::bridge_task_web_session_socket(socket, worktree).await;
+    })
+}
+
 pub(crate) fn websocket_origin_allowed(headers: &HeaderMap) -> bool {
     let Some(origin) = headers
         .get(header::ORIGIN)

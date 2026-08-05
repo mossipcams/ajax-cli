@@ -2,7 +2,7 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 8] = [
+    const SLICES: [&str; 9] = [
         "cockpit",
         "dev_deploy",
         "diff_review",
@@ -11,8 +11,9 @@ mod tests {
         "push",
         "stt",
         "terminal",
+        "web_session",
     ];
-    const ADAPTERS: [&str; 9] = [
+    const ADAPTERS: [&str; 10] = [
         "assets",
         "browser_session",
         "cloudflare_access",
@@ -22,6 +23,7 @@ mod tests {
         "stt_provider",
         "terminal_pty",
         "tls",
+        "web_session_rpc",
     ];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
@@ -125,6 +127,13 @@ mod tests {
                 .iter()
                 .copied()
                 .filter(|slice| *slice != "stt")
+                .collect::<Vec<_>>();
+            forbidden_paths_for_slices(&siblings)
+        } else if adapter == "web_session_rpc" {
+            let siblings = SLICES
+                .iter()
+                .copied()
+                .filter(|slice| *slice != "web_session")
                 .collect::<Vec<_>>();
             forbidden_paths_for_slices(&siblings)
         } else {

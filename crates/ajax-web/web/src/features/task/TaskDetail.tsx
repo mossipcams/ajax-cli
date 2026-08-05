@@ -1,12 +1,19 @@
 import { lazy, Suspense, useRef } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
+import { isAjaxWebSessionEnabled } from "@/shared/lib/ajaxWebSessionSetting";
 import { statusMeta } from "@/shared/lib/state";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import AjaxWebSessionView from "@/features/session/AjaxWebSessionView";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import TaskMetaDetails from "./TaskMetaDetails";
 
+// Keep TaskTerminal lazy so vite emits only app.js + terminal.js.
 const TaskTerminal = lazy(() => import("./TaskTerminal"));
+
+function isCursorAgent(agent: string): boolean {
+  return agent.trim().toLowerCase() === "cursor";
+}
 
 interface Props {
   detail: BrowserTaskDetail;
@@ -43,6 +50,7 @@ export default function TaskDetail({
     const line = detail.agent_activity ?? detail.live_status_summary;
     return line && line !== detail.status_explanation ? line : null;
   })();
+  const showAjaxWebSession = isAjaxWebSessionEnabled() && isCursorAgent(detail.agent);
 
   return (
     <div
@@ -94,9 +102,13 @@ export default function TaskDetail({
       </section>
 
       <div>
-        <Suspense fallback={null}>
-          <TaskTerminal handle={detail.qualified_handle} />
-        </Suspense>
+        {showAjaxWebSession ? (
+          <AjaxWebSessionView handle={detail.qualified_handle} />
+        ) : (
+          <Suspense fallback={null}>
+            <TaskTerminal handle={detail.qualified_handle} />
+          </Suspense>
+        )}
       </div>
 
       <TaskMetaDetails detail={detail} onResult={onResult} />

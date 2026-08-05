@@ -21,6 +21,7 @@ import type {
   StartTaskRequest,
   TaskDiffView,
   VersionResponse,
+  WebSessionSymbolContext,
 } from "./types";
 
 export type ApiErrorKind =
@@ -184,6 +185,36 @@ export async function fetchCockpit(): Promise<BrowserCockpitView> {
 export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {
   const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}`);
   return assertDetail(value);
+}
+
+export async function fetchTaskSymbols(
+  handle: string,
+  query: string,
+): Promise<WebSessionSymbolContext[]> {
+  const params = new URLSearchParams({ q: query });
+  const value = await getJson(
+    `/api/tasks/${encodeURIComponent(handle)}/symbols?${params.toString()}`,
+  );
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("ok" in value) ||
+    (value as { ok: unknown }).ok !== true ||
+    !("symbols" in value) ||
+    !Array.isArray((value as { symbols: unknown }).symbols)
+  ) {
+    throw new ApiError("incompatible", "invalid symbols payload");
+  }
+  return (value as { symbols: Record<string, unknown>[] }).symbols.map((symbol) => ({
+    id: String(symbol.id),
+    name: String(symbol.name),
+    kind: symbol.kind as WebSessionSymbolContext["kind"],
+    path: String(symbol.path),
+    startLine: Number(symbol.start_line ?? symbol.startLine ?? 1),
+    endLine: Number(symbol.end_line ?? symbol.endLine ?? 1),
+    preview: String(symbol.preview ?? ""),
+    source: String(symbol.source ?? ""),
+  }));
 }
 
 export async function fetchTaskPullRequests(handle: string): Promise<PullRequestView[]> {

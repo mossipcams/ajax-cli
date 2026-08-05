@@ -14,6 +14,10 @@ import {
   isTelemetryInitialized,
   readAppVersion,
 } from "@/shared/lib/telemetry";
+import {
+  isAjaxWebSessionEnabled,
+  setAjaxWebSessionEnabled,
+} from "@/shared/lib/ajaxWebSessionSetting";
 import { Button } from "@/shared/ui/button";
 import {
   runPushNotificationTest,
@@ -44,7 +48,14 @@ export default function SettingsView({
   const [pushSubscriptionStatus, setPushSubscriptionStatus] =
     useState<PushSubscriptionStatus>("disabled");
   const [testingPush, setTestingPush] = useState(false);
+  const [ajaxWebSession, setAjaxWebSession] = useState(isAjaxWebSessionEnabled);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function toggleAjaxWebSession() {
+    const next = !ajaxWebSession;
+    setAjaxWebSession(next);
+    setAjaxWebSessionEnabled(next);
+  }
 
   async function refreshPushSubscriptionStatus() {
     setPushSubscriptionStatus(await getPushSubscriptionStatus());
@@ -177,6 +188,26 @@ export default function SettingsView({
           Back
         </Button>
         <h2 id="settings-heading">Settings</h2>
+      </div>
+
+      <div className="settings-section" data-testid="feature-settings">
+        <h3>Features</h3>
+        <div className="settings-toggle-row">
+          <span className="settings-toggle-label" id="ajax-web-session-label">
+            Ajax Web Session
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-labelledby="ajax-web-session-label"
+            aria-checked={ajaxWebSession}
+            data-testid="ajax-web-session-toggle"
+            className={`settings-toggle${ajaxWebSession ? " is-on" : ""}`}
+            onClick={toggleAjaxWebSession}
+          >
+            <span className="settings-toggle-thumb" aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <div className="settings-section" data-testid="dev-settings">

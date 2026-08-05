@@ -200,6 +200,152 @@ async fn axum_task_stt_rejects_cross_site_websocket_origin() {
     );
 }
 
+#[tokio::test]
+async fn axum_task_symbols_requires_browser_session_cookie() {
+    let state = super::WebAppState::new(
+        context_with_task(),
+        OkRunner,
+        TestBridge::default(),
+        scratch_dir("symbols-auth"),
+    );
+    let app = super::axum_app(state);
+
+    let response = get_public(&app, "/api/tasks/web%2Ffix-login/symbols?q=start").await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn axum_task_symbols_returns_not_found_for_missing_task() {
+    let (_state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "symbols-missing-task",
+    );
+
+    let response = get(&app, &cookie, "/api/tasks/web%2Fmissing/symbols?q=start").await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = json_of(response).await;
+    assert_eq!(body["ok"], false);
+}
+
+#[tokio::test]
+async fn axum_task_web_session_requires_browser_session_cookie() {
+    let state = super::WebAppState::new(
+        context_with_task(),
+        OkRunner,
+        TestBridge::default(),
+        scratch_dir("web-session-auth"),
+    );
+    let app = super::axum_app(state);
+
+    let response = get_public(&app, "/api/tasks/web%2Ffix-login/web-session").await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn axum_task_web_session_rejects_non_upgrade_requests() {
+    let (_state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "web-session-upgrade",
+    );
+
+    let response = get(&app, &cookie, "/api/tasks/web%2Ffix-login/web-session").await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        std::str::from_utf8(&body).unwrap(),
+        "websocket upgrade required"
+    );
+}
+
+#[tokio::test]
+async fn axum_task_web_session_rejects_cross_site_websocket_origin() {
+    let (_state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "web-session-cross-origin",
+    );
+
+    let response = websocket_get(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login/web-session",
+        Some("https://evil.example"),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        std::str::from_utf8(&body).unwrap(),
+        "websocket origin forbidden"
+    );
+}
+
+#[tokio::test]
+async fn axum_task_symbols_searches_task_worktree() {
+    let temp = scratch_dir("symbols-search");
+    std::fs::create_dir_all(temp.join("src")).expect("worktree dir");
+    std::fs::write(
+        temp.join("src/manager.rs"),
+        "pub struct SessionManager {}\n",
+    )
+    .expect("write fixture");
+    let mut task = crate::test_support::fix_login_task();
+    task.worktree_path = temp.clone();
+    task.selected_agent = ajax_core::models::AgentClient::Cursor;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "symbols-search");
+
+    let response = get(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login/symbols?q=SessionManager",
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_of(response).await;
+    assert_eq!(body["ok"], true);
+    let symbols = body["symbols"].as_array().expect("symbols array");
+    assert!(
+        symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "SessionManager"),
+        "expected SessionManager in {symbols:?}"
+    );
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[tokio::test]
+async fn axum_task_symbols_rejects_non_cursor_agent() {
+    let temp = scratch_dir("symbols-non-cursor");
+    std::fs::create_dir_all(temp.join("src")).expect("worktree dir");
+    let mut task = crate::test_support::fix_login_task();
+    task.worktree_path = temp.clone();
+    task.selected_agent = ajax_core::models::AgentClient::Codex;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "symbols-non-cursor");
+
+    let response = get(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login/symbols?q=SessionManager",
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = json_of(response).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "ajax web session requires cursor agent");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
 #[test]
 fn websocket_origin_policy_accepts_same_origin_host() {
     let request = AxumRequest::builder()

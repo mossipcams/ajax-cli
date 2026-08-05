@@ -7,6 +7,7 @@ import {
   startTask,
   fetchCockpit,
   fetchDetail,
+  fetchTaskSymbols,
   fetchVersion,
   openTaskTerminalSocket,
   taskTerminalWebSocketUrl,
@@ -71,6 +72,42 @@ describe("fetchCockpit", () => {
   it("raises a network error when fetch rejects", async () => {
     mockFetch(() => Promise.reject(new Error("offline")));
     await expect(fetchCockpit()).rejects.toMatchObject({ kind: "network" });
+  });
+});
+
+describe("fetchTaskSymbols", () => {
+  it("returns symbols for a task handle and query", async () => {
+    mockFetch((input) => {
+      const path = String(input);
+      expect(path).toContain("/api/tasks/web%2Ffix-login/symbols?q=session");
+      return json({
+        ok: true,
+        symbols: [
+          {
+            id: "src/lib.rs:1:foo",
+            name: "foo",
+            kind: "function",
+            path: "src/lib.rs",
+            start_line: 1,
+            end_line: 2,
+            preview: "fn foo() {}",
+            source: "fn foo() {}",
+          },
+        ],
+      });
+    });
+    const symbols = await fetchTaskSymbols("web/fix-login", "session");
+    expect(symbols).toHaveLength(1);
+    expect(symbols[0]?.name).toBe("foo");
+    expect(symbols[0]?.startLine).toBe(1);
+    expect(symbols[0]?.endLine).toBe(2);
+  });
+
+  it("raises an incompatible-response error on malformed payload", async () => {
+    mockFetch(() => json({ ok: true, nope: true }));
+    await expect(fetchTaskSymbols("web/fix-login", "x")).rejects.toMatchObject({
+      kind: "incompatible",
+    });
   });
 });
 

@@ -258,6 +258,27 @@ export interface DevDeployResponse {
   error?: string;
 }
 
+/** Ajax Web Session symbol hit (mirrors ajax-web `web_session` wire DTOs). */
+export type WebSessionSymbolKind =
+  | "function"
+  | "method"
+  | "struct"
+  | "class"
+  | "type"
+  | "interface"
+  | "file";
+
+export interface WebSessionSymbolContext {
+  id: string;
+  name: string;
+  kind: WebSessionSymbolKind;
+  path: string;
+  startLine: number;
+  endLine: number;
+  preview: string;
+  source: string;
+}
+
 export type RemoteResource<T> =
   | { status: "loading"; data: null; error: null }
   | { status: "ready"; data: T; error: null }

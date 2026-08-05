@@ -16,7 +16,7 @@ use axum::{
 };
 use std::time::Instant;
 
-use super::live::{axum_task_stt, axum_task_terminal};
+use super::live::{axum_task_stt, axum_task_terminal, axum_task_web_session};
 
 pub(crate) async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
 where
@@ -177,6 +177,18 @@ where
         };
         return axum_task_stt(State(state), task_handle.to_string(), req).await;
     }
+    if req.uri().path().ends_with("/web-session") {
+        let Some(task_handle) = handle.strip_suffix("/web-session") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
+        return axum_task_web_session(State(state), task_handle.to_string(), req).await;
+    }
+    if let Some(task_handle) = handle.strip_suffix("/symbols") {
+        return axum_task_symbols(State(state), task_handle.to_string(), req).await;
+    }
     if handle.ends_with("/snapshot") {
         return json_value_response(
             404,
@@ -190,6 +202,96 @@ where
         return axum_task_diff(State(state), task_handle.to_string(), req).await;
     }
     axum_task_detail::<C, B>(State(state), handle).await
+}
+
+pub(crate) async fn axum_task_symbols<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let query = parse_symbols_query(req.uri().query().unwrap_or(""));
+
+    let response = tokio::task::spawn_blocking(move || {
+        let guard = state.shared();
+        match crate::slices::web_session::prepare_web_session(&guard.context, &handle) {
+            Ok(plan) => {
+                let symbols =
+                    crate::slices::web_session::search_worktree_symbols(&plan.worktree_path, &query);
+                json_value_response(
+                    200,
+                    serde_json::json!({ "ok": true, "symbols": symbols }),
+                )
+            }
+            Err(crate::slices::web_session::WebSessionRouteError::TaskNotFound) => {
+                json_value_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": "task not found" }),
+                )
+            }
+            Err(crate::slices::web_session::WebSessionRouteError::WorktreeMissing) => {
+                json_value_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": "worktree missing" }),
+                )
+            }
+            Err(crate::slices::web_session::WebSessionRouteError::AgentNotSupported) => {
+                json_value_response(
+                    422,
+                    serde_json::json!({ "ok": false, "error": "ajax web session requires cursor agent" }),
+                )
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        web_error_response(WebError::CommandFailed(format!(
+            "symbol search worker failed: {error}"
+        )))
+    });
+    response
+}
+
+fn parse_symbols_query(query: &str) -> String {
+    query
+        .split('&')
+        .find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            if key == "q" {
+                Some(percent_decode(value))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or(""),
+                16,
+            ) {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        if bytes[index] == b'+' {
+            out.push(b' ');
+        } else {
+            out.push(bytes[index]);
+        }
+        index += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
 }
 
 pub(crate) async fn axum_task_pull_requests<C, B>(

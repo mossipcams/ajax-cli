@@ -9,7 +9,16 @@ import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import { setAjaxWebSessionEnabled } from "@/shared/lib/ajaxWebSessionSetting";
 import { readFileSync } from "node:fs";
+
+vi.mock("./TaskTerminal", () => ({
+  default: () => <div data-testid="task-terminal-panel">Terminal</div>,
+}));
+
+vi.mock("@/features/session/AjaxWebSessionView", () => ({
+  default: () => <div data-testid="ajax-web-session">Session</div>,
+}));
 
 vi.mock("@/shared/lib/swipeEnter", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
@@ -40,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
@@ -242,6 +252,36 @@ describe("TaskDetail", () => {
 
     expect(document.documentElement.classList.contains("ajax-task-open")).toBe(false);
   });
+
+  it("renders Ajax Web Session for Cursor tasks when the flag is on", async () => {
+    setAjaxWebSessionEnabled(true);
+    render(<TaskDetail detail={detail({ agent: "Cursor" })} />);
+    expect(await screen.findByTestId("ajax-web-session")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-terminal-panel")).not.toBeInTheDocument();
+  });
+
+  it("matches Cursor case-insensitively when the flag is on", async () => {
+    setAjaxWebSessionEnabled(true);
+    render(<TaskDetail detail={detail({ agent: "cursor" })} />);
+    expect(await screen.findByTestId("ajax-web-session")).toBeInTheDocument();
+  });
+
+  it("keeps the terminal for Cursor tasks when the flag is off", async () => {
+    setAjaxWebSessionEnabled(false);
+    render(<TaskDetail detail={detail({ agent: "Cursor" })} />);
+    expect(await screen.findByTestId("task-terminal-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("ajax-web-session")).not.toBeInTheDocument();
+  });
+
+  it.each(["Pi", "Claude", "Codex", "Other"])(
+    "keeps the terminal for %s tasks when the flag is on",
+    async (agent) => {
+      setAjaxWebSessionEnabled(true);
+      render(<TaskDetail detail={detail({ agent })} />);
+      expect(await screen.findByTestId("task-terminal-panel")).toBeInTheDocument();
+      expect(screen.queryByTestId("ajax-web-session")).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("TaskDetail projection surface", () => {

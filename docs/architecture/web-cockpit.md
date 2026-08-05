@@ -714,6 +714,21 @@ Both modules exist and are wired into `TaskTerminal.tsx`, and the
 mobile-WebKit terminal behavior suite, including the repeated same-dimension
 viewport-burst case, passes as of 2026-07-16.
 
+### Ajax Web Session (POC)
+
+Ajax Web Session is a feature-flagged (`ajax.webSession` in browser
+`localStorage`), Cursor-only alternate task surface in
+`crates/ajax-web/web/src/features/session/`. When the flag is off, or the task
+agent is not Cursor, Task Detail keeps the default raw xterm/tmux terminal. The
+browser does not own task truth: it presents chat history, composer state, and
+symbol context while the host runs Cursor `agent acp` (ACP JSON-RPC over stdio)
+over an authenticated task-scoped WebSocket
+(`ajax-web::slices::web_session`). Backend `prepare_web_session` also admits
+Cursor tasks only (non-Cursor → 422). Symbol search and attached context are
+presentation helpers over the task worktree; response linkification reuses
+session-local known symbols only. This path does not replace the terminal
+bridge and does not enable non-Cursor agent pickers in the POC.
+
 ### `ajax-web::adapters::terminal_pty`
 
 Owns the PTY/tmux attach mechanism behind the protected task terminal
