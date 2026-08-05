@@ -317,9 +317,12 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
       aria-labelledby="ajax-web-session-heading"
     >
       <header className="ajax-web-session-header">
-        <h2 id="ajax-web-session-heading" className="ajax-web-session-title">
-          Ajax Web Session
-        </h2>
+        <div className="ajax-web-session-header-text">
+          <h2 id="ajax-web-session-heading" className="ajax-web-session-title">
+            Session
+          </h2>
+          <p className="ajax-web-session-subtitle">Cursor on host</p>
+        </div>
         <span
           className={`ajax-web-session-status interact-pill tone-${tone}`}
           data-testid="ajax-web-session-status"
@@ -355,20 +358,37 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
 
       <div className="ajax-web-session-messages" data-testid="ajax-web-session-messages">
         {messages.length === 0 ? (
-          <p className="ajax-web-session-empty" data-testid="ajax-web-session-empty">
-            {connectionStatus === "connecting" || connectionStatus === "reconnecting"
-              ? "Connecting to Cursor on the host…"
-              : "Message Cursor. Attach symbols for context. Other sessions that need you appear above."}
-          </p>
+          <div className="ajax-web-session-empty" data-testid="ajax-web-session-empty">
+            <p className="ajax-web-session-empty-lead">
+              {connectionStatus === "connecting" || connectionStatus === "reconnecting"
+                ? "Connecting to Cursor on the host…"
+                : "Prompt Cursor. Attach symbols when the question needs code."}
+            </p>
+            {connectionStatus === "connected" || connectionStatus === "connecting" ? (
+              <p className="ajax-web-session-empty-hint">
+                Cross-session needs appear above. Esc stops a run. Mic fills the draft.
+              </p>
+            ) : null}
+          </div>
         ) : null}
         {messages.map((message) => (
-          <div
+          <article
             key={message.id}
-            className={`ajax-web-session-bubble is-${message.role}${message.streaming ? " is-streaming" : ""}`}
+            className={`ajax-web-session-turn is-${message.role}${message.streaming ? " is-streaming" : ""}`}
             data-testid={`ajax-web-session-bubble-${message.role}`}
           >
-            {renderMessageContent(message.text, knownSymbolIndex, setDetailSymbol)}
-          </div>
+            <header className="ajax-web-session-turn-meta">
+              <span className="ajax-web-session-turn-role">
+                {message.role === "user" ? "You" : "Cursor"}
+              </span>
+              {message.streaming ? (
+                <span className="ajax-web-session-turn-live">Streaming</span>
+              ) : null}
+            </header>
+            <div className="ajax-web-session-turn-body">
+              {renderMessageContent(message.text, knownSymbolIndex, setDetailSymbol)}
+            </div>
+          </article>
         ))}
         <div ref={messagesEndRef} />
       </div>
@@ -392,7 +412,24 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
           </div>
         ) : null}
 
-        <div className="ajax-web-session-composer-row">
+        <textarea
+          ref={inputRef}
+          className="ajax-web-session-input"
+          data-testid="ajax-web-session-input"
+          value={draft}
+          placeholder="Prompt the agent…"
+          rows={2}
+          disabled={!composerEnabled}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              if (canSend) sendPrompt();
+            }
+          }}
+        />
+
+        <div className="ajax-web-session-composer-toolbar">
           <button
             type="button"
             className="ajax-web-session-add-context"
@@ -400,47 +437,30 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
             disabled={!composerEnabled}
             onClick={() => setSymbolSheetOpen(true)}
           >
-            Add context
+            Context
           </button>
-          <textarea
-            ref={inputRef}
-            className="ajax-web-session-input"
-            data-testid="ajax-web-session-input"
-            value={draft}
-            placeholder="Message the agent…"
-            rows={3}
-            disabled={!composerEnabled}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                if (canSend) sendPrompt();
-              }
-            }}
-          />
-        </div>
-
-        <div className="ajax-web-session-composer-actions">
-          {showStop ? (
-            <button
-              type="button"
-              className="ajax-web-session-action is-stop"
-              data-testid="ajax-web-session-stop"
-              onClick={abort}
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="ajax-web-session-action is-send"
-              data-testid="ajax-web-session-send"
-              disabled={!canSend}
-              onClick={sendPrompt}
-            >
-              Send
-            </button>
-          )}
+          <div className="ajax-web-session-composer-actions">
+            {showStop ? (
+              <button
+                type="button"
+                className="ajax-web-session-action is-stop"
+                data-testid="ajax-web-session-stop"
+                onClick={abort}
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="ajax-web-session-action is-send"
+                data-testid="ajax-web-session-send"
+                disabled={!canSend}
+                onClick={sendPrompt}
+              >
+                Send
+              </button>
+            )}
+          </div>
         </div>
 
         <SessionComposerKeys

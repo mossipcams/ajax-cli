@@ -294,9 +294,10 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 
 ### Surface: Ajax Web Session (flagged Operate alternate)
 - Behind `ajax.webSession` on Cursor tasks only; otherwise terminal remains the work surface.
-- Composition (top → bottom): status chip → cross-session attention rail → transcript → composer dock → literal terminal key bar (Esc/Tab/arrows/Ctrl/Paste/⌫/Mic) wired to the composer, not a PTY.
-- Keyboard-open: pin the session column to the visualViewport band (`--app-top` / `--app-height`); key bar flush above the soft keyboard; attention rail sticky.
-- States: empty, connecting, ready, running, reconnecting, error+Retry. Connection recovery Retry is the sole primary recovery CTA.
+- Composition (top → bottom): uppercase tracked SESSION chrome + status pill → attention rail → console transcript (role gutter + turn body, not chat bubbles) → interact-style composer dock → literal terminal key bar.
+- Assistant turns use mono; operator turns use sans. Soft Steel Blue only on Send / running / You gutter.
+- Keyboard-open: pin the session column to the visualViewport band; key bar flush above the soft keyboard; attention rail sticky.
+- States: empty (operational copy), connecting, ready, running, reconnecting, error+Retry.
 - iOS Safari / Home Screen first; no classic PWA packaging.
 
 ## 6. Do's and Don'ts
