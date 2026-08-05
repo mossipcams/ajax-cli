@@ -90,52 +90,99 @@ conscious call either way.
 
 ## 2. Decision rule
 
-The filter that rules candidates out:
+**Revised 2026-08-05** after Matt's input: *agent limits and intelligence are
+changing weekly.* The first rule ("prefer substrates you control") was right but
+too weak — it ranks by stability and misses direction of travel. Superseded by:
 
-> **Prefer work that stands on substrates you control. Discount work that
-> depends on surfaces you don't.**
+> **Prefer work whose value increases as agents improve. Discount work whose
+> value depends on agents staying limited.**
 
 Applied:
 
-| Candidate | Depends on | Verdict |
+| Candidate | As agents improve | Verdict |
 | --- | --- | --- |
-| Fleet triage / ranked inbox | Ajax task truth | **Compounds** |
-| Lifecycle & reconciliation depth | git, tmux | **Compounds** |
-| Cost tracking | agent session JSONL on disk | Medium — semi-stable |
-| iOS Safari terminal fidelity | Apple | **Cap it** |
-| Pane-scraped wait detection | vendor CLI chrome | **Cap it** |
+| Agent knowledge as config, not code | churn accelerates | **Appreciates** |
+| Diff review / judgment depth | more diffs, less human-written | **Appreciates** |
+| Fleet triage / ranked inbox | more parallel tasks per operator | **Appreciates** |
+| Rate-limit headroom as scheduling input | more agents contending | **Appreciates** |
+| Lifecycle & reconciliation depth | stable (git, tmux) | Holds |
+| Approval / wait detection parity | fewer approvals needed | **Depreciates** |
+| Pane-scraped wait chrome | vendor churn, shrinking payoff | **Depreciates** |
+| iOS Safari terminal fidelity | flat | **Cap it** |
 
-This rule is the actual deliverable. It survives the audience decision.
+The premise Ajax was built on — an operator catching interrupts — is a function
+of agent *immaturity*. That value decays. What appreciates is deciding what
+ships: more agents producing more changes that a human trusts less per unit.
+The durable seat is coordination and trust, not interrupt handling.
+
+### Structural consequence
+
+`Config` (`crates/ajax-core/src/config.rs:206`) carries `repos`, `test_commands`,
+`stt` — and **nothing about agents**, under `deny_unknown_fields`. Every agent
+fact is compiled in:
+
+- capability profiles: `const fn claude_profile()` … (`agent_capability.rs:85`)
+- launch args, including a special-cased `AgentClient::Other if program ==
+  "cursor"` (`adapters/agent.rs:21`)
+- `AgentClient` is a closed enum (`models/intent.rs:19`)
+- pane needles (`pane_fallback.rs`)
+
+So 100% of Ajax's agent knowledge ships on a Rust release cycle, in a world
+changing weekly. Under churn, the highest-leverage work is whatever lowers the
+cost of adapting. That is now T1.1.
 
 ## 3. Ranked candidates
 
 ### Tier 1 — worth building under every audience outcome
 
-**T1.1 — Surface capability honesty (small).**
-The capability matrix exists in code but never reaches the operator. Show, per
-task, whether Ajax can natively detect an approval wait for that agent. Telling
-the operator "Ajax cannot detect approval waits for Cursor" is more valuable —
-and far cheaper — than a brittle scraper that fails silently. Converts an
-invisible reliability hole into a known limitation.
-*Files: `agent_capability.rs` (read), web/TUI task detail projection.*
+**T1.1 — Move agent knowledge from code to config (medium).**
+Add an agent manifest to `Config`: launch program and args, capability profile,
+hook wiring, pane needles. Keep `AgentClient` for built-in defaults but let
+config override and add clients without a recompile. This is the adaptation-cost
+fix, and it delivers capability honesty for free — once profiles are data, the
+UI can show what Ajax can and cannot detect per agent.
+*Files: `config.rs:206`, `agent_capability.rs`, `adapters/agent.rs`,
+`models/intent.rs:19`.*
+*Under weekly churn this is the highest-leverage item in the repo: it converts
+every future agent change from a release into an edit.*
 
-**T1.2 — Fleet triage (medium).**
-Replace severity-then-alphabetical with real ranking: dwell time in current
-status, staleness, blocked duration. This is the "operator of a fleet" promise,
-and it gets more valuable the more parallel tasks run — which is the author's
-own use case and the one a second user would hit immediately.
-*Files: `commands/projection.rs:108`, `recommended.rs`.*
+**T1.2 — Deepen diff review and judgment (medium–large).**
+`diff_review.rs` already has the right bones — `DiffFileRole`,
+`classify_diff_path`, `DiffFlag`/`DiffFlagSeverity`, `assess_diff_judgment`.
+This is the surface whose value rises fastest as agents improve: more changes,
+each one trusted less per unit, arriving faster than a human can read them.
+Invest in what makes a diff *safe to accept* — risk-weighted file roles, blast
+radius, test-coverage signal, what changed since last look.
 
-**T1.3 — Ship cost tracking (small–medium).**
-The only shelved plan in 256. `feat-cost-tracking.md` is draft v2 with data
-sources already probed and verified on the host. Tokens per task via read-time
-scan of Claude/Codex session JSONL; no schema change, no supervisor change.
-Answers "which of my twelve parallel tasks burned the rate limit" — a question
-that exists only because Ajax works.
+**T1.3 — Fleet triage (medium).**
+Replace severity-then-alphabetical (`commands/projection.rs:113`) with real
+ranking: dwell time, staleness, blocked duration. Appreciates directly with
+parallelism — the smarter agents get, the more of them run at once.
 
-**T1.4 — Declare a web terminal fidelity bar (policy, not code).**
-Not a feature: a budget. Write down which iOS Safari behaviors are supported and
-close the rest won't-fix. Nothing in Tier 1 gets built until this frees capacity.
+**T1.4 — Rate-limit headroom as a scheduling input (new; small–medium).**
+Today `RateLimited` is deliberately silenced as transient noise
+(`attention/tests.rs:655`). If limits move weekly and many agents contend, limit
+headroom is the binding constraint on fleet throughput, not an annoyance.
+Minimum viable: surface per-agent limit state so "which agent has room for this
+task right now" is answerable. Reframes T1.5 as well — the useful metric is burn
+rate against a window, not cumulative tokens.
+
+**T1.5 — Ship cost tracking (small–medium).**
+The only shelved plan in 256; `feat-cost-tracking.md` is draft v2 with data
+sources already probed on the host. Its instinct to exclude dollars ("prices
+drift") is now clearly correct. Reframe around burn-rate-vs-window per T1.4.
+
+**T1.6 — Declare a web terminal fidelity bar (policy, not code).**
+Unchanged and still load-bearing. A budget, not a feature. Nothing above gets
+capacity until this lands.
+
+### Explicitly not worth further investment
+
+**Approval/wait detection parity for Cursor and Pi.** Previously ranked first;
+demoted. Chasing native-quality wait detection through pane scraping spends
+effort on a shrinking problem: it depends on vendor chrome that churns weekly,
+and on agents needing frequent approval, which is exactly what improving agents
+stop doing. Surface the limitation (free, via T1.1) and stop there.
 
 ### Tier 2 — gated on the audience decision
 
@@ -161,12 +208,24 @@ Proposed sequence:
    is also a signal — and nothing is wasted, because Tier 1 was worth building
    regardless.
 
-## 5. Counter-argument (recorded honestly)
+## 5. Counter-arguments (recorded honestly)
 
-If Ajax is genuinely personal-only, T1.2 matters less: the author feels terminal
-quality every day and may never run enough parallel tasks for ranking to pay
-off. The rebuttal is the 4.2:1 fix ratio — terminal work is not converging, so
-more of it is unlikely to be the highest-value use of the next cycle.
+**Personal-only weakens T1.3.** If the author never runs enough parallel tasks,
+ranking may not pay off, and terminal quality is felt daily instead. Rebuttal:
+the 4.2:1 fix ratio says terminal work is not converging.
+
+**Weekly churn is an argument against building anything large.** A real reading:
+under high environmental churn, optionality beats commitment, and the correct
+move is to stay thin. This is why T1.1 is ranked first — it is precisely the
+item that buys optionality rather than spending it. T1.2 is the one genuinely
+large bet here, and it is defensible only because review load is the one thing
+that rises under *every* scenario where agents improve.
+
+**The premise itself could be decaying.** If agents get good enough to run
+unattended and self-review, the operator layer thins. The honest read is that
+the *interrupt* layer thins while the *trust* layer thickens — someone still
+decides what ships. But that is a bet, not a fact, and it is the assumption most
+worth revisiting if the next few months invalidate it.
 
 ## 6. Checklist
 
@@ -190,9 +249,15 @@ git log --pretty=%s | grep -oE "^[a-z]+" | sort | uniq -c | sort -rn
 
 ## 8. Risks
 
-- Capping web terminal work (T1.4) is the load-bearing move; without it Tier 1
+- Capping web terminal work (T1.6) is the load-bearing move; without it Tier 1
   will not get capacity and this plan changes nothing.
 - T1.1 makes a reliability limitation visible. That is the point, but it will
   make Ajax feel weaker on Cursor/Pi before it feels stronger.
-- T1.3's data sources are third-party on-disk formats and can drift; the plan
+- T1.1 must not become a plugin framework. `AGENTS.md` forbids broad generic
+  abstractions without concrete need — the concrete need is weekly agent churn,
+  and the scope is a config-backed manifest, not an extension API.
+- T1.5's data sources are third-party on-disk formats and can drift; the plan
   file already flags the cumulative-vs-incremental check for Codex.
+- The ranking rests on the assumption that agents improve fast enough to shift
+  load from approvals to review. Re-check that assumption quarterly; if approvals
+  stay frequent, the demoted item comes back.
