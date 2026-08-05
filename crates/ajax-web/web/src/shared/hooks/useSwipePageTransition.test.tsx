@@ -96,7 +96,7 @@ describe("useSwipePageTransition", () => {
     );
   });
 
-  it("springs back without navigation on a short drag", async () => {
+  it("ignores sub-dead-zone drags without telemetry", async () => {
     const onLeft = vi.fn();
     render(<Harness onLeft={onLeft} />);
     const node = screen.getByTestId("swipe-target");
@@ -104,6 +104,24 @@ describe("useSwipePageTransition", () => {
     node.dispatchEvent(touch("touchstart", 200, 40, node));
     node.dispatchEvent(touch("touchmove", 180, 42, node));
     node.dispatchEvent(touch("touchend", 180, 42, node));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe("");
+    expect(telemetry.captureSwipe).not.toHaveBeenCalled();
+  });
+
+  it("springs back without navigation when engaged but under commit", async () => {
+    const onLeft = vi.fn();
+    render(<Harness onLeft={onLeft} />);
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    node.dispatchEvent(touch("touchmove", 150, 42, node));
+    node.dispatchEvent(touch("touchend", 150, 42, node));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
