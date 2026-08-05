@@ -4,6 +4,7 @@ import {
   createSpeechTransport,
   encodeSpeechAudioFrame,
   floatSamplesToPcm16,
+  isMicrophonePermissionDenied,
   type SpeechTransportCallbacks,
   type SpeechTransportPlatform,
   type SpeechTransportSocket,
@@ -85,6 +86,27 @@ function audioFrameCount(sent: Array<string | ArrayBuffer | Uint8Array>): number
 }
 
 describe("speech transport", () => {
+  it("detects microphone permission denial", () => {
+    expect(isMicrophonePermissionDenied(new DOMException("denied", "NotAllowedError"))).toBe(true);
+    expect(isMicrophonePermissionDenied(new Error("Permission denied by user"))).toBe(true);
+    expect(isMicrophonePermissionDenied(new Error("Web Audio is unavailable"))).toBe(false);
+  });
+
+  it("rejects mic permission denial without onError or onClosed", async () => {
+    const socket = fakeSocket();
+    const { platform } = platformFor(socket);
+    const events = callbacks();
+    vi.mocked(platform.getUserMedia).mockRejectedValue(
+      new DOMException("Permission denied", "NotAllowedError"),
+    );
+    const transport = createSpeechTransport("web/fix-login", events, platform);
+
+    await expect(transport.start()).rejects.toThrow();
+    expect(events.onError).not.toHaveBeenCalled();
+    expect(events.onClosed).not.toHaveBeenCalled();
+    expect(platform.openSocket).not.toHaveBeenCalled();
+  });
+
   it("frames raw PCM with a sequence prefix and prevents duplicate starts", async () => {
     const socket = fakeSocket();
     const { platform } = platformFor(socket);

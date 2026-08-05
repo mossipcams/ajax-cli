@@ -12,6 +12,20 @@ export const PUSH_TEST_DELAY_MS = 20_000;
 
 export type PushStatusCallback = (status: string) => void;
 
+export type PushSubscriptionStatus = "enabled" | "disabled" | "unavailable";
+
+export async function getPushSubscriptionStatus(): Promise<PushSubscriptionStatus> {
+  if (!window.pushManager) {
+    return "unavailable";
+  }
+  try {
+    const subscription = await window.pushManager.getSubscription();
+    return subscription ? "enabled" : "disabled";
+  } catch {
+    return "unavailable";
+  }
+}
+
 interface PushSubscriptionJson {
   endpoint: string;
   keys: {

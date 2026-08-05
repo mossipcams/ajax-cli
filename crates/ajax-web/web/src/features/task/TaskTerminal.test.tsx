@@ -380,11 +380,19 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(taskTerminalFeatureSource).toMatch(/aria-label="Paste"/);
   });
 
-  it("includes Backspace in CONTROL_KEYS with DEL payload", () => {
+  it("renders Backspace between Paste and Mic with DEL payload outside CONTROL_KEYS", () => {
     const controlKeysBlock =
       taskTerminalFeatureSource.match(/const CONTROL_KEYS\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
-    expect(controlKeysBlock).toMatch(/ariaLabel:\s*"Backspace"/);
-    expect(controlKeysBlock).toMatch(/data:\s*"\\x7f"/);
+    expect(controlKeysBlock).not.toMatch(/ariaLabel:\s*"Backspace"/);
+    expect(taskTerminalFeatureSource).toMatch(/const BACKSPACE_KEY\s*=\s*\{[\s\S]*?data:\s*"\\x7f"/);
+    expect(taskTerminalFeatureSource).toMatch(/aria-label=\{BACKSPACE_KEY\.ariaLabel\}/);
+
+    const paste = taskTerminalSource.indexOf(">\n            Paste");
+    const backspace = taskTerminalSource.indexOf("aria-label={BACKSPACE_KEY.ariaLabel}");
+    const mic = taskTerminalSource.indexOf(">\n            Mic");
+    expect(paste).toBeGreaterThan(-1);
+    expect(backspace).toBeGreaterThan(paste);
+    expect(mic).toBeGreaterThan(backspace);
   });
 
   it("marks Backspace and arrows as repeatable hotbar keys only", () => {
@@ -540,7 +548,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 });
 
 describe("TaskTerminal speech input", () => {
-  it("auto-inserts ordered finals with no staging composer, and one Mic shortcut after Paste", () => {
+  it("auto-inserts ordered finals with no staging composer, and orders Paste, Backspace, then Mic", () => {
     expect(taskTerminalFeatureSource).not.toMatch(/TerminalComposer/);
     expect(taskTerminalFeatureSource).not.toMatch(/terminal-composer/);
     expect(taskTerminalFeatureSource).not.toMatch(/insertComposerTranscript/);
@@ -558,9 +566,11 @@ describe("TaskTerminal speech input", () => {
     expect(onFinal).toMatch(/undoInsertedSpeech\(\)/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
+    const backspace = taskTerminalSource.indexOf("aria-label={BACKSPACE_KEY.ariaLabel}");
     const mic = taskTerminalSource.indexOf(">\n            Mic");
     expect(paste).toBeGreaterThan(-1);
-    expect(mic).toBeGreaterThan(paste);
+    expect(backspace).toBeGreaterThan(paste);
+    expect(mic).toBeGreaterThan(backspace);
     expect(taskTerminalFeatureSource).toMatch(/Start voice input/);
     expect(taskTerminalFeatureSource).toMatch(/Stop voice input/);
     expect(taskTerminalFeatureSource).toMatch(/micArmed/);
@@ -589,6 +599,13 @@ describe("TaskTerminal speech input", () => {
   it("allows a recoverable error to retry voice input", () => {
     expect(taskTerminalFeatureSource).toMatch(/speechModelRef\.current\.state\s*===\s*["']error["']/);
     expect(taskTerminalFeatureSource).toMatch(/toggleMic\s*\(\s*\)/);
+  });
+
+  it("cancels voice input when microphone permission is denied", () => {
+    expect(taskTerminalFeatureSource).toMatch(/isMicrophonePermissionDenied/);
+    expect(taskTerminalFeatureSource).toMatch(
+      /transport\.start\(\)\.catch\([\s\S]*?isMicrophonePermissionDenied[\s\S]*?cancelSpeechInput\(\)/,
+    );
   });
 
   it("surfaces an unexpected STT socket close as a recoverable error", () => {
