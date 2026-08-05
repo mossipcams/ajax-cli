@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
@@ -30,7 +30,7 @@ interface TaskRowProps extends ActionProps {
   onOpenTask?: (handle: string) => void;
 }
 
-function TaskRow({
+const TaskRow = memo(function TaskRow({
   card,
   nowSecs,
   offset,
@@ -107,7 +107,7 @@ function TaskRow({
       </button>
     </div>
   );
-}
+});
 
 export default function TaskList({
   cockpit,

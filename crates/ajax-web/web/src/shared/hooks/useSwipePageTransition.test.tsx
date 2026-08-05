@@ -16,6 +16,7 @@ vi.mock("@/shared/lib/telemetry", async () => {
   return {
     ...actual,
     captureSwipe: vi.fn(actual.captureSwipe),
+    markNavigationStart: vi.fn(actual.markNavigationStart),
   };
 });
 
@@ -62,6 +63,7 @@ describe("useSwipePageTransition", () => {
     vi.useFakeTimers();
     vi.mocked(setSwipeEnterDirection).mockClear();
     vi.mocked(telemetry.captureSwipe).mockClear();
+    vi.mocked(telemetry.markNavigationStart).mockClear();
   });
 
   afterEach(() => {
@@ -191,6 +193,25 @@ describe("useSwipePageTransition", () => {
     expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     setTerminalSelecting(false);
+  });
+
+  it("aborts settle on unmount without swipe or nav mark side effects", async () => {
+    const onLeft = vi.fn();
+    const { unmount } = render(<Harness onLeft={onLeft} />);
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    node.dispatchEvent(touch("touchmove", 120, 42, node));
+    node.dispatchEvent(touch("touchend", 120, 42, node));
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
+    expect(telemetry.captureSwipe).not.toHaveBeenCalled();
+    expect(telemetry.markNavigationStart).not.toHaveBeenCalled();
   });
 
   it("does not arm swipe on terminal when a double-tap is pending", async () => {

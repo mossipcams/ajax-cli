@@ -3,6 +3,7 @@ import { renderHook, act } from "@testing-library/react";
 import cockpitFixture from "@/fixtures/cockpit.json";
 import type { BrowserCockpitView } from "@/shared/lib/types";
 import { ApiError } from "@/shared/lib/api";
+import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { useCockpitResource } from "./useCockpitResource";
 
 const cockpit = cockpitFixture as BrowserCockpitView;
@@ -28,6 +29,7 @@ describe("useCockpitResource", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    while (gestureBusyGate.isBusy()) gestureBusyGate.end();
   });
 
   it("starts in loading with checking connection", () => {
@@ -284,6 +286,46 @@ describe("useCockpitResource", () => {
     expect(result.current.cockpit.status).toBe("ready");
     expect(result.current.cockpit.data).toEqual(cockpit);
     expect(result.current.connection).toBe("connected");
+  });
+
+  it("defers interval poll projection while a gesture is active and flushes on idle", async () => {
+    fetchCockpit.mockResolvedValue(cockpit);
+    const { result } = renderHook(() => useCockpitResource());
+    gestureBusyGate.begin();
+
+    await act(async () => {
+      await result.current.loadCockpit({ deferDuringGesture: true });
+    });
+
+    expect(result.current.cockpit.status).toBe("loading");
+    expect(fetchCockpit).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      gestureBusyGate.end();
+    });
+
+    expect(result.current.cockpit.status).toBe("ready");
+    expect(result.current.cockpit.data).toEqual(cockpit);
+  });
+
+  it("does not defer resume or mutation applyCockpit while a gesture is active", async () => {
+    fetchCockpit.mockResolvedValue(cockpit);
+    const { result } = renderHook(() => useCockpitResource());
+    gestureBusyGate.begin();
+
+    await act(async () => {
+      await result.current.loadCockpit({ trailing: true });
+    });
+
+    expect(result.current.cockpit.status).toBe("ready");
+
+    const changed = structuredClone(cockpit);
+    changed.cards[0] = { ...changed.cards[0], title: "Mutation title" };
+    act(() => {
+      result.current.applyCockpit(changed);
+    });
+
+    expect(result.current.cockpit.data?.cards[0].title).toBe("Mutation title");
   });
 
   it("keeps loadCockpit, applyCockpit, and applyConnectionError referentially stable", () => {

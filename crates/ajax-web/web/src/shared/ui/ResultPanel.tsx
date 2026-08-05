@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { DROP_UNDO_MS, RESULT_AUTO_DISMISS_MS, RESULT_SUCCESS_DISMISS_MS } from "@/shared/lib/polling";
+import {
+  CONFIRM_TIMEOUT_MS,
+  DROP_UNDO_MS,
+  RESULT_AUTO_DISMISS_MS,
+  RESULT_SUCCESS_DISMISS_MS,
+} from "@/shared/lib/polling";
 import { Button } from "./button";
 
 interface Props {
@@ -11,6 +16,13 @@ interface Props {
   onUndo?: () => void;
   /** Commit a pending pre-commit action when the undo window elapses. */
   onCommit?: () => void;
+  /** Shell confirm: primary proceeds into the mutation path. */
+  onConfirm?: () => void;
+  /** Shell confirm: operator cancelled (not timeout). */
+  onCancelConfirm?: () => void;
+  /** Shell confirm: timeout fired — parent emits confirm_timeout telemetry. */
+  onConfirmTimeout?: () => void;
+  confirmTimeoutMs?: number;
 }
 
 export default function ResultPanel({
@@ -20,31 +32,59 @@ export default function ResultPanel({
   onDismiss,
   onUndo,
   onCommit,
+  onConfirm,
+  onCancelConfirm,
+  onConfirmTimeout,
+  confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
 }: Props) {
   const trimmedOutput = output?.trim() || null;
-  const undoArmed = !!onUndo || !!onCommit;
+  const confirmMode = !!onConfirm;
+  const undoArmed = !confirmMode && (!!onUndo || !!onCommit);
   const onDismissRef = useRef(onDismiss);
   const onUndoRef = useRef(onUndo);
   const onCommitRef = useRef(onCommit);
+  const onConfirmRef = useRef(onConfirm);
+  const onCancelConfirmRef = useRef(onCancelConfirm);
+  const onConfirmTimeoutRef = useRef(onConfirmTimeout);
   onDismissRef.current = onDismiss;
   onUndoRef.current = onUndo;
   onCommitRef.current = onCommit;
+  onConfirmRef.current = onConfirm;
+  onCancelConfirmRef.current = onCancelConfirm;
+  onConfirmTimeoutRef.current = onConfirmTimeout;
 
   useEffect(() => {
-    const dismissMs = undoArmed
-      ? DROP_UNDO_MS
-      : isError
-        ? RESULT_AUTO_DISMISS_MS
-        : RESULT_SUCCESS_DISMISS_MS;
+    const dismissMs = confirmMode
+      ? confirmTimeoutMs
+      : undoArmed
+        ? DROP_UNDO_MS
+        : isError
+          ? RESULT_AUTO_DISMISS_MS
+          : RESULT_SUCCESS_DISMISS_MS;
     const timer = setTimeout(() => {
+      if (confirmMode) {
+        onConfirmTimeoutRef.current?.();
+        onDismissRef.current?.();
+        return;
+      }
       if (undoArmed) onCommitRef.current?.();
       onDismissRef.current?.();
     }, dismissMs);
     return () => clearTimeout(timer);
-  }, [message, undoArmed, isError]);
+  }, [message, confirmMode, undoArmed, isError, confirmTimeoutMs]);
 
   function dismiss() {
     if (undoArmed) onUndoRef.current?.();
+    onDismissRef.current?.();
+  }
+
+  function cancelConfirm() {
+    onCancelConfirmRef.current?.();
+    onDismissRef.current?.();
+  }
+
+  function confirm() {
+    onConfirmRef.current?.();
     onDismissRef.current?.();
   }
 
@@ -53,17 +93,29 @@ export default function ResultPanel({
       className={`result-panel${isError ? " is-error" : ""}`}
       role={isError ? "alert" : "status"}
       aria-live={isError ? "assertive" : "polite"}
+      data-testid={confirmMode ? "result-panel-confirm" : "result-panel"}
     >
       <p className="result-message">{message}</p>
       {trimmedOutput ? <pre className="result-output">{trimmedOutput}</pre> : null}
-      {undoArmed ? (
+      {confirmMode ? (
+        <>
+          <Button type="button" variant="default" onClick={confirm}>
+            Confirm
+          </Button>
+          <Button type="button" variant="secondary" onClick={cancelConfirm}>
+            Cancel
+          </Button>
+        </>
+      ) : undoArmed ? (
         <Button type="button" variant="default" onClick={dismiss}>
           Undo
         </Button>
       ) : null}
-      <Button type="button" variant="secondary" onClick={dismiss}>
-        Dismiss
-      </Button>
+      {!confirmMode ? (
+        <Button type="button" variant="secondary" onClick={dismiss}>
+          Dismiss
+        </Button>
+      ) : null}
     </div>
   );
 }

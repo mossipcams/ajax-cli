@@ -14,6 +14,7 @@ import {
   navigateSwipeTranslateX,
   type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
+import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { captureSwipe, markNavigationStart } from "@/shared/lib/telemetry";
 import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
@@ -66,7 +67,42 @@ export function useSwipePageTransition(
   const [dragging, setDragging] = useState(false);
   const [settling, setSettling] = useState(false);
   const settlingRef = useRef(false);
+  const dragGestureHeldRef = useRef(false);
+  const settleGestureHeldRef = useRef(false);
   const commitRef = useRef<(direction: SwipePageCommitDirection) => void>(() => {});
+
+  const holdDragGesture = () => {
+    if (!dragGestureHeldRef.current) {
+      dragGestureHeldRef.current = true;
+      gestureBusyGate.begin();
+    }
+  };
+
+  const releaseDragGesture = () => {
+    if (dragGestureHeldRef.current) {
+      dragGestureHeldRef.current = false;
+      gestureBusyGate.end();
+    }
+  };
+
+  const holdSettleGesture = () => {
+    if (!settleGestureHeldRef.current) {
+      settleGestureHeldRef.current = true;
+      gestureBusyGate.begin();
+    }
+  };
+
+  const releaseSettleGesture = () => {
+    if (settleGestureHeldRef.current) {
+      settleGestureHeldRef.current = false;
+      gestureBusyGate.end();
+    }
+  };
+
+  const releaseGestures = () => {
+    releaseDragGesture();
+    releaseSettleGesture();
+  };
 
   useEffect(() => {
     const root = ref.current;
@@ -84,9 +120,30 @@ export function useSwipePageTransition(
       touchTargetRef.current = null;
       settlingRef.current = false;
       maxDistanceRef.current = 0;
+      releaseGestures();
       setDragX(0);
       setDragging(false);
       setSettling(false);
+    };
+
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let settleOnTransitionEnd: ((event: TransitionEvent) => void) | null = null;
+    let settleAborted = false;
+
+    const clearSettle = () => {
+      if (settleOnTransitionEnd) {
+        root.removeEventListener("transitionend", settleOnTransitionEnd);
+        settleOnTransitionEnd = null;
+      }
+      if (settleTimer !== null) {
+        window.clearTimeout(settleTimer);
+        settleTimer = null;
+      }
+    };
+
+    const abortSettle = () => {
+      settleAborted = true;
+      clearSettle();
     };
 
     const animateTo = (
@@ -104,17 +161,20 @@ export function useSwipePageTransition(
     ) => {
       if (settlingRef.current) return;
       settlingRef.current = true;
+      settleAborted = false;
+      releaseDragGesture();
+      holdSettleGesture();
       setDragging(false);
       setSettling(true);
       setDragX(targetX);
       const settleStartedAt = performance.now();
+      const fromRouteAtCommit = readFromRoute();
 
       let finished = false;
       const finish = () => {
-        if (finished) return;
+        if (finished || settleAborted) return;
         finished = true;
-        root.removeEventListener("transitionend", onTransitionEnd);
-        window.clearTimeout(timer);
+        clearSettle();
         const settle_ms = Math.round(performance.now() - settleStartedAt);
         if (swipeOutcome) {
           const page_width_px = pageWidth();
@@ -130,14 +190,20 @@ export function useSwipePageTransition(
             completed: swipeOutcome.completed,
             cancelled: swipeOutcome.cancelled,
             settle_ms,
-            from_route: readFromRoute(),
+            from_route: fromRouteAtCommit,
             ...(swipeOutcome.to_route ? { to_route: swipeOutcome.to_route } : {}),
           });
         }
         if (direction) setSwipeEnterDirection(direction);
         if (then) {
-          markNavigationStart(readFromRoute(), "swipe");
+          const toRoute = swipeOutcome?.to_route;
+          if (toRoute !== undefined && toRoute === window.location.hash) {
+            reset();
+            return;
+          }
+          markNavigationStart(fromRouteAtCommit, "swipe");
           // Navigating unmounts this surface; skip reset to avoid a snap-back flash.
+          releaseSettleGesture();
           then();
         } else {
           reset();
@@ -149,7 +215,8 @@ export function useSwipePageTransition(
         finish();
       };
 
-      const timer = window.setTimeout(finish, SWIPE_PAGE_COMMIT_MS + 40);
+      settleTimer = window.setTimeout(finish, SWIPE_PAGE_COMMIT_MS + 40);
+      settleOnTransitionEnd = onTransitionEnd;
       root.addEventListener("transitionend", onTransitionEnd);
     };
 
@@ -226,6 +293,7 @@ export function useSwipePageTransition(
       if (distance > maxDistanceRef.current) {
         maxDistanceRef.current = distance;
       }
+      holdDragGesture();
       setDragging(true);
       setSettling(false);
       setDragX(navigateSwipeTranslateX(next));
@@ -296,6 +364,8 @@ export function useSwipePageTransition(
     root.addEventListener("touchcancel", reset, { capture, passive: true });
 
     return () => {
+      abortSettle();
+      releaseGestures();
       root.removeEventListener("touchstart", onTouchStart, capture);
       root.removeEventListener("touchmove", onTouchMove, capture);
       root.removeEventListener("touchend", onTouchEnd, capture);

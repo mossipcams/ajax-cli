@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, waitFor, screen, act, within, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, fireEvent, screen, waitFor, act, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import App from "./App";
+import * as telemetry from "@/shared/lib/telemetry";
 import appSource from "./App.tsx?raw";
 import appViewportSource from "./AppViewport.tsx?raw";
 import cockpit from "@/fixtures/cockpit.json";
@@ -975,5 +976,40 @@ describe("App shell", () => {
     );
     await screen.findByText("Fix login");
     expect(detailCalls).toBe(callsBeforeRetry + 1);
+  });
+
+  it("keeps shell confirm visible after navigating away from the task", async () => {
+    const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    setHash("#/");
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
+    expect(completeSpy).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error_kind: "unmount" }),
+    );
+
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(completeSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ok: false, op: "drop", error_kind: "undo" }),
+    );
+    expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
   });
 });

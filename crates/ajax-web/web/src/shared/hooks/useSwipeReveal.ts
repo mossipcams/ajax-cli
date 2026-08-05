@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { swipeStart, swipeMove, swipeEnd, type SwipeState } from "@/shared/gestures/swipeReveal";
+import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 
 export interface SwipeOptions {
   onOffset?: (offset: number) => void;
@@ -26,6 +27,21 @@ export function useSwipeReveal(
     let state: SwipeState | null = null;
     let startX = 0;
     let startY = 0;
+    let touchHeld = false;
+
+    const holdTouch = () => {
+      if (!touchHeld) {
+        touchHeld = true;
+        gestureBusyGate.begin();
+      }
+    };
+
+    const releaseTouch = () => {
+      if (touchHeld) {
+        touchHeld = false;
+        gestureBusyGate.end();
+      }
+    };
 
     const onStart = (event: Event) => {
       const point = readTouch(event);
@@ -33,6 +49,7 @@ export function useSwipeReveal(
       startX = point.x;
       startY = point.y;
       state = swipeStart();
+      holdTouch();
     };
 
     const onMove = (event: Event) => {
@@ -44,11 +61,15 @@ export function useSwipeReveal(
     };
 
     const onEnd = () => {
-      if (!state) return;
+      if (!state) {
+        releaseTouch();
+        return;
+      }
       const settled = swipeEnd(state);
       optsRef.current.onOffset?.(settled.offset);
       optsRef.current.onOpenChange?.(settled.open);
       state = null;
+      releaseTouch();
     };
 
     node.addEventListener("touchstart", onStart, { passive: true });
@@ -57,6 +78,7 @@ export function useSwipeReveal(
     node.addEventListener("touchcancel", onEnd);
 
     return () => {
+      releaseTouch();
       node.removeEventListener("touchstart", onStart);
       node.removeEventListener("touchmove", onMove);
       node.removeEventListener("touchend", onEnd);

@@ -359,6 +359,20 @@ describe("route and PWA helpers", () => {
     expect(isNavigationPending()).toBe(false);
   });
 
+  it("markNavigationStart overwrites a pending swipe navigation mark", () => {
+    initTelemetry();
+    markNavigationStart("#/t/h1", "swipe");
+    markNavigationStart(undefined, "hash");
+    captureRouteVisible({ to_route: "#/settings" });
+    expect(mockedPosthog.capture).toHaveBeenCalledWith(
+      "ajax_route_visible",
+      expect.objectContaining({
+        nav_trigger: "hash",
+        to_route: "#/settings",
+      }),
+    );
+  });
+
   it("captures PWA launch with navigation timing when available", () => {
     initTelemetry();
     const navEntry = {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
 import ResultPanel from "./ResultPanel";
-import { DROP_UNDO_MS } from "@/shared/lib/polling";
+import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "@/shared/lib/polling";
 
 describe("ResultPanel", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -96,6 +96,53 @@ describe("ResultPanel", () => {
     expect(onCommit).not.toHaveBeenCalled();
     vi.advanceTimersByTime(DROP_UNDO_MS);
     expect(onCommit).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("calls onConfirm when Confirm is clicked in confirm mode", () => {
+    const onConfirm = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByText("Confirm"));
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("calls onCancelConfirm when Cancel is clicked in confirm mode", () => {
+    const onCancelConfirm = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={vi.fn()}
+        onCancelConfirm={onCancelConfirm}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(onCancelConfirm).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("expires shell confirm after CONFIRM_TIMEOUT_MS", () => {
+    const onConfirmTimeout = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={vi.fn()}
+        onConfirmTimeout={onConfirmTimeout}
+        onDismiss={onDismiss}
+      />,
+    );
+    vi.advanceTimersByTime(CONFIRM_TIMEOUT_MS);
+    expect(onConfirmTimeout).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 });
