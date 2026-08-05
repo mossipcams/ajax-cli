@@ -475,9 +475,19 @@ async fn test_in_stable_endpoint_returns_not_found_when_disabled() {
 
 #[tokio::test]
 async fn test_in_stable_endpoint_returns_restarting_when_enabled() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-test-in-stable-endpoint-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let scripts = root.join("scripts");
+    std::fs::create_dir_all(&scripts).expect("create scripts dir");
+    let restart = scripts.join("dev-web-restart.sh");
+    std::fs::write(&restart, "#!/bin/sh\n").expect("write restart script");
+    std::fs::write(scripts.join("test-in-stable.sh"), "#!/bin/sh\n").expect("write wrapper");
     let _script = EnvVarGuard::set(
         "AJAX_WEB_RESTART_SCRIPT",
-        "/repo/scripts/dev-web-restart.sh",
+        restart.to_str().expect("restart path"),
     );
     let _profile = EnvVarGuard::set("AJAX_WEB_RESTART_PROFILE", "stable");
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -489,6 +499,8 @@ async fn test_in_stable_endpoint_returns_restarting_when_enabled() {
     let body = json_of(response).await;
     assert_eq!(body["ok"], true);
     assert_eq!(body["restarting"], true);
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]
