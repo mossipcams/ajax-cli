@@ -143,6 +143,16 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
 
 ## Hard Invariants
 
+- **Ajax never calls model APIs directly.** It launches vendor agent CLIs and
+  observes them. Ajax holds no provider API keys and opens no connection to a
+  model endpoint. This is a product constraint, not an implementation detail:
+  operators run Ajax to use subsidised vendor subscriptions, and direct API
+  access forfeits that pricing. An agent loop inside Ajax is out of scope by
+  design.
+- **Every agent client is a peer.** No harness is first-class. Adding or
+  updating one must not require changes in more than one operator surface, and
+  must not leave Web Cockpit, CLI, and TUI disagreeing about which clients
+  exist.
 - Core owns task truth. UI presents task truth. CLI dispatches commands.
   Supervisor observes and reports execution.
 - Browser code must not become an alternate registry, policy engine, lifecycle

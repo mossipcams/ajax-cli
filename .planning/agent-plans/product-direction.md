@@ -1,6 +1,6 @@
 # Plan: Ajax product direction
 
-Mode: Planning-Only. Status: **draft, unapproved — for Matt's decision**.
+Mode: Planning-Only. Status: **direction decided 2026-08-05 and written into `PRODUCT.md`; sequence below awaiting Matt's go**.
 Delegation decision: not delegated — broad product planning is on the
 do-not-delegate list (`AGENTS.md` → Delegation).
 
@@ -8,19 +8,27 @@ do-not-delegate list (`AGENTS.md` → Delegation).
 
 Answer two linked questions:
 
-1. Is Ajax meant to have users beyond its author? (currently undecided)
-2. What is worth building next? (currently unranked)
+1. Is Ajax meant to have users beyond its author? — **answered, §4**
+2. What is worth building next? — **answered, §5b**
+
+Both were open when this file was created. The direction is now stated in §5b
+and written into `PRODUCT.md`.
 
 ## Non-goals
 
-- No code changes. No architecture changes.
-- Not a commitment to ship any item below; this ranks candidates and supplies a
-  decision rule.
-- Does not itself edit `PRODUCT.md` or `architecture.md`. It concludes they need
-  rewriting (T1.0) and says what the new text must assert, but the edits are a
-  separate approved change. *(An earlier draft listed "does not revisit
-  `PRODUCT.md`" as a non-goal on the assumption that document was sound; §1's
-  last finding overturns that.)*
+- No code changes. This plan changed documentation only.
+- Not a commitment to ship the sequence in §5b; that awaits Matt's go.
+
+## Deviations
+
+- Two earlier drafts of the decision rule were superseded; §2 records why.
+- An early non-goal said `PRODUCT.md` positioning was sound and would not be
+  revisited. §1's last finding overturned that, and T1.0 rewrote it.
+- T1.0 was executed rather than left pending, on Matt's request for a direction
+  to move in. `PRODUCT.md` was rewritten and two invariants added to
+  `architecture.md`. **Quotations of the old positioning in §1 refer to the
+  pre-rewrite file** (`git show b16541a:PRODUCT.md`); their line numbers no
+  longer resolve.
 
 ## 1. Findings
 
@@ -433,14 +441,48 @@ Ajax's counter is host-level truth — git and tmux reconciliation across repos 
 which is further from any harness's centre of gravity than agent orchestration
 is.
 
+## 5b. The direction, stated
+
+> **Ajax is the scheduler for your subsidised agent capacity.**
+>
+> You hold several vendor subscriptions because cheap inference is siloed per
+> vendor. Ajax's job is to keep all of them busy on useful work in isolated
+> worktrees, and to tell you what is ready to ship.
+
+Written into `PRODUCT.md` (2026-08-05). Everything below follows from it.
+
+**Ajax does:** drive every harness the operator owns; track quota headroom
+across vendors; place new work where there is room; keep tasks isolated in
+worktrees and tmux; surface what is ready to review and ship.
+
+**Ajax does not:** call model APIs; implement an agent loop; treat any vendor as
+first-class; chase terminal parity beyond a stated bar; expose a public-internet
+path.
+
+### Concrete sequence
+
+| # | Work | Size | Done when |
+| --- | --- | --- | --- |
+| 1 | Thesis into `PRODUCT.md` + `architecture.md` invariants | S | Done 2026-08-05 |
+| 2 | Web terminal fidelity bar | S | Supported iOS behaviours listed; rest closed won't-fix |
+| 3 | Open the agent set | M | A new harness is added by config and appears in Web, CLI and TUI together |
+| 4 | Quota headroom | M | Cockpit answers "which vendor has room right now"; unknown states degrade honestly |
+| 5 | Placement + triage | M | Inbox ranks by dwell/staleness; new task suggests a vendor from quota |
+| 6 | Review depth | L | Diff review flags blast radius and what changed since last look |
+
+Step 2 gates the rest — without it there is no capacity. Steps 3–5 are the
+product; step 6 is the compounding bet.
+
 ## 6. Checklist
 
 - [x] Inspect product, design, architecture docs
 - [x] Measure shipped-work distribution
 - [x] Identify capability and triage gaps against the stated promise
 - [x] Produce a decision rule and ranked candidates
-- [ ] Matt selects audience track and confirms/edits Tier 1 order
-- [ ] Convert selected items into per-item implementation plans
+- [x] State the direction (§5b) and write it into `PRODUCT.md` (T1.0)
+- [x] Record the never-a-harness and every-harness-is-a-peer invariants
+- [ ] Matt accepts, edits, or rejects the §5b sequence
+- [ ] Convert accepted steps into per-item implementation plans
 
 ## 7. Validation
 
