@@ -338,49 +338,38 @@ fn run_start_with_attach_mode(
 }
 
 // from suite_2.rs
-fn expected_task_launch_command(session: &str, task_id: &str, worktree_path: &str) -> CommandSpec {
+const EXPECTED_HUSKY_GUARD: &str =
+    "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+
+fn folded_agent_launch_line(task_id: &str, worktree_path: &str, bootstrap: Option<&str>) -> String {
+    let agent = format!(
+        "ajax-cli __agent-runtime --task-id {task_id} --state-root .cache/ajax/agent-runtime -- codex --cd {worktree_path}"
+    );
+    match bootstrap {
+        Some(bootstrap) => format!("{EXPECTED_HUSKY_GUARD}; {bootstrap} && {agent}"),
+        None => format!("{EXPECTED_HUSKY_GUARD}; {agent}"),
+    }
+}
+
+fn expected_task_launch_command(
+    session: &str,
+    task_id: &str,
+    worktree_path: &str,
+    bootstrap: Option<&str>,
+) -> CommandSpec {
     CommandSpec {
         program: "tmux".to_string(),
         args: vec![
             "send-keys".to_string(),
             "-t".to_string(),
             format!("{session}:task"),
-            format!(
-                "ajax-cli __agent-runtime --task-id {task_id} --state-root .cache/ajax/agent-runtime -- codex --cd {worktree_path}"
-            ),
+            folded_agent_launch_line(task_id, worktree_path, bootstrap),
             "Enter".to_string(),
         ],
         cwd: None,
         mode: CommandMode::Capture,
         timeout: None,
     }
-}
-
-// from suite_2.rs
-fn expected_task_setup_command(
-    repo_path: &str,
-    worktree_path: &str,
-    bootstrap: Option<&str>,
-) -> CommandSpec {
-    let mut command_line = String::from("if [ -d \"$1\" ]; then cd \"$1\" && ");
-    command_line.push_str(
-        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
-    );
-    if let Some(bootstrap) = bootstrap {
-        command_line.push_str("; ");
-        command_line.push_str(bootstrap);
-    }
-    command_line.push_str("; fi");
-    CommandSpec::new(
-        "sh",
-        [
-            "-lc",
-            command_line.as_str(),
-            "ajax-setup-task",
-            worktree_path,
-        ],
-    )
-    .with_cwd(repo_path)
 }
 
 // from suite_2.rs

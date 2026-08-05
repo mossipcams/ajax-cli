@@ -111,15 +111,11 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        expected_task_setup_command(
-            "/Users/matt/projects/web",
-            "/Users/matt/projects/web__worktrees/ajax-fix-login",
-            None,
-        ),
         expected_task_launch_command(
             "ajax-web-fix-login",
             "web/fix-login",
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            None,
         ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
@@ -200,15 +196,11 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        expected_task_setup_command(
-            "/Users/matt/projects/web",
-            "/Users/matt/projects/web__worktrees/ajax-fix-login",
-            Some("npm ci"),
-        ),
         expected_task_launch_command(
             "ajax-web-fix-login",
             "web/fix-login",
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            Some("npm ci"),
         ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
@@ -322,7 +314,7 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
     assert_eq!(runner.commands, expected_commands);
 }
 #[test]
-fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
+fn new_execute_folds_bootstrap_into_send_keys_without_blocking_start() {
     let mut repo = ManagedRepo::new("web", "/Users/matt/projects/web", "main");
     repo.bootstrap = Some("npm ci".to_string());
     let mut context = CommandContext::new(
@@ -332,17 +324,8 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
         },
         InMemoryRegistry::default(),
     );
-    let mut runner = QueuedRunner::new(vec![
-        output(0, ""),
-        output(0, ""),
-        output(0, ""),
-        CommandOutput {
-            status_code: 42,
-            stdout: String::new(),
-            stderr: "npm failed".to_string(),
-        },
-    ]);
-    let error = run_with_context_and_runner(
+    let mut runner = RecordingCommandRunner::default();
+    run_start_with_attach_mode(
         [
             "ajax",
             "start",
@@ -350,61 +333,37 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
             "web",
             "--title",
             "Fix login",
+            "--agent",
+            "codex",
             "--execute",
         ],
         &mut context,
         &mut runner,
     )
-    .unwrap_err();
-    assert!(
-        matches!(error, CliError::CommandFailedAfterStateChange(message)
-                if message == "command failed: sh exited with status 42 in /Users/matt/projects/web: npm failed")
-    );
+    .unwrap();
     let task = context
         .registry
         .list_tasks()
         .into_iter()
         .find(|task| task.qualified_handle() == "web/fix-login")
-        .expect("provisioning task should remain visible");
-    assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
-    assert!(task.has_side_flag(SideFlag::NeedsInput));
-    assert!(task.agent_attempts.is_empty());
-    let mut expected_commands =
-        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
-    expected_commands.extend([
-        CommandSpec::new(
-            "git",
-            [
-                "-C",
-                "/Users/matt/projects/web",
-                "worktree",
-                "add",
-                "-b",
-                "ajax/fix-login",
-                "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "origin/main",
-            ],
-        ),
-        CommandSpec::new(
-            "tmux",
-            [
-                "new-session",
-                "-d",
-                "-s",
-                "ajax-web-fix-login",
-                "-n",
-                "task",
-                "-c",
-                "/Users/matt/projects/web__worktrees/ajax-fix-login",
-            ],
-        ),
-        expected_task_setup_command(
-            "/Users/matt/projects/web",
-            "/Users/matt/projects/web__worktrees/ajax-fix-login",
-            Some("npm ci"),
-        ),
-    ]);
-    assert_eq!(runner.commands, expected_commands);
+        .expect("start task should be recorded");
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    assert_eq!(task.agent_attempts.len(), 1);
+    assert!(
+        !runner
+            .commands()
+            .iter()
+            .any(|command| command.program == "sh"),
+        "bootstrap should not run as a standalone Ajax command"
+    );
+    let send_keys = runner
+        .commands()
+        .iter()
+        .find(|command| {
+            command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string())
+        })
+        .expect("expected folded send-keys launch");
+    assert!(send_keys.args[3].contains("npm ci && ajax-cli __agent-runtime"));
 }
 #[test]
 fn new_execute_records_provisioning_task_before_first_command_failure() {
@@ -520,15 +479,11 @@ fn new_execute_allows_reusing_removed_task_handle() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        expected_task_setup_command(
-            "/Users/matt/projects/web",
-            "/Users/matt/projects/web__worktrees/ajax-fix-login",
-            None,
-        ),
         expected_task_launch_command(
             "ajax-web-fix-login",
             "web/fix-login",
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            None,
         ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
         expected_new_task_open_command("ajax-web-fix-login"),

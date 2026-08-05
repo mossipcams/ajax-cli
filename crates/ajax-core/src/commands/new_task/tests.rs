@@ -1,11 +1,10 @@
 use super::{
-    is_git_worktree_add_command, is_task_window_new_session_command,
-    mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
-    record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
-    StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
+    is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
+    new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
+    StartPlanObservation, StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
 };
 use crate::{
-    adapters::{CommandSpec, GitAdapter},
+    adapters::GitAdapter,
     commands::CommandContext,
     config::{Config, ManagedRepo, RuntimePathRequest, WorktreePlacement},
     models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
@@ -125,7 +124,7 @@ fn new_task_plan_claude_agent_command_omits_cd_flag_and_skips_permissions() {
     .unwrap();
 
     let launch = agent_send_keys_line(&plan);
-    assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+    assert!(launch.contains("ajax-cli __agent-runtime --task-id web/fix-login"));
     assert!(launch.ends_with("-- claude --dangerously-skip-permissions"));
     assert!(!launch.contains("--cd"));
 }
@@ -141,7 +140,7 @@ fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
     let launch = agent_send_keys_line(&plan);
-    assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+    assert!(launch.contains("ajax-cli __agent-runtime --task-id web/fix-login"));
     assert!(launch.ends_with("-- cursor agent"));
     assert_eq!(
         task_from_new_request(&context, &request)
@@ -162,7 +161,7 @@ fn new_task_plan_pi_agent_stores_pi_client() {
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
     let launch = agent_send_keys_line(&plan);
-    assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+    assert!(launch.contains("ajax-cli __agent-runtime --task-id web/fix-login"));
     assert!(launch.ends_with("-- pi"));
     assert_eq!(
         task_from_new_request(&context, &request)
@@ -195,12 +194,12 @@ fn new_task_plan_launches_agent_through_runtime_wrapper() {
 
     assert_eq!(
         agent_send_keys_line(&plan),
-        "ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
     );
 }
 
 #[test]
-fn new_task_plan_has_no_standalone_husky_command() {
+fn new_task_plan_has_no_standalone_setup_command() {
     let context = context();
     let plan = new_task_plan(
         &context,
@@ -213,14 +212,14 @@ fn new_task_plan_has_no_standalone_husky_command() {
     .unwrap();
 
     assert!(
-        plan.commands.iter().any(|command| command.program == "sh"),
-        "expected standalone setup command: {:?}",
+        !plan.commands.iter().any(|command| command.program == "sh"),
+        "expected no standalone setup command: {:?}",
         plan.commands
     );
 }
 
 #[test]
-fn new_task_plan_chains_setup_before_agent_in_task_session() {
+fn new_task_plan_folds_husky_into_agent_send_keys() {
     let context = context();
     let plan = new_task_plan(
         &context,
@@ -233,7 +232,8 @@ fn new_task_plan_chains_setup_before_agent_in_task_session() {
     .unwrap();
 
     let launch = agent_send_keys_line(&plan);
-    assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+    assert!(launch.contains("npm exec --yes husky"));
+    assert!(launch.contains("ajax-cli __agent-runtime --task-id web/fix-login"));
     assert!(launch.ends_with(
         "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
     ));
@@ -261,16 +261,11 @@ fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
     .unwrap();
 
     let launch = agent_send_keys_line(&plan);
-    assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+    assert!(launch.contains("npm exec --yes husky"));
+    assert!(launch.contains("npm install && ajax-cli __agent-runtime"));
     assert!(
-        plan.commands.iter().any(|command| {
-            command.program == "sh"
-                && command
-                    .args
-                    .get(1)
-                    .is_some_and(|arg| arg.contains("npm install"))
-        }),
-        "expected standalone bootstrap command: {:?}",
+        !plan.commands.iter().any(|command| command.program == "sh"),
+        "expected no standalone bootstrap command: {:?}",
         plan.commands
     );
 }
@@ -287,7 +282,7 @@ fn new_task_plan_fetches_origin_and_branches_from_remote_tracking_ref() {
     let plan = new_task_plan(&context, request).unwrap();
     let git = GitAdapter::new("git");
 
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(
         plan.commands[0],
         git.fetch_origin_branch("/repo/web", "main")
@@ -319,7 +314,7 @@ fn new_task_plan_skips_fetch_when_origin_fetch_is_fresh() {
     let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
     let git = GitAdapter::new("git");
 
-    assert_eq!(plan.commands.len(), 4);
+    assert_eq!(plan.commands.len(), 3);
     assert_eq!(
         plan.commands[0],
         git.add_worktree(
@@ -351,7 +346,7 @@ fn new_task_plan_fetches_when_origin_fetch_is_stale() {
     let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
     let git = GitAdapter::new("git");
 
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(
         plan.commands[0],
         git.fetch_origin_branch("/repo/web", "main")
@@ -374,74 +369,11 @@ fn new_task_plan_fetches_when_origin_fetch_age_is_unknown() {
     let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
     let git = GitAdapter::new("git");
 
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(
         plan.commands[0],
         git.fetch_origin_branch("/repo/web", "main")
     );
-}
-
-#[test]
-fn new_task_plan_runs_graphify_update_detached() {
-    let mut repo = ManagedRepo::new("web", "/repo/web", "main");
-    repo.graphify_update = Some("graphify extract --update".to_string());
-    let context = CommandContext::new(
-        Config {
-            repos: vec![repo],
-            ..Config::default()
-        },
-        InMemoryRegistry::default(),
-    );
-    let request = NewTaskRequest {
-        repo: "web".to_string(),
-        title: "Fix login".to_string(),
-        agent: "codex".to_string(),
-    };
-
-    let plan = new_task_plan(&context, request).unwrap();
-
-    assert_eq!(plan.commands.len(), 6);
-    assert_eq!(
-        plan.commands[2],
-        CommandSpec::new(
-            "sh",
-            ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
-        )
-        .with_cwd("/repo/web__worktrees/ajax-fix-login")
-    );
-}
-
-#[test]
-fn new_task_plan_runs_graphify_update_in_new_worktree_when_configured() {
-    let mut repo = ManagedRepo::new("web", "/repo/web", "main");
-    repo.graphify_update = Some("graphify extract --update".to_string());
-    let context = CommandContext::new(
-        Config {
-            repos: vec![repo],
-            ..Config::default()
-        },
-        InMemoryRegistry::default(),
-    );
-    let request = NewTaskRequest {
-        repo: "web".to_string(),
-        title: "Fix login".to_string(),
-        agent: "codex".to_string(),
-    };
-
-    let plan = new_task_plan(&context, request).unwrap();
-
-    assert_eq!(plan.commands.len(), 6);
-    assert_eq!(
-        plan.commands[2],
-        CommandSpec::new(
-            "sh",
-            ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
-        )
-        .with_cwd("/repo/web__worktrees/ajax-fix-login")
-    );
-    assert!(is_git_worktree_add_command(&plan.commands[1]));
-    assert!(is_task_window_new_session_command(&plan.commands[3]));
-    assert_eq!(plan.commands[3].args[5], "task");
 }
 
 #[test]

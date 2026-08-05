@@ -78,12 +78,6 @@ Before provisioning a task worktree, start planning runs `git fetch origin
 `origin/<default_branch>`. This avoids mutating a checked-out or diverged local
 default branch while ensuring new tasks use the fetched remote state.
 
-Managed repos may optionally run a detached `graphify_update` shell command from
-each new task worktree after `git worktree add` (for example `graphify extract
---update`). Each task generates its own ignored `graphify-out/` knowledge graph
-without committing generated graph data. `ajax doctor` warns when
-`graphify-out/` is not gitignored in a repo that configures `graphify_update`.
-
 Runtime reconciliation lives in `runtime`. It compares expected task runtime
 state with observed Git, tmux, and task-window evidence, then produces a single
 runtime health verdict such as healthy, missing worktree, missing session,

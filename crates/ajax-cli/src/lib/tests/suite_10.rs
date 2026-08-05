@@ -413,15 +413,11 @@ fn pending_new_task_action_runs_after_title_is_collected() {
                 "/Users/matt/projects/api__worktrees/ajax-fix-login",
             ],
         ),
-        expected_task_setup_command(
-            "/Users/matt/projects/api",
-            "/Users/matt/projects/api__worktrees/ajax-fix-login",
-            None,
-        ),
         expected_task_launch_command(
             "ajax-api-fix-login",
             "api/fix-login",
             "/Users/matt/projects/api__worktrees/ajax-fix-login",
+            None,
         ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-api-fix-login:task"]),
         expected_new_task_open_command("ajax-api-fix-login"),

@@ -221,9 +221,9 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
 
     let line = agent_send_keys_line(runner.commands());
     assert_eq!(
-            line,
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent"
-        );
+        line,
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent"
+    );
     assert!(!line.contains("--cd"));
 }
 
@@ -247,9 +247,9 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
     // pi opens in the current directory; the task window's cwd is
     // the worktree, so the launch needs no extra arguments.
     assert_eq!(
-            agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
-        );
+        agent_send_keys_line(runner.commands()),
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
+    );
 }
 
 #[test]
@@ -270,9 +270,9 @@ fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
     .unwrap();
 
     assert_eq!(
-            agent_send_keys_line(runner.commands()),
-            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude --dangerously-skip-permissions"
-        );
+        agent_send_keys_line(runner.commands()),
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude --dangerously-skip-permissions"
+    );
 }
 
 #[test]

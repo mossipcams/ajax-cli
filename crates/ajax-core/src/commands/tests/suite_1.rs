@@ -648,16 +648,12 @@ fn next_returns_first_canonical_status_item() {
 #[test]
 fn doctor_and_status_return_basic_health() {
     let mut context = context_with_tasks();
-    for repo in &mut context.config.repos {
-        repo.graphify_update = Some("graphify extract --update".to_string());
-    }
     context.config.test_commands = vec![
         TestCommand::new("web", "cargo test"),
         TestCommand::new("api", "cargo test"),
     ];
     let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-        .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"])
-        .with_graphify_out_gitignored(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
+        .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
 
     let doctor = doctor_with_environment(&context, &environment);
     let status = status(&context);

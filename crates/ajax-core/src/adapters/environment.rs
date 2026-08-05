@@ -11,7 +11,6 @@ pub const REQUIRED_DOCTOR_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
 pub struct DoctorEnvironment {
     available_tools: BTreeSet<String>,
     existing_paths: Option<BTreeSet<PathBuf>>,
-    graphify_out_gitignored: Option<BTreeSet<PathBuf>>,
 }
 
 impl DoctorEnvironment {
@@ -23,7 +22,6 @@ impl DoctorEnvironment {
         Self {
             available_tools: tools.into_iter().map(Into::into).collect(),
             existing_paths: None,
-            graphify_out_gitignored: None,
         }
     }
 
@@ -43,17 +41,7 @@ impl DoctorEnvironment {
         Self {
             available_tools,
             existing_paths: None,
-            graphify_out_gitignored: None,
         }
-    }
-
-    pub fn with_graphify_out_gitignored<I, T>(mut self, repo_paths: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<PathBuf>,
-    {
-        self.graphify_out_gitignored = Some(repo_paths.into_iter().map(Into::into).collect());
-        self
     }
 
     pub fn with_existing_paths<I, T>(mut self, paths: I) -> Self
@@ -73,23 +61,6 @@ impl DoctorEnvironment {
         self.existing_paths
             .as_ref()
             .map_or_else(|| path.exists(), |paths| paths.contains(path))
-    }
-
-    pub(crate) fn graphify_out_gitignored(&self, repo_path: &Path) -> bool {
-        if let Some(repo_paths) = &self.graphify_out_gitignored {
-            return repo_paths.contains(repo_path);
-        }
-
-        Command::new("git")
-            .args([
-                "-C",
-                repo_path.to_str().unwrap_or_default(),
-                "check-ignore",
-                "-q",
-                "graphify-out",
-            ])
-            .output()
-            .is_ok_and(|output| output.status.success())
     }
 }
 

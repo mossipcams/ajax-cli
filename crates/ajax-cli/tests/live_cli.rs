@@ -604,7 +604,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&output), "");
     assert_eq!(
         stdout(&output),
-        "exit:0\nstdout:fake git fetch\nstderr:\nexit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
+        "exit:0\nstdout:fake git fetch\nstderr:\nexit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
     );
     let lifecycle_log = std::fs::read_to_string(&lifecycle_log)
         .expect("fake lifecycle tools should record invocation");
@@ -622,7 +622,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         worktree = worktree.display()
     )));
     assert!(lifecycle_log.contains(&format!(
-        "args=send-keys -t ajax-web-fix-login:task ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
+        "args=send-keys -t ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
         state_root = home.root.join(".cache/ajax/agent-runtime").display(),
         worktree = worktree.display()
     )));

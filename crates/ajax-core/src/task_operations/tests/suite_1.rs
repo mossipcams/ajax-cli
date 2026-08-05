@@ -117,16 +117,15 @@ fn start_operation_plan_returns_task_intent_and_commands_without_mutating_regist
     assert_eq!(intent.task_window, "task");
     assert_eq!(intent.selected_agent, AgentClient::Codex);
     assert_eq!(plan.title, "create task: Fix login");
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert!(crate::commands::is_git_worktree_add_command(
         &plan.commands[1]
     ));
     assert!(crate::commands::is_task_window_new_session_command(
         &plan.commands[2]
     ));
-    assert_eq!(plan.commands[3].program, "sh");
     assert!(crate::commands::is_agent_send_keys_command(
-        &plan.commands[4]
+        &plan.commands[3]
     ));
 }
 
