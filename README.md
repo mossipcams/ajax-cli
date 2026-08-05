@@ -41,7 +41,7 @@ ajax-cli
 ```
 
 From Cockpit you can start a task, jump back into an active task, inspect work
-that needs attention, review completed work, ship it, or drop stale task
+that needs attention, open Diff Review on a task, ship it, or drop stale task
 environments.
 
 ### Web Cockpit (Safari-first)
@@ -72,10 +72,12 @@ stores it beside the state database (`web-tls-cert.pem`); Safari will warn the
 first time. On iOS, open `web-tls-cert.pem`, install the profile, then enable
 full trust under Settings, General, About, Certificate Trust Settings.
 
-Recommended on iPhone: use a normal Safari tab. Web Cockpit no longer ships a
-manifest, service worker, or Home Screen icon surface; the supported browser
-path is the live Safari shell. A native app is only a future option if the
-browser path stops being sufficient.
+Primary path on iPhone: a normal Safari tab. Full Cockpit works without Home
+Screen install. Ajax does not ship classic PWA packaging — no
+`manifest.webmanifest`, app icons, or service worker. Optional Add to Home
+Screen (Safari-native; safe `apple-mobile-web-app-*` metadata only) is how you
+enable Declarative Web Push phone pings on a capable browser. A native app is
+only a future option if the browser path stops being sufficient.
 
 From Safari you can see every repo's tasks, use the attention inbox, and run
 browser-capable operations such as `review`, `ship`, `repair`, and `drop`. The
@@ -83,6 +85,8 @@ main task view is dashboard-first: current status, required decision, best next
 action, and recent milestones are primary. When you open a task, the embedded
 raw Ghostty/tmux terminal is the default on mobile and desktop. Browser
 `resume` uses that authenticated terminal bridge for full interactive attach.
+From a selected task, swipe left opens Diff Review — a read-only PR / file /
+hunk viewer for vibe-checking the change before you ship.
 
 When an agent stops at a recognized approval prompt, Web Cockpit shows guarded
 structured actions such as Approve and Deny. The browser sends a typed answer
@@ -97,10 +101,11 @@ into the active shell line through the same paste/PTY path as manual paste. See
 [`docs/speech-input.md`](docs/speech-input.md) for Moonshine v2 host
 setup, `[stt]` configuration, iOS behavior, and recovery.
 
-Notifications are out of scope. Ajax Web Cockpit does not support Web Push,
-PushManager flows, Notification API prompts, VAPID keys, push subscriptions,
-service-worker push handlers, notification click handlers, or native/external
-notification replacements.
+Optional phone pings use Declarative Web Push from Web Cockpit Settings after
+you add the site to the Home Screen on a capable browser (for example iOS
+Safari 18.4+). Cockpit still works without install or notifications; without
+enabling push there is no phone ping. Delivery uses `window.pushManager` with
+no service worker — see Configuration below for episode rules.
 
 The browser renders server-authoritative Cockpit projections and submits typed
 operator intents. It does not own offline task mutation state, persist task
@@ -208,25 +213,25 @@ inside each task worktree before the agent starts. Ajax runs the command from
 the newly created worktree after `git worktree add` succeeds and before tmux or
 the selected agent CLI are launched.
 
-Enable declarative Web Push from Web Cockpit Settings after adding the site to
+Enable Declarative Web Push from Web Cockpit Settings after adding the site to
 the Home Screen on a Declarative Web Push–capable browser (for example iOS
-Safari 18.4+). Attention episodes deliver OS notifications even when the PWA is
-fully closed. Cockpit still works without install; without enabling
-notifications there is no phone ping.
+Safari 18.4+). Attention episodes deliver OS notifications even when the
+installed shell is fully closed. Cockpit still works without install; without
+enabling notifications there is no phone ping.
 
-Push notifications fire once per episode for actionable Waiting (structured
-wait/ask from agent hooks/lifecycle events — Claude `Notification`, Codex
-`PermissionRequest`) and `Error`-class evidence (CI failed, merge conflict,
-command failed, blocked, runtime probe failure). Cursor and Pi have no native
-wait/ask hook yet; they still notify on Error-class evidence. Transient
-`Rate limited` Waiting and lifecycle-only "Ready for review" stay
+Push notifications fire once per episode for actionable Waiting (`Waiting for
+input` / `Waiting for approval` from structured hooks/lifecycle events) and
+`Error`-class evidence (CI failed, merge conflict, command failed, blocked,
+runtime probe failure). Cursor and Pi have no native wait/ask hook yet; they
+still notify on Error-class evidence. Transient `Rate limited` Waiting,
+lifecycle-only "Ready for review", and turn-settled "Response ready" stay
 inbox-visible but do **not** phone-ping. Dedup is by status class
 (`Waiting` / `Error`); the body includes the agent client and explanation
 (`repo/handle: Waiting (codex) — …`). Sustained `Running`/`Idle` for 30
 seconds re-arms the detector; opening a task silences the current episode.
 
-Notifications fire from the `ajax web` background poll when at least one push
-subscription is stored, so a running web server delivers them even when no
+Notifications fire from the `ajax-cli web` background poll when at least one
+push subscription is stored, so a running web server delivers them even when no
 browser tab is open. Hooks only write status event files — they never send
 push. Delivery stays quiet while a browser is actively using Web Cockpit.
 

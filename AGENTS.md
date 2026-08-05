@@ -250,8 +250,10 @@ Safari.
 Do not change these without explicit approval:
 
 - raw xterm/tmux-first terminal behavior
-- normal iOS Safari as the target browser mode
-- no Home Screen PWA dependency
+- normal iOS Safari as the target browser mode (full Cockpit without install)
+- no classic PWA packaging (`manifest.webmanifest`, app icons, service worker)
+- Home Screen install remains optional and is required only for Declarative Web
+  Push phone pings — not for core Cockpit use
 - no service worker/offline mutation model
 - no browser-owned task records
 - no Live/snapshot/composer terminal model as the default path

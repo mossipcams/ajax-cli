@@ -30,9 +30,9 @@ The PTY adapter ownership is unchanged from today.
 ## Permanent acceptance
 
 - `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — passing as of 2026-07-16.
-- `TERMINAL_BEHAVIOR_CONTRACT.md` — behavior inventory (evidence)
-- `TERMINAL_REBUILD_ACCEPTANCE.md` — acceptance matrix (evidence)
-- `TERMINAL_LEGACY_SURFACE_TESTS.md` — removal hygiene index (evidence)
+- Historical rebuild evidence (archived, not live contracts):
+  `.planning/archive/terminal-rebuild/TERMINAL_BEHAVIOR_CONTRACT.md`,
+  `TERMINAL_REBUILD_ACCEPTANCE.md`, `TERMINAL_LEGACY_SURFACE_TESTS.md`.
 
 ## Rule
 
