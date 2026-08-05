@@ -16,7 +16,11 @@ Answer two linked questions:
 - No code changes. No architecture changes.
 - Not a commitment to ship any item below; this ranks candidates and supplies a
   decision rule.
-- Does not revisit `PRODUCT.md` positioning — that document is sound.
+- Does not itself edit `PRODUCT.md` or `architecture.md`. It concludes they need
+  rewriting (T1.0) and says what the new text must assert, but the edits are a
+  separate approved change. *(An earlier draft listed "does not revisit
+  `PRODUCT.md`" as a non-goal on the assumption that document was sound; §1's
+  last finding overturns that.)*
 
 ## 1. Findings
 
@@ -88,6 +92,41 @@ not a triage queue.
 Product analytics are pointed at an install base of one. That gap needs a
 conscious call either way.
 
+### The root cause: the real thesis is undocumented
+
+Established in conversation, not found in the repo: **Ajax is built on vendor
+harnesses deliberately, to capture subscription subsidies.** That is a strategy.
+It exists. It simply is not written anywhere.
+
+What *is* written says something else. `PRODUCT.md` positions Ajax as *"a
+mobile-first remote cockpit for your local agent fleet: Safari on the phone, the
+host does the work"* (`PRODUCT.md:21`), with purpose framed as control and
+attention (`PRODUCT.md:17`). Its four design principles are terminal, status,
+mobile reach, and decisive actions. Cross-vendor appears nowhere. Subsidy,
+quota, capacity and placement appear nowhere. `architecture.md` likewise records
+substrates and layers but no strategic position.
+
+So there are two products:
+
+| | Written thesis | Actual thesis |
+| --- | --- | --- |
+| Ajax is | a mobile-first operator cockpit | a scheduler over subsidised capacity |
+| Scarce resource | operator attention | vendor quota |
+| Wins by | not missing approvals | harvesting siloed subsidies |
+| Roadmap it generates | terminal fidelity, mobile polish, push | open agent set, quota rollup, placement |
+
+**This is the most likely reason planning feels impossible.** Every planning
+attempt starts from the written thesis and produces a mobile-cockpit roadmap,
+which does not match the intent; the mismatch reads as "I can't find a
+direction" when the direction exists and the documents contradict it.
+
+It plausibly also explains the 90/10 spend. `AGENTS.md` instructs every agent to
+treat `architecture.md` and the focused docs as sources of truth, and this repo
+delegates most implementation. Documents that say *mobile-first cockpit* reliably
+generate mobile-cockpit work — at agent scale, continuously. Mobile Safari is
+genuinely hard and some of that spend was unavoidable, so this is a reinforcing
+loop rather than a sole cause. But the loop is real and it is cheap to break.
+
 ## 2. Decision rule
 
 **Revised twice on 2026-08-05.** First rule ("prefer substrates you control")
@@ -145,8 +184,11 @@ provider, no API keys, no direct model calls anywhere in `crates/`. Axum is
 server transport for Web Cockpit only. Ajax launches vendor CLIs and observes
 them.
 
-Today that is an accident of architecture. It should become an explicit
-invariant in `architecture.md`, because it is load-bearing: the moment Ajax
+**This was deliberate.** Matt built Ajax on vendor harnesses specifically to
+capture subscription subsidies. The property is design intent, not a
+side-effect — but it appears in no repo artifact, which is the subject of §1's
+last finding. It should become an explicit invariant in `architecture.md`,
+because it is load-bearing: the moment Ajax
 calls models directly it pays API rates and forfeits the subsidy that is the
 entire reason its users run multiple vendors. Sitting *above* harnesses rather
 than replacing them is what keeps Ajax on the right side of subsidised access.
@@ -219,6 +261,24 @@ Ajax loses the cross-vendor race precisely when breadth is the whole point.
 ## 3. Ranked candidates
 
 ### Tier 1 — worth building under every audience outcome
+
+**T1.0 — Write the real thesis into `PRODUCT.md` and `architecture.md` (small).**
+Causally upstream of everything else, and the cheapest item in the plan.
+
+Three edits:
+1. `PRODUCT.md` — replace the mobile-first cockpit positioning with the
+   cross-vendor capacity thesis, and name the audience from §4. Keep the design
+   principles; they are good, they are just not a strategy.
+2. `architecture.md` — add the invariant: **Ajax never calls models directly.**
+   It orchestrates vendor harnesses and observes them. Any direct model call
+   forfeits subsidised pricing and is out of scope by design.
+3. `architecture.md` — record quota/capacity as a first-class operator fact so
+   T1.2 has somewhere to land.
+
+Rationale: this repo delegates implementation, and `AGENTS.md` points every
+delegate at these documents. Until they carry the real thesis, each delegated
+task re-derives priorities from the wrong one. Fixing the documents changes what
+every future agent optimises for — a leverage point no feature can match.
 
 **T1.1 — Open the agent set: config-driven, not a closed enum (medium).**
 Add an agent manifest to `Config`: launch program and args, capability profile,
@@ -324,10 +384,12 @@ cross-vendor-first rather than for whichever harness he used most that week.
 
 Proposed sequence:
 
-1. Land T1.5 (the cap), then T1.1 — the moat — then T1.2 → T1.4.
-2. Revisit distribution only after T1.1. Breadth gated behind a Rust release is
+1. **T1.0 first** — it is small, and it redirects every delegated task that
+   follows. Doing it after the feature work wastes the redirection.
+2. Then T1.5 (the cap), then T1.1 — the moat — then T1.2 → T1.4.
+3. Revisit distribution only after T1.1. Breadth gated behind a Rust release is
    not distributable regardless of install path.
-3. Then run one cheap test: 3–5 people who run multiple harnesses in parallel.
+4. Then run one cheap test: 3–5 people who run multiple harnesses in parallel.
    Nothing is wasted either way, because Tier 1 is worth building for one user.
 
 ## 5. Counter-arguments (recorded honestly)
@@ -407,6 +469,6 @@ git log --pretty=%s | grep -oE "^[a-z]+" | sort | uniq -c | sort -rn
 - The ranking rests on the assumption that agents improve fast enough to shift
   load from approvals to review. Re-check that assumption quarterly; if approvals
   stay frequent, the demoted item comes back.
-- "Never become a harness" (§2) should be added to `architecture.md` invariants.
+- "Never become a harness" (§2) is now T1.0 rather than a loose risk.
   Until it is written down, nothing stops a future change from adding a direct
   model call and quietly forfeiting the subsidy position.
