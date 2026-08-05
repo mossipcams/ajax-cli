@@ -99,9 +99,12 @@ describe("keyboard band height pin contract", () => {
     );
   });
 
-  it("ships sticky attention rail under keyboard-open", () => {
+  it("ships fixed top attention toast under keyboard-open", () => {
     expect(stylesSource).toMatch(
-      /html\.keyboard-open\s+\.ajax-web-session-attention-rail\s*\{[^}]*position:\s*sticky/s,
+      /\.ajax-web-session-attention-rail\s*\{[^}]*position:\s*fixed/s,
+    );
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.ajax-web-session-attention-rail\s*\{[^}]*top:\s*var\(--app-top/s,
     );
   });
 

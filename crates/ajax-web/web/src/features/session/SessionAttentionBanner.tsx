@@ -1,5 +1,9 @@
-import { useState } from "react";
-import type { SessionAttentionItem, SessionAttentionResponse } from "./types";
+import { useEffect, useState } from "react";
+import type {
+  SessionAttentionItem,
+  SessionAttentionKind,
+  SessionAttentionResponse,
+} from "./types";
 
 interface Props {
   currentHandle: string;
@@ -11,6 +15,19 @@ interface Props {
   onOpenTask: (handle: string) => void;
 }
 
+function statusLabel(kind: SessionAttentionKind): string {
+  switch (kind) {
+    case "permission":
+      return "Needs permission";
+    case "question":
+      return "Needs answer";
+    case "failed":
+      return "Run failed";
+    case "review":
+      return "Ready for review";
+  }
+}
+
 export default function SessionAttentionBanner({
   currentHandle,
   items,
@@ -20,36 +37,62 @@ export default function SessionAttentionBanner({
   const remote = items.filter((item) => item.handle !== currentHandle);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
-
-  if (remote.length === 0) return null;
+  const [visible, setVisible] = useState(false);
 
   const primary = remote[0];
+  const primaryKey = primary ? `${primary.handle}:${primary.requestId}` : "";
+
+  useEffect(() => {
+    if (!primaryKey) {
+      setVisible(false);
+      return;
+    }
+    setVisible(false);
+    const id = window.requestAnimationFrame(() => setVisible(true));
+    return () => window.cancelAnimationFrame(id);
+  }, [primaryKey]);
+
+  if (!primary) return null;
+
   const overflow = remote.length - 1;
-  const expandedKey = `${primary.handle}:${primary.requestId}`;
-  const isQuestionExpanded = expandedId === expandedKey && primary.kind === "question";
+  const isQuestionExpanded = expandedId === primaryKey && primary.kind === "question";
+
+  const openTask = () => {
+    if (primary.kind === "review") {
+      onRespond(primary, { type: "review", action: "open" });
+    }
+    onOpenTask(primary.handle);
+  };
 
   return (
     <div
-      className="ajax-web-session-attention-rail"
+      className={`ajax-web-session-attention-rail${visible ? " is-visible" : ""}`}
       data-testid="ajax-web-session-attention-rail"
       role="region"
       aria-label="Other sessions need attention"
     >
-      {overflow > 0 ? (
-        <p className="ajax-web-session-attention-overflow" data-testid="ajax-web-session-attention-overflow">
-          {overflow + 1} sessions need you
-        </p>
-      ) : null}
-
-      <article
+      <div
         className={`ajax-web-session-attention-banner is-${primary.kind}`}
         data-testid="ajax-web-session-attention-banner"
         data-kind={primary.kind}
         data-handle={primary.handle}
       >
-        <div className="ajax-web-session-attention-copy">
-          <p className="ajax-web-session-attention-origin">{primary.handle}</p>
-          <p className="ajax-web-session-attention-title">{primary.title}</p>
+        <div className="ajax-web-session-attention-status">
+          {overflow > 0 ? (
+            <p
+              className="ajax-web-session-attention-overflow"
+              data-testid="ajax-web-session-attention-overflow"
+            >
+              +{overflow} more
+            </p>
+          ) : null}
+          <p className="ajax-web-session-attention-title">
+            <span className="ajax-web-session-attention-kind">{statusLabel(primary.kind)}</span>
+            <span className="ajax-web-session-attention-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="ajax-web-session-attention-origin">{primary.handle}</span>
+          </p>
           <p className="ajax-web-session-attention-summary">{primary.summary}</p>
         </div>
 
@@ -70,7 +113,9 @@ export default function SessionAttentionBanner({
                 type="button"
                 className="ajax-web-session-attention-action"
                 data-testid="ajax-web-session-attention-deny"
-                onClick={() => onRespond(primary, { type: "permission", outcome: "reject" })}
+                onClick={() =>
+                  onRespond(primary, { type: "permission", outcome: "reject" })
+                }
               >
                 Deny
               </button>
@@ -83,7 +128,7 @@ export default function SessionAttentionBanner({
               className="ajax-web-session-attention-action is-primary"
               data-testid="ajax-web-session-attention-reply"
               onClick={() => {
-                setExpandedId(isQuestionExpanded ? null : expandedKey);
+                setExpandedId(isQuestionExpanded ? null : primaryKey);
                 setReplyDraft("");
               }}
             >
@@ -95,36 +140,31 @@ export default function SessionAttentionBanner({
             <>
               <button
                 type="button"
-                className="ajax-web-session-attention-action"
-                data-testid="ajax-web-session-attention-stop"
-                onClick={() => onRespond(primary, { type: "failed", action: "stop" })}
-              >
-                Stop
-              </button>
-              <button
-                type="button"
                 className="ajax-web-session-attention-action is-primary"
                 data-testid="ajax-web-session-attention-retry"
                 onClick={() => onRespond(primary, { type: "failed", action: "retry" })}
               >
                 Retry
               </button>
+              <button
+                type="button"
+                className="ajax-web-session-attention-action"
+                data-testid="ajax-web-session-attention-stop"
+                onClick={() => onRespond(primary, { type: "failed", action: "stop" })}
+              >
+                Stop
+              </button>
             </>
           ) : null}
 
-          {primary.kind === "review" ? (
-            <button
-              type="button"
-              className="ajax-web-session-attention-action is-primary"
-              data-testid="ajax-web-session-attention-open"
-              onClick={() => {
-                onRespond(primary, { type: "review", action: "open" });
-                onOpenTask(primary.handle);
-              }}
-            >
-              Open
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className={`ajax-web-session-attention-action${primary.kind === "review" ? " is-primary" : ""}`}
+            data-testid="ajax-web-session-attention-open"
+            onClick={openTask}
+          >
+            Open
+          </button>
         </div>
 
         {isQuestionExpanded ? (
@@ -158,7 +198,7 @@ export default function SessionAttentionBanner({
             </button>
           </form>
         ) : null}
-      </article>
+      </div>
     </div>
   );
 }

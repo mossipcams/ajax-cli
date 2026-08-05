@@ -732,16 +732,19 @@ requests are parked for the operator (not auto-answered). Pending attentions
 fan out to every connected web-session socket so the active Ajax Web Session UI
 can Approve / Deny / Answer / Stop / Retry into the originating hub without
 leaving the current task. Review banners are derived from cockpit
-`attention: review` cards and Open navigates. Routine Running / non-actionable
+`attention: review` cards. A minimal top-of-page toast shows status
+(`Needs permission` / `Needs answer` / `Run failed` / `Ready for review`) plus
+inline actions (Approve/Deny, Reply, Retry/Stop, Open). Routine Running / non-actionable
 Waiting never generate in-app banners. Symbol search and attached context remain
 presentation helpers over the task worktree. This path does not replace the
 terminal bridge and does not enable non-Cursor agent pickers.
 
 The session Operate surface is iOS Safari / Home Screen first (no classic PWA
-packaging): status chip, sticky attention rail, transcript, composer dock, then
+packaging): status chip, minimal attention toast, transcript, composer dock, then
 the literal terminal key bar (Esc / Tab / arrows / Ctrl / Paste / ⌫ / Mic) wired
 to the composer textarea (Mic appends speech into the draft; Esc/Ctrl+C abort a
-running prompt). Under `html.keyboard-open`, Task Detail pins to the
+running prompt). Task and diff routes hide the Dashboard / New bottom nav so the
+session (or terminal) can use the full band. Under `html.keyboard-open`, Task Detail pins to the
 `visualViewport` band and the session key bar sits flush above the soft
 keyboard (same `--app-top` / `--app-height` contract as the terminal hotbar).
 

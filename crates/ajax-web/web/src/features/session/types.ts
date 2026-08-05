@@ -39,6 +39,31 @@ export interface WebSessionMessage {
   streaming?: boolean;
 }
 
+export type SessionComposerMode = "hidden" | "redirect" | "question";
+
+export type SessionCardKind = "progress" | "operator" | "decision";
+
+export interface SessionProgressCard {
+  id: string;
+  kind: "progress";
+  text: string;
+  streaming?: boolean;
+}
+
+export interface SessionOperatorCard {
+  id: string;
+  kind: "operator";
+  text: string;
+}
+
+export interface SessionDecisionCard {
+  id: string;
+  kind: "decision";
+  attention: SessionAttentionItem;
+}
+
+export type SessionCard = SessionProgressCard | SessionOperatorCard | SessionDecisionCard;
+
 export function symbolContextChipLabel(symbol: WebSessionSymbolContext): string {
   if (symbol.kind === "method") {
     return `${symbol.name}()`;

@@ -433,6 +433,36 @@ describe("App shell", () => {
     expect(await screen.findByTestId("outlet-task")).toBeInTheDocument();
   });
 
+  it("hides Dashboard and New bottom-nav on task routes", async () => {
+    render(<App />);
+    expect(screen.getByRole("navigation", { name: "Mobile navigation" })).toBeInTheDocument();
+    setHash("#/t/web%2Ffix-login");
+    await screen.findByTestId("outlet-task");
+    expect(screen.queryByRole("navigation", { name: "Mobile navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New" })).not.toBeInTheDocument();
+    setHash("#/");
+    await screen.findByTestId("outlet-dashboard");
+    expect(screen.getByRole("navigation", { name: "Mobile navigation" })).toBeInTheDocument();
+  });
+
+  it("reclaims route-scroll bottom padding when task outlet is present", () => {
+    const stylesSource = loadStylesSource();
+    expect(stylesSource).toMatch(
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)[\s\S]*?padding-bottom:\s*max\(0px,\s*env\(safe-area-inset-bottom\)\)/,
+    );
+  });
+
+  it("aligns task chrome and attention toast to --task-inset", () => {
+    const stylesSource = loadStylesSource();
+    expect(stylesSource).toMatch(/--task-inset:\s*12px/);
+    expect(stylesSource).toMatch(
+      /\.ajax-web-session-attention-rail\s*\{[^}]*var\(--task-inset\)/s,
+    );
+    expect(stylesSource).toMatch(
+      /\.detail-header\s*\{[^}]*var\(--task-inset\)/s,
+    );
+  });
+
   it("applies swipe enter-left when opening a task from the list", async () => {
     vi.stubGlobal(
       "fetch",

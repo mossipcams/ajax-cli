@@ -113,14 +113,12 @@ describe("App new-task sheet route coupling", () => {
     setHash("#/t/web%2Ffix-login");
     await screen.findByTestId("outlet-task");
     expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
-
-    // Late reopen while still on the task (click-through onto New) must not
-    // survive swipe-back to the dashboard.
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
-    expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
+    // Task routes hide Dashboard/New bottom-nav, so New cannot reopen the sheet.
+    expect(screen.queryByRole("button", { name: "New" })).not.toBeInTheDocument();
 
     setHash("#/");
     await screen.findByTestId("outlet-dashboard");
     expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New" })).toBeInTheDocument();
   });
 });

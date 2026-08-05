@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 interface Props {
   chrome: ReactNode;
   children: ReactNode;
-  nav: ReactNode;
+  nav?: ReactNode;
 }
 
-export default function AppShell({ chrome, children, nav }: Props) {
+export default function AppShell({ chrome, children, nav = null }: Props) {
   return (
     <div data-testid="app-shell" className="app-shell">
       {chrome}

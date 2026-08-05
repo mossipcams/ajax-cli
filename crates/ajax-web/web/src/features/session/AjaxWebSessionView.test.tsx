@@ -78,6 +78,35 @@ function serverEvent(body: Record<string, unknown>) {
   return new MessageEvent("message", { data: JSON.stringify(body) });
 }
 
+function connectSession(socket = latestSocket()) {
+  socket.readyState = MockWebSocket.OPEN;
+  socket.fire("open");
+  socket.fire(
+    "message",
+    serverEvent({
+      type: "session.ready",
+      version: WEB_SESSION_PROTOCOL_VERSION,
+      sessionId: "sess-1",
+    }),
+  );
+  socket.fire(
+    "message",
+    serverEvent({
+      type: "session.status",
+      version: WEB_SESSION_PROTOCOL_VERSION,
+      state: "waiting",
+    }),
+  );
+}
+
+async function openRedirectComposer() {
+  await waitFor(() => {
+    expect(screen.getByTestId("ajax-web-session-redirect")).toBeInTheDocument();
+  });
+  fireEvent.click(screen.getByTestId("ajax-web-session-redirect"));
+  expect(screen.getByTestId("ajax-web-session-composer")).toBeInTheDocument();
+}
+
 describe("AjaxWebSessionView", () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
@@ -90,7 +119,14 @@ describe("AjaxWebSessionView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("connects, shows user message on send, streams assistant reply, and settles", async () => {
+  it("hides composer by default and opens it from Redirect", async () => {
+    render(<AjaxWebSessionView handle="web/fix-login" />);
+    connectSession();
+    expect(screen.queryByTestId("ajax-web-session-composer")).not.toBeInTheDocument();
+    await openRedirectComposer();
+  });
+
+  it("connects, shows operator card on send, streams progress card, and settles", async () => {
     render(<AjaxWebSessionView handle="web/fix-login" />);
     expect(screen.getByTestId("ajax-web-session")).toBeInTheDocument();
     expect(latestSocket().url).toBe(
@@ -98,30 +134,15 @@ describe("AjaxWebSessionView", () => {
     );
 
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.ready",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        sessionId: "sess-1",
-      }),
-    );
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.status",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "waiting",
-      }),
-    );
+    connectSession(socket);
+    await openRedirectComposer();
 
     const input = screen.getByTestId("ajax-web-session-input");
     fireEvent.change(input, { target: { value: "hello agent" } });
     fireEvent.click(screen.getByTestId("ajax-web-session-send"));
 
-    expect(screen.getByText("hello agent")).toBeInTheDocument();
+    expect(screen.getByTestId("ajax-web-session-card-operator")).toHaveTextContent("hello agent");
+    expect(screen.queryByTestId("ajax-web-session-composer")).not.toBeInTheDocument();
     expect(JSON.parse(socket.sent[0]!)).toEqual({
       type: "session.prompt",
       version: WEB_SESSION_PROTOCOL_VERSION,
@@ -158,7 +179,7 @@ describe("AjaxWebSessionView", () => {
       }),
     );
     await waitFor(() => {
-      expect(screen.getByText("Hello back")).toBeInTheDocument();
+      expect(screen.getByTestId("ajax-web-session-card-progress")).toHaveTextContent("Hello back");
     });
 
     socket.fire(
@@ -177,15 +198,52 @@ describe("AjaxWebSessionView", () => {
       }),
     );
     await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-send")).toBeInTheDocument();
+      expect(screen.getByTestId("ajax-web-session-continue")).toBeInTheDocument();
     });
   });
 
-  it("sends abort from the stop button while running", async () => {
+  it("sends Continue without opening the composer", async () => {
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
+    connectSession(socket);
+    await openRedirectComposer();
+    fireEvent.change(screen.getByTestId("ajax-web-session-input"), {
+      target: { value: "seed" },
+    });
+    fireEvent.click(screen.getByTestId("ajax-web-session-send"));
+    socket.fire(
+      "message",
+      serverEvent({
+        type: "session.settled",
+        version: WEB_SESSION_PROTOCOL_VERSION,
+      }),
+    );
+    socket.fire(
+      "message",
+      serverEvent({
+        type: "session.status",
+        version: WEB_SESSION_PROTOCOL_VERSION,
+        state: "waiting",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ajax-web-session-continue")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("ajax-web-session-continue"));
+
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
+      type: "session.prompt",
+      version: WEB_SESSION_PROTOCOL_VERSION,
+      message: "Continue",
+    });
+    expect(screen.queryByTestId("ajax-web-session-composer")).not.toBeInTheDocument();
+  });
+
+  it("sends abort from the header stop button while running", async () => {
+    render(<AjaxWebSessionView handle="web/fix-login" />);
+    const socket = latestSocket();
+    connectSession(socket);
     socket.fire(
       "message",
       serverEvent({
@@ -210,7 +268,6 @@ describe("AjaxWebSessionView", () => {
     vi.useFakeTimers();
     render(<AjaxWebSessionView handle="web/fix-login" />);
 
-    // Never-opened dials: close schedules reconnect; after limit → fatal error.
     for (let i = 0; i < 6; i += 1) {
       const socket = latestSocket();
       socket.fire("close");
@@ -225,48 +282,44 @@ describe("AjaxWebSessionView", () => {
     vi.useRealTimers();
   });
 
-  it("renders the session key bar and empty state", () => {
+  it("renders the session key bar only when composer is open", async () => {
     render(<AjaxWebSessionView handle="web/fix-login" />);
+    connectSession();
+    expect(screen.queryByTestId("ajax-web-session-key-esc")).not.toBeInTheDocument();
+    expect(screen.getByTestId("ajax-web-session-empty")).toBeInTheDocument();
+    await openRedirectComposer();
     expect(screen.getByTestId("ajax-web-session-key-esc")).toBeInTheDocument();
     expect(screen.getByTestId("ajax-web-session-key-mic")).toBeInTheDocument();
-    expect(screen.getByTestId("ajax-web-session-empty")).toBeInTheDocument();
   });
 
-  it("Esc while running sends abort", async () => {
+  it("renders current-handle permission attention as a decision card", async () => {
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
+    connectSession(socket);
     socket.fire(
       "message",
       serverEvent({
-        type: "session.status",
+        type: "attention.required",
         version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "waiting",
+        handle: "web/fix-login",
+        requestId: "perm-1",
+        kind: "permission",
+        title: "Permission",
+        summary: "Run cargo test",
       }),
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-input")).not.toBeDisabled();
+      expect(screen.getByTestId("ajax-web-session-card-decision")).toBeInTheDocument();
     });
-
-    fireEvent.change(screen.getByTestId("ajax-web-session-input"), {
-      target: { value: "go" },
-    });
-    fireEvent.click(screen.getByTestId("ajax-web-session-send"));
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.status",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "running",
-      }),
-    );
-
-    fireEvent.click(screen.getByTestId("ajax-web-session-key-esc"));
+    expect(screen.queryByTestId("ajax-web-session-attention-rail")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("ajax-web-session-decision-approve"));
     expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
-      type: "session.abort",
+      type: "attention.respond",
       version: WEB_SESSION_PROTOCOL_VERSION,
+      targetHandle: "web/fix-login",
+      requestId: "perm-1",
+      response: { type: "permission", outcome: "allow-once" },
     });
   });
 
@@ -274,20 +327,8 @@ describe("AjaxWebSessionView", () => {
     vi.mocked(fetchTaskSymbols).mockResolvedValue([sampleSymbol]);
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.status",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "waiting",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-add-context")).not.toBeDisabled();
-    });
+    connectSession(socket);
+    await openRedirectComposer();
 
     fireEvent.click(screen.getByTestId("ajax-web-session-add-context"));
     fireEvent.change(screen.getByTestId("symbol-search-input"), {
@@ -319,24 +360,12 @@ describe("AjaxWebSessionView", () => {
     expect(screen.queryByTestId("ajax-web-session-context-chips")).not.toBeInTheDocument();
   });
 
-  it("linkifies known symbols in assistant messages and attaches from detail sheet", async () => {
+  it("linkifies known symbols in progress cards and attaches from detail sheet", async () => {
     vi.mocked(fetchTaskSymbols).mockResolvedValue([sampleSymbol]);
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.status",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "waiting",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-add-context")).not.toBeDisabled();
-    });
+    connectSession(socket);
+    await openRedirectComposer();
 
     fireEvent.click(screen.getByTestId("ajax-web-session-add-context"));
     fireEvent.change(screen.getByTestId("symbol-search-input"), {
@@ -382,6 +411,7 @@ describe("AjaxWebSessionView", () => {
     );
 
     fireEvent.click(screen.getByTestId("symbol-detail-attach"));
+    await openRedirectComposer();
     expect(screen.getByTestId("ajax-web-session-context-chips")).toBeInTheDocument();
     expect(screen.getByText("start_session()")).toBeInTheDocument();
   });
@@ -390,20 +420,8 @@ describe("AjaxWebSessionView", () => {
     vi.mocked(fetchTaskSymbols).mockResolvedValue([sampleSymbol]);
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.readyState = MockWebSocket.OPEN;
-    socket.fire("open");
-    socket.fire(
-      "message",
-      serverEvent({
-        type: "session.status",
-        version: WEB_SESSION_PROTOCOL_VERSION,
-        state: "waiting",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-add-context")).not.toBeDisabled();
-    });
+    connectSession(socket);
+    await openRedirectComposer();
 
     fireEvent.click(screen.getByTestId("ajax-web-session-add-context"));
     fireEvent.change(screen.getByTestId("symbol-search-input"), {

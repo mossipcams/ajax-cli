@@ -24,21 +24,29 @@ describe("SessionAttentionBanner", () => {
     expect(screen.queryByTestId("ajax-web-session-attention-rail")).toBeNull();
   });
 
-  it("approves a remote permission without navigating", () => {
+  it("shows status then approve without navigating", () => {
     const onRespond = vi.fn();
+    const onOpenTask = vi.fn();
     render(
       <SessionAttentionBanner
         currentHandle="web/current"
         items={[permissionItem]}
         onRespond={onRespond}
-        onOpenTask={vi.fn()}
+        onOpenTask={onOpenTask}
       />,
+    );
+    expect(screen.getByTestId("ajax-web-session-attention-banner")).toHaveTextContent(
+      "Needs permission",
+    );
+    expect(screen.getByTestId("ajax-web-session-attention-banner")).toHaveTextContent(
+      "web/other-task",
     );
     fireEvent.click(screen.getByTestId("ajax-web-session-attention-approve"));
     expect(onRespond).toHaveBeenCalledWith(permissionItem, {
       type: "permission",
       outcome: "allow-once",
     });
+    expect(onOpenTask).not.toHaveBeenCalled();
   });
 
   it("expands a question composer and sends the reply", () => {
@@ -66,7 +74,7 @@ describe("SessionAttentionBanner", () => {
     expect(onRespond).toHaveBeenCalledWith(question, { type: "question", text: "Yes" });
   });
 
-  it("opens a review task and reports the review response", () => {
+  it("opens the review task from the Open action", () => {
     const onRespond = vi.fn();
     const onOpenTask = vi.fn();
     const review: SessionAttentionItem = {
@@ -84,8 +92,28 @@ describe("SessionAttentionBanner", () => {
         onOpenTask={onOpenTask}
       />,
     );
+    expect(screen.queryByTestId("ajax-web-session-attention-hit")).toBeNull();
     fireEvent.click(screen.getByTestId("ajax-web-session-attention-open"));
     expect(onRespond).toHaveBeenCalledWith(review, { type: "review", action: "open" });
     expect(onOpenTask).toHaveBeenCalledWith("web/ready");
+  });
+
+  it("animates in as a top-of-page toast", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    });
+    render(
+      <SessionAttentionBanner
+        currentHandle="web/current"
+        items={[permissionItem]}
+        onRespond={vi.fn()}
+        onOpenTask={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("ajax-web-session-attention-rail").className).toContain(
+      "is-visible",
+    );
+    vi.unstubAllGlobals();
   });
 });

@@ -294,11 +294,13 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 
 ### Surface: Ajax Web Session (flagged Operate alternate)
 - Behind `ajax.webSession` on Cursor tasks only; otherwise terminal remains the work surface.
-- Composition (top → bottom): uppercase tracked SESSION chrome + status pill → attention rail → console transcript (role gutter + turn body, not chat bubbles) → interact-style composer dock → literal terminal key bar.
-- Assistant turns use mono; operator turns use sans. Soft Steel Blue only on Send / running / You gutter.
-- Keyboard-open: pin the session column to the visualViewport band; key bar flush above the soft keyboard; attention rail sticky.
-- States: empty (operational copy), connecting, ready, running, reconnecting, error+Retry.
-- iOS Safari / Home Screen first; no classic PWA packaging.
+- **Supervision feed:** one `--task-inset` column (`12px` + safe-area) for header, feed, and attention toast — not a chat transcript.
+- Composition: quiet Session header + status pill + header Stop while running → chronological card feed (progress, operator, decision) → hidden composer until Redirect or question reply → Continue when waiting with no pending decision.
+- Progress cards truncate ~280 chars client-side; operator cards for prompts; current-handle attentions render as decision cards in the feed. Cross-session needs: minimal fixed top toast (status + inline actions) aligned to that column.
+- Soft Steel Blue for Continue / Send / running only; composer fully hidden by default.
+- Task / diff routes hide Dashboard + New bottom nav; Task Details clears home-indicator safe-area.
+- Keyboard-open: pin to visualViewport band; composer key bar only when composer is open; attention toast tracks `--app-top`.
+- No classic PWA packaging.
 
 ## 6. Do's and Don'ts
 

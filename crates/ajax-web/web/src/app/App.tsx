@@ -438,9 +438,11 @@ export default function App() {
     </nav>
   );
 
+  const showBottomNav = route.kind !== "task" && route.kind !== "diff";
+
   return (
     <AppViewport>
-      <AppShell chrome={chrome} nav={nav}>
+      <AppShell chrome={chrome} nav={showBottomNav ? nav : null}>
         <RouteScroll>
           {route.kind === "settings" ? (
             <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
