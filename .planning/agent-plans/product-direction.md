@@ -90,12 +90,51 @@ conscious call either way.
 
 ## 2. Decision rule
 
-**Revised 2026-08-05** after Matt's input: *agent limits and intelligence are
-changing weekly.* The first rule ("prefer substrates you control") was right but
-too weak — it ranks by stability and misses direction of travel. Superseded by:
+**Revised twice on 2026-08-05.** First rule ("prefer substrates you control")
+ranked by stability and missed direction of travel. Second rule ("prefer work
+whose value increases as agents improve") was closer but still framed the
+harnesses as a *dependency*. Matt's clarification — *AI harnesses and models
+change weekly* — makes the real relationship clear: the layer below Ajax is not
+merely churning, it is **expanding into Ajax's territory**. Final rule:
 
-> **Prefer work whose value increases as agents improve. Discount work whose
-> value depends on agents staying limited.**
+> **Bet only on what is cross-vendor or host-level. Assume anything a single
+> harness can ship for itself will be absorbed within ~2 quarters.**
+
+### Why absorption is the governing force
+
+Harnesses ship weekly and are themselves becoming orchestrators: background
+tasks, subagents, session resume, checkpoints, native notifications, per-session
+cost display. Every Ajax capability that mirrors a *single-harness* feature is on
+a countdown.
+
+The irony is already visible in the code: Ajax's attention detection is *built
+on* harness hooks (`crates/ajax-cli/src/agent_hooks.rs` installs Claude, Codex,
+Cursor and Pi hooks). Ajax is downstream of the exact layer expanding into it.
+
+### What cannot be absorbed
+
+1. **Cross-vendor.** No vendor will orchestrate competitors well. Anthropic has
+   no incentive to make Claude Code a good manager of Codex and Cursor tasks.
+   That is structural, not a gap someone closes next quarter.
+2. **Host-level truth.** A harness knows its own session. It does not know you
+   have twelve worktrees across four repos driven by three vendors. `ajax-core`
+   reconciles against git and tmux, which no harness sees.
+3. **The operator's own lifecycle.** Review, ship, drop, tidy — the git workflow
+   *around* agent output. Harnesses produce diffs; they do not run your merge
+   queue across repos.
+
+Run the filter:
+
+| Candidate | Cross-vendor / host-level? | Verdict |
+| --- | --- | --- |
+| Open the agent set (config, not enum) | It *is* the breadth | **Existential** |
+| Cross-vendor normalized task truth | Yes | **Core moat** |
+| Review / ship lifecycle across repos | Yes — host-level git | **Durable** |
+| Fleet triage across vendors | Yes | **Durable** |
+| Cross-vendor limit/cost rollup | Yes, only in rollup form | **Durable** |
+| Per-agent approval detection | No — harness ships it | **Absorbed** |
+| Per-task token display | No — harnesses show natively | **Absorbed** |
+| iOS Safari terminal fidelity | No | **Cap it** |
 
 Applied:
 
@@ -115,7 +154,7 @@ of agent *immaturity*. That value decays. What appreciates is deciding what
 ships: more agents producing more changes that a human trusts less per unit.
 The durable seat is coordination and trust, not interrupt handling.
 
-### Structural consequence
+### Structural consequence: the closed enum is now existential
 
 `Config` (`crates/ajax-core/src/config.rs:206`) carries `repos`, `test_commands`,
 `stt` — and **nothing about agents**, under `deny_unknown_fields`. Every agent
@@ -127,62 +166,79 @@ fact is compiled in:
 - `AgentClient` is a closed enum (`models/intent.rs:19`)
 - pane needles (`pane_fallback.rs`)
 
-So 100% of Ajax's agent knowledge ships on a Rust release cycle, in a world
-changing weekly. Under churn, the highest-leverage work is whatever lowers the
-cost of adapting. That is now T1.1.
+Previously filed as an ergonomics problem. Under the absorption rule it is the
+central one: **cross-vendor breadth is the moat, and breadth is gated behind a
+Rust release.**
+
+This is not hypothetical — the wall has already been hit. OpenCode appears
+throughout `.planning/`, and
+`.planning/agent-plans/web-terminal-scroll-yank-and-opencode.md` records the
+cost: adding it required a code change and shipped asymmetrically — *"No
+CLI/TUI agent-picker changes; web only for opencode."* One new harness produced
+a code change plus surface drift between Web Cockpit and CLI/TUI.
+
+If new harnesses keep appearing and each costs a release and widens that drift,
+Ajax loses the cross-vendor race precisely when breadth is the whole point.
 
 ## 3. Ranked candidates
 
 ### Tier 1 — worth building under every audience outcome
 
-**T1.1 — Move agent knowledge from code to config (medium).**
+**T1.1 — Open the agent set: config-driven, not a closed enum (medium).**
 Add an agent manifest to `Config`: launch program and args, capability profile,
-hook wiring, pane needles. Keep `AgentClient` for built-in defaults but let
-config override and add clients without a recompile. This is the adaptation-cost
-fix, and it delivers capability honesty for free — once profiles are data, the
-UI can show what Ajax can and cannot detect per agent.
+hook wiring, pane needles. Keep built-in defaults, but a new harness must be
+addable by editing config — no recompile, no surface drift. Target: adopting the
+next OpenCode-equivalent is a config edit that lands in Web, CLI, and TUI at
+once. Capability honesty falls out free — once profiles are data, the UI can
+show what Ajax can and cannot detect per agent.
 *Files: `config.rs:206`, `agent_capability.rs`, `adapters/agent.rs`,
 `models/intent.rs:19`.*
-*Under weekly churn this is the highest-leverage item in the repo: it converts
-every future agent change from a release into an edit.*
+*This is the moat. Everything else in Tier 1 is worth less if breadth stays
+gated behind a release.*
 
 **T1.2 — Deepen diff review and judgment (medium–large).**
 `diff_review.rs` already has the right bones — `DiffFileRole`,
 `classify_diff_path`, `DiffFlag`/`DiffFlagSeverity`, `assess_diff_judgment`.
-This is the surface whose value rises fastest as agents improve: more changes,
-each one trusted less per unit, arriving faster than a human can read them.
-Invest in what makes a diff *safe to accept* — risk-weighted file roles, blast
-radius, test-coverage signal, what changed since last look.
+Host-level and cross-vendor by nature: it operates on git output, not on any
+harness's internals. Invest in what makes a diff *safe to accept* — risk-weighted
+file roles, blast radius, test-coverage signal, what changed since last look.
+The volume of changes needing this judgment rises under every scenario where
+harnesses improve.
 
-**T1.3 — Fleet triage (medium).**
+**T1.3 — Fleet triage across vendors (medium).**
 Replace severity-then-alphabetical (`commands/projection.rs:113`) with real
-ranking: dwell time, staleness, blocked duration. Appreciates directly with
-parallelism — the smarter agents get, the more of them run at once.
+ranking: dwell time, staleness, blocked duration. Value is specifically the
+*cross-vendor* view — one queue over Claude, Codex, Cursor, OpenCode work. No
+harness will ever render that queue.
 
-**T1.4 — Rate-limit headroom as a scheduling input (new; small–medium).**
-Today `RateLimited` is deliberately silenced as transient noise
-(`attention/tests.rs:655`). If limits move weekly and many agents contend, limit
-headroom is the binding constraint on fleet throughput, not an annoyance.
-Minimum viable: surface per-agent limit state so "which agent has room for this
-task right now" is answerable. Reframes T1.5 as well — the useful metric is burn
-rate against a window, not cumulative tokens.
+**T1.4 — Cross-vendor limit and burn rollup (new; small–medium).**
+Merges the old rate-limit and cost items, because under the absorption rule they
+have the same durable core. Per-vendor token counts and limit banners are
+absorbed — every harness shows its own. What no harness shows is the rollup:
+*across all vendors I'm running, where is the headroom right now.* Today
+`RateLimited` is deliberately silenced as transient noise
+(`attention/tests.rs:655`); revisit that if limit headroom is the binding
+constraint on fleet throughput.
+Note `feat-cost-tracking.md` (draft v2, the only shelved plan in 256) already
+scoped the cross-agent rollup and already excluded dollars because "prices
+drift" — that instinct now looks clearly right. Build the rollup, skip the
+per-task display.
 
-**T1.5 — Ship cost tracking (small–medium).**
-The only shelved plan in 256; `feat-cost-tracking.md` is draft v2 with data
-sources already probed on the host. Its instinct to exclude dollars ("prices
-drift") is now clearly correct. Reframe around burn-rate-vs-window per T1.4.
-
-**T1.6 — Declare a web terminal fidelity bar (policy, not code).**
+**T1.5 — Declare a web terminal fidelity bar (policy, not code).**
 Unchanged and still load-bearing. A budget, not a feature. Nothing above gets
 capacity until this lands.
 
 ### Explicitly not worth further investment
 
 **Approval/wait detection parity for Cursor and Pi.** Previously ranked first;
-demoted. Chasing native-quality wait detection through pane scraping spends
-effort on a shrinking problem: it depends on vendor chrome that churns weekly,
-and on agents needing frequent approval, which is exactly what improving agents
-stop doing. Surface the limitation (free, via T1.1) and stop there.
+now doubly demoted. It depends on vendor chrome that churns weekly, on agents
+staying limited enough to need frequent approval, *and* it is the single most
+likely capability for harnesses to ship natively — Claude and Codex already do,
+which is where Ajax's own hooks come from. Surface the limitation (free, via
+T1.1) and stop.
+
+**Per-task token/cost display.** Absorbed. Keep only the cross-vendor rollup
+(T1.4).
 
 ### Tier 2 — gated on the audience decision
 
@@ -194,19 +250,33 @@ Requires explicitly amending `architecture.md:161`. Only if "users" wins.
 
 ## 4. Settling the audience question
 
-Do not decide in the abstract — the decision has no new information behind it
-today. Note that Tier 1 is exactly the overlap: each item makes Ajax measurably
-better for its author **and** is a prerequisite for a second user.
+The absorption rule mostly answers this, which the earlier drafts could not.
+
+If the only durable seat is cross-vendor and host-level, then the audience is
+not "developers using AI agents" — most of them use one harness, and for them
+the harness is already enough and getting better weekly. The audience is
+specifically:
+
+> **Operators running two or more agent harnesses in parallel, across multiple
+> repos, on their own machine.**
+
+That group is small today, structurally unserveable by any vendor, and — this is
+the part that matters — **grows as harnesses proliferate**. Every new entrant
+adds people whose fleet spans vendors. Ajax's addressable audience is a function
+of exactly the churn that threatens it.
+
+This also reframes the personal-vs-product question. Matt is already in that
+group (Claude, Codex, Cursor, Pi, OpenCode). Building for himself and building
+for the audience are, for once, the same act — provided Tier 1 is built
+cross-vendor-first rather than for whichever harness he used most that week.
 
 Proposed sequence:
 
-1. Land T1.4 (the cap), then T1.1 → T1.3.
-2. Set a decision date at the end of that run, not now.
-3. If leaning toward users, run one cheap test first: put it in front of 3–5
-   people who run parallel agent fleets. If install friction is the only
-   objection, that is a signal. If they don't want it with a clean install, that
-   is also a signal — and nothing is wasted, because Tier 1 was worth building
-   regardless.
+1. Land T1.5 (the cap), then T1.1 — the moat — then T1.2 → T1.4.
+2. Revisit distribution only after T1.1. Breadth gated behind a Rust release is
+   not distributable regardless of install path.
+3. Then run one cheap test: 3–5 people who run multiple harnesses in parallel.
+   Nothing is wasted either way, because Tier 1 is worth building for one user.
 
 ## 5. Counter-arguments (recorded honestly)
 
@@ -224,8 +294,20 @@ that rises under *every* scenario where agents improve.
 **The premise itself could be decaying.** If agents get good enough to run
 unattended and self-review, the operator layer thins. The honest read is that
 the *interrupt* layer thins while the *trust* layer thickens — someone still
-decides what ships. But that is a bet, not a fact, and it is the assumption most
-worth revisiting if the next few months invalidate it.
+decides what ships. But that is a bet, not a fact.
+
+**The cross-vendor audience may stay too small.** The strongest objection to
+this whole plan. If most operators consolidate onto one harness — plausible if
+one pulls decisively ahead — the durable seat shrinks to near nothing, and Ajax
+is a personal tool by default rather than by choice. This is the assumption to
+re-check quarterly; it is load-bearing for everything in §4.
+
+**A harness could go cross-vendor.** Less likely from a model vendor, but an
+independent harness (an OpenCode-class project) has every incentive to. If one
+does it well, Ajax's moat is contested by something with more surface area.
+Ajax's counter is host-level truth — git and tmux reconciliation across repos —
+which is further from any harness's centre of gravity than agent orchestration
+is.
 
 ## 6. Checklist
 
@@ -249,14 +331,14 @@ git log --pretty=%s | grep -oE "^[a-z]+" | sort | uniq -c | sort -rn
 
 ## 8. Risks
 
-- Capping web terminal work (T1.6) is the load-bearing move; without it Tier 1
+- Capping web terminal work (T1.5) is the load-bearing move; without it Tier 1
   will not get capacity and this plan changes nothing.
 - T1.1 makes a reliability limitation visible. That is the point, but it will
   make Ajax feel weaker on Cursor/Pi before it feels stronger.
 - T1.1 must not become a plugin framework. `AGENTS.md` forbids broad generic
   abstractions without concrete need — the concrete need is weekly agent churn,
   and the scope is a config-backed manifest, not an extension API.
-- T1.5's data sources are third-party on-disk formats and can drift; the plan
+- T1.4's data sources are third-party on-disk formats and can drift; the plan
   file already flags the cumulative-vs-incremental check for Codex.
 - The ranking rests on the assumption that agents improve fast enough to shift
   load from approvals to review. Re-check that assumption quarterly; if approvals
