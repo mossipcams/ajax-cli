@@ -341,6 +341,20 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         self.persist_changed_state(context)
             .map_err(web_error_from_cli)
     }
+
+    fn reload_registry_from_disk(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<bool, WebError> {
+        let Some(paths) = self.paths.as_ref() else {
+            return Ok(false);
+        };
+        let tracked = load_tracked_context(paths).map_err(web_error_from_cli)?;
+        *context = tracked.context;
+        self.save_state = tracked.save_state;
+        self.last_loaded_mtime = state_file_mtime(paths);
+        Ok(true)
+    }
 }
 
 impl CliRuntimeBridge {

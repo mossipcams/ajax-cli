@@ -139,3 +139,183 @@ fn logging_test_logs_dir() -> &'static std::path::Path {
 fn read_logging_test_log(logs_dir: &std::path::Path) -> String {
     std::fs::read_to_string(logs_dir.join("ajax.log")).expect("ajax.log should exist")
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn run_optimistic_recovers_durable_operate_after_revision_cas_loss() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let bridge = TestBridge {
+        operate_entered: Some(Arc::clone(&entered)),
+        operate_release: Some(Arc::clone(&release)),
+        acknowledge_result: Ok(true),
+        operate_result: Ok(OperateOutcome {
+            state_changed: true,
+            output: "reviewed".to_string(),
+        }),
+        ..TestBridge::default()
+    };
+    let reload_calls = Arc::clone(&bridge.reload_calls);
+    let (state, cookie, app) = app_with(context_with_task(), bridge, "run-optimistic-cas-recover");
+
+    let first_app = app.clone();
+    let first_cookie = cookie.clone();
+    let first = tokio::spawn(async move {
+        post_json(
+            &first_app,
+            &first_cookie,
+            "/api/operations",
+            r#"{"request_id":"req-cas-recover","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("operation never entered the bridge");
+
+    let sink = super::operator_input_sink(&state, "web/fix-login".to_string());
+    sink();
+
+    release_gate(&release);
+
+    let response = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("operation timed out")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = json_of(response).await;
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["request_id"], "req-cas-recover");
+    assert_eq!(json["output"], "reviewed");
+    assert!(json["cockpit"].is_object());
+    assert_eq!(reload_calls.load(Ordering::SeqCst), 1);
+
+    let replay = post_json(
+        &app,
+        &cookie,
+        "/api/operations",
+        r#"{"request_id":"req-cas-recover","task_handle":"web/fix-login","action":"review"}"#,
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_json = json_of(replay).await;
+    assert_eq!(replay_json["ok"], true);
+    assert_eq!(replay_json["request_id"], "req-cas-recover");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn run_optimistic_keeps_conflict_when_cas_loss_is_not_durable() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let bridge = TestBridge {
+        operate_entered: Some(Arc::clone(&entered)),
+        operate_release: Some(Arc::clone(&release)),
+        acknowledge_result: Ok(true),
+        operate_result: Ok(OperateOutcome {
+            state_changed: false,
+            output: String::new(),
+        }),
+        ..TestBridge::default()
+    };
+    let reload_calls = Arc::clone(&bridge.reload_calls);
+    let (state, cookie, app) =
+        app_with(context_with_task(), bridge, "run-optimistic-cas-ephemeral");
+
+    let first_app = app.clone();
+    let first_cookie = cookie.clone();
+    let first = tokio::spawn(async move {
+        post_json(
+            &first_app,
+            &first_cookie,
+            "/api/operations",
+            r#"{"request_id":"req-cas-ephemeral","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("operation never entered the bridge");
+
+    let sink = super::operator_input_sink(&state, "web/fix-login".to_string());
+    sink();
+
+    release_gate(&release);
+
+    let response = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("operation timed out")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let json = json_of(response).await;
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["request_id"], "req-cas-ephemeral");
+    assert!(json["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("cockpit state changed"));
+    assert_eq!(reload_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn run_optimistic_installs_operate_clone_when_durable_cas_loss_has_no_disk_reload() {
+    use ajax_core::models::TaskId;
+    use ajax_core::registry::Registry;
+
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let bridge = TestBridge {
+        operate_entered: Some(Arc::clone(&entered)),
+        operate_release: Some(Arc::clone(&release)),
+        acknowledge_result: Ok(true),
+        clear_registry_on_operate: true,
+        operate_result: Ok(OperateOutcome {
+            state_changed: true,
+            output: "cleared".to_string(),
+        }),
+        ..TestBridge::default()
+    };
+    let reload_calls = Arc::clone(&bridge.reload_calls);
+    let (state, cookie, app) = app_with(context_with_task(), bridge, "run-optimistic-cas-no-disk");
+
+    let first_app = app.clone();
+    let first_cookie = cookie.clone();
+    let first = tokio::spawn(async move {
+        post_json(
+            &first_app,
+            &first_cookie,
+            "/api/operations",
+            r#"{"request_id":"req-cas-no-disk","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("operation never entered the bridge");
+
+    let sink = super::operator_input_sink(&state, "web/fix-login".to_string());
+    sink();
+
+    release_gate(&release);
+
+    let response = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("operation timed out")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = json_of(response).await;
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["request_id"], "req-cas-no-disk");
+    assert_eq!(json["output"], "cleared");
+    assert_eq!(reload_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        state
+            .shared()
+            .context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none(),
+        "shared state should reflect the operate clone with cleared registry"
+    );
+}

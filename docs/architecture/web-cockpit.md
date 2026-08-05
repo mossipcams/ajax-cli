@@ -601,16 +601,17 @@ the crate:
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
-  When at least one push subscription is stored it also runs a background tick
-  that reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
-  and revision-checked commit) so attention push fires without a browser
-  polling; the interval is 30 seconds. The tick always
-  refreshes at `RefreshTier::Full` (CI probes and Full-only rediscovery) but
-  skips push delivery while a browser has polled `/api/cockpit` within the
-  last 90 seconds. Presence is refreshed not only by `/api/cockpit` polls but
-  also by recent terminal-WebSocket attaches and operate/action requests that
-  pass their origin/JSON-parse gates, so push delivery stays suppressed while
-  the operator is actively using the PWA terminal or submitting actions.
+  When at least one push subscription is stored and no browser is connected it
+  also runs a background tick that reuses the `/api/cockpit` refresh path (same
+  single-flight lock, cache TTL, and revision-checked commit) so attention push
+  fires without a browser polling; the interval is 30 seconds. The tick skips
+  entirely while a browser has polled `/api/cockpit` within the last 90 seconds.
+  Presence is refreshed not only by `/api/cockpit` polls but also by recent
+  terminal-WebSocket attaches and operate/action requests that pass their
+  origin/JSON-parse gates, so the tick stays suppressed while the operator is
+  actively using the PWA terminal or submitting actions. When the tick runs it
+  refreshes at `RefreshTier::Full` (CI probes and Full-only rediscovery) and
+  delivers attention push.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
@@ -826,7 +827,12 @@ asset embedding inside `ajax-web`. Those mechanisms must not move into
 Web operations are coordinated by request ID and task key. External operation
 work runs outside the global shared-state lock, then commits against the
 prepared revision; stale commits return conflicts instead of replacing newer
-state. `/api/cockpit` adds a short refresh TTL and single-flight gate so
+state. When an operate or start reports a durable persist but loses the
+process-local revision CAS (for example to a terminal acknowledgment or a
+concurrent read-side metadata save), the runtime reloads authoritative SQLite
+state into shared memory when present; otherwise it installs the durable operate
+clone. The response always includes a fresh cockpit view instead of a false
+generic conflict. `/api/cockpit` adds a short refresh TTL and single-flight gate so
 near-simultaneous polls reuse the same refreshed projection, and task mutations
 invalidate that window. Terminal bridge cleanup and substrate probes are
 bounded so browser disconnects, pane probes, or slow external commands do not

@@ -153,8 +153,8 @@ where
     })
 }
 
-/// Background Full refresh. Always refreshes; push delivery only when
-/// subscriptions exist and no browser is connected.
+/// Background Full refresh when push subscriptions exist and no browser is
+/// connected; otherwise skip the tick body.
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -167,11 +167,13 @@ where
         interval.tick().await; // consume the immediate first tick
         loop {
             interval.tick().await;
-            let deliver_notifications =
-                tick_state.push.has_subscriptions() && !tick_state.browser_connected();
-            let _ =
-                refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, deliver_notifications)
-                    .await;
+            if tick_state.browser_connected() {
+                continue;
+            }
+            if !tick_state.push.has_subscriptions() {
+                continue;
+            }
+            let _ = refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, true).await;
         }
     });
 }

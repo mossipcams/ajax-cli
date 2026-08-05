@@ -3,7 +3,7 @@
 use crate::adapters::http::{
     json_response, operation_response_with_request_id, response_from_web_error, Response,
 };
-use crate::runtime::bridge::RuntimeBridge;
+use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
@@ -90,18 +90,20 @@ impl<C, B> Clone for WebAppState<C, B> {
 
 impl<C, B> WebAppState<C, B>
 where
-    C: Clone,
-    B: Clone,
+    C: Clone + CommandRunner,
+    B: Clone + RuntimeBridge<C>,
 {
     /// Run `operate` against a clone of the shared state without holding the
     /// `shared` lock across the call, then commit the result only if no other
     /// request advanced the revision in the meantime. A losing writer leaves
-    /// shared state untouched and returns a `409` conflict instead.
+    /// shared state untouched and returns a `409` conflict unless the operate
+    /// closure reports a durable persist, in which case shared state reloads
+    /// from disk and returns the operate response with a fresh cockpit view.
     pub(crate) fn run_optimistic(
         &self,
         request_id: Option<&str>,
         conflict_message: &str,
-        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> Response,
+        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> (Response, bool),
     ) -> Response {
         let (mut context, mut runner, mut bridge, base_revision) = {
             let guard = self.shared();
@@ -112,7 +114,7 @@ where
                 guard.revision,
             )
         };
-        let response = operate(&mut context, &mut runner, &mut bridge);
+        let (response, durable) = operate(&mut context, &mut runner, &mut bridge);
         let mut guard = self.shared();
         if guard.revision == base_revision {
             guard.context = context;
@@ -121,6 +123,25 @@ where
             guard.revision = guard.revision.saturating_add(1);
             guard.cockpit_cache = None;
             response
+        } else if durable {
+            let reload_result = {
+                let WebSharedState {
+                    context, bridge, ..
+                } = &mut *guard;
+                bridge.reload_registry_from_disk(context)
+            };
+            match reload_result {
+                Err(error) => return response_from_web_error(error, request_id),
+                Ok(false) => {
+                    guard.context = context;
+                    guard.runner = runner;
+                    guard.bridge = bridge;
+                }
+                Ok(true) => {}
+            }
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            response_with_fresh_cockpit(response, &guard.context, request_id)
         } else {
             operation_response_with_request_id(
                 json_response(
@@ -132,13 +153,7 @@ where
             )
         }
     }
-}
 
-impl<C, B> WebAppState<C, B>
-where
-    C: Clone + CommandRunner,
-    B: Clone + RuntimeBridge<C>,
-{
     /// Run `operate` against a clone without holding the shared lock. The HTTP
     /// response is always returned; when `metadata_changed` is true, observed
     /// PR metadata is persisted best-effort and merged into shared state only

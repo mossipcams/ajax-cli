@@ -60,6 +60,15 @@ pub trait RuntimeBridge<C: CommandRunner> {
     ) -> Result<(), WebError> {
         Ok(())
     }
+
+    /// Force-reload authoritative registry context from disk into `context`.
+    /// Returns `true` when durable storage replaced `context`; default is `Ok(false)`.
+    fn reload_registry_from_disk(
+        &mut self,
+        _context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<bool, WebError> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -94,9 +103,9 @@ pub(crate) fn handle_action_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
-) -> Result<Response, WebError> {
+) -> Result<(Response, bool), WebError> {
     if let Some(failure) = unsupported_operate_action(&request.action) {
-        return operation_error_response(failure, context);
+        return operation_error_response(failure, context).map(|response| (response, false));
     }
 
     match bridge.execute_operate(
@@ -109,9 +118,35 @@ pub(crate) fn handle_action_request<C: CommandRunner>(
         context,
         runner,
     ) {
-        Ok(outcome) => operation_success_response(outcome, context),
-        Err(error) => operation_error_response(error, context),
+        Ok(outcome) => {
+            let durable = outcome.state_changed;
+            operation_success_response(outcome, context).map(|response| (response, durable))
+        }
+        Err(error) => {
+            let durable = error.state_changed;
+            operation_error_response(error, context).map(|response| (response, durable))
+        }
     }
+}
+
+/// Reattach `browser_cockpit_view` from `context` after a durable CAS recovery.
+pub(crate) fn response_with_fresh_cockpit(
+    mut response: Response,
+    context: &CommandContext<InMemoryRegistry>,
+    request_id: Option<&str>,
+) -> Response {
+    if response.content_type != "application/json; charset=utf-8" {
+        return crate::adapters::http::operation_response_with_request_id(response, request_id);
+    }
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&response.body) else {
+        return crate::adapters::http::operation_response_with_request_id(response, request_id);
+    };
+    value["cockpit"] = serde_json::to_value(cockpit::browser_cockpit_view(context))
+        .unwrap_or(serde_json::Value::Null);
+    if let Ok(body) = serde_json::to_vec(&value) {
+        response.body = body;
+    }
+    crate::adapters::http::operation_response_with_request_id(response, request_id)
 }
 
 pub(crate) fn operation_success_response(

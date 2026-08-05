@@ -52,8 +52,12 @@ fn restart_launch() -> RestartLaunch {
     )
 }
 
+fn should_exit_after_launch(result: Result<(), String>) -> bool {
+    result.is_ok()
+}
+
 /// Re-exec the current process or spawn a configured restart script after a short
-/// delay, then exit.
+/// delay, then exit only when the successor spawn succeeded.
 ///
 /// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_process_restart() {
@@ -61,10 +65,13 @@ pub fn schedule_process_restart() {
     {
         thread::spawn(|| {
             thread::sleep(RESTART_DELAY);
-            if let Err(error) = launch_restart(restart_launch()) {
+            let result = launch_restart(restart_launch());
+            if let Err(ref error) = result {
                 eprintln!("Ajax web restart failed: {error}");
             }
-            std::process::exit(0);
+            if should_exit_after_launch(result) {
+                std::process::exit(0);
+            }
         });
     }
 }
@@ -164,7 +171,8 @@ pub fn test_in_stable_enabled_from_env() -> bool {
     }
 }
 
-/// Spawn the detached Test in Stable wrapper with stable profile args, then exit.
+/// Spawn the detached Test in Stable wrapper with stable profile args, then exit
+/// only when the wrapper spawn succeeded.
 ///
 /// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_test_in_stable() {
@@ -172,20 +180,28 @@ pub fn schedule_test_in_stable() {
     {
         thread::spawn(|| {
             thread::sleep(RESTART_DELAY);
-            if let Some(script) = std::env::var(RESTART_SCRIPT_ENV)
+            let result = std::env::var(RESTART_SCRIPT_ENV)
                 .ok()
                 .filter(|value| !value.is_empty())
-            {
-                let port = std::env::var(RESTART_PORT_ENV)
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string());
-                let args = test_in_stable_script_args(&port);
-                if let Err(error) = spawn_restart_script(&test_in_stable_script(&script), &args) {
-                    eprintln!("Ajax web test-in-stable failed: {error}");
-                }
+                .map(|script| {
+                    let port = std::env::var(RESTART_PORT_ENV)
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string());
+                    let args = test_in_stable_script_args(&port);
+                    spawn_restart_script(&test_in_stable_script(&script), &args)
+                });
+            let exit = result
+                .map(|launch| {
+                    if let Err(ref error) = launch {
+                        eprintln!("Ajax web test-in-stable failed: {error}");
+                    }
+                    should_exit_after_launch(launch)
+                })
+                .unwrap_or(false);
+            if exit {
+                std::process::exit(0);
             }
-            std::process::exit(0);
         });
     }
 }
@@ -197,6 +213,19 @@ mod tests {
     #[test]
     fn schedule_process_restart_is_no_op_in_tests() {
         schedule_process_restart();
+    }
+
+    #[test]
+    fn schedule_test_in_stable_is_no_op_in_tests() {
+        super::schedule_test_in_stable();
+    }
+
+    #[test]
+    fn should_exit_after_launch_only_on_success() {
+        assert!(super::should_exit_after_launch(Ok(())));
+        assert!(!super::should_exit_after_launch(Err(
+            "spawn failed".to_string()
+        )));
     }
 
     #[test]
