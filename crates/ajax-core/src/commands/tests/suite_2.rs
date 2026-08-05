@@ -322,7 +322,7 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
     assert_eq!(plan.commands[3].args[2], "ajax-web-fix-logout:task");
     assert_eq!(
         plan.commands[3].args[3],
-        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
+        "(if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi) >/dev/null 2>&1; ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
     );
 }
 

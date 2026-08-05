@@ -363,7 +363,7 @@ fn new_execute_folds_bootstrap_into_send_keys_without_blocking_start() {
             command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string())
         })
         .expect("expected folded send-keys launch");
-    assert!(send_keys.args[3].contains("npm ci && ajax-cli __agent-runtime"));
+    assert!(send_keys.args[3].contains("npm ci) >/dev/null 2>&1 && ajax-cli __agent-runtime"));
 }
 #[test]
 fn new_execute_records_provisioning_task_before_first_command_failure() {

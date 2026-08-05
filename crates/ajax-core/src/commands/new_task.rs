@@ -481,9 +481,13 @@ fn agent_runtime_command(
 }
 
 fn fold_setup_into_agent_launch(bootstrap: Option<&str>, agent_line: &str) -> String {
+    // Keep setup in-pane (before agent) but mute npm/husky noise in the task
+    // terminal — same idea as the old detached graphify redirect.
     match bootstrap {
-        Some(bootstrap) => format!("{HUSKY_GUARD}; {bootstrap} && {agent_line}"),
-        None => format!("{HUSKY_GUARD}; {agent_line}"),
+        Some(bootstrap) => {
+            format!("({HUSKY_GUARD}; {bootstrap}) >/dev/null 2>&1 && {agent_line}")
+        }
+        None => format!("({HUSKY_GUARD}) >/dev/null 2>&1; {agent_line}"),
     }
 }
 

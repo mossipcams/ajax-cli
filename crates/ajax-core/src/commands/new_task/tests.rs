@@ -194,7 +194,7 @@ fn new_task_plan_launches_agent_through_runtime_wrapper() {
 
     assert_eq!(
         agent_send_keys_line(&plan),
-        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
+        "(if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi) >/dev/null 2>&1; ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
     );
 }
 
@@ -262,7 +262,7 @@ fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
 
     let launch = agent_send_keys_line(&plan);
     assert!(launch.contains("npm exec --yes husky"));
-    assert!(launch.contains("npm install && ajax-cli __agent-runtime"));
+    assert!(launch.contains("npm install) >/dev/null 2>&1 && ajax-cli __agent-runtime"));
     assert!(
         !plan.commands.iter().any(|command| command.program == "sh"),
         "expected no standalone bootstrap command: {:?}",

@@ -346,8 +346,10 @@ fn folded_agent_launch_line(task_id: &str, worktree_path: &str, bootstrap: Optio
         "ajax-cli __agent-runtime --task-id {task_id} --state-root .cache/ajax/agent-runtime -- codex --cd {worktree_path}"
     );
     match bootstrap {
-        Some(bootstrap) => format!("{EXPECTED_HUSKY_GUARD}; {bootstrap} && {agent}"),
-        None => format!("{EXPECTED_HUSKY_GUARD}; {agent}"),
+        Some(bootstrap) => {
+            format!("({EXPECTED_HUSKY_GUARD}; {bootstrap}) >/dev/null 2>&1 && {agent}")
+        }
+        None => format!("({EXPECTED_HUSKY_GUARD}) >/dev/null 2>&1; {agent}"),
     }
 }
 
