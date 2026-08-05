@@ -30,7 +30,8 @@ The task operation boundary now owns the main mutable task actions:
 - Start operation execution records the task, applies named provisioning steps,
   records step receipts for successful provisioning side effects, marks
   provisioning failure in core with failed-step metadata, and opens the task
-  after successful setup.
+  after worktree/session/agent-send succeed (in-pane husky/bootstrap is not an
+  Ajax-blocking setup step).
 - Single-task command operations plan and execute `resume`, `review`, `repair`,
   and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
   core owns post-execution reducers such as opened, merged, repair/check

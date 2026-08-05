@@ -119,15 +119,11 @@ fn execution_dispatch_module_routes_mutating_commands() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-logout",
             ],
         ),
-        expected_task_setup_command(
-            "/Users/matt/projects/web",
-            "/Users/matt/projects/web__worktrees/ajax-fix-logout",
-            None,
-        ),
         expected_task_launch_command(
             "ajax-web-fix-logout",
             "web/fix-logout",
             "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+            None,
         ),
         CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-logout:task"]),
         expected_new_task_open_command("ajax-web-fix-logout"),

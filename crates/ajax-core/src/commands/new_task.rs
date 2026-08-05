@@ -153,26 +153,17 @@ pub fn new_task_plan_with_observation<R: Registry>(
         &branch,
         &format!("origin/{}", repo.default_branch),
     ));
-    if let Some(graphify_update) = &repo.graphify_update {
-        let graphify_command = format!("({graphify_update}) >/dev/null 2>&1 &");
-        plan.commands.push(
-            CommandSpec::new("sh", ["-lc", graphify_command.as_str()]).with_cwd(&worktree_path),
-        );
-    }
     plan.commands.push(tmux.new_detached_task_session(
         &tmux_session,
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
-    plan.commands.push(setup_task_environment_command(
-        &repo_path,
-        &worktree_path_string,
-        repo.bootstrap.as_deref(),
-    ));
+    let agent_launch_line =
+        fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
     plan.commands.push(tmux.send_agent_command(
         &tmux_session,
         DEFAULT_TASK_WINDOW_NAME,
-        &command_line(&launch),
+        &agent_launch_line,
     ));
 
     Ok(plan)
@@ -489,23 +480,11 @@ fn agent_runtime_command(
     }
 }
 
-fn setup_task_environment_command(
-    repo_path: &str,
-    worktree_path: &str,
-    bootstrap: Option<&str>,
-) -> CommandSpec {
-    let mut command = String::from("if [ -d \"$1\" ]; then cd \"$1\" && ");
-    command.push_str(HUSKY_GUARD);
-    if let Some(bootstrap) = bootstrap {
-        command.push_str("; ");
-        command.push_str(bootstrap);
+fn fold_setup_into_agent_launch(bootstrap: Option<&str>, agent_line: &str) -> String {
+    match bootstrap {
+        Some(bootstrap) => format!("{HUSKY_GUARD}; {bootstrap} && {agent_line}"),
+        None => format!("{HUSKY_GUARD}; {agent_line}"),
     }
-    command.push_str("; fi");
-    CommandSpec::new(
-        "sh",
-        ["-lc", command.as_str(), "ajax-setup-task", worktree_path],
-    )
-    .with_cwd(repo_path)
 }
 
 fn shell_quote(value: &str) -> String {

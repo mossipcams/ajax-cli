@@ -186,7 +186,6 @@ name = "web"
 path = "/Users/matt/projects/web"
 default_branch = "main"
 bootstrap = "npm ci"
-graphify_update = "graphify extract --update"
 
 [[test_commands]]
 repo = "web"
@@ -209,9 +208,10 @@ Each managed repo should have a matching test command so `ajax-cli repair` and
 `ajax-cli doctor` can verify the workflow end to end.
 
 Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
-inside each task worktree before the agent starts. Ajax runs the command from
-the newly created worktree after `git worktree add` succeeds and before tmux or
-the selected agent CLI are launched.
+inside each task worktree before the agent starts. Ajax folds husky setup and
+optional bootstrap into the task-session launch line (after `git worktree add`
+and detached tmux create), so start returns without waiting on bootstrap while
+the pane still runs setup before the agent.
 
 Enable Declarative Web Push from Web Cockpit Settings after adding the site to
 the Home Screen on a Declarative Web Push–capable browser (for example iOS
@@ -250,12 +250,6 @@ most every 5 minutes per task.
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
-
-Set `graphify_update` to generate a knowledge graph in each new task worktree
-during start. Ajax runs the configured command from the task worktree after
-`git worktree add` and detaches it so graph generation does not block agent
-startup. Add `graphify-out/` to the repo's `.gitignore`; `ajax doctor` reports
-Graphify-enabled repos where the generated output is not ignored.
 
 ## First Run
 

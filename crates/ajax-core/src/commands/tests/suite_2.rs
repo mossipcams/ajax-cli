@@ -14,8 +14,7 @@ fn doctor_reports_repo_config_problems() {
     };
     let context = CommandContext::new(config, InMemoryRegistry::default());
     let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-        .with_existing_paths(["/repos/web"])
-        .with_graphify_out_gitignored(std::iter::empty::<std::path::PathBuf>());
+        .with_existing_paths(["/repos/web"]);
 
     let doctor = doctor_with_environment(&context, &environment);
 
@@ -42,31 +41,6 @@ fn doctor_reports_repo_config_problems() {
             .find(|check| check.name == "repo:api:test-command")
             .map(|check| (check.ok, check.message.as_str())),
         Some((false, "no test command configured"))
-    );
-}
-
-#[test]
-fn doctor_warns_when_graphify_out_is_not_gitignored() {
-    let mut repo = ManagedRepo::new("web", "/repos/web", "main");
-    repo.graphify_update = Some("graphify extract --update".to_string());
-    let config = Config {
-        repos: vec![repo],
-        ..Config::default()
-    };
-    let context = CommandContext::new(config, InMemoryRegistry::default());
-    let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-        .with_existing_paths(["/repos/web"])
-        .with_graphify_out_gitignored(std::iter::empty::<std::path::PathBuf>());
-
-    let doctor = doctor_with_environment(&context, &environment);
-
-    assert_eq!(
-        doctor
-            .checks
-            .iter()
-            .find(|check| check.name == "repo:web:graphify-out")
-            .map(|check| (check.ok, check.message.contains("not gitignored"))),
-        Some((false, true))
     );
 }
 
@@ -306,7 +280,7 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
 
     assert!(!plan.requires_confirmation);
     let git = GitAdapter::new("git");
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(
         plan.commands[0],
         git.fetch_origin_branch("/Users/matt/projects/web", "main")
@@ -343,12 +317,12 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
             ]
         )
     );
-    assert_eq!(plan.commands[4].program, "tmux");
-    assert_eq!(plan.commands[4].args[0], "send-keys");
-    assert_eq!(plan.commands[4].args[2], "ajax-web-fix-logout:task");
+    assert_eq!(plan.commands[3].program, "tmux");
+    assert_eq!(plan.commands[3].args[0], "send-keys");
+    assert_eq!(plan.commands[3].args[2], "ajax-web-fix-logout:task");
     assert_eq!(
-        plan.commands[4].args[3],
-        "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
+        plan.commands[3].args[3],
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
     );
 }
 
@@ -376,7 +350,7 @@ fn new_task_plan_preserves_paths_with_spaces_as_command_arguments() {
     )
     .unwrap();
 
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(plan.commands[0].args[1], "/Users/matt/projects/web app");
     assert_eq!(plan.commands[1].args[1], "/Users/matt/projects/web app");
     assert_eq!(
@@ -388,7 +362,7 @@ fn new_task_plan_preserves_paths_with_spaces_as_command_arguments() {
         plan.commands[2].args[7],
         "/Users/matt/projects/web app__worktrees/ajax-fix-login"
     );
-    let launch_words = shell_words(&plan.commands[4].args[3]);
+    let launch_words = shell_words(&plan.commands[3].args[3]);
     assert_eq!(
         &launch_words[launch_words.len() - 3..],
         &[
@@ -440,7 +414,7 @@ fn new_task_plan_slugifies_title_into_branch_session_and_handle() {
         .iter()
         .find(|command| is_agent_send_keys_command(command))
         .expect("agent send-keys command");
-    assert_eq!(plan.commands.len(), 5);
+    assert_eq!(plan.commands.len(), 4);
     assert_eq!(worktree_command.args[5], "ajax/ship-oauth-v2");
     assert_eq!(
         worktree_command.args[6],

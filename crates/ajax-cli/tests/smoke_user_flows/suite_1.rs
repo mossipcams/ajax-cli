@@ -134,7 +134,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:task ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            "tmux send-keys -t ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
             sandbox.root.join("cache/agent-runtime").display(),
             worktree.display(),
         )),
