@@ -132,6 +132,65 @@ async fn notify_refresh_path_delivers_when_browser_disconnected() {
     assert_eq!(bridge.deliver_notifications_flags, vec![true]);
 }
 
+fn sample_push_subscription() -> crate::slices::push::PushSubscription {
+    use crate::slices::push::{PushSubscription, PushSubscriptionKeys};
+    const P256DH: &str =
+        "BLn9b-VR0ca83knDNZ32dCHGyjJp-1riX9ZTN40MqV8K_LpQmLqxC_DoHvqvFXO_nGdAB4W9dogZb_sM-uV4JbY";
+    const AUTH: &str = "_ordMnz7uTCmrpBTeUV4Bw";
+    PushSubscription {
+        endpoint: "https://web.push.apple.com/messages/1".to_string(),
+        keys: PushSubscriptionKeys {
+            p256dh: P256DH.to_string(),
+            auth: AUTH.to_string(),
+        },
+        navigate: None,
+    }
+}
+
+#[tokio::test]
+async fn push_tick_logic_skips_refresh_while_browser_connected() {
+    let (state, _cookie, _app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "push-tick-skip-connected",
+    );
+    state
+        .push
+        .upsert_subscription(sample_push_subscription(), "https://cockpit.example/")
+        .expect("subscription");
+    state.mark_browser_cockpit_seen();
+    assert!(state.browser_connected());
+
+    if !state.browser_connected() && state.push.has_subscriptions() {
+        super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
+    }
+    assert_eq!(state.shared().bridge.refresh_count, 0);
+}
+
+#[tokio::test]
+async fn push_tick_logic_runs_full_refresh_when_disconnected_with_subscriptions() {
+    let (state, _cookie, _app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "push-tick-run-disconnected",
+    );
+    state
+        .push
+        .upsert_subscription(sample_push_subscription(), "https://cockpit.example/")
+        .expect("subscription");
+    assert!(!state.browser_connected());
+
+    if !state.browser_connected() && state.push.has_subscriptions() {
+        super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
+    }
+    assert_eq!(state.shared().bridge.refresh_count, 1);
+    assert_eq!(state.shared().bridge.refresh_tier, Some(RefreshTier::Full));
+    assert_eq!(
+        state.shared().bridge.deliver_notifications_flags,
+        vec![true]
+    );
+}
+
 #[tokio::test]
 async fn refresh_cockpit_and_cache_refreshes_once_and_caches() {
     let (state, _cookie, _app) = app_with(

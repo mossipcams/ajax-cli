@@ -28,15 +28,22 @@ where
         return response.into_axum_response();
     }
 
-    if let Ok(_refresh_guard) = state.control_lane.try_lock() {
-        return refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false);
-    }
-
-    let guard = state.shared();
-    match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
-        Ok(value) => json_value_response(200, value),
-        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
-    }
+    tokio::task::spawn_blocking(move || match state.control_lane.try_lock() {
+        Ok(_lane) => refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false),
+        Err(_) => {
+            let guard = state.shared();
+            match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
+                Ok(value) => json_value_response(200, value),
+                Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        web_error_response(WebError::CommandFailed(format!(
+            "cockpit refresh worker failed: {error}"
+        )))
+    })
 }
 
 /// Refresh the cockpit projection and cache the response, delivering
@@ -53,8 +60,17 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let _refresh_guard = state.control_lane.lock().await;
-    refresh_cockpit_and_cache_locked(state, tier, deliver_notifications)
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        web_error_response(WebError::CommandFailed(format!(
+            "cockpit refresh worker failed: {error}"
+        )))
+    })
 }
 
 pub(crate) fn refresh_cockpit_and_cache_locked<C, B>(

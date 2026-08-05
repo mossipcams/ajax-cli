@@ -492,3 +492,30 @@ fn persist_registry_snapshot_writes_diff_review_metadata_across_reload() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn reload_registry_from_disk_loads_tracked_context_after_in_memory_drift() {
+    let dir = scratch_dir("reload-registry-from-disk");
+    let paths = CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+    let mut context = reviewable_context();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&context.registry)
+        .unwrap();
+    let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+    context.registry = InMemoryRegistry::default();
+
+    let reloaded = <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::reload_registry_from_disk(
+        &mut bridge,
+        &mut context,
+    )
+    .expect("reload ok");
+    assert!(reloaded);
+
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_some());
+
+    let _ = std::fs::remove_dir_all(dir);
+}

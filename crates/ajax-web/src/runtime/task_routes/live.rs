@@ -230,14 +230,22 @@ where
             Some(&request_id),
             "cockpit state changed while task start was running",
             |context, runner, bridge| {
-                let result = match bridge.execute_start_task(request, context, runner) {
-                    Ok(outcome) => operation_success_response(outcome, context),
-                    Err(error) => operation_error_response(error, context),
+                let result = bridge.execute_start_task(request, context, runner);
+                let (durable, http_result) = match result {
+                    Ok(outcome) => {
+                        let durable = outcome.state_changed;
+                        (durable, operation_success_response(outcome, context))
+                    }
+                    Err(error) => {
+                        let durable = error.state_changed;
+                        (durable, operation_error_response(error, context))
+                    }
                 };
-                match result {
+                let response = match http_result {
                     Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
                     Err(error) => response_from_web_error(error, Some(&request_id)),
-                }
+                };
+                (response, durable)
             },
         );
         state
@@ -346,8 +354,11 @@ where
             "cockpit state changed while operation was running",
             |context, runner, bridge| match handle_action_request(request, context, runner, bridge)
             {
-                Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-                Err(error) => response_from_web_error(error, request_id.as_deref()),
+                Ok((response, durable)) => (
+                    operation_response_with_request_id(response, request_id.as_deref()),
+                    durable,
+                ),
+                Err(error) => (response_from_web_error(error, request_id.as_deref()), false),
             },
         );
         state

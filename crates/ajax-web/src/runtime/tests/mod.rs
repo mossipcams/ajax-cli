@@ -56,6 +56,9 @@ pub(super) struct TestBridge {
     refresh_release: Option<Arc<(Mutex<bool>, Condvar)>>,
     acknowledge_calls: Arc<AtomicUsize>,
     acknowledge_result: Result<bool, crate::WebError>,
+    disk_context: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+    reload_calls: Arc<AtomicUsize>,
+    clear_registry_on_operate: bool,
 }
 
 impl Default for TestBridge {
@@ -91,6 +94,9 @@ impl Default for TestBridge {
             refresh_release: None,
             acknowledge_calls: Arc::new(AtomicUsize::new(0)),
             acknowledge_result: Ok(false),
+            disk_context: Arc::new(Mutex::new(None)),
+            reload_calls: Arc::new(AtomicUsize::new(0)),
+            clear_registry_on_operate: false,
         }
     }
 }
@@ -160,7 +166,17 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         wait_for_release(&self.operate_release, call_index);
         std::thread::sleep(self.operate_delay);
         self.operate = Some(request);
-        self.operate_result.clone()
+        let result = self.operate_result.clone();
+        if let Ok(outcome) = &result {
+            if outcome.state_changed {
+                if self.clear_registry_on_operate {
+                    _context.registry = InMemoryRegistry::default();
+                } else if let Ok(mut disk) = self.disk_context.lock() {
+                    *disk = Some(_context.clone());
+                }
+            }
+        }
+        result
     }
 
     fn execute_start_task(
@@ -177,7 +193,29 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         wait_for_release(&self.start_release, call_index);
         std::thread::sleep(self.start_delay);
         self.start = Some(request);
-        self.start_result.clone()
+        let result = self.start_result.clone();
+        if let Ok(outcome) = &result {
+            if outcome.state_changed {
+                if let Ok(mut disk) = self.disk_context.lock() {
+                    *disk = Some(_context.clone());
+                }
+            }
+        }
+        result
+    }
+
+    fn reload_registry_from_disk(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<bool, crate::WebError> {
+        self.reload_calls.fetch_add(1, Ordering::SeqCst);
+        if let Ok(disk) = self.disk_context.lock() {
+            if let Some(snapshot) = disk.as_ref() {
+                *context = snapshot.clone();
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn acknowledge_operator_input(
