@@ -111,11 +111,57 @@ The irony is already visible in the code: Ajax's attention detection is *built
 on* harness hooks (`crates/ajax-cli/src/agent_hooks.rs` installs Claude, Codex,
 Cursor and Pi hooks). Ajax is downstream of the exact layer expanding into it.
 
+### The demand driver is subsidy, not preference
+
+Matt's third input, and the one that explains the rest: **operators use vendor
+harnesses mainly because the subscription is subsidized.** A flat monthly plan
+buys far more inference than the same tokens cost at API rates, and that pricing
+is only reachable through the vendor's own harness.
+
+Three consequences follow, and they reorder this plan:
+
+1. **Multi-vendor is the rational default, not a niche taste.** Subsidised
+   capacity is siloed per vendor and does not transfer. The only way to get more
+   cheap capacity is another subscription — so serious operators accumulate
+   vendors. Ajax's addressable audience is not "people who happen to like
+   variety"; it is everyone optimising for subsidised throughput.
+2. **Quota is the scarce resource the fleet is scheduled against.** If the point
+   of holding four subscriptions is harvesting four buckets of cheap capacity,
+   then "which vendor has headroom right now" is *the* operating decision, not a
+   dashboard nicety.
+3. **Harness quality is more commoditised than it looks.** If the binding reason
+   to pick a harness is its price plan rather than its merits, switching costs
+   are low and harnesses are closer to interchangeable capacity. That is exactly
+   the condition under which a scheduling layer above them has value.
+
+Sharper positioning than §2's earlier framing:
+
+> **Ajax is a scheduler over heterogeneous subsidised capacity.**
+
+### The invariant this implies: Ajax must never become a harness
+
+Verified: Ajax has **no model API access at all** — no HTTP client to any
+provider, no API keys, no direct model calls anywhere in `crates/`. Axum is
+server transport for Web Cockpit only. Ajax launches vendor CLIs and observes
+them.
+
+Today that is an accident of architecture. It should become an explicit
+invariant in `architecture.md`, because it is load-bearing: the moment Ajax
+calls models directly it pays API rates and forfeits the subsidy that is the
+entire reason its users run multiple vendors. Sitting *above* harnesses rather
+than replacing them is what keeps Ajax on the right side of subsidised access.
+
+This also closes off a tempting direction — "Ajax should have its own agent
+loop." Under subsidy economics that is not ambition, it is economic suicide.
+
 ### What cannot be absorbed
 
-1. **Cross-vendor.** No vendor will orchestrate competitors well. Anthropic has
-   no incentive to make Claude Code a good manager of Codex and Cursor tasks.
-   That is structural, not a gap someone closes next quarter.
+1. **Cross-vendor — economically enforced.** Stronger than the earlier
+   "no incentive" argument. Anthropic subsidises Claude Code to sell Max
+   subscriptions; it cannot subsidise a harness that routes work to OpenAI,
+   because that is paying to lose. Vendors are *structurally barred* from the
+   cross-vendor seat by the same economics that fund their harnesses. This is
+   the most durable line in the plan.
 2. **Host-level truth.** A harness knows its own session. It does not know you
    have twelve worktrees across four repos driven by three vendors. `ajax-core`
    reconciles against git and tmux, which no harness sees.
@@ -184,35 +230,45 @@ show what Ajax can and cannot detect per agent.
 *Files: `config.rs:206`, `agent_capability.rs`, `adapters/agent.rs`,
 `models/intent.rs:19`.*
 *This is the moat. Everything else in Tier 1 is worth less if breadth stays
-gated behind a release.*
+gated behind a release.* Under the subsidy argument it is also the growth lever:
+each harness Ajax can drive is another bucket of subsidised capacity its users
+can harvest, so time-to-adopt-a-new-harness is a headline metric, not an
+ergonomic detail.
 
-**T1.2 — Deepen diff review and judgment (medium–large).**
+**T1.2 — Quota headroom as a first-class operator fact (small–medium).**
+**Promoted** on the subsidy argument: if the reason to hold four subscriptions
+is harvesting four buckets of cheap capacity, quota is the scarce resource the
+whole fleet schedules against.
+
+Today Ajax treats it as noise — `RateLimited` is deliberately silenced and does
+not notify (`attention/tests.rs:655`). Under subsidy economics that is exactly
+backwards: limit state is the most decision-relevant signal in the system,
+because it determines where work can go.
+
+This also reframes the shelved `feat-cost-tracking.md`. Its instinct to exclude
+dollars ("prices drift") was right for API pricing but the reasoning changes
+under subscriptions: **spend is fixed, utilisation varies.** The question is not
+"what did this task cost" — it is *"am I extracting the value of the plans I am
+already paying for, and which one is sitting idle?"* Utilisation against
+committed spend, not marginal cost. Per-vendor counters are absorbed; the
+cross-vendor rollup is the durable artifact.
+
+**T1.3 — Fleet triage and placement across vendors (medium).**
+Replace severity-then-alphabetical (`commands/projection.rs:113`) with real
+ranking: dwell time, staleness, blocked duration — and consume T1.2's quota
+state, so triage answers both operator questions at once: *which task do I touch
+next*, and *where do I run the next one*. Placement is only meaningful with
+quota headroom as an input, which is why T1.2 precedes it.
+
+**T1.4 — Deepen diff review and judgment (medium–large).**
 `diff_review.rs` already has the right bones — `DiffFileRole`,
 `classify_diff_path`, `DiffFlag`/`DiffFlagSeverity`, `assess_diff_judgment`.
 Host-level and cross-vendor by nature: it operates on git output, not on any
 harness's internals. Invest in what makes a diff *safe to accept* — risk-weighted
 file roles, blast radius, test-coverage signal, what changed since last look.
-The volume of changes needing this judgment rises under every scenario where
-harnesses improve.
-
-**T1.3 — Fleet triage across vendors (medium).**
-Replace severity-then-alphabetical (`commands/projection.rs:113`) with real
-ranking: dwell time, staleness, blocked duration. Value is specifically the
-*cross-vendor* view — one queue over Claude, Codex, Cursor, OpenCode work. No
-harness will ever render that queue.
-
-**T1.4 — Cross-vendor limit and burn rollup (new; small–medium).**
-Merges the old rate-limit and cost items, because under the absorption rule they
-have the same durable core. Per-vendor token counts and limit banners are
-absorbed — every harness shows its own. What no harness shows is the rollup:
-*across all vendors I'm running, where is the headroom right now.* Today
-`RateLimited` is deliberately silenced as transient noise
-(`attention/tests.rs:655`); revisit that if limit headroom is the binding
-constraint on fleet throughput.
-Note `feat-cost-tracking.md` (draft v2, the only shelved plan in 256) already
-scoped the cross-agent rollup and already excluded dollars because "prices
-drift" — that instinct now looks clearly right. Build the rollup, skip the
-per-task display.
+Demoted below quota not because it matters less but because it is larger and
+slower; quota determines *where work runs*, review determines *what ships*, and
+both remain durable.
 
 **T1.5 — Declare a web terminal fidelity bar (policy, not code).**
 Unchanged and still load-bearing. A budget, not a feature. Nothing above gets
@@ -255,6 +311,12 @@ the part that matters — **grows as harnesses proliferate**. Every new entrant
 adds people whose fleet spans vendors. Ajax's addressable audience is a function
 of exactly the churn that threatens it.
 
+The subsidy argument supplies the mechanism. Operators do not go multi-vendor
+out of curiosity; they go multi-vendor because subsidised capacity is siloed per
+subscription and the only way to get more is another vendor. That makes the
+audience a predictable consequence of pricing rather than a matter of taste —
+and it means the group grows every time a vendor launches a competitive plan.
+
 This also reframes the personal-vs-product question. Matt is already in that
 group (Claude, Codex, Cursor, Pi, OpenCode). Building for himself and building
 for the audience are, for once, the same act — provided Tier 1 is built
@@ -292,6 +354,16 @@ one pulls decisively ahead — the durable seat shrinks to near nothing, and Aja
 is a personal tool by default rather than by choice. This is the assumption to
 re-check quarterly; it is load-bearing for everything in §4.
 
+**Subsidies are a phase, and the thesis is dated to it.** Current pricing is a
+land-grab. If subscription economics normalise toward cost-recovery, the
+multi-subscription arbitrage weakens and consolidation onto one vendor gets more
+likely — which is the same failure mode as above, arriving by a different road.
+Two mitigations, both real: quota and utilisation management (T1.2) stays
+valuable under *any* pricing regime, merely with different arithmetic; and
+host-level git/tmux truth is independent of how inference is billed. But this
+plan should be re-read the moment subscription pricing moves materially, because
+§2's demand driver is the piece that would break first.
+
 **A harness could go cross-vendor.** Less likely from a model vendor, but an
 independent harness (an OpenCode-class project) has every incentive to. If one
 does it well, Ajax's moat is contested by something with more surface area.
@@ -328,8 +400,13 @@ git log --pretty=%s | grep -oE "^[a-z]+" | sort | uniq -c | sort -rn
 - T1.1 must not become a plugin framework. `AGENTS.md` forbids broad generic
   abstractions without concrete need — the concrete need is weekly agent churn,
   and the scope is a config-backed manifest, not an extension API.
-- T1.4's data sources are third-party on-disk formats and can drift; the plan
-  file already flags the cumulative-vs-incremental check for Codex.
+- T1.2's data sources are third-party on-disk formats and can drift; the plan
+  file already flags the cumulative-vs-incremental check for Codex. Quota state
+  in particular may not be exposed uniformly — expect per-vendor discovery work
+  and design the rollup to degrade to "unknown" rather than guess.
 - The ranking rests on the assumption that agents improve fast enough to shift
   load from approvals to review. Re-check that assumption quarterly; if approvals
   stay frequent, the demoted item comes back.
+- "Never become a harness" (§2) should be added to `architecture.md` invariants.
+  Until it is written down, nothing stops a future change from adding a direct
+  model call and quietly forfeiting the subsidy position.
