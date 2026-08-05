@@ -12,7 +12,6 @@
 // Enabling the jsx-a11y / testing-library / import-x / vitest rule sets (plus
 // the recommended core sets). Slice 12 cleared the deferred backlog; tests use
 // accessible queries or explicit data-testid hooks — no permanent rule exemptions.
-import js from "@eslint/js";
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -26,7 +25,6 @@ export default tseslint.config(
     ignores: ["dist/", "node_modules/"],
   },
   eslint.configs.recommended,
-  js.configs.recommended,
   ...tseslint.configs.recommended,
   {
     linterOptions: {
