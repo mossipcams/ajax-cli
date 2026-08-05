@@ -288,7 +288,7 @@ where
     }
     json_value_response(
         401,
-        serde_json::json!({ "ok": false, "error": "browser session required" }),
+        serde_json::json!({ "ok": false, "error": "browser session required", "code": "stale_session" }),
     )
 }
 

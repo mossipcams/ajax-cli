@@ -417,6 +417,29 @@ describe("postOperation", () => {
     expect(result.error?.kind).toBe("conflict");
   });
 
+  it("populates ApiError.code from a 409 response code field", async () => {
+    mockFetch(() =>
+      json(
+        {
+          ok: false,
+          request_id: "operate-request-409",
+          error: "operation already in progress",
+          code: "conflict",
+          state_changed: false,
+        },
+        409,
+      ),
+    );
+    const result = await postOperation({
+      task_handle: "web/x",
+      action: "review",
+      request_id: "operate-request-409",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("conflict");
+    expect(result.response.code).toBe("conflict");
+  });
+
   it("preserves server request_id and error detail when start-task conflicts", async () => {
     mockFetch(() =>
       json(

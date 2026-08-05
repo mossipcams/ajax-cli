@@ -1,6 +1,7 @@
 import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
 import { postOperation, requestId } from "@/shared/lib/api";
+import { operatorErrorPresentation } from "@/shared/lib/errorRecovery";
 import { endTapToFeedback, endTapToOperationComplete } from "@/shared/lib/telemetry";
 
 export type TaskMutationCallbacks = {
@@ -53,28 +54,26 @@ export async function runTaskAction(
         callbacks.onMutated?.();
       }
     } else {
+      const presentation = operatorErrorPresentation(result.error ?? result.response);
       if (interactionId) {
         endTapToOperationComplete(interactionId, {
           ok: false,
           op: action.action,
-          error_kind: "operation_failed",
+          error_kind: presentation.telemetryKind,
         });
       }
-      callbacks.onResult?.(
-        result.error?.message ?? "Action failed",
-        result.response.output,
-        true,
-      );
+      callbacks.onResult?.(presentation.message, result.response.output, true);
     }
   } catch {
+    const presentation = operatorErrorPresentation({ kind: "network", message: "" });
     if (interactionId) {
       endTapToOperationComplete(interactionId, {
         ok: false,
         op: action.action,
-        error_kind: "network",
+        error_kind: presentation.telemetryKind,
       });
     }
-    callbacks.onResult?.("Action failed — network error", null, true);
+    callbacks.onResult?.(presentation.message, null, true);
   }
 }
 

@@ -12,6 +12,7 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionFailure {
     pub message: String,
+    pub code: String,
     pub state_changed: bool,
 }
 
@@ -173,6 +174,7 @@ pub(crate) fn operation_error_response(
         serde_json::json!({
             "ok": false,
             "error": error.message,
+            "code": error.code,
             "state_changed": error.state_changed,
             "cockpit": cockpit::browser_cockpit_view(context),
         }),
@@ -192,6 +194,7 @@ pub(crate) fn unsupported_operate_action(action: &str) -> Option<ActionFailure> 
     };
     Some(ActionFailure {
         message,
+        code: "unsupported_action".to_string(),
         state_changed: false,
     })
 }

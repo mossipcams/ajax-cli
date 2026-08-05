@@ -459,6 +459,25 @@ pub fn format_operate_error(error: &OperateError) -> String {
     }
 }
 
+pub fn operate_error_code(error: &OperateError) -> &'static str {
+    match error {
+        OperateError::UnknownAction(_) => "unknown_action",
+        OperateError::UnsupportedCapability(message) => {
+            if message.to_ascii_lowercase().contains("terminal") {
+                "needs_terminal"
+            } else {
+                "unsupported_action"
+            }
+        }
+        OperateError::Command(command_error, _) => match command_error {
+            CommandError::TaskNotFound(_) => "task_not_found",
+            CommandError::ConfirmationRequired => "confirmation_required",
+            CommandError::PlanBlocked(_) => "conflict",
+            _ => "command_failed",
+        },
+    }
+}
+
 fn format_command_error(error: &CommandError) -> String {
     match error {
         CommandError::ConfirmationRequired => {

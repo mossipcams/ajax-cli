@@ -146,7 +146,7 @@ where
             operation_response_with_request_id(
                 json_response(
                     409,
-                    serde_json::json!({ "ok": false, "error": conflict_message }),
+                    serde_json::json!({ "ok": false, "error": conflict_message, "code": "conflict" }),
                 )
                 .unwrap_or_else(|error| response_from_web_error(error, request_id)),
                 request_id,

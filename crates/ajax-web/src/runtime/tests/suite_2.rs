@@ -420,6 +420,7 @@ async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
         TestBridge {
             operate_result: Err(ActionFailure {
                 message: "bridge failed".to_string(),
+                code: "command_failed".to_string(),
                 state_changed: true,
             }),
             ..TestBridge::default()
@@ -441,6 +442,7 @@ async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
     assert_eq!(json["request_id"], "op-error-1");
     assert_eq!(json["state_changed"], true);
     assert_eq!(json["error"], "bridge failed");
+    assert_eq!(json["code"], "command_failed");
     assert!(json["cockpit"].is_object());
 }
 

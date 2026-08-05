@@ -675,6 +675,26 @@ actions must echo the exact `branch_adoption` plan core attached to the action;
 the slice forwards that payload to core without recomputing branch policy or
 comparing branches in the browser.
 
+#### Operation failure envelopes
+
+Mutation endpoints such as `POST /api/operations` and `POST /api/tasks` return a
+typed failure JSON envelope when the HTTP status is non-success:
+
+```json
+{ "ok": false, "error": "human-readable message", "code": "optional_recovery_hint" }
+```
+
+The browser parses `error` for operator-facing copy and optional `code` into
+`ApiError.code`. `code` is a recovery hint from the backend adapter — not browser
+policy and not a second task model. The shared `operatorErrorPresentation`
+helper maps codes to toast copy suffixes and telemetry `error_kind` values;
+missing `code` preserves legacy kind-based behavior (`conflict`, `stale-session`,
+`network`, and so on).
+
+Starter codes: `conflict`, `unsupported_action`, `unknown_action`, `needs_terminal`,
+`task_not_found`, `tmux_missing`, `substrate_missing`, `stale_session`,
+`rate_limit`, `command_failed`, `internal`, `confirmation_required`.
+
 ### `ajax-web::slices::install`
 
 Owns the browser shell. It serves the HTML shell, the boot client JavaScript

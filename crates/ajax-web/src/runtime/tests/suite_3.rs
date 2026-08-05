@@ -53,6 +53,7 @@ async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
         TestBridge {
             start_result: Err(ActionFailure {
                 message: "start failed".to_string(),
+                code: "command_failed".to_string(),
                 state_changed: true,
             }),
             ..TestBridge::default()
@@ -74,6 +75,7 @@ async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
     assert_eq!(json["request_id"], "start-error-1");
     assert_eq!(json["state_changed"], true);
     assert_eq!(json["error"], "start failed");
+    assert_eq!(json["code"], "command_failed");
     assert!(json["cockpit"].is_object());
 }
 

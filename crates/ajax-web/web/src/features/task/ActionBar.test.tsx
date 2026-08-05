@@ -381,4 +381,31 @@ describe("ActionBar", () => {
     );
     expect(spy.mock.calls[0][0]).not.toHaveProperty("branch_adoption");
   });
+
+  it("surfaces coded operation failures through onResult", async () => {
+    vi.spyOn(api, "postOperation").mockResolvedValue({
+      ok: false,
+      response: {
+        ok: false,
+        error: "Use tmux for this step",
+        code: "needs_terminal",
+        output: "stderr",
+      },
+      error: new api.ApiError("terminal", "Use tmux for this step", 422, null, "needs_terminal"),
+    });
+    const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
+    const onResult = vi.fn();
+    render(<ActionBar actions={[review]} handle="web/x" onResult={onResult} />);
+    fireEvent.click(screen.getByText("Review"));
+    await vi.runAllTimersAsync();
+    expect(onResult).toHaveBeenCalledWith(
+      "Use tmux for this step — open the terminal",
+      "stderr",
+      true,
+    );
+    expect(completeSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ok: false, op: "review", error_kind: "needs_terminal" }),
+    );
+  });
 });
