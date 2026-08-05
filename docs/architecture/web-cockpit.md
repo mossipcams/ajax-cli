@@ -33,8 +33,11 @@ key-send endpoints, or answer routes the default task interaction path.
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
 the Ajax backend remain authoritative for task state and operations. The
-primary iPhone target is normal iOS Safari. Web Cockpit does not ship an
-installable PWA surface; it has no manifest, service worker, or app icon routes.
+primary iPhone target is normal iOS Safari; full Cockpit works without Home
+Screen install. Web Cockpit does not ship classic PWA packaging — no
+`manifest.webmanifest`, app icons, or service worker. Optional Add to Home
+Screen (Safari-native; safe `apple-mobile-web-app-*` metadata only) enables
+Declarative Web Push phone pings on capable browsers.
 
 Web Cockpit is host-native only. `ajax-cli web` is the live-control backend and
 runs with the same host authority as SQLite, configured repos, worktrees, tmux
@@ -326,9 +329,11 @@ cookie formatting, `Set-Cookie` application, and request-cookie matching.
 reloads and saves the authoritative SQLite state, and delegates native command
 execution for browser-submitted actions.
 
-Manifest, service-worker, icon, offline-cache, push, and Home Screen install
-surfaces are unsupported. The browser shell must remain a live same-origin
-client for the host-native backend.
+Classic PWA packaging surfaces are unsupported: no `manifest.webmanifest`,
+service worker, install icons, or offline cache. Safe standalone metadata
+(`apple-mobile-web-app-*`, theme-color) remains so operators can optionally Add
+to Home Screen for Declarative Web Push. The browser shell must remain a live
+same-origin client for the host-native backend.
 
 Web Cockpit syncs server-authoritative Cockpit projections, not browser-owned
 task records. `GET /api/cockpit` returns the latest backend projection, but it

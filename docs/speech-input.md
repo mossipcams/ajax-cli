@@ -188,8 +188,9 @@ tap.
 ## iOS Safari and installed PWA behavior
 
 Web Cockpit is **Safari-first** on iPhone over the private HTTPS listener. The
-supported path is a normal Safari tab. Ajax does not ship a manifest, service
-worker, or offline mutation model for speech.
+supported path is a normal Safari tab; an optional Home Screen shell is fine for
+speech too. Ajax does not ship classic PWA packaging (manifest, icons, service
+worker) or an offline mutation model for speech.
 
 Practical behavior on Safari and on an optional Home Screen installed shell:
 
