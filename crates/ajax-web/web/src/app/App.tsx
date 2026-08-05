@@ -30,6 +30,7 @@ import {
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
+import type { WebAction } from "@/shared/lib/types";
 import {
   beginInteraction,
   capturePwaLaunch,
@@ -40,6 +41,10 @@ import {
   isNavigationPending,
   markNavigationStart,
 } from "@/shared/lib/telemetry";
+import {
+  commitConfirmedAction,
+  type DropUndoHandles,
+} from "@/features/task/taskMutations";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -50,6 +55,12 @@ type ResultState = {
   isError: boolean;
   onUndo?: () => void;
   onCommit?: () => void;
+};
+
+type PendingConfirmState = {
+  action: WebAction;
+  handle: string;
+  interactionId: string;
 };
 
 export default function App() {
@@ -74,6 +85,10 @@ export default function App() {
   const { updateAvailable, checkVersion } = useVersionMonitor();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
+  const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropResolvedRef = useRef(false);
+  const dropHandles: DropUndoHandles = { dropTimerRef, dropResolvedRef };
   const [pullDistance, setPullDistance] = useState(0);
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
@@ -103,9 +118,61 @@ export default function App() {
     message: string,
     output: string | null | undefined,
     isError: boolean,
-    options?: { onUndo?: () => void; onCommit?: () => void },
+    options?: {
+      onUndo?: () => void;
+      onCommit?: () => void;
+      pendingConfirm?: PendingConfirmState;
+    },
   ) {
+    if (options?.pendingConfirm) {
+      setPendingConfirm(options.pendingConfirm);
+      return;
+    }
     setResult({ message, output, isError, onUndo: options?.onUndo, onCommit: options?.onCommit });
+  }
+
+  function dismissPendingConfirm() {
+    setPendingConfirm(null);
+  }
+
+  function cancelPendingConfirm() {
+    if (!pendingConfirm) return;
+    endTapToOperationComplete(pendingConfirm.interactionId, {
+      ok: false,
+      op: pendingConfirm.action.action,
+      error_kind: "undo",
+    });
+    dismissPendingConfirm();
+  }
+
+  function expirePendingConfirm() {
+    if (!pendingConfirm) return;
+    endTapToOperationComplete(pendingConfirm.interactionId, {
+      ok: false,
+      error_kind: "confirm_timeout",
+    });
+    dismissPendingConfirm();
+  }
+
+  function commitPendingConfirm() {
+    if (!pendingConfirm) return;
+    const { action, handle, interactionId } = pendingConfirm;
+    dismissPendingConfirm();
+    commitConfirmedAction(
+      action,
+      handle,
+      interactionId,
+      {
+        onCockpit: applyCockpit,
+        onResult: showResult,
+        onMutated: () => {
+          if (route.kind === "task" && route.handle) reload();
+          else void loadCockpit();
+        },
+        onDismiss: () => go(dashboardHash()),
+      },
+      dropHandles,
+    );
   }
 
   function whenIdle(callback: () => void): number {
@@ -119,7 +186,7 @@ export default function App() {
   }
 
   function go(hash: string) {
-    if (location.hash !== hash && !isNavigationPending()) {
+    if (location.hash !== hash) {
       markNavigationStart(undefined, "hash");
     }
     location.hash = hash;
@@ -249,7 +316,7 @@ export default function App() {
 
   useEffect(() => {
     const cockpitTimer = window.setInterval(() => {
-      if (!document.hidden || hiddenStartupRetry) void loadCockpit();
+      if (!document.hidden || hiddenStartupRetry) void loadCockpit({ deferDuringGesture: true });
     }, cockpitIntervalMs);
     const versionTimer = window.setInterval(checkVersion, versionIntervalMs);
     return () => {
@@ -473,7 +540,17 @@ export default function App() {
         </RouteScroll>
       </AppShell>
 
-      {result && (
+      {pendingConfirm ? (
+        <ResultPanel
+          message={`Confirm ${pendingConfirm.action.label} for ${pendingConfirm.handle}?`}
+          onConfirm={commitPendingConfirm}
+          onCancelConfirm={cancelPendingConfirm}
+          onConfirmTimeout={expirePendingConfirm}
+          onDismiss={dismissPendingConfirm}
+        />
+      ) : null}
+
+      {result && !pendingConfirm ? (
         <ResultPanel
           message={result.message}
           output={result.output}
@@ -482,7 +559,7 @@ export default function App() {
           onCommit={result.onCommit}
           onDismiss={() => setResult(null)}
         />
-      )}
+      ) : null}
 
       {sheetOpen && route.kind !== "task" && route.kind !== "diff" && (
         <NewTaskSheet

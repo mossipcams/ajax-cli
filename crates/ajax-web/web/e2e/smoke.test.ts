@@ -63,11 +63,12 @@ test("destructive action requires two taps to execute", async ({ page }) => {
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.locator("[data-action='drop']")).toBeVisible({ timeout: 10_000 });
 
-  // First tap: enters confirming state
+  // First tap: opens shell confirm panel
   await page.locator("[data-action='drop']").click();
-  await expect(page.locator(".action.confirming")).toBeVisible({ timeout: 3_000 });
+  const confirmPanel = page.getByTestId("result-panel-confirm");
+  await expect(confirmPanel).toBeVisible({ timeout: 3_000 });
 
-  // Second tap: executes
-  await page.locator(".action.confirming").click();
+  // Confirm executes the destructive action
+  await confirmPanel.getByRole("button", { name: "Confirm" }).click();
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 5_000 });
 });

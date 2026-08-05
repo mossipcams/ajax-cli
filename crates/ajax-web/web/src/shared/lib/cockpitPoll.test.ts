@@ -5,6 +5,7 @@ import {
   stableCockpitHash,
   createCockpitApplyGate,
   createInFlightGuard,
+  createGestureBusyGate,
 } from "./cockpitPoll";
 
 const fixture = cockpit as BrowserCockpitView;
@@ -43,6 +44,30 @@ describe("createCockpitApplyGate", () => {
     gate.applyIfChanged(fixture);
     gate.reset();
     expect(gate.applyIfChanged(structuredClone(fixture))).toBe(true);
+  });
+});
+
+describe("createGestureBusyGate", () => {
+  it("tracks nested begin/end with a refcount", () => {
+    const gate = createGestureBusyGate();
+    gate.begin();
+    expect(gate.isBusy()).toBe(true);
+    gate.begin();
+    gate.end();
+    expect(gate.isBusy()).toBe(true);
+    gate.end();
+    expect(gate.isBusy()).toBe(false);
+  });
+
+  it("notifies idle listeners when the refcount returns to zero", () => {
+    const gate = createGestureBusyGate();
+    const idle = vi.fn();
+    gate.onIdle(idle);
+    gate.begin();
+    gate.end();
+    expect(idle).toHaveBeenCalledOnce();
+    gate.end();
+    expect(idle).toHaveBeenCalledOnce();
   });
 });
 

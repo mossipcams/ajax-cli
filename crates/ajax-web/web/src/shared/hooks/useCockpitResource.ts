@@ -1,11 +1,22 @@
-import { useCallback, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, fetchCockpit } from "@/shared/lib/api";
-import { createCockpitApplyGate, createInFlightGuard } from "@/shared/lib/cockpitPoll";
+import {
+  createCockpitApplyGate,
+  createInFlightGuard,
+  gestureBusyGate,
+} from "@/shared/lib/cockpitPoll";
 import type { BrowserCockpitView, ConnectionState, RemoteResource } from "@/shared/lib/types";
+
+export type ApplyCockpitOptions = {
+  /** Background interval poll: defer while a gesture is active (INP). */
+  deferDuringGesture?: boolean;
+};
 
 export type LoadCockpitOptions = {
   /** Schedule a follow-up poll if one is already in flight (Retry). */
   trailing?: boolean;
+  /** Interval poll only — resume/recovery loads must not use this blindly. */
+  deferDuringGesture?: boolean;
 };
 
 export type CockpitResource = {
@@ -13,7 +24,7 @@ export type CockpitResource = {
   connection: ConnectionState;
   connectionDetail: string | null;
   loadCockpit: (options?: LoadCockpitOptions) => Promise<void>;
-  applyCockpit: (next: BrowserCockpitView) => void;
+  applyCockpit: (next: BrowserCockpitView, options?: ApplyCockpitOptions) => void;
   applyConnectionError: (error: unknown) => void;
   /**
    * Mark the connection healthy without touching the cockpit projection.
@@ -40,6 +51,34 @@ export function useCockpitResource(): CockpitResource {
 
   const cockpitApplyGateRef = useRef(createCockpitApplyGate());
   const cockpitPollGuardRef = useRef(createInFlightGuard());
+  const deferredCockpitRef = useRef<BrowserCockpitView | null>(null);
+
+  const commitCockpitProjection = useCallback((next: BrowserCockpitView) => {
+    const projectionChanged = cockpitApplyGateRef.current.applyIfChanged(next);
+    startTransition(() => {
+      if (projectionChanged) {
+        setCockpit({ status: "ready", data: next, error: null });
+      } else {
+        setCockpit((prev) => {
+          if (prev.status === "stale") {
+            return { status: "ready", data: prev.data, error: null };
+          }
+          return prev;
+        });
+      }
+      setConnection("connected");
+      setConnectionDetail(null);
+    });
+  }, []);
+
+  useEffect(() => {
+    return gestureBusyGate.onIdle(() => {
+      const deferred = deferredCockpitRef.current;
+      if (!deferred) return;
+      deferredCockpitRef.current = null;
+      commitCockpitProjection(deferred);
+    });
+  }, [commitCockpitProjection]);
 
   const applyConnectionError = useCallback((error: unknown) => {
     if (error instanceof ApiError) {
@@ -62,20 +101,18 @@ export function useCockpitResource(): CockpitResource {
     setConnectionDetail(null);
   }, []);
 
-  const applyCockpit = useCallback((next: BrowserCockpitView) => {
-    if (cockpitApplyGateRef.current.applyIfChanged(next)) {
-      setCockpit({ status: "ready", data: next, error: null });
-    } else {
-      setCockpit((prev) => {
-        if (prev.status === "stale") {
-          return { status: "ready", data: prev.data, error: null };
-        }
-        return prev;
-      });
-    }
-    setConnection("connected");
-    setConnectionDetail(null);
-  }, []);
+  const applyCockpit = useCallback(
+    (next: BrowserCockpitView, options?: ApplyCockpitOptions) => {
+      if (options?.deferDuringGesture && gestureBusyGate.isBusy()) {
+        // INP: avoid poll re-renders during tap/swipe; resume/recovery must not pass this flag.
+        deferredCockpitRef.current = next;
+        return;
+      }
+      deferredCockpitRef.current = null;
+      commitCockpitProjection(next);
+    },
+    [commitCockpitProjection],
+  );
 
   // No document.hidden guard here: an iOS home-screen PWA mounts while the
   // splash screen still reports the document hidden, and swallowing the mount
@@ -85,7 +122,9 @@ export function useCockpitResource(): CockpitResource {
     await cockpitPollGuardRef.current.run(
       async () => {
         try {
-          applyCockpit(await fetchCockpit());
+          applyCockpit(await fetchCockpit(), {
+            deferDuringGesture: options?.deferDuringGesture,
+          });
         } catch (error) {
           applyConnectionError(error);
           const apiError = toApiError(error);

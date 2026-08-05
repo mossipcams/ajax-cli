@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
-import { CONFIRM_TIMEOUT_MS, DROP_UNDO_MS } from "@/shared/lib/polling";
-import { postOperation, requestId } from "@/shared/lib/api";
 import {
   beginInteraction,
   endTapToFeedback,
   endTapToOperationComplete,
 } from "@/shared/lib/telemetry";
+import { runTaskAction, type TaskMutationCallbacks } from "./taskMutations";
+
+export type PendingConfirmRequest = {
+  action: WebAction;
+  handle: string;
+  interactionId: string;
+};
 
 interface Props {
   actions: WebAction[];
@@ -18,7 +23,11 @@ interface Props {
     message: string,
     output: string | null | undefined,
     isError: boolean,
-    options?: { onUndo?: () => void; onCommit?: () => void },
+    options?: {
+      onUndo?: () => void;
+      onCommit?: () => void;
+      pendingConfirm?: PendingConfirmRequest;
+    },
   ) => void;
   /** Notify the parent a mutation finished (e.g. to refresh detail). */
   onMutated?: () => void;
@@ -37,13 +46,11 @@ const actionRowStyle: CSSProperties = {
 function actionClassName(
   action: WebAction,
   index: number,
-  pendingAction: WebAction | null,
   runningAction: string | null,
 ): string {
   const classes = ["action"];
   // Destructive must never wear the accent primary fill (blue + red label).
   if (index === 0 && !action.destructive) classes.push("primary");
-  if (pendingAction?.action === action.action) classes.push("confirming");
   if (runningAction === action.action) classes.push("is-running");
   if (REMEDIATION.has(action.action)) classes.push("remediation-action");
   return classes.join(" ");
@@ -57,11 +64,7 @@ export default function ActionBar({
   onMutated,
   onDismiss,
 }: Props) {
-  const [pendingAction, setPendingAction] = useState<WebAction | null>(null);
   const [runningAction, setRunningAction] = useState<string | null>(null);
-  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropResolvedRef = useRef(false);
   const mountedRef = useRef(true);
   const interactionRef = useRef<string | null>(null);
 
@@ -76,36 +79,21 @@ export default function ActionBar({
         });
         interactionRef.current = null;
       }
-      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-      if (dropTimerRef.current && !dropResolvedRef.current) return;
-      if (dropTimerRef.current) clearTimeout(dropTimerRef.current);
     };
   }, []);
 
-  const clearConfirm = useCallback(() => {
-    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-    confirmTimerRef.current = null;
-    setPendingAction(null);
-  }, []);
-
-  const expireConfirm = useCallback(() => {
-    clearConfirm();
-    if (interactionRef.current) {
-      endTapToOperationComplete(interactionRef.current, {
-        ok: false,
-        error_kind: "confirm_timeout",
-      });
-      interactionRef.current = null;
-    }
-  }, [clearConfirm]);
-
-  const clearDropTimer = useCallback(() => {
-    if (dropTimerRef.current) clearTimeout(dropTimerRef.current);
-    dropTimerRef.current = null;
-  }, []);
+  const mutationCallbacks = useCallback(
+    (): TaskMutationCallbacks => ({
+      onCockpit,
+      onResult,
+      onMutated,
+      onDismiss,
+      isMounted: () => mountedRef.current,
+    }),
+    [onCockpit, onDismiss, onMutated, onResult],
+  );
 
   const label = (action: WebAction): string => {
-    if (pendingAction?.action === action.action) return "Tap to confirm";
     if (runningAction === action.action) return `${action.label} …`;
     return action.label;
   };
@@ -113,113 +101,28 @@ export default function ActionBar({
   const run = async (action: WebAction, confirmed: boolean) => {
     if (mountedRef.current) setRunningAction(action.action);
     const interactionId = interactionRef.current;
-    if (interactionId) endTapToFeedback(interactionId, "busy");
     try {
-      const result = await postOperation({
-        task_handle: handle,
-        action: action.action,
-        request_id: requestId(),
-        confirmed,
-        ...(action.branch_adoption ? { branch_adoption: action.branch_adoption } : {}),
-      });
-      if (result.response.cockpit) onCockpit?.(result.response.cockpit);
-      if (result.ok) {
-        if (interactionId) {
-          endTapToOperationComplete(interactionId, { ok: true, op: action.action });
-          interactionRef.current = null;
-        }
-        // Drop removes the task; refreshing this detail would 404. Leave instead.
-        // If we unmounted during the undo window (operator switched tasks), commit
-        // the Drop but do not navigate — the new task view is already active.
-        if (action.action === "drop") {
-          if (mountedRef.current) onDismiss?.();
-        } else onMutated?.();
-      } else {
-        if (interactionId) {
-          endTapToOperationComplete(interactionId, {
-            ok: false,
-            op: action.action,
-            error_kind: "operation_failed",
-          });
-          interactionRef.current = null;
-        }
-        onResult?.(
-          result.error?.message ?? "Action failed",
-          result.response.output,
-          true,
-        );
-      }
-    } catch {
-      if (interactionId) {
-        endTapToOperationComplete(interactionId, {
-          ok: false,
-          op: action.action,
-          error_kind: "network",
-        });
-        interactionRef.current = null;
-      }
-      onResult?.("Action failed — network error", null, true);
+      await runTaskAction(action, handle, confirmed, interactionId, mutationCallbacks());
+      if (interactionId) interactionRef.current = null;
     } finally {
       if (mountedRef.current) setRunningAction(null);
     }
   };
 
-  // Arm the delayed-Drop undo window. The toast's Undo cancels (no API); the
-  // timer or the toast's auto-dismiss commits by running the real Drop.
-  const armDrop = (action: WebAction) => {
-    dropResolvedRef.current = false;
-    setRunningAction("drop");
-    const interactionId = interactionRef.current;
-    if (interactionId) endTapToFeedback(interactionId, "banner");
-    const commit = () => {
-      if (dropResolvedRef.current) return;
-      dropResolvedRef.current = true;
-      clearDropTimer();
-      void run(action, true);
-    };
-    const undo = () => {
-      if (dropResolvedRef.current) return;
-      dropResolvedRef.current = true;
-      clearDropTimer();
-      if (interactionId) {
-        endTapToOperationComplete(interactionId, {
-          ok: false,
-          op: action.action,
-          error_kind: "undo",
-        });
-        interactionRef.current = null;
-      }
-      if (mountedRef.current) setRunningAction(null);
-    };
-    dropTimerRef.current = setTimeout(commit, DROP_UNDO_MS);
-    onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });
-  };
-
   const handleClick = (action: WebAction) => {
     if (runningAction) return;
     const needsConfirm = action.destructive || action.confirmation_required;
-    if (needsConfirm && pendingAction?.action !== action.action) {
-      clearConfirm();
+    if (needsConfirm) {
       const interactionId = beginInteraction(action.action);
-      interactionRef.current = interactionId;
-      setPendingAction(action);
       endTapToFeedback(interactionId, "confirm");
-      confirmTimerRef.current = setTimeout(expireConfirm, CONFIRM_TIMEOUT_MS);
+      onResult?.(`Confirm ${action.label} for ${handle}?`, null, false, {
+        pendingConfirm: { action, handle, interactionId },
+      });
       return;
     }
-    const confirmingSecondTap = pendingAction?.action === action.action;
-    const retained = confirmingSecondTap ? pendingAction : action;
-    clearConfirm();
-    if (!confirmingSecondTap) {
-      const interactionId = beginInteraction(retained.action);
-      interactionRef.current = interactionId;
-    }
-    // Only Drop is delayed for pre-commit undo; other actions run immediately.
-    if (retained.action === "drop") {
-      armDrop(retained);
-      return;
-    }
-    void run(retained, needsConfirm);
+    const interactionId = beginInteraction(action.action);
+    interactionRef.current = interactionId;
+    void run(action, false);
   };
 
   return (
@@ -228,7 +131,7 @@ export default function ActionBar({
         <button
           key={action.action}
           type="button"
-          className={actionClassName(action, index, pendingAction, runningAction)}
+          className={actionClassName(action, index, runningAction)}
           data-action={action.action}
           data-task={handle}
           {...(action.destructive ? { "data-destructive": "true" } : {})}

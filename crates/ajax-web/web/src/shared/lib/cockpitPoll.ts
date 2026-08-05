@@ -1,5 +1,40 @@
 import type { BrowserCockpitView } from "./types";
 
+export type GestureBusyGate = {
+  begin(): void;
+  end(): void;
+  isBusy(): boolean;
+  onIdle(listener: () => void): () => void;
+};
+
+/** Refcount gate: while busy, background poll projections defer (INP). */
+export function createGestureBusyGate(): GestureBusyGate {
+  let count = 0;
+  const idleListeners = new Set<() => void>();
+
+  return {
+    begin() {
+      count += 1;
+    },
+    end() {
+      if (count <= 0) return;
+      count -= 1;
+      if (count === 0) {
+        for (const listener of idleListeners) listener();
+      }
+    },
+    isBusy() {
+      return count > 0;
+    },
+    onIdle(listener) {
+      idleListeners.add(listener);
+      return () => idleListeners.delete(listener);
+    },
+  };
+}
+
+export const gestureBusyGate = createGestureBusyGate();
+
 // API JSON is parsed with stable key order from serde; plain stringify is enough.
 export function stableCockpitHash(view: BrowserCockpitView): string {
   return JSON.stringify(view);
