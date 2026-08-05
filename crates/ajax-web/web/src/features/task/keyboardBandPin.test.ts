@@ -98,4 +98,10 @@ describe("keyboard band height pin contract", () => {
       /html\.keyboard-open\s+\.terminal-panel\.is-expanded[^{]*\.terminal-keys[^{]*\{[^}]*padding-bottom:6px/,
     );
   });
+
+  it("ships sticky attention rail under keyboard-open", () => {
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.ajax-web-session-attention-rail\s*\{[^}]*position:\s*sticky/s,
+    );
+  });
 });

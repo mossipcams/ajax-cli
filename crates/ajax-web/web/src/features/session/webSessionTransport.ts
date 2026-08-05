@@ -1,5 +1,10 @@
 import { WEB_SESSION_PROTOCOL_VERSION } from "./types";
-import type { WebSessionSymbolContext } from "./types";
+import type {
+  SessionAttentionItem,
+  SessionAttentionKind,
+  SessionAttentionResponse,
+  WebSessionSymbolContext,
+} from "./types";
 
 const OPEN_READY_STATE = 1;
 
@@ -23,11 +28,19 @@ export interface WebSessionTransportCallbacks {
   onSettled(): void;
   onError(message: string): void;
   onClosed(): void;
+  onAttentionRequired?(item: SessionAttentionItem): void;
+  onAttentionCleared?(handle: string, requestId: string): void;
+  onAttentionError?(handle: string, requestId: string, message: string): void;
 }
 
 export interface WebSessionTransport {
   sendPrompt(message: string): void;
   sendAbort(): void;
+  respondAttention(
+    targetHandle: string,
+    requestId: string,
+    response: SessionAttentionResponse,
+  ): void;
   dispose(): void;
 }
 
@@ -63,6 +76,18 @@ export function createBrowserWebSessionPlatform(): WebSessionTransportPlatform {
   };
 }
 
+function parseAttentionKind(value: unknown): SessionAttentionKind | null {
+  if (
+    value === "permission" ||
+    value === "question" ||
+    value === "failed" ||
+    value === "review"
+  ) {
+    return value;
+  }
+  return null;
+}
+
 export function connectWebSession(
   handle: string,
   callbacks: WebSessionTransportCallbacks,
@@ -93,17 +118,9 @@ export function connectWebSession(
   const handleServerMessage = (event: Event) => {
     const raw = (event as MessageEvent).data;
     if (typeof raw !== "string") return;
-    let payload: {
-      type?: string;
-      version?: number;
-      sessionId?: string;
-      state?: string;
-      text?: string;
-      code?: string;
-      message?: string;
-    };
+    let payload: Record<string, unknown>;
     try {
-      payload = JSON.parse(raw) as typeof payload;
+      payload = JSON.parse(raw) as Record<string, unknown>;
     } catch {
       return;
     }
@@ -129,11 +146,53 @@ export function connectWebSession(
         break;
       case "session.error":
         callbacks.onRunStatus("waiting");
-        callbacks.onError(payload.message ?? payload.code ?? "Session error");
+        callbacks.onError(
+          typeof payload.message === "string"
+            ? payload.message
+            : typeof payload.code === "string"
+              ? payload.code
+              : "Session error",
+        );
         break;
       case "session.closed":
         callbacks.onConnectionStatus("closed");
         callbacks.onClosed();
+        break;
+      case "attention.required": {
+        const kind = parseAttentionKind(payload.kind);
+        if (
+          kind &&
+          typeof payload.handle === "string" &&
+          typeof payload.requestId === "string" &&
+          typeof payload.title === "string" &&
+          typeof payload.summary === "string"
+        ) {
+          callbacks.onAttentionRequired?.({
+            handle: payload.handle,
+            requestId: payload.requestId,
+            kind,
+            title: payload.title,
+            summary: payload.summary,
+            options: Array.isArray(payload.options)
+              ? payload.options.filter((item): item is string => typeof item === "string")
+              : undefined,
+          });
+        }
+        break;
+      }
+      case "attention.cleared":
+        if (typeof payload.handle === "string" && typeof payload.requestId === "string") {
+          callbacks.onAttentionCleared?.(payload.handle, payload.requestId);
+        }
+        break;
+      case "attention.error":
+        if (typeof payload.handle === "string" && typeof payload.requestId === "string") {
+          callbacks.onAttentionError?.(
+            payload.handle,
+            payload.requestId,
+            typeof payload.message === "string" ? payload.message : "Attention reply failed",
+          );
+        }
         break;
       default:
         break;
@@ -171,6 +230,14 @@ export function connectWebSession(
     },
     sendAbort() {
       sendControl({ type: "session.abort" });
+    },
+    respondAttention(targetHandle, requestId, response) {
+      sendControl({
+        type: "attention.respond",
+        targetHandle,
+        requestId,
+        response,
+      });
     },
     dispose() {
       disposed = true;

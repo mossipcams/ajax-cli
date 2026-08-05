@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectWebSession, composeWebSessionPrompt, type WebSessionTransport } from "./webSessionTransport";
+import SessionAttentionBanner from "./SessionAttentionBanner";
 import SymbolDetailSheet from "./SymbolDetailSheet";
 import SymbolSearchSheet from "./SymbolSearchSheet";
 import {
@@ -9,14 +10,19 @@ import {
 } from "./renderMessage";
 import {
   symbolContextChipLabel,
+  type SessionAttentionItem,
+  type SessionAttentionResponse,
   type WebSessionConnectionStatus,
   type WebSessionMessage,
   type WebSessionRunStatus,
   type WebSessionSymbolContext,
 } from "./types";
+import type { BrowserTaskCard } from "@/shared/lib/types";
 
 interface Props {
   handle: string;
+  cockpitCards?: BrowserTaskCard[];
+  onOpenTask?: (handle: string) => void;
 }
 
 let nextMessageId = 0;
@@ -46,7 +52,35 @@ function statusChipTone(
   return { tone: "waiting", label: "Ready" };
 }
 
-export default function AjaxWebSessionView({ handle }: Props) {
+function attentionKey(item: SessionAttentionItem): string {
+  return `${item.handle}::${item.requestId}`;
+}
+
+function cockpitDerivedAttentions(
+  currentHandle: string,
+  cards: BrowserTaskCard[],
+): SessionAttentionItem[] {
+  const items: SessionAttentionItem[] = [];
+  for (const card of cards) {
+    if (card.qualified_handle === currentHandle) continue;
+    if (card.attention === "review") {
+      items.push({
+        handle: card.qualified_handle,
+        requestId: `review:${card.qualified_handle}`,
+        kind: "review",
+        title: "Ready for review",
+        summary: card.status_explanation?.trim() || card.title || "Open for review",
+      });
+      continue;
+    }
+    // Failed/needs-you without a live hub ACP id is surfaced only when the
+    // hub publishes a failed attention event. Cockpit Error alone is not enough
+    // for Stop/Retry (Direct ACP). Review Open is always available.
+  }
+  return items;
+}
+
+export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTask }: Props) {
   const [messages, setMessages] = useState<WebSessionMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [attachedSymbols, setAttachedSymbols] = useState<WebSessionSymbolContext[]>([]);
@@ -56,6 +90,7 @@ export default function AjaxWebSessionView({ handle }: Props) {
   const [connectionStatus, setConnectionStatus] = useState<WebSessionConnectionStatus>("connecting");
   const [runStatus, setRunStatus] = useState<WebSessionRunStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [attentions, setAttentions] = useState<SessionAttentionItem[]>([]);
   const transportRef = useRef<WebSessionTransport | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const assistantStreamingRef = useRef(false);
@@ -86,6 +121,22 @@ export default function AjaxWebSessionView({ handle }: Props) {
     });
   }, []);
 
+  const upsertAttention = useCallback((item: SessionAttentionItem) => {
+    setAttentions((prev) => {
+      const key = attentionKey(item);
+      const without = prev.filter((existing) => attentionKey(existing) !== key);
+      return without.concat(item);
+    });
+  }, []);
+
+  const clearAttention = useCallback((targetHandle: string, requestId: string) => {
+    setAttentions((prev) =>
+      prev.filter(
+        (item) => !(item.handle === targetHandle && item.requestId === requestId),
+      ),
+    );
+  }, []);
+
   useEffect(() => {
     const transport = connectWebSession(handle, {
       onConnectionStatus: setConnectionStatus,
@@ -105,13 +156,18 @@ export default function AjaxWebSessionView({ handle }: Props) {
       onClosed: () => {
         settleAssistant();
       },
+      onAttentionRequired: upsertAttention,
+      onAttentionCleared: clearAttention,
+      onAttentionError: (_targetHandle, _requestId, message) => {
+        setErrorMessage(message);
+      },
     });
     transportRef.current = transport;
     return () => {
       transport.dispose();
       transportRef.current = null;
     };
-  }, [handle, appendAssistantDelta, settleAssistant]);
+  }, [handle, appendAssistantDelta, settleAssistant, upsertAttention, clearAttention]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ block: "end" });
@@ -122,6 +178,19 @@ export default function AjaxWebSessionView({ handle }: Props) {
   const rememberSymbols = useCallback((symbols: Iterable<WebSessionSymbolContext>) => {
     setKnownSymbols((prev) => mergeKnownSymbols(prev, symbols));
   }, []);
+
+  const mergedAttentions = useMemo(() => {
+    const derived = cockpitDerivedAttentions(handle, cockpitCards);
+    const byKey = new Map<string, SessionAttentionItem>();
+    for (const item of attentions) {
+      byKey.set(attentionKey(item), item);
+    }
+    for (const item of derived) {
+      const key = attentionKey(item);
+      if (!byKey.has(key)) byKey.set(key, item);
+    }
+    return Array.from(byKey.values());
+  }, [attentions, cockpitCards, handle]);
 
   const canSend =
     connectionStatus === "connected" && runStatus !== "running" && draft.trim().length > 0;
@@ -162,6 +231,13 @@ export default function AjaxWebSessionView({ handle }: Props) {
     setDetailSymbol(null);
   };
 
+  const respondAttention = (item: SessionAttentionItem, response: SessionAttentionResponse) => {
+    transportRef.current?.respondAttention(item.handle, item.requestId, response);
+    if (response.type === "review") {
+      clearAttention(item.handle, item.requestId);
+    }
+  };
+
   const { tone, label } = statusChipTone(connectionStatus, runStatus, errorMessage);
   const showStop = connectionStatus === "connected" && runStatus === "running";
 
@@ -183,6 +259,13 @@ export default function AjaxWebSessionView({ handle }: Props) {
           {label}
         </span>
       </header>
+
+      <SessionAttentionBanner
+        currentHandle={handle}
+        items={mergedAttentions}
+        onRespond={respondAttention}
+        onOpenTask={(target) => onOpenTask?.(target)}
+      />
 
       {errorMessage ? (
         <p className="ajax-web-session-error" role="alert" data-testid="ajax-web-session-error">

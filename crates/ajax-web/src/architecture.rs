@@ -13,7 +13,7 @@ mod tests {
         "terminal",
         "web_session",
     ];
-    const ADAPTERS: [&str; 10] = [
+    const ADAPTERS: [&str; 11] = [
         "assets",
         "browser_session",
         "cloudflare_access",
@@ -23,6 +23,7 @@ mod tests {
         "stt_provider",
         "terminal_pty",
         "tls",
+        "web_session_hub",
         "web_session_rpc",
     ];
 
@@ -129,7 +130,7 @@ mod tests {
                 .filter(|slice| *slice != "stt")
                 .collect::<Vec<_>>();
             forbidden_paths_for_slices(&siblings)
-        } else if adapter == "web_session_rpc" {
+        } else if adapter == "web_session_rpc" || adapter == "web_session_hub" {
             let siblings = SLICES
                 .iter()
                 .copied()

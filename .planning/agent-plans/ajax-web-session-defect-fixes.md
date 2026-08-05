@@ -20,8 +20,8 @@ Fix root causes from the local defect review of the Ajax Web Session POC, then o
 - [x] Packet READY + delegate ACP/session/symbol/UI defect fixes
 - [x] Review gate ACCEPT (delegate report schema wrap failed; parent verified diff + tests)
 - [x] Parent validation (`cargo nextest -p ajax-web web_session` 15 pass; `suite_4` 30 pass; session vitest 23 pass)
-- [ ] Commit (Conventional Commits) + local verify gate
-- [ ] Push + `gh pr create`
+- [x] Commit (Conventional Commits) + local verify gate
+- [x] Push + `gh pr create` → https://github.com/mossipcams/ajax-cli/pull/775
 
 ## Fixes (root cause)
 

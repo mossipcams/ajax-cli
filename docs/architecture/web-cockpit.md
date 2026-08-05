@@ -714,20 +714,28 @@ Both modules exist and are wired into `TaskTerminal.tsx`, and the
 mobile-WebKit terminal behavior suite, including the repeated same-dimension
 viewport-burst case, passes as of 2026-07-16.
 
-### Ajax Web Session (POC)
+### Ajax Web Session
 
 Ajax Web Session is a feature-flagged (`ajax.webSession` in browser
 `localStorage`), Cursor-only alternate task surface in
 `crates/ajax-web/web/src/features/session/`. When the flag is off, or the task
 agent is not Cursor, Task Detail keeps the default raw xterm/tmux terminal. The
-browser does not own task truth: it presents chat history, composer state, and
-symbol context while the host runs Cursor `agent acp` (ACP JSON-RPC over stdio)
-over an authenticated task-scoped WebSocket
-(`ajax-web::slices::web_session`). Backend `prepare_web_session` also admits
-Cursor tasks only (non-Cursor → 422). Symbol search and attached context are
-presentation helpers over the task worktree; response linkification reuses
-session-local known symbols only. This path does not replace the terminal
-bridge and does not enable non-Cursor agent pickers in the POC.
+browser does not own task truth: it presents chat history, composer state,
+symbol context, and cross-session attention banners while the host runs Cursor
+`agent acp` (ACP JSON-RPC over stdio) through a process-local
+`WebSessionHub` (`ajax-web::adapters::web_session_hub`) behind an authenticated
+task-scoped WebSocket (`ajax-web::slices::web_session`). Backend
+`prepare_web_session` also admits Cursor tasks only (non-Cursor → 422).
+
+ACP lifetime is hub-scoped (not one process per socket). Permission and question
+requests are parked for the operator (not auto-answered). Pending attentions
+fan out to every connected web-session socket so the active Ajax Web Session UI
+can Approve / Deny / Answer / Stop / Retry into the originating hub without
+leaving the current task. Review banners are derived from cockpit
+`attention: review` cards and Open navigates. Routine Running / non-actionable
+Waiting never generate in-app banners. Symbol search and attached context remain
+presentation helpers over the task worktree. This path does not replace the
+terminal bridge and does not enable non-Cursor agent pickers.
 
 ### `ajax-web::adapters::terminal_pty`
 

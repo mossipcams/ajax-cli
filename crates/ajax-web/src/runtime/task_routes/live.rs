@@ -196,6 +196,8 @@ where
     };
 
     let worktree = plan.worktree_path;
+    let hub = Arc::clone(&state.web_session_hub);
+    let task_handle = handle.clone();
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -203,7 +205,13 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::adapters::web_session_rpc::bridge_task_web_session_socket(socket, worktree).await;
+        crate::adapters::web_session_rpc::bridge_task_web_session_socket(
+            socket,
+            task_handle,
+            worktree,
+            hub,
+        )
+        .await;
     })
 }
 

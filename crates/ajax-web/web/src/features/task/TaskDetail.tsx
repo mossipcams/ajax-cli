@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef } from "react";
-import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
+import type { BrowserCockpitView, BrowserTaskCard, BrowserTaskDetail } from "@/shared/lib/types";
 import { isAjaxWebSessionEnabled } from "@/shared/lib/ajaxWebSessionSetting";
 import { statusMeta } from "@/shared/lib/state";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
@@ -17,8 +17,10 @@ function isCursorAgent(agent: string): boolean {
 
 interface Props {
   detail: BrowserTaskDetail;
+  cockpitCards?: BrowserTaskCard[];
   onBack?: () => void;
   onOpenDiff?: () => void;
+  onOpenTask?: (handle: string) => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
@@ -27,8 +29,10 @@ interface Props {
 
 export default function TaskDetail({
   detail,
+  cockpitCards = [],
   onBack,
   onOpenDiff,
+  onOpenTask,
   onCockpit,
   onResult,
   onMutated,
@@ -103,7 +107,11 @@ export default function TaskDetail({
 
       <div>
         {showAjaxWebSession ? (
-          <AjaxWebSessionView handle={detail.qualified_handle} />
+          <AjaxWebSessionView
+            handle={detail.qualified_handle}
+            cockpitCards={cockpitCards}
+            onOpenTask={onOpenTask}
+          />
         ) : (
           <Suspense fallback={null}>
             <TaskTerminal handle={detail.qualified_handle} />

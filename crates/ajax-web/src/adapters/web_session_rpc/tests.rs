@@ -101,6 +101,59 @@ fn send_cancel_writes_notification_without_waiting_for_reply() {
     let _ = fs::remove_dir_all(worktree);
 }
 
+#[test]
+fn park_permission_request_emits_operator_event_without_auto_reply() {
+    let script = r#"set -euo pipefail
+while IFS= read -r line; do
+  method=$(printf '%s' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$method" in
+    initialize|authenticate)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"test-session"}}\n' "$id"
+      ;;
+    session/prompt)
+      printf '{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"title":"Run tests"}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
+      ;;
+    session/cancel)
+      exit 0
+      ;;
+  esac
+done"#;
+    let script_path = write_temp_script(script);
+    let worktree =
+        std::env::temp_dir().join(format!("ajax-web-session-park-{}", std::process::id()));
+    fs::create_dir_all(&worktree).expect("worktree");
+    let mut peer = AgentAcpProcess::spawn(&worktree, "bash", &[script_path.to_str().unwrap()])
+        .expect("spawn fake peer");
+    peer.handshake(&worktree).expect("handshake");
+    peer.send_prompt("hello").expect("prompt");
+
+    let mut saw_permission = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        match peer.poll_event() {
+            Some(AgentAcpEvent::OperatorRequest {
+                kind: OperatorRequestKind::Permission,
+                summary,
+                ..
+            }) => {
+                assert!(summary.contains("Permission"));
+                saw_permission = true;
+                break;
+            }
+            Some(AgentAcpEvent::Exited) => break,
+            Some(_) => {}
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    assert!(saw_permission, "expected parked permission request");
+    let _ = fs::remove_dir_all(worktree);
+}
+
 fn fake_acp_peer_script() -> String {
     r#"set -euo pipefail
 while IFS= read -r line; do

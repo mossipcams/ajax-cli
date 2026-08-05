@@ -491,8 +491,10 @@ export default function App() {
               ) : detail.data ? (
                 <TaskDetail
                   detail={detail.data}
+                  cockpitCards={cockpit.data?.cards ?? []}
                   onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
                   onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
+                  onOpenTask={(handle) => go(taskHash(handle))}
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => route.kind === "task" && route.handle && reload()}

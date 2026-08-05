@@ -216,4 +216,64 @@ describe("connectWebSession", () => {
 
     transport.dispose();
   });
+
+  it("forwards attention.required and attention.respond", () => {
+    const socket = fakeSocket();
+    const events = callbacks();
+    events.onAttentionRequired = vi.fn();
+    events.onAttentionCleared = vi.fn();
+    const transport = connectWebSession("web/fix-login", events, platformFor(socket));
+    socket.emit("open");
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "attention.required",
+          version: WEB_SESSION_PROTOCOL_VERSION,
+          handle: "web/other",
+          requestId: "7",
+          kind: "permission",
+          title: "Permission needed",
+          summary: "Permission: Run tests",
+          options: ["allow-once", "reject"],
+        }),
+      }),
+    );
+    expect(events.onAttentionRequired).toHaveBeenCalledWith({
+      handle: "web/other",
+      requestId: "7",
+      kind: "permission",
+      title: "Permission needed",
+      summary: "Permission: Run tests",
+      options: ["allow-once", "reject"],
+    });
+
+    transport.respondAttention("web/other", "7", {
+      type: "permission",
+      outcome: "allow-once",
+    });
+    expect(JSON.parse(socket.sent[0]!)).toEqual({
+      type: "attention.respond",
+      version: WEB_SESSION_PROTOCOL_VERSION,
+      targetHandle: "web/other",
+      requestId: "7",
+      response: { type: "permission", outcome: "allow-once" },
+    });
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "attention.cleared",
+          version: WEB_SESSION_PROTOCOL_VERSION,
+          handle: "web/other",
+          requestId: "7",
+        }),
+      }),
+    );
+    expect(events.onAttentionCleared).toHaveBeenCalledWith("web/other", "7");
+
+    transport.dispose();
+  });
 });

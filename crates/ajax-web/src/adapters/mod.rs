@@ -9,4 +9,5 @@ pub mod skills;
 pub mod stt_provider;
 pub mod terminal_pty;
 pub mod tls;
+pub(crate) mod web_session_hub;
 pub mod web_session_rpc;

@@ -578,6 +578,118 @@ header .bar h1 {
   flex: none;
 }
 
+.ajax-web-session-attention-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+
+.ajax-web-session-attention-overflow {
+  margin: 0;
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.ajax-web-session-attention-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised, var(--soft-charcoal-raised, #242424));
+}
+
+.ajax-web-session-attention-banner.is-permission,
+.ajax-web-session-attention-banner.is-question {
+  border-color: var(--warn, #d7af5f);
+}
+
+.ajax-web-session-attention-banner.is-failed {
+  border-color: var(--fault, #d78787);
+}
+
+.ajax-web-session-attention-banner.is-review {
+  border-color: var(--accent, #87afd7);
+}
+
+.ajax-web-session-attention-origin {
+  margin: 0;
+  font-size: var(--text-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.ajax-web-session-attention-title {
+  margin: 4px 0 0;
+  font-size: var(--text-heading);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ajax-web-session-attention-summary {
+  margin: 4px 0 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.ajax-web-session-attention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ajax-web-session-attention-action {
+  min-height: 44px;
+  min-width: 88px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--rule-strong);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.ajax-web-session-attention-action.is-primary {
+  background: var(--accent, #87afd7);
+  border-color: transparent;
+  color: var(--paper, #161616);
+}
+
+.ajax-web-session-attention-action:disabled {
+  opacity: 0.45;
+}
+
+.ajax-web-session-attention-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ajax-web-session-attention-input {
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  resize: vertical;
+}
+
+html.keyboard-open .ajax-web-session-attention-rail {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
 .ajax-web-session-error {
   margin: 0;
   padding: 10px 12px;

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const WEB_SESSION_PROTOCOL_VERSION: u32 = 1;
+pub const WEB_SESSION_PROTOCOL_VERSION: u32 = 2;
 pub const SYMBOL_SEARCH_MAX_RESULTS: usize = 30;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,12 +30,66 @@ pub enum WebSessionStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AttentionKind {
+    Permission,
+    Question,
+    Failed,
+    Review,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AttentionResponse {
+    #[serde(rename = "permission")]
+    Permission {
+        #[serde(rename = "outcome")]
+        outcome: PermissionOutcome,
+    },
+    #[serde(rename = "question")]
+    Question { text: String },
+    #[serde(rename = "failed")]
+    Failed { action: FailedAttentionAction },
+    #[serde(rename = "review")]
+    Review { action: ReviewAttentionAction },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionOutcome {
+    AllowOnce,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FailedAttentionAction {
+    Stop,
+    Retry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReviewAttentionAction {
+    Open,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WebSessionClientMessage {
     #[serde(rename = "session.prompt")]
     Prompt { version: u32, message: String },
     #[serde(rename = "session.abort")]
     Abort { version: u32 },
+    #[serde(rename = "attention.respond")]
+    AttentionRespond {
+        version: u32,
+        #[serde(rename = "targetHandle")]
+        target_handle: String,
+        #[serde(rename = "requestId")]
+        request_id: String,
+        response: AttentionResponse,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +118,34 @@ pub enum WebSessionServerEvent {
     },
     #[serde(rename = "session.closed")]
     Closed { version: u32 },
+    #[serde(rename = "attention.required")]
+    AttentionRequired {
+        version: u32,
+        handle: String,
+        #[serde(rename = "requestId")]
+        request_id: String,
+        kind: AttentionKind,
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<Vec<String>>,
+    },
+    #[serde(rename = "attention.cleared")]
+    AttentionCleared {
+        version: u32,
+        handle: String,
+        #[serde(rename = "requestId")]
+        request_id: String,
+    },
+    #[serde(rename = "attention.error")]
+    AttentionError {
+        version: u32,
+        handle: String,
+        #[serde(rename = "requestId")]
+        request_id: String,
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,6 +523,20 @@ mod tests {
             WebSessionServerEvent::Closed {
                 version: WEB_SESSION_PROTOCOL_VERSION,
             },
+            WebSessionServerEvent::AttentionRequired {
+                version: WEB_SESSION_PROTOCOL_VERSION,
+                handle: "web/other".to_string(),
+                request_id: "7".to_string(),
+                kind: AttentionKind::Permission,
+                title: "Permission needed".to_string(),
+                summary: "Permission: Run tests".to_string(),
+                options: Some(vec!["allow-once".to_string(), "reject".to_string()]),
+            },
+            WebSessionServerEvent::AttentionCleared {
+                version: WEB_SESSION_PROTOCOL_VERSION,
+                handle: "web/other".to_string(),
+                request_id: "7".to_string(),
+            },
         ];
         for event in events {
             let encoded = serde_json::to_vec(&event).expect("serialize");
@@ -448,6 +544,18 @@ mod tests {
                 serde_json::from_slice(&encoded).expect("deserialize");
             assert_eq!(decoded, event);
         }
+
+        let respond = WebSessionClientMessage::AttentionRespond {
+            version: WEB_SESSION_PROTOCOL_VERSION,
+            target_handle: "web/other".to_string(),
+            request_id: "7".to_string(),
+            response: AttentionResponse::Permission {
+                outcome: PermissionOutcome::AllowOnce,
+            },
+        };
+        let respond_json = serde_json::to_value(&respond).expect("serialize respond");
+        assert_eq!(respond_json["type"], "attention.respond");
+        assert_eq!(respond_json["targetHandle"], "web/other");
     }
 
     #[test]

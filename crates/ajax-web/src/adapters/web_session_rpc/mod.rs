@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub use bridge::bridge_task_web_session_socket;
+pub(crate) use bridge::bridge_task_web_session_socket;
 
 const EVENT_QUEUE_BOUND: usize = 64;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -54,10 +54,27 @@ impl std::fmt::Display for AgentAcpError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentAcpEvent {
     PromptStarted,
-    AssistantDelta { text: String },
+    AssistantDelta {
+        text: String,
+    },
     AgentSettled,
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    OperatorRequest {
+        request_id: String,
+        json_rpc_id: Value,
+        method: String,
+        summary: String,
+        kind: OperatorRequestKind,
+    },
     Exited,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperatorRequestKind {
+    Permission,
+    Question,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,7 +325,7 @@ impl AgentAcpProcess {
         }
     }
 
-    fn send_prompt(&mut self, message: &str) -> Result<(), AgentAcpError> {
+    pub(crate) fn send_prompt(&mut self, message: &str) -> Result<(), AgentAcpError> {
         let session_id = self
             .session_id
             .as_deref()
@@ -326,7 +343,7 @@ impl AgentAcpProcess {
         Ok(())
     }
 
-    fn send_cancel(&mut self) -> Result<(), AgentAcpError> {
+    pub(crate) fn send_cancel(&mut self) -> Result<(), AgentAcpError> {
         let Some(session_id) = self.session_id.as_deref() else {
             return Ok(());
         };
@@ -336,7 +353,15 @@ impl AgentAcpProcess {
         ))
     }
 
-    fn poll_event(&mut self) -> Option<AgentAcpEvent> {
+    pub(crate) fn respond_json_rpc(
+        &mut self,
+        json_rpc_id: &Value,
+        result: Value,
+    ) -> Result<(), AgentAcpError> {
+        self.write_line(&encode_acp_response(json_rpc_id, result))
+    }
+
+    pub(crate) fn poll_event(&mut self) -> Option<AgentAcpEvent> {
         match self.events.try_recv() {
             Ok(event) => Some(event),
             Err(TryRecvError::Empty) => {
@@ -400,7 +425,11 @@ fn spawn_event_reader(
 
                     if let Some(method) = parsed.method.as_deref() {
                         if let Some(id) = parsed.id.as_ref() {
-                            if let Some(response) = auto_response_for_method(method) {
+                            if let Some(parked) =
+                                park_operator_request(method, id, parsed.params.as_ref())
+                            {
+                                let _ = tx.try_send(parked);
+                            } else if let Some(response) = auto_response_for_method(method) {
                                 write_stdin_line(&stdin, &encode_acp_response(id, response));
                             } else {
                                 write_stdin_line(
@@ -461,12 +490,70 @@ fn json_id_as_u64(id: &Value) -> Option<u64> {
 
 fn auto_response_for_method(method: &str) -> Option<Value> {
     match method {
-        "session/request_permission" => Some(json!({
-            "outcome": { "outcome": "selected", "optionId": "allow-once" }
-        })),
-        "cursor/ask_question" => Some(json!({ "outcome": { "outcome": "cancelled" } })),
+        // permission + ask_question are parked for the operator (see park_operator_request).
         "cursor/create_plan" => Some(json!({ "outcome": { "outcome": "cancelled" } })),
         _ => None,
+    }
+}
+
+fn park_operator_request(
+    method: &str,
+    json_rpc_id: &Value,
+    params: Option<&Value>,
+) -> Option<AgentAcpEvent> {
+    let kind = match method {
+        "session/request_permission" => OperatorRequestKind::Permission,
+        "cursor/ask_question" => OperatorRequestKind::Question,
+        _ => return None,
+    };
+    let request_id = json_id_as_string(json_rpc_id);
+    let summary = operator_request_summary(kind, params);
+    Some(AgentAcpEvent::OperatorRequest {
+        request_id,
+        json_rpc_id: json_rpc_id.clone(),
+        method: method.to_string(),
+        summary,
+        kind,
+    })
+}
+
+fn json_id_as_string(id: &Value) -> String {
+    match id {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn operator_request_summary(kind: OperatorRequestKind, params: Option<&Value>) -> String {
+    match kind {
+        OperatorRequestKind::Permission => {
+            let tool = params
+                .and_then(|value| {
+                    value
+                        .pointer("/toolCall/title")
+                        .or_else(|| value.get("title"))
+                })
+                .and_then(Value::as_str);
+            match tool {
+                Some(title) if !title.is_empty() => format!("Permission: {title}"),
+                _ => "Permission required".to_string(),
+            }
+        }
+        OperatorRequestKind::Question => {
+            let question = params
+                .and_then(|value| {
+                    value
+                        .pointer("/question")
+                        .or_else(|| value.get("text"))
+                        .or_else(|| value.pointer("/questions/0/prompt"))
+                })
+                .and_then(Value::as_str);
+            match question {
+                Some(text) if !text.is_empty() => text.to_string(),
+                _ => "Agent question".to_string(),
+            }
+        }
     }
 }
 
