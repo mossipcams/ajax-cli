@@ -258,6 +258,14 @@ export default function App() {
     };
   }, [checkVersion, cockpitIntervalMs, hiddenStartupRetry, loadCockpit, versionIntervalMs]);
 
+  // Sheet is a list overlay. Clear it on task/diff — including a late reopen
+  // (e.g. iOS click-through onto New) so swipe-back never remounts it.
+  useEffect(() => {
+    if ((route.kind === "task" || route.kind === "diff") && sheetOpen) {
+      setSheetOpen(false);
+    }
+  }, [route.kind, sheetOpen]);
+
   useEffect(() => {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
@@ -476,7 +484,7 @@ export default function App() {
         />
       )}
 
-      {sheetOpen && (
+      {sheetOpen && route.kind !== "task" && route.kind !== "diff" && (
         <NewTaskSheet
           repos={cockpit.data?.repos?.repos ?? []}
           selectedProject={selectedProject}
