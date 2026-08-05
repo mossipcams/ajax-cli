@@ -191,6 +191,32 @@ fn claude_stop_failure_settles_without_error() {
 }
 
 #[test]
+fn cursor_before_shell_execution_requests_permission_attention() {
+    let payload = serde_json::json!({});
+    let canonical = translate_native_event("cursor", "beforeShellExecution", &payload).unwrap();
+    assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+    assert_eq!(
+        canonical.detail,
+        Some(CanonicalEventDetail::Attention {
+            attention: AttentionReason::Permission
+        })
+    );
+}
+
+#[test]
+fn cursor_before_mcp_execution_requests_permission_attention() {
+    let payload = serde_json::json!({});
+    let canonical = translate_native_event("cursor", "beforeMCPExecution", &payload).unwrap();
+    assert_eq!(canonical.kind, CanonicalEventKind::AttentionRequested);
+    assert_eq!(
+        canonical.detail,
+        Some(CanonicalEventDetail::Attention {
+            attention: AttentionReason::Permission
+        })
+    );
+}
+
+#[test]
 fn cursor_notification_permission_prompt_requests_permission_attention() {
     let payload = serde_json::json!({});
     let canonical =

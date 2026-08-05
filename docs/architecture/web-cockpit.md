@@ -568,8 +568,10 @@ task truth.
 
 Attention delivery fires once per actionable episode and only for statuses
 the operator can act on. Actionable Waiting is allowlisted to `Waiting for
-input` / `Waiting for approval` (structured hooks/lifecycle events); all other
-Waiting explanations stay inbox-visible but silent. `Error`-class evidence
+input` / `Waiting for approval` (structured hooks/lifecycle events, including
+Cursor `beforeShellExecution` / `beforeMCPExecution` plus pane fallback; Cursor
+`Notification` matchers are best-effort only); all other Waiting explanations
+stay inbox-visible but silent. `Error`-class evidence
 (CI failed, merge conflict, command failed, blocked, runtime probe failure)
 each fire a single push after the same shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) for every actionable status. Transient `Rate limited` Waiting,

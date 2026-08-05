@@ -122,6 +122,8 @@ fn install_cursor_hooks(home: &Path) -> Result<&'static str, CliError> {
         "preToolUse",
         "postToolUse",
         "postToolUseFailure",
+        "beforeShellExecution",
+        "beforeMCPExecution",
         "subagentStart",
         "subagentStop",
         "stop",
@@ -455,12 +457,14 @@ mod tests {
         ]
     }
 
-    fn cursor_events() -> [&'static str; 9] {
+    fn cursor_events() -> [&'static str; 11] {
         [
             "beforeSubmitPrompt",
             "preToolUse",
             "postToolUse",
             "postToolUseFailure",
+            "beforeShellExecution",
+            "beforeMCPExecution",
             "subagentStart",
             "subagentStop",
             "stop",
