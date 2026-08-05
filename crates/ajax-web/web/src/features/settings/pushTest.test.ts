@@ -6,6 +6,7 @@ import {
   runPushNotificationTest,
   enablePushNotifications,
   disablePushNotifications,
+  getPushSubscriptionStatus,
   urlSafeBase64ToUint8Array,
 } from "./pushTest";
 
@@ -29,6 +30,26 @@ describe("urlSafeBase64ToUint8Array", () => {
   it("decodes url-safe base64 without padding", () => {
     const bytes = urlSafeBase64ToUint8Array("AQID");
     expect(Array.from(bytes)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("getPushSubscriptionStatus", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns unavailable when pushManager is missing", async () => {
+    expect(await getPushSubscriptionStatus()).toBe("unavailable");
+  });
+
+  it("returns enabled when a subscription exists", async () => {
+    installPushManager(undefined, vi.fn().mockResolvedValue({ toJSON: () => mockSubscriptionPayload }));
+    expect(await getPushSubscriptionStatus()).toBe("enabled");
+  });
+
+  it("returns disabled when pushManager has no subscription", async () => {
+    installPushManager();
+    expect(await getPushSubscriptionStatus()).toBe("disabled");
   });
 });
 

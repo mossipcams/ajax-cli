@@ -15,7 +15,13 @@ import {
   readAppVersion,
 } from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
-import { runPushNotificationTest, enablePushNotifications, disablePushNotifications } from "./pushTest";
+import {
+  runPushNotificationTest,
+  enablePushNotifications,
+  disablePushNotifications,
+  getPushSubscriptionStatus,
+  type PushSubscriptionStatus,
+} from "./pushTest";
 
 interface Props {
   detailHandle?: string | null;
@@ -35,8 +41,26 @@ export default function SettingsView({
   const [testingInStable, setTestingInStable] = useState(false);
   const [diagnosticsOutput, setDiagnosticsOutput] = useState<string | null>(null);
   const [pushTestStatus, setPushTestStatus] = useState<string | null>(null);
+  const [pushSubscriptionStatus, setPushSubscriptionStatus] =
+    useState<PushSubscriptionStatus>("disabled");
   const [testingPush, setTestingPush] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function refreshPushSubscriptionStatus() {
+    setPushSubscriptionStatus(await getPushSubscriptionStatus());
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPushSubscriptionStatus().then((status) => {
+      if (!cancelled) {
+        setPushSubscriptionStatus(status);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +129,9 @@ export default function SettingsView({
     const result = await enablePushNotifications(setPushTestStatus);
     setTestingPush(false);
     setPushTestStatus(result.ok ? "Push notifications enabled." : result.error);
+    if (result.ok) {
+      await refreshPushSubscriptionStatus();
+    }
   }
 
   async function disablePush() {
@@ -113,6 +140,9 @@ export default function SettingsView({
     const result = await disablePushNotifications(setPushTestStatus);
     setTestingPush(false);
     setPushTestStatus(result.ok ? "Push notifications disabled." : result.error);
+    if (result.ok) {
+      await refreshPushSubscriptionStatus();
+    }
   }
 
   async function testPushNotification() {
@@ -193,6 +223,20 @@ export default function SettingsView({
           <div>
             <dt>User agent</dt>
             <dd>{truncatedUa}</dd>
+          </div>
+        </dl>
+
+        <h4 className="settings-subheading">Push notifications</h4>
+        <dl className="settings-debug" data-testid="dev-settings-push">
+          <div>
+            <dt>Status</dt>
+            <dd data-testid="push-subscription-status">
+              {pushSubscriptionStatus === "enabled"
+                ? "Enabled"
+                : pushSubscriptionStatus === "disabled"
+                  ? "Disabled"
+                  : "Unavailable"}
+            </dd>
           </div>
         </dl>
 

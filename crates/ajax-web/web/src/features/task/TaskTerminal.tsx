@@ -132,12 +132,13 @@ export default function TaskTerminal({ handle }: Props) {
   const CONTROL_KEYS = [
     { label: "Esc", ariaLabel: "Escape", data: "\x1b" },
     { label: "Tab", ariaLabel: "Tab", data: "\t" },
-    { label: "⌫", ariaLabel: "Backspace", data: "\x7f" },
     { label: "←", ariaLabel: "Left arrow", data: "\x1b[D" },
     { label: "↑", ariaLabel: "Up arrow", data: "\x1b[A" },
     { label: "↓", ariaLabel: "Down arrow", data: "\x1b[B" },
     { label: "→", ariaLabel: "Right arrow", data: "\x1b[C" },
   ];
+
+  const BACKSPACE_KEY = { label: "⌫", ariaLabel: "Backspace", data: "\x7f" };
 
   const REPEATABLE_KEY_DATA = new Set([
     "\x7f",
@@ -960,6 +961,20 @@ export default function TaskTerminal({ handle }: Props) {
               void requestPaste(ownedFocus);
             }}>
             Paste
+          </button>
+          <button
+            key={BACKSPACE_KEY.label}
+            type="button"
+            className="terminal-key"
+            aria-label={BACKSPACE_KEY.ariaLabel}
+            onPointerDown={(event) => onRepeatableKeyPointerDown(event, BACKSPACE_KEY.data)}
+            onPointerUp={onRepeatableKeyPointerEnd}
+            onPointerCancel={onRepeatableKeyPointerEnd}
+            onLostPointerCapture={onRepeatableKeyPointerEnd}
+            onClick={(event) =>
+              onControlKeyClick(event, BACKSPACE_KEY.data, isRepeatableKey(BACKSPACE_KEY.data))
+            }>
+            {BACKSPACE_KEY.label}
           </button>
           <button
             type="button"

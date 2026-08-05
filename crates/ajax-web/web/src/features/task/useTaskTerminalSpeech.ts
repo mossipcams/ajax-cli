@@ -16,6 +16,7 @@ import {
 import {
   createBrowserSpeechPlatform,
   createSpeechTransport,
+  isMicrophonePermissionDenied,
   newSessionId,
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
@@ -202,8 +203,12 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
       { sessionId },
     );
     speechTransportRef.current = transport;
-    void transport.start().catch(() => {
-      // Errors surface through onError / reducer.
+    void transport.start().catch((error) => {
+      if (isMicrophonePermissionDenied(error)) {
+        cancelSpeechInput();
+        return;
+      }
+      // Other errors surface through onError / reducer.
     });
   };
 

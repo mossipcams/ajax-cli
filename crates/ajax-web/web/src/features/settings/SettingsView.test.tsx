@@ -208,15 +208,37 @@ describe("SettingsView", () => {
     });
     vi.spyOn(pushTest, "enablePushNotifications").mockResolvedValue({ ok: true });
     vi.spyOn(pushTest, "disablePushNotifications").mockResolvedValue({ ok: true });
+    vi.spyOn(pushTest, "getPushSubscriptionStatus")
+      .mockResolvedValueOnce("disabled")
+      .mockResolvedValueOnce("enabled")
+      .mockResolvedValueOnce("disabled");
 
     render(<SettingsView />);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("push-subscription-status")).toHaveTextContent("Disabled"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Enable push notifications" }));
     await vi.waitFor(() =>
       expect(screen.getByText("Push notifications enabled.")).toBeInTheDocument(),
     );
+    expect(screen.getByTestId("push-subscription-status")).toHaveTextContent("Enabled");
     fireEvent.click(screen.getByRole("button", { name: "Disable push notifications" }));
     await vi.waitFor(() =>
       expect(screen.getByText("Push notifications disabled.")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("push-subscription-status")).toHaveTextContent("Disabled");
+  });
+
+  it("shows unavailable push status when pushManager is missing", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(pushTest, "getPushSubscriptionStatus").mockResolvedValue("unavailable");
+
+    render(<SettingsView />);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("push-subscription-status")).toHaveTextContent("Unavailable"),
     );
   });
 

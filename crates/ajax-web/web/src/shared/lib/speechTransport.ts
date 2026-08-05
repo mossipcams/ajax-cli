@@ -74,6 +74,17 @@ export function encodeSpeechAudioFrame(
   return buffer;
 }
 
+export function isMicrophonePermissionDenied(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "NotAllowedError";
+  }
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return message.includes("permission") || message.includes("notallowed");
+  }
+  return false;
+}
+
 export function newSessionId(): string {
   if (typeof crypto !== "undefined") {
     if (typeof crypto.randomUUID === "function") {
@@ -583,13 +594,14 @@ export function createSpeechTransport(
       try {
         mediaStream = await platform.getUserMedia();
       } catch (error) {
+        if (isMicrophonePermissionDenied(error)) {
+          activeSessionId = undefined;
+          startPromise = undefined;
+          throw error instanceof Error ? error : new Error("Microphone permission denied");
+        }
         const message =
-          error instanceof Error ? error.message : "Microphone permission denied";
-        fail(
-          message.includes("permission") || message.includes("NotAllowed")
-            ? "Microphone permission denied"
-            : message,
-        );
+          error instanceof Error ? error.message : "Microphone capture failed";
+        fail(message);
         throw error instanceof Error ? error : new Error(message);
       }
 
