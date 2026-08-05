@@ -136,23 +136,13 @@ Run the filter:
 | Per-task token display | No — harnesses show natively | **Absorbed** |
 | iOS Safari terminal fidelity | No | **Cap it** |
 
-Applied:
-
-| Candidate | As agents improve | Verdict |
-| --- | --- | --- |
-| Agent knowledge as config, not code | churn accelerates | **Appreciates** |
-| Diff review / judgment depth | more diffs, less human-written | **Appreciates** |
-| Fleet triage / ranked inbox | more parallel tasks per operator | **Appreciates** |
-| Rate-limit headroom as scheduling input | more agents contending | **Appreciates** |
-| Lifecycle & reconciliation depth | stable (git, tmux) | Holds |
-| Approval / wait detection parity | fewer approvals needed | **Depreciates** |
-| Pane-scraped wait chrome | vendor churn, shrinking payoff | **Depreciates** |
-| iOS Safari terminal fidelity | flat | **Cap it** |
-
-The premise Ajax was built on — an operator catching interrupts — is a function
-of agent *immaturity*. That value decays. What appreciates is deciding what
-ships: more agents producing more changes that a human trusts less per unit.
-The durable seat is coordination and trust, not interrupt handling.
+The second rule's conclusion survives inside this one and is worth stating
+directly, because it is the part that indicts `PRODUCT.md`. The premise Ajax was
+built on — an operator catching interrupts — is a function of agent
+*immaturity*, so that value decays on its own even before absorption. What
+grows is deciding what ships: more agents producing more changes that a human
+trusts less per unit. **The durable seat is coordination and trust, not
+interrupt handling.**
 
 ### Structural consequence: the closed enum is now existential
 
