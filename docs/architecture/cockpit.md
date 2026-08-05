@@ -14,8 +14,10 @@ TLS, browser shell assets, or static web assets.
 
 Web Cockpit serves HTTPS so browsers treat it as a secure context. On first run
 it generates a self-signed certificate and persists it beside the state
-database; the operator trusts it once on the browser device. HTTPS support does
-not imply Home Screen installation, service-worker, or notification support.
+database; the operator trusts it once on the browser device. HTTPS does not
+require Home Screen installation. Optional Declarative Web Push (Web Cockpit
+only) needs Add to Home Screen on a capable browser; see
+[`web-cockpit.md`](web-cockpit.md).
 
 Native Cockpit starts `ajax-cli web` by default and keeps it alive for the
 Cockpit session. `ajax-cli` starts Web Cockpit on port `8787` with the stable

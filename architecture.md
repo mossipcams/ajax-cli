@@ -153,9 +153,11 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
 - Operator status is exactly `Running`, `Waiting`, `Idle`, or `Error`, with one
   optional presentation-ready explanation; lifecycle and annotations stay
   separate typed inputs.
-- Web Cockpit targets normal iOS Safari without Home Screen PWA dependency,
-  without a service-worker offline mutation model, and without replacing the
-  raw xterm/tmux-first terminal model as the default path.
+- Web Cockpit targets normal iOS Safari without requiring Home Screen install
+  for core Cockpit use, without classic PWA packaging (manifest, icons, service
+  worker), without a service-worker offline mutation model, and without
+  replacing the raw xterm/tmux-first terminal model as the default path.
+  Optional Home Screen install enables Declarative Web Push only.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 
