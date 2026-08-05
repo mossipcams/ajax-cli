@@ -108,8 +108,8 @@ const fn cursor_profile() -> AgentCapabilityProfile {
     AgentCapabilityProfile {
         turn_started: CapabilitySupport::Native,
         turn_settled: CapabilitySupport::Native,
-        permission_wait: CapabilitySupport::Native,
-        question_wait: CapabilitySupport::Native,
+        permission_wait: CapabilitySupport::Unavailable,
+        question_wait: CapabilitySupport::Unavailable,
         subagents: CapabilitySupport::Unverified,
         session_closed: CapabilitySupport::Native,
     }
@@ -142,10 +142,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_profile_marks_wait_capabilities_native() {
+    fn cursor_profile_marks_wait_capabilities_unavailable() {
         let profile = profile_for_hook_client("cursor");
-        assert_eq!(profile.permission_wait, CapabilitySupport::Native);
-        assert_eq!(profile.question_wait, CapabilitySupport::Native);
+        assert_eq!(profile.permission_wait, CapabilitySupport::Unavailable);
+        assert_eq!(profile.question_wait, CapabilitySupport::Unavailable);
     }
 
     #[test]
@@ -158,7 +158,8 @@ mod tests {
     #[test]
     fn pane_fallback_allowed_only_when_unavailable_or_unverified() {
         let cursor = profile_for_hook_client("cursor");
-        assert!(!cursor.allows_pane_fallback(CapabilityFact::QuestionWait));
+        assert!(cursor.allows_pane_fallback(CapabilityFact::PermissionWait));
+        assert!(cursor.allows_pane_fallback(CapabilityFact::QuestionWait));
 
         let claude = profile_for_agent_client(AgentClient::Claude);
         assert!(!claude.allows_pane_fallback(CapabilityFact::QuestionWait));
@@ -173,7 +174,7 @@ mod tests {
             "Cursor wait capabilities must match hook profile"
         );
         assert_eq!(from_client.question_wait, from_hook.question_wait);
-        assert_eq!(from_client.permission_wait, CapabilitySupport::Native);
+        assert_eq!(from_client.permission_wait, CapabilitySupport::Unavailable);
     }
 
     #[test]

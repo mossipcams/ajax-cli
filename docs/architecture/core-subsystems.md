@@ -170,9 +170,10 @@ Waiting and Error operator status after a shared 15-second confirmation dwell
 (`NOTIFY_CONFIRMATION_DWELL`) that applies to all actionable attention — a
 Waiting→Error flap mid-dwell does not restart the clock. Actionable Waiting is allowlisted to structured
 wait/ask explanations only (`Waiting for input`, `Waiting for approval` from
-Claude `Notification`, Codex `PermissionRequest`, Cursor `Notification`
-permission/elicitation matchers, and legacy provider hook files that write
-`wait`/`ask`). Pi has no native wait/ask hook today — they still notify on
+Claude `Notification`, Codex `PermissionRequest`, Cursor `beforeShellExecution` /
+`beforeMCPExecution` hooks plus pane fallback, with Cursor `Notification`
+permission/elicitation matchers as best-effort only, and legacy provider hook
+files that write `wait`/`ask`). Pi has no native wait/ask hook today — they still notify on
 Error-class evidence (CI/wrapper/substrate). Auth required, context waits,
 lifecycle review, rate limits, response-ready settle, and parent phases that
 wait on delegated children remain visible as Waiting but do not

@@ -148,6 +148,9 @@ pub(crate) fn translate_native_event(
         ("cursor", "preToolUse") => Some(activity_started(payload)),
         ("cursor", "postToolUse") => Some(activity_finished(payload)),
         ("cursor", "postToolUseFailure") => Some(activity_finished(payload)),
+        ("cursor", "beforeShellExecution") | ("cursor", "beforeMCPExecution") => {
+            Some(attention_requested(AttentionReason::Permission))
+        }
         ("cursor", "subagentStart") => Some(child_started()),
         ("cursor", "subagentStop") => Some(child_settled()),
         ("cursor", "stop") => Some(cursor_stop(payload)),

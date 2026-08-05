@@ -119,13 +119,24 @@ fn recognize_prompt(agent: AgentClient, lines: &[&str]) -> Option<RawPromptHint>
 
 fn recognize_cursor_prompt(lines: &[&str]) -> Option<RawPromptHint> {
     let bottom = bottom_lines(lines, PROMPT_WINDOW);
-    let has_selected_approval = bottom.iter().any(|line| {
+    let has_approval_intent = bottom.iter().any(|line| {
         let lower = line.to_ascii_lowercase();
-        line.trim_start().starts_with('>') && contains_any(&lower, &["allow", "approve"])
+        contains_any(
+            &lower,
+            &[
+                "permission required",
+                "approval required",
+                "allow command",
+                "allow this command",
+                "requires approval",
+            ],
+        ) || (lower.contains("run this command") && !lower.contains("do you want"))
     });
-    let has_denial = bottom
-        .iter()
-        .any(|line| line.trim().eq_ignore_ascii_case("deny"));
+    let has_cursor_menu = bottom.iter().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        line.trim().eq_ignore_ascii_case("deny")
+            || (line.trim_start().starts_with('>') && contains_any(&lower, &["allow", "approve"]))
+    });
     let has_keyboard_cue = bottom.iter().any(|line| {
         contains_any(
             &line.to_ascii_lowercase(),
@@ -133,7 +144,7 @@ fn recognize_cursor_prompt(lines: &[&str]) -> Option<RawPromptHint> {
         )
     });
 
-    (has_selected_approval && has_denial && has_keyboard_cue)
+    (has_approval_intent || (has_cursor_menu && has_keyboard_cue))
         .then_some(RawPromptHint::ApprovalPrompt)
 }
 
@@ -281,6 +292,15 @@ mod tests {
     fn client_specific_cursor_permission_chrome_is_waiting_permission() {
         let pane =
             "Run this command?\n\n> Allow this command\n  Deny\n\nenter to select · esc to cancel";
+        assert_eq!(
+            recognize_wait_hint(AgentClient::Cursor, pane),
+            Some(PaneWaitHint::WaitingPermission)
+        );
+    }
+
+    #[test]
+    fn cursor_approval_required_phrase_is_waiting_permission() {
+        let pane = "Shell command approval required\n\nAllow command\nDeny";
         assert_eq!(
             recognize_wait_hint(AgentClient::Cursor, pane),
             Some(PaneWaitHint::WaitingPermission)
