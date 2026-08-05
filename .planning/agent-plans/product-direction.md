@@ -46,7 +46,12 @@ and written into `PRODUCT.md`.
 ~90% of everything ever shipped is Web Cockpit, at four fixes per feature. The
 problem is not a shortage of ideas. There is no capacity to plan into.
 
-### Two maintenance treadmills, one root cause
+### Two surfaces Ajax does not control
+
+**Partly corrected — this section originally read "two maintenance treadmills"
+and treated both as waste.** The counts below are accurate; the verdict on the
+first was not. Under the corrected thesis (§5b) most iOS work is on-thesis,
+because the phone loop is how subscribed capacity gets used. Item 2 stands.
 
 Ajax depends on two surfaces it does not control, and both generate unbounded
 work:
@@ -59,10 +64,13 @@ work:
    ("Visible-pane text is weak evidence", `pane_fallback.rs:3`). Every vendor UI
    change can silently break it.
 
-The differentiated asset — `ajax-core` task truth, 38k LOC of lifecycle,
+The other differentiated asset — `ajax-core` task truth, 38k LOC of lifecycle,
 reconciliation, receipts, ghost-task handling — sits on **git and tmux**, which
-are stable. It is not on a treadmill, and it is being starved: 23 changelog
-bullets against web's 322.
+are stable, and has received 23 changelog bullets against web's 322.
+
+The 90/10 split is not by itself evidence of misallocation, since the phone loop
+is load-bearing. What it does show is that cross-vendor breadth, quota, and
+placement have had almost no investment — which is where §5b's steps 3–5 point.
 
 ### The stated promise is not yet true
 
@@ -228,9 +236,16 @@ Run the filter:
 | Review / ship lifecycle across repos | Yes — host-level git | **Durable** |
 | Fleet triage across vendors | Yes | **Durable** |
 | Cross-vendor limit/cost rollup | Yes, only in rollup form | **Durable** |
+| Mobile reach to the whole fleet | Yes — cross-vendor, cross-repo, host-side | **Durable** |
 | Per-agent approval detection | No — harness ships it | **Absorbed** |
 | Per-task token display | No — harnesses show natively | **Absorbed** |
-| iOS Safari terminal fidelity | No | **Cap it** |
+| Desktop-terminal parity for its own sake | No operator action unblocked | **Cap it** |
+
+**Corrected:** an earlier version of this table read "iOS Safari terminal
+fidelity — Cap it". Wrong. A vendor could ship a phone view of *its own*
+sessions; none will ship phone access to a cross-vendor fleet across your repos
+on your host. Mobile reach is one of the least absorbable things Ajax has. Only
+parity-chasing is capped — see §5b.
 
 The second rule's conclusion survives inside this one and is worth stating
 directly, because it is the part that indicts `PRODUCT.md`. The premise Ajax was
@@ -443,35 +458,63 @@ is.
 
 ## 5b. The direction, stated
 
-> **Ajax is the scheduler for your subsidised agent capacity.**
+> **Ajax is a mobile-first cockpit for a cross-vendor agent fleet.**
 >
 > You hold several vendor subscriptions because cheap inference is siloed per
-> vendor. Ajax's job is to keep all of them busy on useful work in isolated
-> worktrees, and to tell you what is ready to ship.
+> vendor. Ajax keeps all of it busy on useful work in isolated worktrees, and
+> keeps you able to place, unblock, review and ship from a phone.
 
 Written into `PRODUCT.md` (2026-08-05). Everything below follows from it.
 
+**Corrected after a first draft dropped mobile-first.** That draft treated the
+phone as a delivery channel and demoted it. Matt rejected that, correctly: the
+two halves are not in tension, and mobile is the *mechanism* by which the
+capacity thesis pays off.
+
+The argument: subscriptions are a fixed monthly cost, so idle capacity is wasted
+money. The binding constraint on utilisation is how often the operator can place
+and unblock work. If that requires a desk, utilisation collapses to desk hours
+and the operator becomes the bottleneck. Phone reach decouples utilisation from
+location. **Subsidy economics make mobile more important, not less** — the first
+draft had this exactly backwards.
+
 **Ajax does:** drive every harness the operator owns; track quota headroom
 across vendors; place new work where there is room; keep tasks isolated in
-worktrees and tmux; surface what is ready to review and ship.
+worktrees and tmux; surface what is ready to review and ship — all of it from a
+phone as readily as from the desk.
 
 **Ajax does not:** call model APIs; implement an agent loop; treat any vendor as
-first-class; chase terminal parity beyond a stated bar; expose a public-internet
-path.
+first-class; expose a public-internet path.
 
 ### Concrete sequence
 
 | # | Work | Size | Done when |
 | --- | --- | --- | --- |
 | 1 | Thesis into `PRODUCT.md` + `architecture.md` invariants | S | Done 2026-08-05 |
-| 2 | Web terminal fidelity bar | S | Supported iOS behaviours listed; rest closed won't-fix |
+| 2 | Define the mobile operator bar | S | Each terminal/mobile item classified loop-blocking or parity-chasing |
 | 3 | Open the agent set | M | A new harness is added by config and appears in Web, CLI and TUI together |
 | 4 | Quota headroom | M | Cockpit answers "which vendor has room right now"; unknown states degrade honestly |
 | 5 | Placement + triage | M | Inbox ranks by dwell/staleness; new task suggests a vendor from quota |
 | 6 | Review depth | L | Diff review flags blast radius and what changed since last look |
 
-Step 2 gates the rest — without it there is no capacity. Steps 3–5 are the
-product; step 6 is the compounding bet.
+### On step 2 — cap parity, not capability
+
+An earlier version of this row said "cap web terminal work", on the reading that
+the 4.2:1 fix ratio proved a treadmill. That was too blunt. Under the corrected
+thesis most of that spend is **on-thesis**: scrollback, keyboard geometry, paste,
+swipe conflicts and selection are all "can I actually operate from my phone"
+problems, and the phone loop is how capacity gets used.
+
+The distinction that matters is not how much terminal work but which kind:
+
+- **Loop-blocking** — the operator cannot place, unblock, review or ship from a
+  phone without it. On-thesis. Fund it.
+- **Parity-chasing** — closing the gap to a desktop terminal for its own sake,
+  with no operator action unblocked. Off-thesis. Close won't-fix.
+
+Step 2 is writing that classification down, not freezing the work. It still
+comes before 3–6, because without a test for which bugs matter the queue fills
+itself.
 
 ## 6. Checklist
 
