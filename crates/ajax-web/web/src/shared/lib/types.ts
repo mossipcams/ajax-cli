@@ -204,6 +204,7 @@ export interface OperationResponse {
   cockpit?: BrowserCockpitView;
   output?: string | null;
   error?: string | null;
+  code?: string | null;
   restarting?: boolean;
 }
 

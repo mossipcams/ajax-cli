@@ -36,17 +36,20 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number | null;
   readonly body: OperationResponse | null;
+  readonly code: string | null;
   constructor(
     kind: ApiErrorKind,
     message: string,
     status: number | null = null,
     body: OperationResponse | null = null,
+    code: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
     this.body = body;
+    this.code = code;
   }
 }
 
@@ -311,6 +314,10 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+function operationErrorCode(payload: OperationResponse): string | null {
+  return typeof payload.code === "string" && payload.code.length > 0 ? payload.code : null;
+}
+
 /** Operations and task-start return a refreshed cockpit projection; callers
  * replace their projection with it rather than merging optimistically. */
 export interface MutationResult {
@@ -326,7 +333,13 @@ async function postMutation(path: string, req: unknown): Promise<MutationResult>
   return {
     ok: false,
     response: payload,
-    error: new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload),
+    error: new ApiError(
+      classifyStatus(response.status),
+      payload.error || `HTTP ${response.status}`,
+      response.status,
+      payload,
+      operationErrorCode(payload),
+    ),
   };
 }
 
@@ -365,7 +378,13 @@ export async function restartServer(): Promise<OperationResponse> {
   const { response, payload: rawPayload } = await postJson("/api/server/restart", {});
   const payload = assertOperationResponse(rawPayload);
   if (!response.ok) {
-    throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
+    throw new ApiError(
+      classifyStatus(response.status),
+      payload.error || `HTTP ${response.status}`,
+      response.status,
+      payload,
+      operationErrorCode(payload),
+    );
   }
   return payload;
 }
@@ -374,7 +393,13 @@ export async function startTestInStable(): Promise<OperationResponse> {
   const { response, payload: rawPayload } = await postJson("/api/server/test-in-stable", {});
   const payload = assertOperationResponse(rawPayload);
   if (!response.ok) {
-    throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
+    throw new ApiError(
+      classifyStatus(response.status),
+      payload.error || `HTTP ${response.status}`,
+      response.status,
+      payload,
+      operationErrorCode(payload),
+    );
   }
   return payload;
 }

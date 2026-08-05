@@ -41,10 +41,18 @@ pub fn json_response(status_code: u16, value: serde_json::Value) -> Result<Respo
     })
 }
 
+fn web_error_code(error: &WebError) -> &'static str {
+    match error {
+        WebError::JsonSerialization(_) => "internal",
+        WebError::CommandFailed(_) => "command_failed",
+    }
+}
+
 pub fn response_from_web_error(error: WebError, request_id: Option<&str>) -> Response {
     let mut value = serde_json::json!({
         "ok": false,
         "error": error.to_string(),
+        "code": web_error_code(&error),
     });
     if let Some(request_id) = request_id {
         value["request_id"] = serde_json::Value::String(request_id.to_string());
@@ -116,6 +124,7 @@ pub fn web_error_response(error: WebError) -> AxumResponse {
         serde_json::json!({
             "ok": false,
             "error": error.to_string(),
+            "code": web_error_code(&error),
         }),
     )
 }

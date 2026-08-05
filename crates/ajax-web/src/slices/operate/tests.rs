@@ -1,8 +1,8 @@
-use super::{format_execution_outputs, operate, OperateError, OperateRequest};
+use super::{format_execution_outputs, operate, operate_error_code, OperateError, OperateRequest};
 use ajax_core::remediation;
 use ajax_core::{
     adapters::{CommandOutput, RecordingCommandRunner},
-    commands::CommandContext,
+    commands::{CommandContext, CommandError},
     config::{Config, ManagedRepo},
     models::{
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, TaskId, TmuxStatus,
@@ -14,6 +14,52 @@ fn context_with_reviewable_task() -> CommandContext<InMemoryRegistry> {
     let mut task = crate::test_support::fix_login_task();
     task.lifecycle_status = LifecycleStatus::Reviewable;
     crate::test_support::context_with_tasks(&["web"], vec![task])
+}
+
+#[test]
+fn operate_error_code_maps_known_operate_errors() {
+    assert_eq!(
+        operate_error_code(&OperateError::UnknownAction("nope".to_string())),
+        "unknown_action"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::UnsupportedCapability(
+            "attach requires a terminal"
+        )),
+        "needs_terminal"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::UnsupportedCapability("unsupported agent")),
+        "unsupported_action"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::Command(
+            CommandError::TaskNotFound("web/missing".to_string()),
+            false
+        )),
+        "task_not_found"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::Command(
+            CommandError::ConfirmationRequired,
+            false
+        )),
+        "confirmation_required"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::Command(
+            CommandError::PlanBlocked(vec!["blocked".to_string()]),
+            false
+        )),
+        "conflict"
+    );
+    assert_eq!(
+        operate_error_code(&OperateError::Command(
+            CommandError::RepoNotFound("missing".to_string()),
+            false
+        )),
+        "command_failed"
+    );
 }
 
 #[test]

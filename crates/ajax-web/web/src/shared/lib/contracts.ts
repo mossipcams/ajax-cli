@@ -136,6 +136,7 @@ export function assertOperationResponse(value: unknown): OperationResponse {
   }
   assertOptionalNullableString(value, "output");
   assertOptionalNullableString(value, "error");
+  assertOptionalNullableString(value, "code");
   if (value.restarting !== undefined && typeof value.restarting !== "boolean") {
     throw new IncompatibleResponseError("operation.restarting is not a boolean");
   }

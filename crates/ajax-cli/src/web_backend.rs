@@ -10,8 +10,8 @@ use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
     slices::operate::{
-        format_operate_error, operate, start_task_with_checkpoint, OperateError, OperateOutcome,
-        OperateRequest, StartTaskRequest,
+        format_operate_error, operate, operate_error_code, start_task_with_checkpoint,
+        OperateError, OperateOutcome, OperateRequest, StartTaskRequest,
     },
     WebError,
 };
@@ -434,6 +434,7 @@ impl CliRuntimeBridge {
                 }
                 Err(ActionFailure {
                     message: format_operate_error(&error),
+                    code: operate_error_code(&error).to_string(),
                     state_changed,
                 })
             }
@@ -458,6 +459,7 @@ fn cli_error_from_web(error: WebError) -> CliError {
 fn action_failure_from_cli(error: CliError) -> ActionFailure {
     ActionFailure {
         message: error.to_string(),
+        code: "command_failed".to_string(),
         state_changed: error.state_changed(),
     }
 }
