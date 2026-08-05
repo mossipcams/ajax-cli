@@ -125,7 +125,18 @@ impl PushHub {
         let store = if subscriptions_path.is_file() {
             let raw = fs::read_to_string(&subscriptions_path)
                 .map_err(|error| format!("read subscriptions: {error}"))?;
-            serde_json::from_str(&raw).map_err(|error| format!("parse subscriptions: {error}"))?
+            match serde_json::from_str::<SubscriptionStore>(&raw) {
+                Ok(store) => store,
+                Err(error) => {
+                    // No legacy migrate: bare arrays / unknown shapes are wiped.
+                    eprintln!("invalid {SUBSCRIPTIONS_FILE} ({error}); wiping to empty store");
+                    let empty = SubscriptionStore::default();
+                    let rewritten = serde_json::to_string_pretty(&empty)
+                        .map_err(|error| format!("serialize subscriptions: {error}"))?;
+                    write_private_file(&subscriptions_path, rewritten.as_bytes())?;
+                    empty
+                }
+            }
         } else {
             SubscriptionStore::default()
         };
@@ -664,6 +675,28 @@ mod tests {
         assert_eq!(first, URL_SAFE_NO_PAD.encode(vapid_public_key_bytes(&key)));
         let second_hub = PushHub::load_or_create(&dir).unwrap();
         assert_eq!(first, second_hub.vapid_public_key_base64().unwrap());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_legacy_subscriptions_file_is_wiped_not_migrated() {
+        let dir = scratch_dir("legacy-wipe");
+        let path = dir.join(SUBSCRIPTIONS_FILE);
+        // Legacy shape was a bare array; current store is {"subscriptions":[...]}.
+        fs::write(
+            &path,
+            r#"[{"endpoint":"https://web.push.apple.com/x","keys":{"p256dh":"a","auth":"b"}}]"#,
+        )
+        .unwrap();
+        let hub = PushHub::load_or_create(&dir).unwrap();
+        assert!(!hub.has_subscriptions());
+        let rewritten: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            rewritten,
+            serde_json::json!({"subscriptions": []}),
+            "legacy file must be replaced with empty current-shape store, not migrated"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
