@@ -3,7 +3,8 @@
 // stay ignored so scroll still works.
 
 export const NAVIGATE_SWIPE_TRIGGER = 56; // px past which release navigates
-const ENGAGE_MIN = 8;
+// ponytail: iOS PWA accidental sub-threshold horizontal touches stay silent (no chrome drag / cancelled ajax_swipe).
+const ENGAGE_MIN = 48;
 const LOCK_RATIO = 1.15;
 
 export type NavigateSwipeDirection = "none" | "left" | "right";

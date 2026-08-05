@@ -12,8 +12,15 @@ import {
 const PAGE_WIDTH = 390;
 
 describe("navigate swipe", () => {
+  it("does not engage below the horizontal dead-zone", () => {
+    const state = navigateSwipeMove(navigateSwipeStart(), 40, 0, PAGE_WIDTH);
+    expect(state.engaged).toBe(false);
+    expect(navigateSwipeEnd(state)).toBe("none");
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+  });
+
   it("ignores predominantly vertical drags", () => {
-    const state = navigateSwipeMove(navigateSwipeStart(), -12, -40, PAGE_WIDTH);
+    const state = navigateSwipeMove(navigateSwipeStart(), -50, -80, PAGE_WIDTH);
     expect(state.engaged).toBe(false);
     expect(navigateSwipeEnd(state)).toBe("none");
   });
