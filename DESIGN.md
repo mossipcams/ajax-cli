@@ -292,6 +292,13 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - Raw xterm pane is the default work surface on task detail.
 - Interact panel is a flat hairline strip (`border-top` / `border-bottom` Rule) for structured Approve/Deny — never a composer that replaces the terminal.
 
+### Surface: Ajax Web Session (flagged Operate alternate)
+- Behind `ajax.webSession` on Cursor tasks only; otherwise terminal remains the work surface.
+- Composition (top → bottom): status chip → cross-session attention rail → transcript → composer dock → literal terminal key bar (Esc/Tab/arrows/Ctrl/Paste/⌫/Mic) wired to the composer, not a PTY.
+- Keyboard-open: pin the session column to the visualViewport band (`--app-top` / `--app-height`); key bar flush above the soft keyboard; attention rail sticky.
+- States: empty, connecting, ready, running, reconnecting, error+Retry. Connection recovery Retry is the sole primary recovery CTA.
+- iOS Safari / Home Screen first; no classic PWA packaging.
+
 ## 6. Do's and Don'ts
 
 ### Do:
@@ -308,6 +315,6 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - **Don't** build overbuilt IDE shells: too many panels and tabs fighting the terminal.
 - **Don't** use side-stripe borders (`border-left` / `border-right` > 1px) as status accents — use the tone system.
 - **Don't** use gradient text, glass cards as decoration, or hero-metric templates.
-- **Don't** put a browser composer or snapshot viewer where the raw terminal belongs.
+- **Don't** put a browser composer or snapshot viewer where the raw terminal belongs — except the flagged Ajax Web Session surface (`ajax.webSession` on Cursor tasks).
 - **Don't** invent a second status color vocabulary outside `--tone`.
 - **Don't** duplicate the New-task CTA (bottom-nav New only).

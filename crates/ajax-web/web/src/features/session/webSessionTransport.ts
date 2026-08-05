@@ -3,10 +3,14 @@ import type {
   SessionAttentionItem,
   SessionAttentionKind,
   SessionAttentionResponse,
+  WebSessionConnectionStatus,
   WebSessionSymbolContext,
 } from "./types";
 
 const OPEN_READY_STATE = 1;
+const RECONNECT_MAX_DELAY_MS = 15000;
+const IMMEDIATE_FAILURE_LIMIT = 5;
+const STABLE_OPEN_MS = 1000;
 
 export interface WebSessionSocket {
   readyState: number;
@@ -21,7 +25,7 @@ export interface WebSessionTransportPlatform {
 }
 
 export interface WebSessionTransportCallbacks {
-  onConnectionStatus(status: "connecting" | "connected" | "error" | "closed"): void;
+  onConnectionStatus(status: WebSessionConnectionStatus): void;
   onSessionReady(sessionId: string): void;
   onRunStatus(status: "running" | "waiting"): void;
   onAssistantDelta(text: string): void;
@@ -41,6 +45,8 @@ export interface WebSessionTransport {
     requestId: string,
     response: SessionAttentionResponse,
   ): void;
+  /** Manual reconnect: skip backoff and dial immediately. */
+  reconnectNow(): void;
   dispose(): void;
 }
 
@@ -88,6 +94,26 @@ function parseAttentionKind(value: unknown): SessionAttentionKind | null {
   return null;
 }
 
+export function clarifyWebSessionError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("cursor_login") || lower.includes("authenticate")) {
+    return "Cursor login required on the host. Sign in with `agent` / Cursor, then Retry.";
+  }
+  if (lower.includes("not found") || lower.includes("no such file") || lower.includes("spawn")) {
+    return "Cursor agent binary not available on the host. Install or fix PATH, then Retry.";
+  }
+  if (lower.includes("connection failed") || lower.includes("websocket")) {
+    return "Web session connection failed. Check the host and tap Retry.";
+  }
+  if (lower.includes("attention request is no longer pending") || lower.includes("stale")) {
+    return "That attention request is no longer pending.";
+  }
+  if (lower.includes("hub is gone") || lower.includes("hub gone")) {
+    return "Originating session is gone. Open that task or start a new prompt.";
+  }
+  return message;
+}
+
 export function connectWebSession(
   handle: string,
   callbacks: WebSessionTransportCallbacks,
@@ -98,21 +124,44 @@ export function connectWebSession(
   let messageListener: EventListener | undefined;
   let errorListener: EventListener | undefined;
   let closeListener: EventListener | undefined;
+  let openListener: EventListener | undefined;
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let everOpened = false;
+  let dialOpened = false;
+  let dialOpenedAt: number | undefined;
+  let status: WebSessionConnectionStatus = "connecting";
+  let visibilityListener: (() => void) | undefined;
+
+  const setStatus = (next: WebSessionConnectionStatus) => {
+    status = next;
+    callbacks.onConnectionStatus(next);
+  };
 
   const detachListeners = () => {
     if (!socket) return;
     if (messageListener) socket.removeEventListener("message", messageListener);
     if (errorListener) socket.removeEventListener("error", errorListener);
     if (closeListener) socket.removeEventListener("close", closeListener);
+    if (openListener) socket.removeEventListener("open", openListener);
     messageListener = undefined;
     errorListener = undefined;
     closeListener = undefined;
+    openListener = undefined;
   };
 
-  const fail = (message: string) => {
+  const clearReconnectTimer = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+  };
+
+  const failFatal = (message: string) => {
     if (disposed) return;
-    callbacks.onConnectionStatus("error");
-    callbacks.onError(message);
+    clearReconnectTimer();
+    setStatus("error");
+    callbacks.onError(clarifyWebSessionError(message));
   };
 
   const handleServerMessage = (event: Event) => {
@@ -147,15 +196,17 @@ export function connectWebSession(
       case "session.error":
         callbacks.onRunStatus("waiting");
         callbacks.onError(
-          typeof payload.message === "string"
-            ? payload.message
-            : typeof payload.code === "string"
-              ? payload.code
-              : "Session error",
+          clarifyWebSessionError(
+            typeof payload.message === "string"
+              ? payload.message
+              : typeof payload.code === "string"
+                ? payload.code
+                : "Session error",
+          ),
         );
         break;
       case "session.closed":
-        callbacks.onConnectionStatus("closed");
+        setStatus("closed");
         callbacks.onClosed();
         break;
       case "attention.required": {
@@ -190,7 +241,9 @@ export function connectWebSession(
           callbacks.onAttentionError?.(
             payload.handle,
             payload.requestId,
-            typeof payload.message === "string" ? payload.message : "Attention reply failed",
+            clarifyWebSessionError(
+              typeof payload.message === "string" ? payload.message : "Attention reply failed",
+            ),
           );
         }
         break;
@@ -204,23 +257,103 @@ export function connectWebSession(
     socket.send(JSON.stringify({ version: WEB_SESSION_PROTOCOL_VERSION, ...body }));
   };
 
-  callbacks.onConnectionStatus("connecting");
-  socket = platform.openSocket(webSessionSocketUrl(handle));
-  messageListener = handleServerMessage;
-  errorListener = () => fail("Web session connection failed");
-  closeListener = () => {
+  const dial = () => {
+    if (disposed) return;
+    clearReconnectTimer();
     detachListeners();
-    if (disposed) return;
-    callbacks.onConnectionStatus("closed");
-    callbacks.onClosed();
+    try {
+      socket?.close();
+    } catch {
+      // ignore
+    }
+    socket = undefined;
+    dialOpened = false;
+    dialOpenedAt = undefined;
+
+    if (!everOpened) {
+      setStatus("connecting");
+    } else {
+      setStatus("reconnecting");
+    }
+
+    socket = platform.openSocket(webSessionSocketUrl(handle));
+    messageListener = handleServerMessage;
+    // Error is followed by close; close owns reconnect so we do not double-schedule.
+    errorListener = () => {};
+    openListener = () => {
+      if (disposed) return;
+      dialOpened = true;
+      dialOpenedAt = Date.now();
+      everOpened = true;
+      reconnectAttempts = 0;
+      setStatus("connected");
+    };
+    closeListener = () => {
+      detachListeners();
+      if (disposed) return;
+      const stableOpen =
+        dialOpened &&
+        dialOpenedAt !== undefined &&
+        Date.now() - dialOpenedAt >= STABLE_OPEN_MS;
+      callbacks.onClosed();
+      if (!everOpened && reconnectAttempts >= IMMEDIATE_FAILURE_LIMIT) {
+        failFatal("Web session connection failed");
+        return;
+      }
+      if (everOpened && !stableOpen && reconnectAttempts >= IMMEDIATE_FAILURE_LIMIT) {
+        failFatal("Web session connection failed");
+        return;
+      }
+      scheduleReconnect(stableOpen);
+    };
+    socket.addEventListener("message", messageListener);
+    socket.addEventListener("error", errorListener);
+    socket.addEventListener("open", openListener);
+    socket.addEventListener("close", closeListener);
   };
-  socket.addEventListener("message", messageListener);
-  socket.addEventListener("error", errorListener);
-  socket.addEventListener("open", () => {
+
+  const scheduleReconnect = (stableOpen = false) => {
     if (disposed) return;
-    callbacks.onConnectionStatus("connected");
-  });
-  socket.addEventListener("close", closeListener);
+    setStatus("reconnecting");
+    const immediate =
+      stableOpen &&
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      reconnectAttempts === 0;
+    const delay = immediate
+      ? 0
+      : Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
+    reconnectAttempts += 1;
+    clearReconnectTimer();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      if (disposed) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        // Stay reconnecting; visibility handler redials.
+        return;
+      }
+      dial();
+    }, delay);
+  };
+
+  const reconnectNow = () => {
+    if (disposed) return;
+    clearReconnectTimer();
+    reconnectAttempts = 0;
+    dial();
+  };
+
+  if (typeof document !== "undefined") {
+    visibilityListener = () => {
+      if (disposed) return;
+      if (document.visibilityState === "visible" && status === "reconnecting") {
+        reconnectNow();
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityListener);
+  }
+
+  dial();
 
   return {
     sendPrompt(message: string) {
@@ -239,9 +372,14 @@ export function connectWebSession(
         response,
       });
     },
+    reconnectNow,
     dispose() {
       disposed = true;
+      clearReconnectTimer();
       detachListeners();
+      if (visibilityListener && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", visibilityListener);
+      }
       try {
         socket?.close();
       } catch {

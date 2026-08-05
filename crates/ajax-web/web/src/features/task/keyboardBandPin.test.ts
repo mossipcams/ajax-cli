@@ -104,4 +104,17 @@ describe("keyboard band height pin contract", () => {
       /html\.keyboard-open\s+\.ajax-web-session-attention-rail\s*\{[^}]*position:\s*sticky/s,
     );
   });
+
+  it("fills ajax-web-session under keyboard-open task-detail band", () => {
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+    expect(mobileBlock).toMatch(
+      /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.ajax-web-session\s*\{[^}]*flex:\s*1\s+1\s+0%/s,
+    );
+    expect(mobileBlock).toMatch(
+      /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.ajax-web-session-keys\s*\{[^}]*padding-bottom:\s*6px/s,
+    );
+  });
 });

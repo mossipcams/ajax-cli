@@ -86,6 +86,7 @@ describe("AjaxWebSessionView", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -205,17 +206,68 @@ describe("AjaxWebSessionView", () => {
     });
   });
 
-  it("shows error state when the socket fails", async () => {
+  it("shows error state with Retry after reconnect attempts are exhausted", async () => {
+    vi.useFakeTimers();
+    render(<AjaxWebSessionView handle="web/fix-login" />);
+
+    // Never-opened dials: close schedules reconnect; after limit → fatal error.
+    for (let i = 0; i < 6; i += 1) {
+      const socket = latestSocket();
+      socket.fire("close");
+      await vi.runOnlyPendingTimersAsync();
+    }
+
+    expect(screen.getByTestId("ajax-web-session-error")).toHaveTextContent(
+      "Web session connection failed",
+    );
+    expect(screen.getByTestId("ajax-web-session-status")).toHaveTextContent("Error");
+    expect(screen.getByTestId("ajax-web-session-retry")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("renders the session key bar and empty state", () => {
+    render(<AjaxWebSessionView handle="web/fix-login" />);
+    expect(screen.getByTestId("ajax-web-session-key-esc")).toBeInTheDocument();
+    expect(screen.getByTestId("ajax-web-session-key-mic")).toBeInTheDocument();
+    expect(screen.getByTestId("ajax-web-session-empty")).toBeInTheDocument();
+  });
+
+  it("Esc while running sends abort", async () => {
     render(<AjaxWebSessionView handle="web/fix-login" />);
     const socket = latestSocket();
-    socket.fire("error");
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    socket.fire(
+      "message",
+      serverEvent({
+        type: "session.status",
+        version: WEB_SESSION_PROTOCOL_VERSION,
+        state: "waiting",
+      }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("ajax-web-session-error")).toHaveTextContent(
-        "Web session connection failed",
-      );
+      expect(screen.getByTestId("ajax-web-session-input")).not.toBeDisabled();
     });
-    expect(screen.getByTestId("ajax-web-session-status")).toHaveTextContent("Error");
+
+    fireEvent.change(screen.getByTestId("ajax-web-session-input"), {
+      target: { value: "go" },
+    });
+    fireEvent.click(screen.getByTestId("ajax-web-session-send"));
+    socket.fire(
+      "message",
+      serverEvent({
+        type: "session.status",
+        version: WEB_SESSION_PROTOCOL_VERSION,
+        state: "running",
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("ajax-web-session-key-esc"));
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
+      type: "session.abort",
+      version: WEB_SESSION_PROTOCOL_VERSION,
+    });
   });
 
   it("attaches symbol context chips and includes source in the sent prompt", async () => {

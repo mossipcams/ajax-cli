@@ -737,6 +737,20 @@ Waiting never generate in-app banners. Symbol search and attached context remain
 presentation helpers over the task worktree. This path does not replace the
 terminal bridge and does not enable non-Cursor agent pickers.
 
+The session Operate surface is iOS Safari / Home Screen first (no classic PWA
+packaging): status chip, sticky attention rail, transcript, composer dock, then
+the literal terminal key bar (Esc / Tab / arrows / Ctrl / Paste / ⌫ / Mic) wired
+to the composer textarea (Mic appends speech into the draft; Esc/Ctrl+C abort a
+running prompt). Under `html.keyboard-open`, Task Detail pins to the
+`visualViewport` band and the session key bar sits flush above the soft
+keyboard (same `--app-top` / `--app-height` contract as the terminal hotbar).
+
+Browser transport auto-reconnects with capped backoff while the view is
+mounted, exposes a distinct `reconnecting` status, preserves the in-memory
+transcript across dials, and offers a Retry CTA after fatal connection failure.
+Reconnect within the hub grace window reattaches to the same ACP process and
+replays pending operator attentions; it does not invent a second agent process.
+
 ### `ajax-web::adapters::terminal_pty`
 
 Owns the PTY/tmux attach mechanism behind the protected task terminal

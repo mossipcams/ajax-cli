@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   connectWebSession,
   composeWebSessionPrompt,
+  clarifyWebSessionError,
   webSessionSocketUrl,
   type WebSessionTransportCallbacks,
   type WebSessionTransportPlatform,
@@ -190,10 +191,19 @@ describe("connectWebSession", () => {
     transport.dispose();
   });
 
-  it("surfaces server errors and connection failures", () => {
-    const socket = fakeSocket();
+  it("surfaces server errors and reconnects after close", () => {
+    vi.useFakeTimers();
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const platform: WebSessionTransportPlatform = {
+      openSocket: vi.fn(() => {
+        const next = fakeSocket();
+        sockets.push(next);
+        return next;
+      }),
+    };
     const events = callbacks();
-    const transport = connectWebSession("web/fix-login", events, platformFor(socket));
+    const transport = connectWebSession("web/fix-login", events, platform);
+    const socket = sockets[0]!;
     socket.emit("open");
 
     socket.emit(
@@ -210,11 +220,49 @@ describe("connectWebSession", () => {
     expect(events.onRunStatus).toHaveBeenCalledWith("waiting");
     expect(events.onError).toHaveBeenCalledWith("boom");
 
-    socket.emit("error");
-    expect(events.onConnectionStatus).toHaveBeenCalledWith("error");
-    expect(events.onError).toHaveBeenCalledWith("Web session connection failed");
+    // Drop after a stable open → reconnecting, then redial.
+    vi.setSystemTime(Date.now() + 2000);
+    socket.emit("close");
+    expect(events.onConnectionStatus).toHaveBeenCalledWith("reconnecting");
+    vi.runOnlyPendingTimers();
+    expect(platform.openSocket).toHaveBeenCalledTimes(2);
+    sockets[1]!.emit("open");
+    expect(events.onConnectionStatus).toHaveBeenCalledWith("connected");
 
     transport.dispose();
+    vi.useRealTimers();
+  });
+
+  it("fails fatally after immediate never-open dials are exhausted", () => {
+    vi.useFakeTimers();
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const platform: WebSessionTransportPlatform = {
+      openSocket: vi.fn(() => {
+        const next = fakeSocket();
+        sockets.push(next);
+        return next;
+      }),
+    };
+    const events = callbacks();
+    const transport = connectWebSession("web/fix-login", events, platform);
+
+    for (let i = 0; i < 6; i += 1) {
+      sockets.at(-1)!.emit("close");
+      vi.runOnlyPendingTimers();
+    }
+
+    expect(events.onConnectionStatus).toHaveBeenCalledWith("error");
+    expect(events.onError).toHaveBeenCalledWith(
+      expect.stringContaining("Web session connection failed"),
+    );
+
+    transport.dispose();
+    vi.useRealTimers();
+  });
+
+  it("clarifies auth and spawn errors for operators", () => {
+    expect(clarifyWebSessionError("authenticate cursor_login failed")).toMatch(/Cursor login/);
+    expect(clarifyWebSessionError("failed to spawn agent")).toMatch(/binary not available/);
   });
 
   it("forwards attention.required and attention.respond", () => {

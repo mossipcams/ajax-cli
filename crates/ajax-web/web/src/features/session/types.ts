@@ -4,7 +4,12 @@ export type { WebSessionSymbolContext, WebSessionSymbolKind } from "@/shared/lib
 
 export const WEB_SESSION_PROTOCOL_VERSION = 2;
 
-export type WebSessionConnectionStatus = "connecting" | "connected" | "error" | "closed";
+export type WebSessionConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error"
+  | "closed";
 
 export type WebSessionRunStatus = "running" | "waiting";
 

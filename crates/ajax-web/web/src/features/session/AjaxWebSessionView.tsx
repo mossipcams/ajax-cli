@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { connectWebSession, composeWebSessionPrompt, type WebSessionTransport } from "./webSessionTransport";
+import {
+  connectWebSession,
+  composeWebSessionPrompt,
+  type WebSessionTransport,
+} from "./webSessionTransport";
 import SessionAttentionBanner from "./SessionAttentionBanner";
+import SessionComposerKeys from "./SessionComposerKeys";
 import SymbolDetailSheet from "./SymbolDetailSheet";
 import SymbolSearchSheet from "./SymbolSearchSheet";
 import {
@@ -8,6 +13,8 @@ import {
   mergeKnownSymbols,
   renderMessageContent,
 } from "./renderMessage";
+import { deleteBackward, insertAtSelection, type DraftSelection } from "./sessionDraftEdit";
+import { useSessionComposerSpeech } from "./useSessionComposerSpeech";
 import {
   symbolContextChipLabel,
   type SessionAttentionItem,
@@ -40,6 +47,9 @@ function statusChipTone(
   if (connectionStatus === "error" || errorMessage) {
     return { tone: "error", label: "Error" };
   }
+  if (connectionStatus === "reconnecting") {
+    return { tone: "waiting", label: "Reconnecting" };
+  }
   if (runStatus === "running") {
     return { tone: "running", label: "Running" };
   }
@@ -71,11 +81,7 @@ function cockpitDerivedAttentions(
         title: "Ready for review",
         summary: card.status_explanation?.trim() || card.title || "Open for review",
       });
-      continue;
     }
-    // Failed/needs-you without a live hub ACP id is surfaced only when the
-    // hub publishes a failed attention event. Cockpit Error alone is not enough
-    // for Stop/Retry (Direct ACP). Review Open is always available.
   }
   return items;
 }
@@ -87,12 +93,14 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
   const [knownSymbols, setKnownSymbols] = useState<WebSessionSymbolContext[]>([]);
   const [symbolSheetOpen, setSymbolSheetOpen] = useState(false);
   const [detailSymbol, setDetailSymbol] = useState<WebSessionSymbolContext | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<WebSessionConnectionStatus>("connecting");
+  const [connectionStatus, setConnectionStatus] =
+    useState<WebSessionConnectionStatus>("connecting");
   const [runStatus, setRunStatus] = useState<WebSessionRunStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [attentions, setAttentions] = useState<SessionAttentionItem[]>([]);
   const transportRef = useRef<WebSessionTransport | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const assistantStreamingRef = useRef(false);
 
   const appendAssistantDelta = useCallback((delta: string) => {
@@ -131,9 +139,7 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
 
   const clearAttention = useCallback((targetHandle: string, requestId: string) => {
     setAttentions((prev) =>
-      prev.filter(
-        (item) => !(item.handle === targetHandle && item.requestId === requestId),
-      ),
+      prev.filter((item) => !(item.handle === targetHandle && item.requestId === requestId)),
     );
   }, []);
 
@@ -172,6 +178,55 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ block: "end" });
   }, [messages]);
+
+  const applyDraftSelection = useCallback((next: DraftSelection) => {
+    setDraft(next.value);
+  }, []);
+
+  const appendDraftText = useCallback((text: string) => {
+    setDraft((prev) => {
+      const input = inputRef.current;
+      const start = input?.selectionStart ?? prev.length;
+      const end = input?.selectionEnd ?? prev.length;
+      const next = insertAtSelection(
+        { value: prev, selectionStart: start, selectionEnd: end },
+        text,
+      );
+      requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.setSelectionRange(next.selectionStart, next.selectionEnd);
+        }
+      });
+      return next.value;
+    });
+  }, []);
+
+  const deleteDraftBackward = useCallback((charCount: number) => {
+    setDraft((prev) => {
+      let state: DraftSelection = {
+        value: prev,
+        selectionStart: prev.length,
+        selectionEnd: prev.length,
+      };
+      for (let i = 0; i < charCount; i += 1) {
+        state = deleteBackward(state);
+      }
+      return state.value;
+    });
+  }, []);
+
+  const {
+    speechModel,
+    micAriaLabel,
+    micArmed,
+    toggleMic,
+    cancelSpeechInput,
+  } = useSessionComposerSpeech({
+    handle,
+    appendDraftText,
+    deleteDraftBackward,
+  });
 
   const knownSymbolIndex = useMemo(() => buildKnownSymbolIndex(knownSymbols), [knownSymbols]);
 
@@ -218,6 +273,11 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
     transportRef.current?.sendAbort();
   };
 
+  const retryConnection = () => {
+    setErrorMessage(null);
+    transportRef.current?.reconnectNow();
+  };
+
   const removeSymbol = (symbolId: string) => {
     setAttachedSymbols((prev) => prev.filter((symbol) => symbol.id !== symbolId));
   };
@@ -238,8 +298,16 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
     }
   };
 
+  const dismissSheets = () => {
+    setSymbolSheetOpen(false);
+    setDetailSymbol(null);
+    cancelSpeechInput();
+  };
+
   const { tone, label } = statusChipTone(connectionStatus, runStatus, errorMessage);
   const showStop = connectionStatus === "connected" && runStatus === "running";
+  const showRetry = connectionStatus === "error";
+  const composerEnabled = connectionStatus === "connected";
 
   return (
     <section
@@ -267,13 +335,32 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
         onOpenTask={(target) => onOpenTask?.(target)}
       />
 
-      {errorMessage ? (
-        <p className="ajax-web-session-error" role="alert" data-testid="ajax-web-session-error">
-          {errorMessage}
-        </p>
+      {errorMessage || showRetry ? (
+        <div className="ajax-web-session-error-row" role="alert" data-testid="ajax-web-session-error">
+          <p className="ajax-web-session-error">
+            {errorMessage ?? "Web session connection failed. Check the host and tap Retry."}
+          </p>
+          {showRetry ? (
+            <button
+              type="button"
+              className="ajax-web-session-action is-retry"
+              data-testid="ajax-web-session-retry"
+              onClick={retryConnection}
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="ajax-web-session-messages" data-testid="ajax-web-session-messages">
+        {messages.length === 0 ? (
+          <p className="ajax-web-session-empty" data-testid="ajax-web-session-empty">
+            {connectionStatus === "connecting" || connectionStatus === "reconnecting"
+              ? "Connecting to Cursor on the host…"
+              : "Message Cursor. Attach symbols for context. Other sessions that need you appear above."}
+          </p>
+        ) : null}
         {messages.map((message) => (
           <div
             key={message.id}
@@ -310,18 +397,19 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
             type="button"
             className="ajax-web-session-add-context"
             data-testid="ajax-web-session-add-context"
-            disabled={connectionStatus !== "connected"}
+            disabled={!composerEnabled}
             onClick={() => setSymbolSheetOpen(true)}
           >
             Add context
           </button>
           <textarea
+            ref={inputRef}
             className="ajax-web-session-input"
             data-testid="ajax-web-session-input"
             value={draft}
             placeholder="Message the agent…"
             rows={3}
-            disabled={connectionStatus !== "connected"}
+            disabled={!composerEnabled}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -332,26 +420,43 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
           />
         </div>
 
-        {showStop ? (
-          <button
-            type="button"
-            className="ajax-web-session-action is-stop"
-            data-testid="ajax-web-session-stop"
-            onClick={abort}
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="ajax-web-session-action is-send"
-            data-testid="ajax-web-session-send"
-            disabled={!canSend}
-            onClick={sendPrompt}
-          >
-            Send
-          </button>
-        )}
+        <div className="ajax-web-session-composer-actions">
+          {showStop ? (
+            <button
+              type="button"
+              className="ajax-web-session-action is-stop"
+              data-testid="ajax-web-session-stop"
+              onClick={abort}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ajax-web-session-action is-send"
+              data-testid="ajax-web-session-send"
+              disabled={!canSend}
+              onClick={sendPrompt}
+            >
+              Send
+            </button>
+          )}
+        </div>
+
+        <SessionComposerKeys
+          inputRef={inputRef}
+          draft={draft}
+          onDraftChange={applyDraftSelection}
+          runStatus={runStatus}
+          onAbort={abort}
+          onDismissSheets={dismissSheets}
+          micArmed={micArmed}
+          micAriaLabel={micAriaLabel}
+          micDisabled={
+            speechModel.state === "connecting" || speechModel.state === "finalizing"
+          }
+          onToggleMic={toggleMic}
+        />
       </footer>
 
       <SymbolSearchSheet
