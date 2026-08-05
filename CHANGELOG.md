@@ -2,6 +2,131 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.56.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.1...ajax-cli-v0.56.0) (2026-08-05)
+
+
+### Features
+
+* replace agent statuses with ACP ([#695](https://github.com/mossipcams/ajax-cli/issues/695)) ([dfe216d](https://github.com/mossipcams/ajax-cli/commit/dfe216d411cfd43445a21852ece0e9cf19b2d55d))
+* **status:** Cursor wait hooks and ack-safe pane reconcile ([#714](https://github.com/mossipcams/ajax-cli/issues/714)) ([1f232f3](https://github.com/mossipcams/ajax-cli/commit/1f232f321bd79e1a18d1d695e7e111edceba3d4b))
+* **status:** improve agent wait detection ([#704](https://github.com/mossipcams/ajax-cli/issues/704)) ([3a51f8b](https://github.com/mossipcams/ajax-cli/commit/3a51f8bccd76b6b015713ee590f1598c29523359))
+* **status:** native-hook-first agent status, remove legacy paths ([#678](https://github.com/mossipcams/ajax-cli/issues/678)) ([d3f8212](https://github.com/mossipcams/ajax-cli/commit/d3f82124db8cba8fa47d6077867034c0b2339e9b))
+* **status:** reconcile mid-turn waits from pane chrome ([#711](https://github.com/mossipcams/ajax-cli/issues/711)) ([765a3e4](https://github.com/mossipcams/ajax-cli/commit/765a3e43f7e94c379b86092d39f6a1e75993c1c6))
+* **web:** add Diff Review vibe-judgment projection ([#726](https://github.com/mossipcams/ajax-cli/issues/726)) ([8268d66](https://github.com/mossipcams/ajax-cli/commit/8268d66251b50ecaee36cab587b56e889ed42cee))
+* **web:** add iOS-like hotbar hold-to-repeat ([#667](https://github.com/mossipcams/ajax-cli/issues/667)) ([7c765e3](https://github.com/mossipcams/ajax-cli/commit/7c765e3470bce84964d9ea06a6fd6223dbad6e1b))
+* **web:** add PostHog Cloud telemetry for UX performance baselines ([#755](https://github.com/mossipcams/ajax-cli/issues/755)) ([badb8f2](https://github.com/mossipcams/ajax-cli/commit/badb8f2979fa743d6071c0e6dd0cca307f3419fb))
+* **web:** add read-only Diff Review for task PRs ([#712](https://github.com/mossipcams/ajax-cli/issues/712)) ([3848fd6](https://github.com/mossipcams/ajax-cli/commit/3848fd666bf5ce8cfe8f509f30697a6e43ea40cd))
+* **web:** add stable error codes for operate recovery toasts ([#774](https://github.com/mossipcams/ajax-cli/issues/774)) ([2ac810d](https://github.com/mossipcams/ajax-cli/commit/2ac810de8759b33177a4024dd919356cfe41dea8))
+* **web:** add start over voice command for speech dictation ([#736](https://github.com/mossipcams/ajax-cli/issues/736)) ([5f570af](https://github.com/mossipcams/ajax-cli/commit/5f570af400d48aa437e2e59c0c87df870257839b))
+* **web:** add Test in Stable and fix Attempts run-on text ([#665](https://github.com/mossipcams/ajax-cli/issues/665)) ([9d00845](https://github.com/mossipcams/ajax-cli/commit/9d008452bc72523e8df93310d2a7e14f824082a2))
+* **web:** add xterm web-links, serialize, and floating link menu ([#686](https://github.com/mossipcams/ajax-cli/issues/686)) ([9a86838](https://github.com/mossipcams/ajax-cli/commit/9a8683893a299eee339aff9710c844b832d47ac6))
+* **web:** auto-insert speech transcripts and ship a working STT sidecar ([#734](https://github.com/mossipcams/ajax-cli/issues/734)) ([2be1c64](https://github.com/mossipcams/ajax-cli/commit/2be1c64cc123cf8877b85e49fde79e6e328aa73f))
+* **web:** continuous speech-to-text input in the task terminal ([#729](https://github.com/mossipcams/ajax-cli/issues/729)) ([d9aaa60](https://github.com/mossipcams/ajax-cli/commit/d9aaa60c5a498d295575428ef4c50ca352180671))
+* **web:** dock the dashboard armed channel for iOS thumbs ([#705](https://github.com/mossipcams/ajax-cli/issues/705)) ([b6f8e71](https://github.com/mossipcams/ajax-cli/commit/b6f8e71e134269bc4d0df80a82c857cbfb0ff461))
+* **web:** double-tap-hold drag to select terminal text for copy ([#752](https://github.com/mossipcams/ajax-cli/issues/752)) ([fd3074c](https://github.com/mossipcams/ajax-cli/commit/fd3074c9102fce20237374acdd9fe6297f92e6c9))
+* **web:** drop the Needs-you inbox for one calm task list ([#676](https://github.com/mossipcams/ajax-cli/issues/676)) ([ca0b3f3](https://github.com/mossipcams/ajax-cli/commit/ca0b3f363376902beac3131f2a731b3ea6e725a3))
+* **web:** enrich Cockpit PostHog telemetry for actionable UX queries ([#763](https://github.com/mossipcams/ajax-cli/issues/763)) ([0e0e403](https://github.com/mossipcams/ajax-cli/commit/0e0e4035f4fa03f92e422edad18135f39b6c530c))
+* **web:** group the dashboard by attention band and put controls on rows ([#691](https://github.com/mossipcams/ajax-cli/issues/691)) ([888f68b](https://github.com/mossipcams/ajax-cli/commit/888f68b90c0b33bac48b6999a1a12905e657bb00))
+* **web:** harden PostHog Safari PWA telemetry with durable queue ([#759](https://github.com/mossipcams/ajax-cli/issues/759)) ([99f1274](https://github.com/mossipcams/ajax-cli/commit/99f127419766d31cf77a279697b88013f7be116a))
+* **web:** keep the swipe reveal for row actions ([#685](https://github.com/mossipcams/ajax-cli/issues/685)) ([d15f5f3](https://github.com/mossipcams/ajax-cli/commit/d15f5f3dd6b6e1e71c53cd85e23332d21365db49))
+* **web:** lead the dashboard with a fleet-health muster bar ([#677](https://github.com/mossipcams/ajax-cli/issues/677)) ([2cda5fe](https://github.com/mossipcams/ajax-cli/commit/2cda5fe59d66395566d91dd7f2205012cd85dd32))
+* **web:** make dashboard actions a primary-key lattice ([#697](https://github.com/mossipcams/ajax-cli/issues/697)) ([b1f36d7](https://github.com/mossipcams/ajax-cli/commit/b1f36d71180f3ae7899360381a56d1eb5039d84b))
+* **web:** put task actions on dashboard rows, drop the fleet gauge ([#684](https://github.com/mossipcams/ajax-cli/issues/684)) ([80be364](https://github.com/mossipcams/ajax-cli/commit/80be36409cee412ee818c78ea05a7a317a250b73))
+* **web:** rank Diff Review files by signal vs noise ([#716](https://github.com/mossipcams/ajax-cli/issues/716)) ([18522c2](https://github.com/mossipcams/ajax-cli/commit/18522c2e1c61e658ea2052ed7c2f359d3e2494b7))
+* **web:** rebuild dashboard as a one-tap control panel ([#696](https://github.com/mossipcams/ajax-cli/issues/696)) ([e6bf9cc](https://github.com/mossipcams/ajax-cli/commit/e6bf9cc9a62324b6849ae1cf7fc5317d47be1651))
+* **web:** rebuild dashboard as a roster with a peg rail ([#703](https://github.com/mossipcams/ajax-cli/issues/703)) ([063b991](https://github.com/mossipcams/ajax-cli/commit/063b99170e9c4e5d4e15a5bc385b4f34e34d6609))
+* **web:** redesign dashboard as an urgency-ordered decision queue ([#671](https://github.com/mossipcams/ajax-cli/issues/671)) ([6729eed](https://github.com/mossipcams/ajax-cli/commit/6729eed923c1dfe326d851e9294192ee0e8ffba5))
+* **web:** replace notify with declarative Web Push ([#761](https://github.com/mossipcams/ajax-cli/issues/761)) ([db099dd](https://github.com/mossipcams/ajax-cli/commit/db099ddb4c22fee08931f6db895fa47b9dab7018))
+* **web:** show push status, cancel mic deny, move hotbar delete ([#765](https://github.com/mossipcams/ajax-cli/issues/765)) ([6319175](https://github.com/mossipcams/ajax-cli/commit/6319175bcb0d9ae4ea3fccf92b8cb906609df75b))
+* **web:** speed terminal auto-reconnect via stable tmux session ([#692](https://github.com/mossipcams/ajax-cli/issues/692)) ([538de07](https://github.com/mossipcams/ajax-cli/commit/538de07228577e933cdc95e26a0d92904632b560))
+
+
+### Bug Fixes
+
+* clear 0.56.0 tech-debt P0/P1 findings ([#728](https://github.com/mossipcams/ajax-cli/issues/728)) ([1401ace](https://github.com/mossipcams/ajax-cli/commit/1401acebb74a2dd2354fb4907bcdf926985a3528))
+* **cli:** arm Cursor approval waits for attention push ([#768](https://github.com/mossipcams/ajax-cli/issues/768)) ([b6fc488](https://github.com/mossipcams/ajax-cli/commit/b6fc488ca667935b7e054987f8ed3ea2aa52d663))
+* **cli:** default ACP host to v1 with AJAX_ACP_V2 opt-in ([#698](https://github.com/mossipcams/ajax-cli/issues/698)) ([26682ac](https://github.com/mossipcams/ajax-cli/commit/26682ac509aff3eb7d9a1200806b37c59b42062b))
+* **cli:** make ACP create sessions usable with ready prompt ([#699](https://github.com/mossipcams/ajax-cli/issues/699)) ([249e69c](https://github.com/mossipcams/ajax-cli/commit/249e69cbc46625ed83f1521d3c3e9a50e410417d))
+* **core:** drain timed command pipes to avoid Diff Review hangs ([#731](https://github.com/mossipcams/ajax-cli/issues/731)) ([5808479](https://github.com/mossipcams/ajax-cli/commit/5808479bb45a59255bf974a923b5c54d65aa55b4))
+* **scripts:** detach Test in Stable from the pane that spawns it ([#673](https://github.com/mossipcams/ajax-cli/issues/673)) ([1de1e27](https://github.com/mossipcams/ajax-cli/commit/1de1e2746f07121d1f9cc6e65f4aab2863957799))
+* **scripts:** reinstall agent hooks when definitions change ([#664](https://github.com/mossipcams/ajax-cli/issues/664)) ([ae2cd63](https://github.com/mossipcams/ajax-cli/commit/ae2cd634134174afc7f5de1ce3a891a37045ec66))
+* **status:** stop CI evidence masking attention gates and outliving its probe ([#680](https://github.com/mossipcams/ajax-cli/issues/680)) ([e8b3645](https://github.com/mossipcams/ajax-cli/commit/e8b36450a68b29c38ae2ddf3bf1c1fd21d9b3e41))
+* **web:** accept unknown task status in cockpit contract ([#682](https://github.com/mossipcams/ajax-cli/issues/682)) ([8b8d9b7](https://github.com/mossipcams/ajax-cli/commit/8b8d9b71fdc8c645b440b24f3808fdd3d94c2e65))
+* **web:** allow CSP retirement script ([#710](https://github.com/mossipcams/ajax-cli/issues/710)) ([708804e](https://github.com/mossipcams/ajax-cli/commit/708804e4e794d501fdf11a9f88dc9079fa59beba))
+* **web:** allow PostHog US hosts in Cockpit CSP for web vitals ([#760](https://github.com/mossipcams/ajax-cli/issues/760)) ([843cea0](https://github.com/mossipcams/ajax-cli/commit/843cea0164bf1cfd8bbb1fd8a2390b694179dfc3))
+* **web:** always npm ci before Test in Stable web build ([#688](https://github.com/mossipcams/ajax-cli/issues/688)) ([4d457ef](https://github.com/mossipcams/ajax-cli/commit/4d457ef3937d8fc20779cf4bef0c34cfeb63109f))
+* **web:** always offer Drop on checkout-mismatch tasks ([#717](https://github.com/mossipcams/ajax-cli/issues/717)) ([1eb400f](https://github.com/mossipcams/ajax-cli/commit/1eb400f4207be131ba9c6d4eb608a3f7a0b1710d))
+* **web:** block page swipe during pending terminal double-tap select ([#758](https://github.com/mossipcams/ajax-cli/issues/758)) ([322304a](https://github.com/mossipcams/ajax-cli/commit/322304a7ab1770e52984101c8550dc975c8ca22d))
+* **web:** clear new-task sheet on task route so swipe-back stays clean ([#769](https://github.com/mossipcams/ajax-cli/issues/769)) ([fd723c5](https://github.com/mossipcams/ajax-cli/commit/fd723c5fe5a7ccba1532d50691d03cb30e1bb985))
+* **web:** correct continuous STT lifecycle and restore composer ([#740](https://github.com/mossipcams/ajax-cli/issues/740)) ([f54f146](https://github.com/mossipcams/ajax-cli/commit/f54f146960b80b48ac43f8d9955aa3c186c075ea))
+* **web:** cut ghost route_visible, Drop false unmount, and gesture INP ([#773](https://github.com/mossipcams/ajax-cli/issues/773)) ([4feb54d](https://github.com/mossipcams/ajax-cli/commit/4feb54d82c3c0821464c9b1691e96bac4e56084c))
+* **web:** disable page swipe during terminal double-tap select ([#756](https://github.com/mossipcams/ajax-cli/issues/756)) ([84f7d8a](https://github.com/mossipcams/ajax-cli/commit/84f7d8af793f7c86534ac5ddad00bf2eb244b298))
+* **web:** drop the redundant Open/Answer control from dashboard rows ([#693](https://github.com/mossipcams/ajax-cli/issues/693)) ([30e91df](https://github.com/mossipcams/ajax-cli/commit/30e91df3b6d25badc5b8dc87053f1fe5a1d8271f))
+* **web:** finish button transitions and keep Drop on switched task ([#741](https://github.com/mossipcams/ajax-cli/issues/741)) ([6215308](https://github.com/mossipcams/ajax-cli/commit/62153087318511fd1f1312ce07f99b3ca0b11d96))
+* **web:** force-reinstall ajax-cli on Test in Stable ([#683](https://github.com/mossipcams/ajax-cli/issues/683)) ([a48ef6e](https://github.com/mossipcams/ajax-cli/commit/a48ef6e626b059ca59c67c2153508f2da5aee887))
+* **web:** harden Cockpit server restart, refresh, and CAS recovery ([#766](https://github.com/mossipcams/ajax-cli/issues/766)) ([01ab04c](https://github.com/mossipcams/ajax-cli/commit/01ab04cb30aa13bff01314bfd5313b42c98806ed))
+* **web:** harden Diff Review load and task swipe ([#713](https://github.com/mossipcams/ajax-cli/issues/713)) ([d77ec01](https://github.com/mossipcams/ajax-cli/commit/d77ec010651ff934da519647097ffb7ea6e4d92f))
+* **web:** harden speech start-over undo and STT ready config ([#737](https://github.com/mossipcams/ajax-cli/issues/737)) ([f48aa81](https://github.com/mossipcams/ajax-cli/commit/f48aa81279f3afe02b64e1f2c421294f6c458f4c))
+* **web:** keep Diff open swipe alive across cockpit polls ([#718](https://github.com/mossipcams/ajax-cli/issues/718)) ([4d3c699](https://github.com/mossipcams/ajax-cli/commit/4d3c699a0aca6e2f4df2cd8ab03f844091b8c912))
+* **web:** keep health responsive during Diff Review ([#721](https://github.com/mossipcams/ajax-cli/issues/721)) ([0cd735f](https://github.com/mossipcams/ajax-cli/commit/0cd735fa62b3583d4ce58384defb5e184e1501a0))
+* **web:** keep health responsive during task create ([#724](https://github.com/mossipcams/ajax-cli/issues/724)) ([81c314f](https://github.com/mossipcams/ajax-cli/commit/81c314fa766345884f01f93fb32bbaaeb4500344))
+* **web:** keep link Open/Copy usable when keyboard is closed ([#739](https://github.com/mossipcams/ajax-cli/issues/739)) ([7b31d0e](https://github.com/mossipcams/ajax-cli/commit/7b31d0e92130277619e23040edcfd1a81cc93e78))
+* **web:** keep seeded terminal hidden across seed→attach gap ([#732](https://github.com/mossipcams/ajax-cli/issues/732)) ([0d0796e](https://github.com/mossipcams/ajax-cli/commit/0d0796e277d573037012cda6bb55492286dab7cf))
+* **web:** keep the terminal put when iOS Backspace reveals the caret ([#679](https://github.com/mossipcams/ajax-cli/issues/679)) ([c61772c](https://github.com/mossipcams/ajax-cli/commit/c61772c72d8fa7f5f2a656d50d7602df8ecd770f))
+* **web:** latch scrollOnErase across split CSI erase chunks ([#762](https://github.com/mossipcams/ajax-cli/issues/762)) ([d913987](https://github.com/mossipcams/ajax-cli/commit/d9139873b5bb463cc7a4be10fb1c4ef4df5ab957))
+* **web:** latch scrollOnErase to the seed window only ([#749](https://github.com/mossipcams/ajax-cli/issues/749)) ([453ceaf](https://github.com/mossipcams/ajax-cli/commit/453ceaf3f7c009251a2d2123d4e027fcc2591d49))
+* **web:** mobile hotbar repeat cadence and iOS keyboard textarea handling ([#675](https://github.com/mossipcams/ajax-cli/issues/675)) ([b16ebd2](https://github.com/mossipcams/ajax-cli/commit/b16ebd28cb28b0e70af71085862207e782252aee))
+* **web:** open Diff Review with a plain swipe-right ([#719](https://github.com/mossipcams/ajax-cli/issues/719)) ([ea13fe3](https://github.com/mossipcams/ajax-cli/commit/ea13fe3f11c3ce18b5fc6ab68d85bf3e086f9025))
+* **web:** open task terminal at CLI input without scroll animation ([#670](https://github.com/mossipcams/ajax-cli/issues/670)) ([b0d6c08](https://github.com/mossipcams/ajax-cli/commit/b0d6c08179766d2979250300564024609fc76c51))
+* **web:** open task terminal at the CLI input without a load scroll ([#672](https://github.com/mossipcams/ajax-cli/issues/672)) ([fb5b1f7](https://github.com/mossipcams/ajax-cli/commit/fb5b1f78bd95c7fae2b1cc9a26e7d2665ac97b78))
+* **web:** open terminal link menu from click hit-test ([#689](https://github.com/mossipcams/ajax-cli/issues/689)) ([12c9b28](https://github.com/mossipcams/ajax-cli/commit/12c9b286b92e1e013030b67c53fab7bbc5b61c12))
+* **web:** open terminal links without replacing the PWA ([#690](https://github.com/mossipcams/ajax-cli/issues/690)) ([dbd3a3e](https://github.com/mossipcams/ajax-cli/commit/dbd3a3e3d893cc2ab8fca8a93016151613b2fc05))
+* **web:** paste rich links into the task terminal ([#725](https://github.com/mossipcams/ajax-cli/issues/725)) ([ec3c581](https://github.com/mossipcams/ajax-cli/commit/ec3c581419c13de5336131c074f07bbb7ca1f8e2))
+* **web:** preserve seed scrollback without live ED2 dumps ([#751](https://github.com/mossipcams/ajax-cli/issues/751)) ([8e1caba](https://github.com/mossipcams/ajax-cli/commit/8e1caba3e2a34f010bec1e4d9d21b28edbbf4757))
+* **web:** preserve seeded scrollback across attach clear ([#666](https://github.com/mossipcams/ajax-cli/issues/666)) ([7543044](https://github.com/mossipcams/ajax-cli/commit/7543044d447d2a300b13fa5a81f19dd8da84f2ef))
+* **web:** raise page-swipe engage dead-zone for iOS PWA ([#767](https://github.com/mossipcams/ajax-cli/issues/767)) ([9c3a676](https://github.com/mossipcams/ajax-cli/commit/9c3a6765050f7d505ab4b61a21a42264a4371fd3))
+* **web:** reap detached ephemeral tmux sessions on connect ([#727](https://github.com/mossipcams/ajax-cli/issues/727)) ([4862f42](https://github.com/mossipcams/ajax-cli/commit/4862f42aa1beb455f55cb75da16d679cea792e63))
+* **web:** recover terminal paste when clipboardData is empty ([#733](https://github.com/mossipcams/ajax-cli/issues/733)) ([22100f0](https://github.com/mossipcams/ajax-cli/commit/22100f06694aaf895b96178e9261d2bc668c389c))
+* **web:** remove speech Insert composer and auto-insert finals ([#742](https://github.com/mossipcams/ajax-cli/issues/742)) ([812cf38](https://github.com/mossipcams/ajax-cli/commit/812cf387c4157d795673d3c1b0513e8c81facde1))
+* **web:** restore floating link menu above the terminal ([#735](https://github.com/mossipcams/ajax-cli/issues/735)) ([cfe2032](https://github.com/mossipcams/ajax-cli/commit/cfe203214405570e0a508523b20303b28d80dbf5))
+* **web:** restore seeded terminal landing at the CLI input ([#723](https://github.com/mossipcams/ajax-cli/issues/723)) ([b66583a](https://github.com/mossipcams/ajax-cli/commit/b66583a1b9bb20e8193b38ed9c7472cd2fd7649b))
+* **web:** restore speech start-over and fail stuck Connecting ([#743](https://github.com/mossipcams/ajax-cli/issues/743)) ([69030f5](https://github.com/mossipcams/ajax-cli/commit/69030f58c9d1eb7fbaa5f88a7509a4af7dd12ee8))
+* **web:** restore Test in Stable when restart env is missing ([#771](https://github.com/mossipcams/ajax-cli/issues/771)) ([1691127](https://github.com/mossipcams/ajax-cli/commit/1691127651f1226a2a75a7276ea134e4f36d04a2))
+* **web:** run Test in Stable detached from the server's log pipe ([#669](https://github.com/mossipcams/ajax-cli/issues/669)) ([cfe6439](https://github.com/mossipcams/ajax-cli/commit/cfe6439e7802c461ff99c856a6c604b82a08137c))
+* **web:** silence redundant success toasts ([#745](https://github.com/mossipcams/ajax-cli/issues/745)) ([1312597](https://github.com/mossipcams/ajax-cli/commit/1312597c39719980a4f5ba440ac8335415a15b05))
+* **web:** smooth finish-the-slide Diff swipe transitions ([#722](https://github.com/mossipcams/ajax-cli/issues/722)) ([3d7d236](https://github.com/mossipcams/ajax-cli/commit/3d7d236cedc109d8b90f326efefdb7a25b5f7fee))
+* **web:** stop Active/Idle task rows from reshuffling ([#715](https://github.com/mossipcams/ajax-cli/issues/715)) ([484154d](https://github.com/mossipcams/ajax-cli/commit/484154d8b3b4c67c4e4756805a359ecef01fc900))
+* **web:** stop clipping Drop confirm pill on dashboard swipe ([#681](https://github.com/mossipcams/ajax-cli/issues/681)) ([0e38ea9](https://github.com/mossipcams/ajax-cli/commit/0e38ea90e060bd555f559f3754469cbb89031e33))
+* **web:** stop missing-window attach from spamming scrollback ([#754](https://github.com/mossipcams/ajax-cli/issues/754)) ([2b9905e](https://github.com/mossipcams/ajax-cli/commit/2b9905efc9d4c953d6e255032d07009dcb3e713b))
+* **web:** stop swallowing native terminal paste on empty clipboardData ([#730](https://github.com/mossipcams/ajax-cli/issues/730)) ([c80aecf](https://github.com/mossipcams/ajax-cli/commit/c80aecfff281996a7f8f77ad1a5a42e5b37b4131))
+* **web:** stop tmux -A attach during terminal reconnect setup ([#694](https://github.com/mossipcams/ajax-cli/issues/694)) ([40b0f28](https://github.com/mossipcams/ajax-cli/commit/40b0f285f4b790fc1fe1b86ff3e9d9ca51755c3b))
+* **web:** swipe-left opens Diff; swipe-right goes back ([#720](https://github.com/mossipcams/ajax-cli/issues/720)) ([3dae0e9](https://github.com/mossipcams/ajax-cli/commit/3dae0e90f7de80a2e732662abb6e78bb928ec4dc))
+* **web:** wipe invalid web-push subscription files on boot ([#764](https://github.com/mossipcams/ajax-cli/issues/764)) ([1933d9d](https://github.com/mossipcams/ajax-cli/commit/1933d9d0edc523555f39c25107759efd64f5257e))
+
+
+### Performance Improvements
+
+* **core:** fold task bootstrap into launch and drop graphify ([#772](https://github.com/mossipcams/ajax-cli/issues/772)) ([5ce2234](https://github.com/mossipcams/ajax-cli/commit/5ce2234005145b60ea69cb74182797870df6a5c6))
+* cut refresh thrash and mute STT monitor echo ([#750](https://github.com/mossipcams/ajax-cli/issues/750)) ([7588649](https://github.com/mossipcams/ajax-cli/commit/758864971154fc51eba56560404dac201d4d2096))
+* **web:** cut cockpit poll and terminal battery drain ([#757](https://github.com/mossipcams/ajax-cli/issues/757)) ([7d95aec](https://github.com/mossipcams/ajax-cli/commit/7d95aec046e23e2ae18af12cfda2f90569dec8d8))
+
+
+### Code Refactoring
+
+* **core:** split operator slices for agentic architecture ([#753](https://github.com/mossipcams/ajax-cli/issues/753)) ([1bfe491](https://github.com/mossipcams/ajax-cli/commit/1bfe49154328a72d22b3dacdf2b8c920d441c89d))
+* **core:** split oversized modules under the LOC gate ([#748](https://github.com/mossipcams/ajax-cli/issues/748)) ([93aa15e](https://github.com/mossipcams/ajax-cli/commit/93aa15ee9b25b5bf9d7d85ec25a20d92e6ca949b))
+* **web:** drop dashboard leftovers from today's rebuild ([#702](https://github.com/mossipcams/ajax-cli/issues/702)) ([fa76f13](https://github.com/mossipcams/ajax-cli/commit/fa76f13b2273a9348e0707eb7f71afe2a54ae4f6))
+* **web:** split ajax-web modules under the LOC gate ([#747](https://github.com/mossipcams/ajax-cli/issues/747)) ([d1bac47](https://github.com/mossipcams/ajax-cli/commit/d1bac47a3409cbada26dc2a7a0e26d2a82373ec4))
+
+
+### Reverts
+
+* restore dashboard to one-tap control panel ([#696](https://github.com/mossipcams/ajax-cli/issues/696)) ([#706](https://github.com/mossipcams/ajax-cli/issues/706)) ([8005d6e](https://github.com/mossipcams/ajax-cli/commit/8005d6e4ccc340b02a5595ccc5d988365d893e6f))
+* undo today's ACP status and host PRs ([#701](https://github.com/mossipcams/ajax-cli/issues/701)) ([f807ffe](https://github.com/mossipcams/ajax-cli/commit/f807ffea799898be3bbb6e07634c689ca2c42702))
+* **web:** restore [#672](https://github.com/mossipcams/ajax-cli/issues/672) Active/Idle dashboard design ([#709](https://github.com/mossipcams/ajax-cli/issues/709)) ([4aec193](https://github.com/mossipcams/ajax-cli/commit/4aec193f3b6f86d49b620139899fb975608798d3))
+* **web:** restore dashboard to TaskList state at [#694](https://github.com/mossipcams/ajax-cli/issues/694) ([#707](https://github.com/mossipcams/ajax-cli/issues/707)) ([b83f422](https://github.com/mossipcams/ajax-cli/commit/b83f422ec05b9e5724894f8fcb8bf99ceeb2d730))
+* **web:** restore MusterBar dashboard; keep terminal links ([#708](https://github.com/mossipcams/ajax-cli/issues/708)) ([ee8dd45](https://github.com/mossipcams/ajax-cli/commit/ee8dd45a46a36ea808686d43e98731ce1e00a2f1))
+
 ## [0.55.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.0...ajax-cli-v0.55.1) (2026-07-22)
 
 
