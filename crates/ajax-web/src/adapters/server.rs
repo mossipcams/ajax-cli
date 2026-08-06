@@ -15,6 +15,8 @@ pub const DEFAULT_STABLE_PORT: &str = "8787";
 const TEST_IN_STABLE_SCRIPT: &str = "test-in-stable.sh";
 const DEV_WEB_RESTART_SCRIPT: &str = "dev-web-restart.sh";
 const SCRIPTS_DIR: &str = "scripts";
+const WORKTREES_DIR: &str = "ajax-cli__worktrees";
+const MAIN_CHECKOUT_DIR: &str = "ajax-cli";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartLaunch {
@@ -176,6 +178,27 @@ fn discover_dev_web_restart_script(cwd: &std::path::Path) -> Option<std::path::P
     None
 }
 
+/// When cwd lives under `ajax-cli__worktrees`, the main checkout is the sibling
+/// `ajax-cli` directory next to that worktrees folder (e.g. trashed worktree cwd).
+fn infer_main_ajax_cli_checkout_from_worktree_path(
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    for ancestor in path.ancestors() {
+        if ancestor.file_name().and_then(|name| name.to_str()) == Some(WORKTREES_DIR) {
+            let parent = ancestor.parent()?;
+            return Some(parent.join(MAIN_CHECKOUT_DIR));
+        }
+    }
+    None
+}
+
+fn resolve_discovered_restart_script(root: &std::path::Path) -> Option<String> {
+    discover_dev_web_restart_script(root).and_then(|path| {
+        let script = path.to_string_lossy().into_owned();
+        restart_script_with_wrapper_exists(&script).then_some(script)
+    })
+}
+
 pub fn resolve_restart_script(
     script_env: Option<&str>,
     cwd: Option<&std::path::Path>,
@@ -184,9 +207,9 @@ pub fn resolve_restart_script(
         return restart_script_with_wrapper_exists(script).then(|| script.to_string());
     }
     let cwd = cwd?;
-    discover_dev_web_restart_script(cwd).and_then(|path| {
-        let script = path.to_string_lossy().into_owned();
-        restart_script_with_wrapper_exists(&script).then_some(script)
+    resolve_discovered_restart_script(cwd).or_else(|| {
+        infer_main_ajax_cli_checkout_from_worktree_path(cwd)
+            .and_then(|main_checkout| resolve_discovered_restart_script(&main_checkout))
     })
 }
 
@@ -384,6 +407,47 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn infer_main_ajax_cli_checkout_from_worktree_path_finds_sibling() {
+        assert_eq!(
+            super::infer_main_ajax_cli_checkout_from_worktree_path(std::path::Path::new(
+                "/Users/matt/Desktop/Projects/ajax-cli__worktrees/.ajax-trash/dead"
+            )),
+            Some(std::path::PathBuf::from(
+                "/Users/matt/Desktop/Projects/ajax-cli"
+            ))
+        );
+        assert_eq!(
+            super::infer_main_ajax_cli_checkout_from_worktree_path(std::path::Path::new(
+                "/tmp/other/repo/nested"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_restart_script_falls_back_to_main_checkout_under_worktrees() {
+        let layout_root = std::env::temp_dir().join(format!(
+            "ajax-test-in-stable-worktree-fallback-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&layout_root);
+        let main_checkout = layout_root.join("ajax-cli");
+        let worktree_cwd = layout_root
+            .join("ajax-cli__worktrees")
+            .join(".ajax-trash")
+            .join("dead");
+        std::fs::create_dir_all(&worktree_cwd).expect("create worktree cwd");
+        let restart = write_test_in_stable_scripts(&main_checkout, true);
+
+        assert_eq!(
+            super::resolve_restart_script(None, Some(&worktree_cwd)),
+            Some(restart)
+        );
+
+        let _ = std::fs::remove_dir_all(&layout_root);
     }
 
     #[test]
