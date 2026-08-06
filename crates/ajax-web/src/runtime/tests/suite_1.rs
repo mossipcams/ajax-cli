@@ -23,6 +23,8 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("GET", "/api/session"),
         ("GET", "/api/cockpit"),
         ("GET", "/api/version"),
+        ("GET", "/api/settings/web-session"),
+        ("PUT", "/api/settings/web-session"),
         ("GET", "/api/push/vapid"),
         ("POST", "/api/push/subscribe"),
         ("DELETE", "/api/push/subscribe"),
@@ -116,6 +118,39 @@ async fn axum_router_serves_static_shell_and_cockpit_json() {
     assert_eq!(
         std::str::from_utf8(&missing_asset_body).unwrap(),
         "not found"
+    );
+}
+
+#[tokio::test]
+async fn web_session_preference_api_is_authenticated_and_persistent() {
+    let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "web-session-pref-api");
+
+    assert_eq!(
+        get_public(&app, "/api/settings/web-session").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        json_of(get(&app, &cookie, "/api/settings/web-session").await).await["enabled"],
+        false
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            authenticated_request(&cookie, "/api/settings/web-session")
+                .method("PUT")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(state.web_session_preference.enabled());
+    assert_eq!(
+        json_of(get(&app, &cookie, "/api/settings/web-session").await).await["enabled"],
+        true
     );
 }
 

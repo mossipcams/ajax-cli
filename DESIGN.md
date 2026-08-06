@@ -292,11 +292,12 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - Raw xterm pane is the default work surface on task detail.
 - Interact panel is a flat hairline strip (`border-top` / `border-bottom` Rule) for structured Approve/Deny — never a composer that replaces the terminal.
 
-### Surface: Ajax Web Session (flagged Operate alternate)
-- Behind `ajax.webSession` on Cursor tasks only; otherwise terminal remains the work surface.
+### Surface: Ajax Web Session (flagged ACP-primary Operate)
+- Behind `ajax.webSession` (host preference + localStorage) on Cursor tasks only; otherwise terminal remains the work surface.
+- **ACP-primary:** hub-owned `agent acp` is the operate agent; new Cursor tasks skip interactive tmux Cursor launch; Open Terminal escapes to the task shell.
 - **Supervision feed:** one `--task-inset` column (`12px` + safe-area) for header, feed, and attention toast — not a chat transcript.
-- Composition: quiet Session header + status pill + header Stop while running → chronological card feed (progress, operator, decision) → hidden composer until Redirect or question reply → Continue when waiting with no pending decision.
-- Progress cards truncate ~280 chars client-side; operator cards for prompts; current-handle attentions render as decision cards in the feed. Cross-session needs: minimal fixed top toast (status + inline actions) aligned to that column.
+- Composition: quiet Session header + status pill + header Stop while running → chronological cards (assistant progress, tool/file progress, operator, decision) → hidden composer until Redirect or question reply → Continue when waiting with no pending decision.
+- Ship / Repair / Drop stay on the interact ActionBar (core). Structured tool/file progress from ACP; assistant text still truncated ~280 chars client-side.
 - Soft Steel Blue for Continue / Send / running only; composer fully hidden by default.
 - Task / diff routes hide Dashboard + New bottom nav; Task Details clears home-indicator safe-area.
 - Keyboard-open: pin to visualViewport band; composer key bar only when composer is open; attention toast tracks `--app-top`.

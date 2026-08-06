@@ -1,8 +1,8 @@
 //! Process-local Ajax Web Session hub: shared ACP lifetime, parked operator
 //! requests, and cross-session attention fan-out.
 //!
-//! ponytail: grace TTL is a fixed 30s after last subscriber when no pending
-//! requests; upgrade to activity-based eviction if idle ACP processes accumulate.
+//! ponytail: non-primary sessions retain the existing fixed grace TTL; ACP-primary
+//! sessions live until explicit task teardown so reconnects preserve the peer.
 
 use super::web_session_rpc::{
     spawn_default_agent_acp, AgentAcpError, AgentAcpEvent, AgentAcpProcess, OperatorRequestKind,
@@ -48,6 +48,8 @@ struct TaskSlot {
     local_subscribers: Mutex<HashMap<u64, SyncSender<HubClientEvent>>>,
     subscriber_count: Mutex<usize>,
     grace_deadline: Mutex<Option<Instant>>,
+    acp_primary: Mutex<bool>,
+    session_id: Mutex<Option<String>>,
 }
 
 pub(crate) struct WebSessionHub {
@@ -83,8 +85,9 @@ impl WebSessionHub {
         self: &Arc<Self>,
         handle: &str,
         worktree: PathBuf,
+        acp_primary: bool,
     ) -> Result<HubSubscription, AgentAcpError> {
-        let slot = self.get_or_create_slot(handle, worktree)?;
+        let slot = self.get_or_create_slot(handle, worktree, acp_primary)?;
         let subscriber_id = self.next_subscriber.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = sync_channel(SUBSCRIBER_QUEUE);
         slot.local_subscribers
@@ -93,6 +96,7 @@ impl WebSessionHub {
             .insert(subscriber_id, tx.clone());
         *slot.subscriber_count.lock().expect("subscriber count") += 1;
         *slot.grace_deadline.lock().expect("grace") = None;
+        *slot.acp_primary.lock().expect("acp primary") |= acp_primary;
         self.bus.lock().expect("bus").insert(subscriber_id, tx);
 
         // Replay parked requests so reconnecting clients see them.
@@ -133,7 +137,7 @@ impl WebSessionHub {
         *count = count.saturating_sub(1);
         if *count == 0 {
             let pending_empty = slot.pending.lock().expect("pending").is_empty();
-            if pending_empty {
+            if pending_empty && !*slot.acp_primary.lock().expect("acp primary") {
                 *slot.grace_deadline.lock().expect("grace") =
                     Some(Instant::now() + WEB_SESSION_HUB_GRACE);
             }
@@ -144,21 +148,26 @@ impl WebSessionHub {
         &self,
         handle: &str,
         worktree: PathBuf,
+        acp_primary: bool,
     ) -> Result<Arc<TaskSlot>, AgentAcpError> {
         self.reap_expired();
         let mut slots = self.slots.lock().expect("slots");
         if let Some(existing) = slots.get(handle) {
+            *existing.acp_primary.lock().expect("acp primary") |= acp_primary;
             let mut peer_guard = existing.peer.lock().expect("peer");
             if peer_guard.is_none() {
                 let mut peer = spawn_default_agent_acp(&existing.worktree)?;
-                peer.handshake(&existing.worktree)?;
+                let previous_session_id = existing.session_id.lock().expect("session id").clone();
+                let session_id = peer
+                    .handshake_with_session(&existing.worktree, previous_session_id.as_deref())?;
+                *existing.session_id.lock().expect("session id") = Some(session_id);
                 *peer_guard = Some(peer);
             }
             drop(peer_guard);
             return Ok(Arc::clone(existing));
         }
         let mut peer = spawn_default_agent_acp(&worktree)?;
-        peer.handshake(&worktree)?;
+        let session_id = peer.handshake(&worktree)?;
         let slot = Arc::new(TaskSlot {
             handle: handle.to_string(),
             worktree,
@@ -168,6 +177,8 @@ impl WebSessionHub {
             local_subscribers: Mutex::new(HashMap::new()),
             subscriber_count: Mutex::new(0),
             grace_deadline: Mutex::new(None),
+            acp_primary: Mutex::new(acp_primary),
+            session_id: Mutex::new(Some(session_id)),
         });
         slots.insert(handle.to_string(), Arc::clone(&slot));
         Ok(slot)
@@ -177,6 +188,9 @@ impl WebSessionHub {
         let mut slots = self.slots.lock().expect("slots");
         let now = Instant::now();
         slots.retain(|_, slot| {
+            if *slot.acp_primary.lock().expect("acp primary") {
+                return true;
+            }
             let subs = *slot.subscriber_count.lock().expect("subscriber count");
             if subs > 0 {
                 return true;
@@ -228,6 +242,12 @@ impl WebSessionHub {
                 }
                 other => self.fanout_local(&slot, HubClientEvent::Local(other)),
             }
+        }
+    }
+
+    pub(crate) fn release(&self, handle: &str) {
+        if let Some(slot) = self.slots.lock().expect("slots").remove(handle) {
+            let _ = slot.peer.lock().expect("peer").take();
         }
     }
 
@@ -522,5 +542,10 @@ mod tests {
     fn hub_new_is_empty() {
         let hub = WebSessionHub::new();
         assert!(hub.pending_snapshot("web/fix-login").is_empty());
+    }
+
+    #[test]
+    fn release_is_explicit_and_safe_for_missing_task() {
+        WebSessionHub::new().release("web/missing");
     }
 }

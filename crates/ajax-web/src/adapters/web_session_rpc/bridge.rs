@@ -5,6 +5,7 @@ use crate::adapters::web_session_hub::{HubClientEvent, HubSubscription, WebSessi
 use crate::slices::web_session::{
     WebSessionClientMessage, WebSessionServerEvent, WebSessionStatus, WEB_SESSION_PROTOCOL_VERSION,
 };
+use ajax_core::models::{LiveObservation, LiveStatusKind};
 use axum::extract::ws::{Message, WebSocket};
 use std::{
     path::PathBuf,
@@ -15,12 +16,61 @@ use std::{
 const MAX_CONTROL_BYTES: usize = 65_536;
 const EVENT_POLL_MS: u64 = 20;
 
+/// Optional ACP → registry live_status sink (ACP-primary only).
+pub(crate) type AcpLiveUpdater = Arc<dyn Fn(&str, LiveObservation) + Send + Sync>;
+
 fn session_id_for(handle: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
     format!("{handle}-{millis}")
+}
+
+fn live_observation_for_acp_event(event: &AgentAcpEvent) -> Option<LiveObservation> {
+    match event {
+        AgentAcpEvent::PromptStarted => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        AgentAcpEvent::OperatorRequest { kind, .. } => match kind {
+            super::OperatorRequestKind::Permission => Some(LiveObservation::new(
+                LiveStatusKind::WaitingForApproval,
+                "waiting for approval",
+            )),
+            super::OperatorRequestKind::Question => Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "waiting for input",
+            )),
+        },
+        AgentAcpEvent::AgentSettled => {
+            Some(LiveObservation::new(LiveStatusKind::ShellIdle, "waiting"))
+        }
+        AgentAcpEvent::Error { message } => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            message.clone(),
+        )),
+        AgentAcpEvent::Exited => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "agent exited",
+        )),
+        AgentAcpEvent::AssistantDelta { .. } => None,
+        AgentAcpEvent::ToolCall { .. }
+        | AgentAcpEvent::ToolCallUpdate { .. }
+        | AgentAcpEvent::FileUpdate { .. } => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+    }
+}
+
+fn publish_live(updater: &Option<AcpLiveUpdater>, handle: &str, event: &AgentAcpEvent) {
+    let Some(updater) = updater else {
+        return;
+    };
+    if let Some(observation) = live_observation_for_acp_event(event) {
+        updater(handle, observation);
+    }
 }
 
 async fn send_event(socket: &mut WebSocket, event: &WebSessionServerEvent) -> bool {
@@ -66,6 +116,37 @@ fn map_acp_event(event: AgentAcpEvent) -> Vec<WebSessionServerEvent> {
             }]
         }
         AgentAcpEvent::AssistantDelta { .. } => Vec::new(),
+        AgentAcpEvent::ToolCall {
+            tool_name,
+            status,
+            summary,
+            path,
+        }
+        | AgentAcpEvent::ToolCallUpdate {
+            tool_name,
+            status,
+            summary,
+            path,
+        } => vec![WebSessionServerEvent::Progress {
+            version: WEB_SESSION_PROTOCOL_VERSION,
+            kind: "tool".to_string(),
+            tool_name: Some(tool_name),
+            status,
+            summary,
+            path,
+        }],
+        AgentAcpEvent::FileUpdate {
+            path,
+            status,
+            summary,
+        } => vec![WebSessionServerEvent::Progress {
+            version: WEB_SESSION_PROTOCOL_VERSION,
+            kind: "file".to_string(),
+            tool_name: None,
+            status,
+            summary,
+            path: Some(path),
+        }],
         AgentAcpEvent::AgentSettled => vec![
             WebSessionServerEvent::Settled {
                 version: WEB_SESSION_PROTOCOL_VERSION,
@@ -92,13 +173,16 @@ pub(crate) async fn bridge_task_web_session_socket(
     handle: String,
     worktree: PathBuf,
     hub: Arc<WebSessionHub>,
+    acp_primary: bool,
+    live_updater: Option<AcpLiveUpdater>,
 ) {
     let display_session_id = session_id_for(&handle);
     let hub_for_attach = Arc::clone(&hub);
     let handle_for_attach = handle.clone();
-    let attach_result =
-        tokio::task::spawn_blocking(move || hub_for_attach.attach(&handle_for_attach, worktree))
-            .await;
+    let attach_result = tokio::task::spawn_blocking(move || {
+        hub_for_attach.attach(&handle_for_attach, worktree, acp_primary)
+    })
+    .await;
 
     let subscription = match attach_result {
         Ok(Ok(subscription)) => subscription,
@@ -158,7 +242,7 @@ pub(crate) async fn bridge_task_web_session_socket(
         }
     }
 
-    run_bridge_loop(&mut socket, &handle, &hub, &subscription).await;
+    run_bridge_loop(&mut socket, &handle, &hub, &subscription, &live_updater).await;
 
     let _ = send_event(
         &mut socket,
@@ -174,10 +258,11 @@ async fn run_bridge_loop(
     handle: &str,
     hub: &Arc<WebSessionHub>,
     subscription: &HubSubscription,
+    live_updater: &Option<AcpLiveUpdater>,
 ) {
     loop {
         hub.poll_peer_into_subscribers(handle);
-        if drain_hub_events(socket, handle, hub, subscription)
+        if drain_hub_events(socket, handle, hub, subscription, live_updater)
             .await
             .is_none()
         {
@@ -224,7 +309,7 @@ async fn run_bridge_loop(
             }
         };
 
-        if !handle_client_control(socket, handle, hub, control).await {
+        if !handle_client_control(socket, handle, hub, control, live_updater).await {
             return;
         }
     }
@@ -235,10 +320,12 @@ async fn drain_hub_events(
     handle: &str,
     hub: &Arc<WebSessionHub>,
     subscription: &HubSubscription,
+    live_updater: &Option<AcpLiveUpdater>,
 ) -> Option<()> {
     while let Some(event) = WebSessionHub::try_recv(subscription) {
         match event {
             HubClientEvent::Local(AgentAcpEvent::Exited) => {
+                publish_live(live_updater, handle, &AgentAcpEvent::Exited);
                 let _ = send_event(
                     socket,
                     &WebSessionServerEvent::Closed {
@@ -249,6 +336,7 @@ async fn drain_hub_events(
                 return None;
             }
             HubClientEvent::Local(local) => {
+                publish_live(live_updater, handle, &local);
                 if let AgentAcpEvent::Error { message } = &local {
                     let failed = WebSessionServerEvent::AttentionRequired {
                         version: WEB_SESSION_PROTOCOL_VERSION,
@@ -278,6 +366,33 @@ async fn drain_hub_events(
                 }
             }
             HubClientEvent::Attention(attention) => {
+                if let WebSessionServerEvent::AttentionRequired { kind, .. } = &attention {
+                    match kind {
+                        crate::slices::web_session::AttentionKind::Permission => {
+                            if let Some(updater) = live_updater {
+                                updater(
+                                    handle,
+                                    LiveObservation::new(
+                                        LiveStatusKind::WaitingForApproval,
+                                        "waiting for approval",
+                                    ),
+                                );
+                            }
+                        }
+                        crate::slices::web_session::AttentionKind::Question => {
+                            if let Some(updater) = live_updater {
+                                updater(
+                                    handle,
+                                    LiveObservation::new(
+                                        LiveStatusKind::WaitingForInput,
+                                        "waiting for input",
+                                    ),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if !send_event(socket, &attention).await {
                     return None;
                 }
@@ -292,6 +407,7 @@ async fn handle_client_control(
     handle: &str,
     hub: &Arc<WebSessionHub>,
     control: WebSessionClientMessage,
+    live_updater: &Option<AcpLiveUpdater>,
 ) -> bool {
     match control {
         WebSessionClientMessage::Prompt { version, message } => {
@@ -308,6 +424,7 @@ async fn handle_client_control(
                 let _ = send_error(socket, "provider_write_failed", error.to_string()).await;
                 return false;
             }
+            publish_live(live_updater, handle, &AgentAcpEvent::PromptStarted);
             send_status(socket, WebSessionStatus::Running).await
         }
         WebSessionClientMessage::Abort { version } => {
@@ -356,5 +473,40 @@ async fn handle_client_control(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::live_observation_for_acp_event;
+    use crate::adapters::web_session_rpc::{AgentAcpEvent, OperatorRequestKind};
+    use ajax_core::models::LiveStatusKind;
+
+    #[test]
+    fn acp_statuses_map_to_operator_live_statuses() {
+        assert_eq!(
+            live_observation_for_acp_event(&AgentAcpEvent::PromptStarted)
+                .expect("prompt status")
+                .kind,
+            LiveStatusKind::AgentRunning
+        );
+        assert_eq!(
+            live_observation_for_acp_event(&AgentAcpEvent::OperatorRequest {
+                kind: OperatorRequestKind::Permission,
+                request_id: "request-1".to_string(),
+                json_rpc_id: serde_json::Value::String("1".to_string()),
+                method: "session/request_permission".to_string(),
+                summary: "Need permission".to_string(),
+            })
+            .expect("permission status")
+            .kind,
+            LiveStatusKind::WaitingForApproval
+        );
+        assert_eq!(
+            live_observation_for_acp_event(&AgentAcpEvent::AgentSettled)
+                .expect("settled status")
+                .kind,
+            LiveStatusKind::ShellIdle
+        );
     }
 }

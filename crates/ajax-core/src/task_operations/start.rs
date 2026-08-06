@@ -102,6 +102,21 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
             }
             Err(error) => return Err(error),
         };
+    if request.acp_primary && task.selected_agent == crate::models::AgentClient::Cursor {
+        commands::mark_new_task_provisioning_step_completed(
+            context,
+            &task.id,
+            StartProvisioningStep::AgentCommandSent,
+        )?;
+        context
+            .registry
+            .record_step_receipt(start_step_receipt(
+                &task,
+                StartProvisioningStep::AgentCommandSent,
+            ))
+            .map_err(CommandError::Registry)?;
+        checkpoint(context)?;
+    }
     let mut outputs = external_outputs;
 
     commands::mark_task_opened(context, &task.qualified_handle())?;

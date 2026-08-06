@@ -24,6 +24,7 @@ pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    pub acp_primary: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,19 +126,6 @@ pub fn new_task_plan_with_observation<R: Registry>(
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);
-    let agent_launch = agent_launch_spec(
-        &request.agent,
-        selected_agent,
-        &AgentLaunch {
-            worktree_path: worktree_path_string.clone(),
-            prompt: String::new(),
-        },
-    );
-    let launch = agent_runtime_command(
-        &qualified_handle,
-        &context.runtime_paths.cache_dir.join("agent-runtime"),
-        agent_launch,
-    );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     if observation
@@ -158,13 +146,28 @@ pub fn new_task_plan_with_observation<R: Registry>(
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
-    let agent_launch_line =
-        fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
-    plan.commands.push(tmux.send_agent_command(
-        &tmux_session,
-        DEFAULT_TASK_WINDOW_NAME,
-        &agent_launch_line,
-    ));
+    if !(request.acp_primary && selected_agent == AgentClient::Cursor) {
+        let agent_launch = agent_launch_spec(
+            &request.agent,
+            selected_agent,
+            &AgentLaunch {
+                worktree_path: worktree_path_string.clone(),
+                prompt: String::new(),
+            },
+        );
+        let launch = agent_runtime_command(
+            &qualified_handle,
+            &context.runtime_paths.cache_dir.join("agent-runtime"),
+            agent_launch,
+        );
+        let agent_launch_line =
+            fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
+        plan.commands.push(tmux.send_agent_command(
+            &tmux_session,
+            DEFAULT_TASK_WINDOW_NAME,
+            &agent_launch_line,
+        ));
+    }
 
     Ok(plan)
 }

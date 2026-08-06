@@ -51,6 +51,7 @@ function callbacks(): WebSessionTransportCallbacks & {
     onSessionReady: vi.fn(),
     onRunStatus: vi.fn(),
     onAssistantDelta: vi.fn(),
+    onProgress: vi.fn(),
     onSettled: vi.fn(),
     onError: vi.fn(),
     onClosed: vi.fn(),
@@ -160,6 +161,28 @@ describe("connectWebSession", () => {
     );
     expect(events.onAssistantDelta).toHaveBeenNthCalledWith(1, "Hi ");
     expect(events.onAssistantDelta).toHaveBeenNthCalledWith(2, "there");
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.progress",
+          version: WEB_SESSION_PROTOCOL_VERSION,
+          kind: "tool",
+          toolName: "cargo test",
+          status: "running",
+          summary: "Running focused tests",
+          path: "crates/ajax-core",
+        }),
+      }),
+    );
+    expect(events.onProgress).toHaveBeenCalledWith({
+      kind: "tool",
+      toolName: "cargo test",
+      status: "running",
+      summary: "Running focused tests",
+      path: "crates/ajax-core",
+    });
 
     socket.emit(
       "message",

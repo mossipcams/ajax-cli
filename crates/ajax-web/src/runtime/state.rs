@@ -9,7 +9,7 @@ use crate::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
         stt_provider::MoonshineProvider, web_session_hub::WebSessionHub,
     },
-    slices::{dev_deploy, push::PushHub},
+    slices::{dev_deploy, push::PushHub, web_session::WebSessionPreferenceStore},
     WebError,
 };
 use ajax_core::{
@@ -42,6 +42,7 @@ pub struct WebAppState<C, B> {
     pub(crate) state_dir: Arc<PathBuf>,
     pub(crate) push: Arc<PushHub>,
     pub(crate) web_session_hub: Arc<WebSessionHub>,
+    pub(crate) web_session_preference: Arc<WebSessionPreferenceStore>,
     pub(crate) browser_session: Arc<BrowserSession>,
     pub(crate) cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
     pub(crate) last_browser_cockpit_at: Arc<Mutex<Option<Instant>>>,
@@ -77,6 +78,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             state_dir: Arc::clone(&self.state_dir),
             push: Arc::clone(&self.push),
             web_session_hub: Arc::clone(&self.web_session_hub),
+            web_session_preference: Arc::clone(&self.web_session_preference),
             browser_session: Arc::clone(&self.browser_session),
             cloudflare_access: Arc::clone(&self.cloudflare_access),
             last_browser_cockpit_at: Arc::clone(&self.last_browser_cockpit_at),
@@ -207,12 +209,17 @@ impl<C, B> WebAppState<C, B> {
         runner: C,
         bridge: B,
         state_dir: PathBuf,
-    ) -> Self {
+    ) -> Self
+    where
+        C: CommandRunner + Send + Sync + 'static,
+        B: RuntimeBridge<C> + Send + Sync + 'static,
+    {
         let stt_provider = moonshine_provider_from_config(&context.config);
         let stt_finalization_timeout_ms = context.config.stt.finalization_timeout_ms;
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
         let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
         let stt_language = context.config.stt.language.clone();
+        let web_session_preference = Arc::new(WebSessionPreferenceStore::new(state_dir.clone()));
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -226,6 +233,7 @@ impl<C, B> WebAppState<C, B> {
             state_dir: Arc::new(state_dir),
             push: PushHub::ephemeral(),
             web_session_hub: WebSessionHub::new(),
+            web_session_preference,
             browser_session: Arc::new(BrowserSession::test_default()),
             cloudflare_access: Arc::new(None),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
@@ -265,7 +273,11 @@ impl<C, B> WebAppState<C, B> {
         runner: C,
         bridge: B,
         state_dir: PathBuf,
-    ) -> Result<Self, WebError> {
+    ) -> Result<Self, WebError>
+    where
+        C: CommandRunner + Send + Sync + 'static,
+        B: RuntimeBridge<C> + Send + Sync + 'static,
+    {
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
         let push = PushHub::load_or_create(&state_dir).map_err(WebError::CommandFailed)?;
         let cloudflare_access = CloudflareAccessConfig::from_env()?;
@@ -274,7 +286,8 @@ impl<C, B> WebAppState<C, B> {
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
         let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
         let stt_language = context.config.stt.language.clone();
-        Ok(Self {
+        let web_session_preference = Arc::new(WebSessionPreferenceStore::new(state_dir.clone()));
+        let state = Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
                 runner,
@@ -287,6 +300,7 @@ impl<C, B> WebAppState<C, B> {
             state_dir: Arc::new(state_dir),
             push,
             web_session_hub: WebSessionHub::new(),
+            web_session_preference,
             browser_session: Arc::new(browser_session),
             cloudflare_access: Arc::new(cloudflare_access),
             last_browser_cockpit_at: Arc::new(Mutex::new(None)),
@@ -296,7 +310,8 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-        })
+        };
+        Ok(state)
     }
 
     #[cfg(test)]

@@ -28,6 +28,7 @@ import {
   type SessionDecisionCard,
   type WebSessionConnectionStatus,
   type WebSessionMessage,
+  type WebSessionProgress,
   type WebSessionRunStatus,
   type WebSessionSymbolContext,
 } from "./types";
@@ -108,6 +109,7 @@ function cockpitDerivedAttentions(
 
 export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTask }: Props) {
   const [messages, setMessages] = useState<WebSessionMessage[]>([]);
+  const [progress, setProgress] = useState<WebSessionProgress[]>([]);
   const [draft, setDraft] = useState("");
   const [composerMode, setComposerMode] = useState<SessionComposerMode>("hidden");
   const [questionAttention, setQuestionAttention] = useState<SessionAttentionItem | null>(null);
@@ -165,6 +167,10 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
     );
   }, []);
 
+  const appendProgress = useCallback((item: Omit<WebSessionProgress, "id">) => {
+    setProgress((prev) => prev.concat({ ...item, id: newMessageId() }));
+  }, []);
+
   useEffect(() => {
     const transport = connectWebSession(handle, {
       onConnectionStatus: setConnectionStatus,
@@ -173,6 +179,7 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
       },
       onRunStatus: setRunStatus,
       onAssistantDelta: appendAssistantDelta,
+      onProgress: appendProgress,
       onSettled: () => {
         settleAssistant();
         setRunStatus("waiting");
@@ -195,7 +202,7 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
       transport.dispose();
       transportRef.current = null;
     };
-  }, [handle, appendAssistantDelta, settleAssistant, upsertAttention, clearAttention]);
+  }, [handle, appendAssistantDelta, appendProgress, settleAssistant, upsertAttention, clearAttention]);
 
   useEffect(() => {
     if (runStatus === "running") {
@@ -277,8 +284,8 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
   }, [attentions, cockpitCards, handle]);
 
   const feedCards = useMemo(
-    () => buildSessionFeed(messages, handle, mergedAttentions),
-    [messages, handle, mergedAttentions],
+    () => buildSessionFeed(messages, handle, mergedAttentions, progress),
+    [messages, handle, mergedAttentions, progress],
   );
 
   const composerVisible = composerMode !== "hidden" && runStatus !== "running";
@@ -571,6 +578,24 @@ export default function AjaxWebSessionView({ handle, cockpitCards = [], onOpenTa
           }
           if (card.kind === "decision") {
             return renderDecisionCard(card);
+          }
+          if (card.kind === "tool" || card.kind === "file") {
+            return (
+              <article
+                key={card.id}
+                className={`ajax-web-session-card ajax-web-session-card-progress is-${card.kind}`}
+                data-testid={`ajax-web-session-card-${card.kind}`}
+              >
+                <p className="ajax-web-session-card-label">
+                  {card.kind === "tool" ? card.toolName || "Tool" : "File"}
+                  <span className="ajax-web-session-card-live">{card.status}</span>
+                </p>
+                <p className="ajax-web-session-card-body">
+                  {card.path ? `${card.path}: ` : ""}
+                  {truncateProgressText(card.summary)}
+                </p>
+              </article>
+            );
           }
           return (
             <article

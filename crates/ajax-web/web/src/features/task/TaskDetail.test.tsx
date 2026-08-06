@@ -258,6 +258,18 @@ describe("TaskDetail", () => {
     render(<TaskDetail detail={detail({ agent: "Cursor" })} />);
     expect(await screen.findByTestId("ajax-web-session")).toBeInTheDocument();
     expect(screen.queryByTestId("task-terminal-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("open-terminal")).toBeInTheDocument();
+  });
+
+  it("toggles Open Terminal escape without leaving ACP-primary session mode", async () => {
+    setAjaxWebSessionEnabled(true);
+    render(<TaskDetail detail={detail({ agent: "Cursor" })} />);
+    expect(await screen.findByTestId("ajax-web-session")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("open-terminal"));
+    expect(await screen.findByTestId("task-terminal-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("ajax-web-session")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("back-to-session"));
+    expect(await screen.findByTestId("ajax-web-session")).toBeInTheDocument();
   });
 
   it("matches Cursor case-insensitively when the flag is on", async () => {

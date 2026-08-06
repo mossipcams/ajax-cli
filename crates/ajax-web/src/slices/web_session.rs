@@ -3,11 +3,49 @@
 use ajax_core::{commands::CommandContext, models::AgentClient, registry::Registry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const WEB_SESSION_PROTOCOL_VERSION: u32 = 2;
 pub const SYMBOL_SEARCH_MAX_RESULTS: usize = 30;
+pub const WEB_SESSION_PREFERENCE_FILE: &str = "web_session_pref.json";
+
+#[derive(Clone, Debug)]
+pub struct WebSessionPreferenceStore {
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct WebSessionPreference {
+    enabled: bool,
+}
+
+impl WebSessionPreferenceStore {
+    pub fn new(state_dir: PathBuf) -> Self {
+        Self {
+            path: state_dir.join(WEB_SESSION_PREFERENCE_FILE),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<WebSessionPreference>(&contents).ok())
+            .is_some_and(|preference| preference.enabled)
+    }
+
+    pub fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create web session state: {error}"))?;
+        }
+        let contents = serde_json::to_string(&WebSessionPreference { enabled })
+            .map_err(|error| format!("encode web session preference: {error}"))?;
+        fs::write(&self.path, contents)
+            .map_err(|error| format!("write web session preference: {error}"))
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebSessionPlan {
@@ -108,6 +146,17 @@ pub enum WebSessionServerEvent {
     },
     #[serde(rename = "session.assistant_delta")]
     AssistantDelta { version: u32, text: String },
+    #[serde(rename = "session.progress")]
+    Progress {
+        version: u32,
+        kind: String,
+        #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+        status: String,
+        summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
     #[serde(rename = "session.settled")]
     Settled { version: u32 },
     #[serde(rename = "session.error")]
@@ -618,6 +667,23 @@ mod tests {
         assert_eq!(
             prepare_web_session(&context, "web/fix-login").unwrap_err(),
             WebSessionRouteError::AgentNotSupported
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn web_session_preference_store_round_trips_under_state_dir() {
+        let temp =
+            std::env::temp_dir().join(format!("ajax-web-session-pref-{}", std::process::id()));
+        let store = WebSessionPreferenceStore::new(temp.clone());
+
+        assert!(!store.enabled());
+        store.set_enabled(true).expect("write preference");
+        assert!(store.enabled());
+        assert_eq!(
+            fs::read_to_string(temp.join(WEB_SESSION_PREFERENCE_FILE)).expect("preference file"),
+            "{\"enabled\":true}"
         );
 
         let _ = fs::remove_dir_all(temp);

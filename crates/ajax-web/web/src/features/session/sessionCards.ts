@@ -2,6 +2,7 @@ import type {
   SessionAttentionItem,
   SessionCard,
   WebSessionMessage,
+  WebSessionProgress,
 } from "./types";
 
 export const SESSION_PROGRESS_MAX_CHARS = 280;
@@ -32,6 +33,7 @@ export function buildSessionFeed(
   messages: WebSessionMessage[],
   handle: string,
   attentions: SessionAttentionItem[],
+  progress: WebSessionProgress[] = [],
 ): SessionCard[] {
   const cards: SessionCard[] = messages.map((message) => {
     if (message.role === "user") {
@@ -48,6 +50,27 @@ export function buildSessionFeed(
       streaming: message.streaming,
     };
   });
+
+  for (const item of progress) {
+    if (item.kind === "tool") {
+      cards.push({
+        id: item.id,
+        kind: "tool",
+        toolName: item.toolName ?? "Tool",
+        status: item.status,
+        summary: item.summary,
+        path: item.path,
+      });
+    } else {
+      cards.push({
+        id: item.id,
+        kind: "file",
+        path: item.path ?? "",
+        status: item.status,
+        summary: item.summary,
+      });
+    }
+  }
 
   for (const attention of currentHandleAttentions(handle, attentions)) {
     cards.push({

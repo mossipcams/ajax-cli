@@ -197,7 +197,25 @@ where
 
     let worktree = plan.worktree_path;
     let hub = Arc::clone(&state.web_session_hub);
+    let acp_primary = state.web_session_preference.enabled();
     let task_handle = handle.clone();
+    let live_updater = if acp_primary {
+        let state_for_live = state.clone();
+        Some(Arc::new(
+            move |handle: &str, observation: ajax_core::models::LiveObservation| {
+                let mut guard = state_for_live.shared();
+                let task_id = ajax_core::models::TaskId::new(handle);
+                if let Some(task) = guard.context.registry.get_task_mut(&task_id) {
+                    ajax_core::live::apply_observation(task, observation);
+                    guard.revision = guard.revision.saturating_add(1);
+                    guard.cockpit_cache = None;
+                }
+            },
+        )
+            as crate::adapters::web_session_rpc::AcpLiveUpdater)
+    } else {
+        None
+    };
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -210,6 +228,8 @@ where
             task_handle,
             worktree,
             hub,
+            acp_primary,
+            live_updater,
         )
         .await;
     })
@@ -283,6 +303,11 @@ where
             }),
         );
     }
+    let request = crate::slices::operate::StartTaskRequest {
+        acp_primary: state.web_session_preference.enabled()
+            && request.agent.eq_ignore_ascii_case("cursor"),
+        ..request
+    };
     let task_key = ajax_core::commands::start_task_identity(&request.repo, &request.title)
         .as_str()
         .to_string();
@@ -413,6 +438,8 @@ where
     let log_task_key = task_key.clone();
     let log_action = action.clone();
     let error_request_id = request_id.clone();
+    let release_task_key = task_key.clone();
+    let web_session_hub = Arc::clone(&state.web_session_hub);
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
@@ -439,6 +466,10 @@ where
             error_request_id.as_deref(),
         )
     });
+
+    if action == "drop" && response.status_code < 400 {
+        web_session_hub.release(&release_task_key);
+    }
 
     if response.status_code >= 400 {
         tracing::warn!(

@@ -161,6 +161,31 @@ async function getJson(path: string, timeoutMs: number = GET_REQUEST_TIMEOUT_MS)
   return readJson(response);
 }
 
+export async function fetchWebSessionPreference(): Promise<boolean> {
+  const payload = await getJson("/api/settings/web-session");
+  return typeof payload === "object" && payload !== null && "enabled" in payload
+    ? payload.enabled === true
+    : false;
+}
+
+export async function setWebSessionPreference(enabled: boolean): Promise<boolean> {
+  const response = await fetchProtectedWithSessionRenewal("/api/settings/web-session", {
+    method: "PUT",
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled }),
+    signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
+  }
+  const payload = await readJson(response);
+  return typeof payload === "object" && payload !== null && "enabled" in payload
+    ? payload.enabled === true
+    : enabled;
+}
+
 async function getJsonPreferringErrorBody(
   path: string,
   timeoutMs: number,

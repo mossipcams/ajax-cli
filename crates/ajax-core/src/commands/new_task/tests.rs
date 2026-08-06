@@ -1,7 +1,8 @@
 use super::{
-    is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
-    new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
-    StartPlanObservation, StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
+    is_agent_send_keys_command, is_git_worktree_add_command, is_task_window_new_session_command,
+    mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
+    record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
+    StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
 };
 use crate::{
     adapters::GitAdapter,
@@ -60,6 +61,7 @@ fn unknown_agent_is_preserved_for_execution_but_classified_other() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "custom-agent-cli".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -73,6 +75,7 @@ fn unknown_agent_is_preserved_for_execution_but_classified_other() {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "custom-agent-cli".to_string(),
+                acp_primary: false,
             }
         )
         .unwrap()
@@ -100,6 +103,7 @@ fn repo_name_cannot_escape_managed_namespace() {
                 repo: repo.to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                acp_primary: false,
             },
         )
         .unwrap_err();
@@ -119,6 +123,7 @@ fn new_task_plan_claude_agent_command_omits_cd_flag_and_skips_permissions() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "claude".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -136,6 +141,7 @@ fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "cursor".to_string(),
+        acp_primary: false,
     };
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -151,12 +157,29 @@ fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
 }
 
 #[test]
+fn new_task_plan_acp_primary_cursor_keeps_tmux_shell_without_agent_command() {
+    let context = context();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "ACP task".to_string(),
+        agent: "cursor".to_string(),
+        acp_primary: true,
+    };
+
+    let plan = new_task_plan(&context, request).unwrap();
+
+    assert!(plan.commands.iter().any(is_task_window_new_session_command));
+    assert!(!plan.commands.iter().any(is_agent_send_keys_command));
+}
+
+#[test]
 fn new_task_plan_pi_agent_stores_pi_client() {
     let context = context();
     let request = NewTaskRequest {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "pi".to_string(),
+        acp_primary: false,
     };
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -188,6 +211,7 @@ fn new_task_plan_launches_agent_through_runtime_wrapper() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -207,6 +231,7 @@ fn new_task_plan_has_no_standalone_setup_command() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -227,6 +252,7 @@ fn new_task_plan_folds_husky_into_agent_send_keys() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -256,6 +282,7 @@ fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -277,6 +304,7 @@ fn new_task_plan_fetches_origin_and_branches_from_remote_tracking_ref() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
 
     let plan = new_task_plan(&context, request).unwrap();
@@ -305,6 +333,7 @@ fn new_task_plan_skips_fetch_when_origin_fetch_is_fresh() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: Some(Duration::from_secs(30)),
@@ -337,6 +366,7 @@ fn new_task_plan_fetches_when_origin_fetch_is_stale() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: Some(Duration::from_secs(120)),
@@ -360,6 +390,7 @@ fn new_task_plan_fetches_when_origin_fetch_age_is_unknown() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: None,
@@ -383,6 +414,7 @@ fn default_new_task_plan_preserves_legacy_sibling_worktree_path() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
 
     let plan = new_task_plan(&context, request).unwrap();
@@ -418,6 +450,7 @@ fn rooted_new_task_plan_and_recorded_task_use_runtime_worktree_root() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
 
     let plan = new_task_plan(&context, request.clone()).unwrap();
@@ -448,6 +481,7 @@ fn start_provisioning_named_steps_update_state_without_numeric_command_indexes()
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
     let task = record_new_task(&mut context, &request).unwrap();
     let task_id = task.id.clone();
@@ -545,6 +579,7 @@ fn new_task_plan_blocks_when_worktree_path_already_exists() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
 
     let error = new_task_plan(&context, request).unwrap_err();
@@ -572,6 +607,7 @@ fn new_task_plan_blocks_when_target_branch_already_exists() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        acp_primary: false,
     };
 
     let error = new_task_plan_with_observation(&context, request, &observation).unwrap_err();
@@ -603,6 +639,7 @@ fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         };
 
         let error = new_task_plan(&context, request).unwrap_err();
@@ -636,6 +673,7 @@ fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            acp_primary: false,
         };
 
         let error = new_task_plan(&context, request).unwrap_err();

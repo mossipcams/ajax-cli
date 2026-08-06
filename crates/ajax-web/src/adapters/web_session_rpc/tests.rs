@@ -37,6 +37,30 @@ fn parse_acp_event_line_maps_session_update_and_prompt_result() {
 }
 
 #[test]
+fn parse_acp_event_line_maps_tool_and_file_progress() {
+    let tool = br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"1","title":"Run tests","status":"in_progress","rawInput":{"path":"src/lib.rs"}}}}"#;
+    assert_eq!(
+        parse_acp_event_line(tool).expect("parse"),
+        Some(AgentAcpEvent::ToolCall {
+            tool_name: "Run tests".to_string(),
+            status: "in_progress".to_string(),
+            summary: "Run tests".to_string(),
+            path: Some("src/lib.rs".to_string()),
+        })
+    );
+
+    let file = br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"file_update","path":"src/lib.rs","status":"changed","summary":"updated exports"}}}"#;
+    assert_eq!(
+        parse_acp_event_line(file).expect("parse"),
+        Some(AgentAcpEvent::FileUpdate {
+            path: "src/lib.rs".to_string(),
+            status: "changed".to_string(),
+            summary: "updated exports".to_string(),
+        })
+    );
+}
+
+#[test]
 fn fake_acp_peer_handshake_prompt_stream_and_settled_without_live_llm() {
     let script_path = write_temp_script(&fake_acp_peer_script());
     let worktree =

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskCard, BrowserTaskDetail } from "@/shared/lib/types";
 import { isAjaxWebSessionEnabled } from "@/shared/lib/ajaxWebSessionSetting";
 import { statusMeta } from "@/shared/lib/state";
@@ -49,6 +49,7 @@ export default function TaskDetail({
     onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
   });
+  const [terminalEscape, setTerminalEscape] = useState(false);
 
   const activityLine = (() => {
     const line = detail.agent_activity ?? detail.live_status_summary;
@@ -103,10 +104,22 @@ export default function TaskDetail({
             onDismiss={onDismiss}
           />
         ) : null}
+        {showAjaxWebSession ? (
+          <div className="interact-escape" data-testid="task-terminal-escape">
+            <button
+              type="button"
+              className="settings-link"
+              data-testid={terminalEscape ? "back-to-session" : "open-terminal"}
+              onClick={() => setTerminalEscape((open) => !open)}
+            >
+              {terminalEscape ? "Back to Session" : "Open Terminal"}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <div>
-        {showAjaxWebSession ? (
+        {showAjaxWebSession && !terminalEscape ? (
           <AjaxWebSessionView
             handle={detail.qualified_handle}
             cockpitCards={cockpitCards}

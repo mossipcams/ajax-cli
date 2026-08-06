@@ -5,7 +5,7 @@ import {
   hasCurrentHandleDecisionPending,
   truncateProgressText,
 } from "./sessionCards";
-import type { SessionAttentionItem, WebSessionMessage } from "./types";
+import type { SessionAttentionItem, WebSessionMessage, WebSessionProgress } from "./types";
 
 const permission: SessionAttentionItem = {
   handle: "web/current",
@@ -42,5 +42,17 @@ describe("sessionCards", () => {
     expect(currentHandleAttentions("web/current", [permission])).toHaveLength(1);
     expect(hasCurrentHandleDecisionPending("web/current", [permission])).toBe(true);
     expect(hasCurrentHandleDecisionPending("web/other", [permission])).toBe(false);
+  });
+
+  it("keeps structured tool and file progress as feed cards", () => {
+    const progress: WebSessionProgress[] = [
+      { id: "tool-1", kind: "tool", toolName: "Run tests", status: "running", summary: "cargo test" },
+      { id: "file-1", kind: "file", path: "src/lib.rs", status: "changed", summary: "updated exports" },
+    ];
+    const feed = buildSessionFeed([], "web/current", [], progress);
+    expect(feed).toMatchObject([
+      { kind: "tool", toolName: "Run tests", status: "running" },
+      { kind: "file", path: "src/lib.rs", status: "changed" },
+    ]);
   });
 });

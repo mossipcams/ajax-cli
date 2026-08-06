@@ -157,6 +157,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   for core Cockpit use, without classic PWA packaging (manifest, icons, service
   worker), without a service-worker offline mutation model, and without
   replacing the raw xterm/tmux-first terminal model as the default path.
+  When `ajax.webSession` (host preference) is on for Cursor tasks, Ajax Web
+  Session is ACP-primary Operate with Open Terminal as escape only; flag off
+  keeps the default terminal path for all agents.
   Optional Home Screen install enables Declarative Web Push only.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.

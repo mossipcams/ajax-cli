@@ -295,7 +295,8 @@ proptest! {
             NewTaskRequest {
                 repo: "web".to_string(),
                 title: title.clone(),
-                agent: "codex".to_string(),
+            agent: "codex".to_string(),
+            acp_primary: false,
             },
         )
         .unwrap();

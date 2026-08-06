@@ -30,6 +30,23 @@ Ajax task handle; `ajax-web` resolves that handle to the registered
 must not accept raw tmux target names or make pane captures, snapshot viewers,
 key-send endpoints, or answer routes the default task interaction path.
 
+### Ajax Web Session (ACP-primary operate)
+
+The flagged `ajax.webSession` mode is Cursor-only. When the host preference is
+enabled, `agent acp` is the task's operate agent: task start still creates the
+worktree and tmux shell for terminal escape, but does not also launch an
+interactive `cursor agent` process. The Web Session hub keeps that ACP peer
+alive for the task, emits structured progress and decisions, and feeds ACP
+observations back through the core live-status contract. **Open Terminal** is an
+escape hatch to the existing raw xterm/tmux surface; returning to Session does
+not create a second agent.
+
+When the preference is disabled, task start remains the default xterm/tmux-first
+Cursor flow. Legacy tasks created during migration may still have both an
+interactive Cursor process and an ACP hub; the hub does not claim those tasks
+retroactively, and operators should use the terminal or drop/restart the task
+to converge it.
+
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
 the Ajax backend remain authoritative for task state and operations. The
@@ -716,43 +733,51 @@ viewport-burst case, passes as of 2026-07-16.
 
 ### Ajax Web Session
 
-Ajax Web Session is a feature-flagged (`ajax.webSession` in browser
-`localStorage`), Cursor-only alternate task surface in
-`crates/ajax-web/web/src/features/session/`. When the flag is off, or the task
-agent is not Cursor, Task Detail keeps the default raw xterm/tmux terminal. The
-browser does not own task truth: it presents chat history, composer state,
-symbol context, and cross-session attention banners while the host runs Cursor
-`agent acp` (ACP JSON-RPC over stdio) through a process-local
-`WebSessionHub` (`ajax-web::adapters::web_session_hub`) behind an authenticated
-task-scoped WebSocket (`ajax-web::slices::web_session`). Backend
-`prepare_web_session` also admits Cursor tasks only (non-Cursor → 422).
+Ajax Web Session is a feature-flagged Operate surface for **Cursor** tasks
+(`ajax.webSession` in browser `localStorage`, mirrored to a host preference
+file `web_session_pref.json` via authenticated `GET`/`PUT`
+`/api/settings/web-session`). Settings toggle writes host + localStorage; host
+wins on Settings load.
 
-ACP lifetime is hub-scoped (not one process per socket). Permission and question
+When the preference is **on** and the task agent is Cursor, Ajax Web Session is
+**ACP-primary**: the process-local `WebSessionHub` owns Cursor `agent acp`
+(ACP JSON-RPC over stdio) as the task’s operate agent. New Cursor tasks skip
+launching interactive `cursor agent` into tmux (worktree + tmux shell still
+created for Open Terminal escape). When the preference is **off**, or the agent
+is not Cursor, Task Detail keeps the default raw xterm/tmux terminal.
+
+The browser does not own task truth: it presents a supervision card feed
+(operator / assistant progress / structured tool+file progress / decisions),
+composer state, symbol context, and cross-session attention banners. Backend
+`prepare_web_session` admits Cursor tasks only (non-Cursor → 422). Ship /
+Repair / Drop / remediations stay on the Task Detail ActionBar →
+`/api/operations` (core). Open Terminal is an escape hatch to the task tmux
+shell, not a second Cursor TUI.
+
+ACP lifetime is hub-scoped and, for ACP-primary slots, survives until task
+`drop` releases the hub (not a short orphan grace). Permission and question
 requests are parked for the operator (not auto-answered). Pending attentions
-fan out to every connected web-session socket so the active Ajax Web Session UI
-can Approve / Deny / Answer / Stop / Retry into the originating hub without
-leaving the current task. Review banners are derived from cockpit
-`attention: review` cards. A minimal top-of-page toast shows status
-(`Needs permission` / `Needs answer` / `Run failed` / `Ready for review`) plus
-inline actions (Approve/Deny, Reply, Retry/Stop, Open). Routine Running / non-actionable
-Waiting never generate in-app banners. Symbol search and attached context remain
-presentation helpers over the task worktree. This path does not replace the
-terminal bridge and does not enable non-Cursor agent pickers.
+fan out to every connected web-session socket. Review banners are derived from
+cockpit `attention: review` cards. ACP running / waiting / permission / failed
+events apply `live::apply_observation` so cockpit status stays truthful without
+Cursor TUI hooks. Legacy Cursor tasks started before ACP-primary may still have
+an interactive agent in tmux until drop/recreate.
+
+Symbol search and attached context remain presentation helpers over the task
+worktree. This path does not enable non-Cursor agent pickers and does not
+change the default Operate path when the flag is off.
 
 The session Operate surface is iOS Safari / Home Screen first (no classic PWA
-packaging): status chip, minimal attention toast, transcript, composer dock, then
-the literal terminal key bar (Esc / Tab / arrows / Ctrl / Paste / ⌫ / Mic) wired
-to the composer textarea (Mic appends speech into the draft; Esc/Ctrl+C abort a
-running prompt). Task and diff routes hide the Dashboard / New bottom nav so the
-session (or terminal) can use the full band. Under `html.keyboard-open`, Task Detail pins to the
-`visualViewport` band and the session key bar sits flush above the soft
-keyboard (same `--app-top` / `--app-height` contract as the terminal hotbar).
+packaging): status chip, minimal attention toast, supervision feed, composer
+dock when Redirect/question, then the literal terminal key bar wired to the
+composer. Task and diff routes hide the Dashboard / New bottom nav. Under
+`html.keyboard-open`, Task Detail pins to the `visualViewport` band.
 
 Browser transport auto-reconnects with capped backoff while the view is
 mounted, exposes a distinct `reconnecting` status, preserves the in-memory
 transcript across dials, and offers a Retry CTA after fatal connection failure.
-Reconnect within the hub grace window reattaches to the same ACP process and
-replays pending operator attentions; it does not invent a second agent process.
+Reconnect reattaches to the same ACP process and replays pending operator
+attentions; it does not invent a second agent process.
 
 ### `ajax-web::adapters::terminal_pty`
 

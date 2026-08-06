@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchVersion,
+  fetchWebSessionPreference,
+  setWebSessionPreference,
   startTestInStable,
   TEST_IN_STABLE_TIMEOUT_MS,
   waitForServerOnline,
@@ -55,11 +57,27 @@ export default function SettingsView({
     const next = !ajaxWebSession;
     setAjaxWebSession(next);
     setAjaxWebSessionEnabled(next);
+    void setWebSessionPreference(next).catch(() => undefined);
   }
 
   async function refreshPushSubscriptionStatus() {
     setPushSubscriptionStatus(await getPushSubscriptionStatus());
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchWebSessionPreference()
+      .then((enabled) => {
+        if (!cancelled) {
+          setAjaxWebSession(enabled);
+          setAjaxWebSessionEnabled(enabled);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

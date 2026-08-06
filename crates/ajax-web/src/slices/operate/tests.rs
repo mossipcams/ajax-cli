@@ -215,6 +215,7 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
             title: "Fix login".to_string(),
             agent: "cursor".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -240,6 +241,7 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
             title: "Fix login".to_string(),
             agent: "pi".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -265,6 +267,7 @@ fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
             title: "Fix login".to_string(),
             agent: "claude".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -288,6 +291,7 @@ fn start_task_creates_a_new_task_in_the_registry() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap();
@@ -319,6 +323,7 @@ fn start_task_rejects_empty_title() {
             title: "   ".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap_err();
@@ -344,6 +349,7 @@ fn start_task_rejects_unsupported_agent() {
             title: "Fix login".to_string(),
             agent: "/bin/sh".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap_err();
@@ -369,6 +375,7 @@ fn start_task_surfaces_unknown_repo_as_command_error() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap_err();
@@ -405,6 +412,7 @@ fn start_task_skips_fetch_when_origin_fetch_is_fresh() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            acp_primary: false,
         },
     )
     .unwrap();

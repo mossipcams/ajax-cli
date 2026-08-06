@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub(crate) use bridge::bridge_task_web_session_socket;
+pub(crate) use bridge::{bridge_task_web_session_socket, AcpLiveUpdater};
 
 const EVENT_QUEUE_BOUND: usize = 64;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -56,6 +56,23 @@ pub enum AgentAcpEvent {
     PromptStarted,
     AssistantDelta {
         text: String,
+    },
+    ToolCall {
+        tool_name: String,
+        status: String,
+        summary: String,
+        path: Option<String>,
+    },
+    ToolCallUpdate {
+        tool_name: String,
+        status: String,
+        summary: String,
+        path: Option<String>,
+    },
+    FileUpdate {
+        path: String,
+        status: String,
+        summary: String,
     },
     AgentSettled,
     Error {
@@ -148,7 +165,7 @@ pub fn parse_acp_event_line(line: &[u8]) -> Result<Option<AgentAcpEvent>, AgentA
         .map_err(|error| AgentAcpError::Protocol(format!("invalid acp JSON: {error}")))?;
 
     if parsed.method.as_deref() == Some("session/update") {
-        return Ok(assistant_delta_from_update(parsed.params.as_ref()));
+        return Ok(event_from_update(parsed.params.as_ref()));
     }
 
     if parsed.id.is_some() {
@@ -182,21 +199,68 @@ fn trim_line(line: &[u8]) -> &[u8] {
     trimmed
 }
 
-fn assistant_delta_from_update(params: Option<&Value>) -> Option<AgentAcpEvent> {
+fn event_from_update(params: Option<&Value>) -> Option<AgentAcpEvent> {
     let update = params?.get("update")?;
-    if update.get("sessionUpdate").and_then(Value::as_str) != Some("agent_message_chunk") {
-        return None;
+    match update.get("sessionUpdate").and_then(Value::as_str)? {
+        "agent_message_chunk" => {
+            let text = update
+                .get("content")
+                .and_then(|content| content.get("text"))
+                .and_then(Value::as_str)?;
+            (!text.is_empty()).then(|| AgentAcpEvent::AssistantDelta {
+                text: text.to_string(),
+            })
+        }
+        "tool_call" | "tool_call_update" => {
+            let tool_name = first_string(update, &["title", "toolName", "name"])
+                .unwrap_or_else(|| "Tool call".to_string());
+            let status =
+                first_string(update, &["status", "state"]).unwrap_or_else(|| "updated".to_string());
+            let summary = first_string(update, &["summary", "title", "name"])
+                .unwrap_or_else(|| tool_name.clone());
+            let path = update
+                .pointer("/rawInput/path")
+                .or_else(|| update.pointer("/input/path"))
+                .or_else(|| update.get("path"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if update.get("sessionUpdate").and_then(Value::as_str) == Some("tool_call") {
+                Some(AgentAcpEvent::ToolCall {
+                    tool_name,
+                    status,
+                    summary,
+                    path,
+                })
+            } else {
+                Some(AgentAcpEvent::ToolCallUpdate {
+                    tool_name,
+                    status,
+                    summary,
+                    path,
+                })
+            }
+        }
+        "file_update" | "diff" | "diff_update" => {
+            let path = update.get("path").and_then(Value::as_str)?.to_string();
+            let status =
+                first_string(update, &["status", "kind"]).unwrap_or_else(|| "changed".to_string());
+            let summary = first_string(update, &["summary", "title"])
+                .unwrap_or_else(|| format!("{status} {path}"));
+            Some(AgentAcpEvent::FileUpdate {
+                path,
+                status,
+                summary,
+            })
+        }
+        _ => None,
     }
-    let text = update
-        .get("content")
-        .and_then(|content| content.get("text"))
-        .and_then(Value::as_str)?;
-    if text.is_empty() {
-        return None;
-    }
-    Some(AgentAcpEvent::AssistantDelta {
-        text: text.to_string(),
-    })
+}
+
+fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn extract_error_message(error: &Value) -> String {
@@ -280,6 +344,14 @@ impl AgentAcpProcess {
     }
 
     pub(crate) fn handshake(&mut self, worktree: &Path) -> Result<String, AgentAcpError> {
+        self.handshake_with_session(worktree, None)
+    }
+
+    pub(crate) fn handshake_with_session(
+        &mut self,
+        worktree: &Path,
+        previous_session_id: Option<&str>,
+    ) -> Result<String, AgentAcpError> {
         self.rpc(
             "initialize",
             json!({
@@ -292,17 +364,30 @@ impl AgentAcpProcess {
             }),
         )?;
         self.rpc("authenticate", json!({ "methodId": "cursor_login" }))?;
-        let result = self.rpc(
-            "session/new",
-            json!({
-                "cwd": worktree,
-                "mcpServers": []
-            }),
-        )?;
+        let (result, loaded_session_id) = if let Some(session_id) = previous_session_id {
+            match self.rpc(
+                "session/load",
+                json!({ "sessionId": session_id, "cwd": worktree }),
+            ) {
+                Ok(result) => (result, Some(session_id.to_string())),
+                Err(_) => (
+                    self.rpc("session/new", json!({ "cwd": worktree, "mcpServers": [] }))?,
+                    None,
+                ),
+            }
+        } else {
+            (
+                self.rpc("session/new", json!({ "cwd": worktree, "mcpServers": [] }))?,
+                None,
+            )
+        };
         let session_id = result
             .get("sessionId")
             .and_then(Value::as_str)
-            .ok_or_else(|| AgentAcpError::HandshakeFailed("session/new missing sessionId".into()))?
+            .or(loaded_session_id.as_deref())
+            .ok_or_else(|| {
+                AgentAcpError::HandshakeFailed("session handshake missing sessionId".into())
+            })?
             .to_string();
         self.session_id = Some(session_id.clone());
         Ok(session_id)
@@ -440,8 +525,7 @@ fn spawn_event_reader(
                             continue;
                         }
                         if method == "session/update" {
-                            if let Some(event) = assistant_delta_from_update(parsed.params.as_ref())
-                            {
+                            if let Some(event) = event_from_update(parsed.params.as_ref()) {
                                 let _ = tx.try_send(event);
                             }
                             continue;

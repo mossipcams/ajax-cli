@@ -38,6 +38,8 @@ pub struct StartTaskRequest {
     pub agent: String,
     #[serde(default)]
     pub request_id: String,
+    #[serde(default)]
+    pub acp_primary: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,6 +189,7 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         repo: request.repo,
         title: request.title,
         agent: request.agent,
+        acp_primary: request.acp_primary,
     };
     let observation = start_plan_observation(context, &core_request);
     let (_intent, plan) =

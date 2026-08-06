@@ -85,6 +85,10 @@ where
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
         .route("/api/push/test", post(axum_push_test::<C, B>))
         .route("/api/version", get(axum_version))
+        .route(
+            "/api/settings/web-session",
+            get(axum_web_session_preference::<C, B>).put(axum_set_web_session_preference::<C, B>),
+        )
         .route("/api/server/restart", post(axum_server_restart))
         .route(
             "/api/server/test-in-stable",
@@ -109,6 +113,36 @@ where
         ))
         .layer(CompressionLayer::new())
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSessionPreferenceRequest {
+    enabled: bool,
+}
+
+async fn axum_web_session_preference<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    json_value_response(
+        200,
+        serde_json::json!({ "enabled": state.web_session_preference.enabled() }),
+    )
+}
+
+async fn axum_set_web_session_preference<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    Json(request): Json<WebSessionPreferenceRequest>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    match state.web_session_preference.set_enabled(request.enabled) {
+        Ok(()) => json_value_response(200, serde_json::json!({ "enabled": request.enabled })),
+        Err(error) => json_value_response(500, serde_json::json!({ "error": error })),
+    }
 }
 
 pub(crate) fn log_web_listening(host: &str, port: u16) {

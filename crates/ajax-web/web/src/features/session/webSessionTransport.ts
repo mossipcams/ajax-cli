@@ -4,6 +4,7 @@ import type {
   SessionAttentionKind,
   SessionAttentionResponse,
   WebSessionConnectionStatus,
+  WebSessionProgress,
   WebSessionSymbolContext,
 } from "./types";
 
@@ -29,6 +30,7 @@ export interface WebSessionTransportCallbacks {
   onSessionReady(sessionId: string): void;
   onRunStatus(status: "running" | "waiting"): void;
   onAssistantDelta(text: string): void;
+  onProgress?(progress: Omit<WebSessionProgress, "id">): void;
   onSettled(): void;
   onError(message: string): void;
   onClosed(): void;
@@ -188,6 +190,21 @@ export function connectWebSession(
       case "session.assistant_delta":
         if (typeof payload.text === "string") {
           callbacks.onAssistantDelta(payload.text);
+        }
+        break;
+      case "session.progress":
+        if (
+          (payload.kind === "tool" || payload.kind === "file") &&
+          typeof payload.status === "string" &&
+          typeof payload.summary === "string"
+        ) {
+          callbacks.onProgress?.({
+            kind: payload.kind,
+            toolName: typeof payload.toolName === "string" ? payload.toolName : undefined,
+            status: payload.status,
+            summary: payload.summary,
+            path: typeof payload.path === "string" ? payload.path : undefined,
+          });
         }
         break;
       case "session.settled":

@@ -39,15 +39,32 @@ export interface WebSessionMessage {
   streaming?: boolean;
 }
 
+export interface WebSessionProgress {
+  id: string;
+  kind: "tool" | "file";
+  toolName?: string;
+  status: string;
+  summary: string;
+  path?: string;
+}
+
 export type SessionComposerMode = "hidden" | "redirect" | "question";
 
-export type SessionCardKind = "progress" | "operator" | "decision";
+export type SessionCardKind = "progress" | "tool" | "file" | "operator" | "decision";
 
 export interface SessionProgressCard {
   id: string;
   kind: "progress";
   text: string;
   streaming?: boolean;
+}
+
+export interface SessionToolCard extends WebSessionProgress {
+  kind: "tool";
+}
+
+export interface SessionFileCard extends WebSessionProgress {
+  kind: "file";
 }
 
 export interface SessionOperatorCard {
@@ -62,7 +79,12 @@ export interface SessionDecisionCard {
   attention: SessionAttentionItem;
 }
 
-export type SessionCard = SessionProgressCard | SessionOperatorCard | SessionDecisionCard;
+export type SessionCard =
+  | SessionProgressCard
+  | SessionToolCard
+  | SessionFileCard
+  | SessionOperatorCard
+  | SessionDecisionCard;
 
 export function symbolContextChipLabel(symbol: WebSessionSymbolContext): string {
   if (symbol.kind === "method") {
