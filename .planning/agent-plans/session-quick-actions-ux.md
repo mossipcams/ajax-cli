@@ -1,117 +1,147 @@
-# Plan: Session quick-action UX
+# Plan: Session UX, task creation → PR merge
 
 Mode: Planning-Only. Status: **draft, unapproved**.
-Delegation decision: not delegated — UX model design; delegate the waves once the
-matrix below is approved.
+Delegation decision: not delegated — journey design; delegate the waves once the
+shape below is approved.
 
-## Problem
+## The through-line
 
-`AjaxWebSessionView` currently carries two competing interaction models.
+> **One utterance in. One decision at a time out. Never type twice.**
 
-**State-driven intent — works.** `SessionAttentionBanner.tsx` renders actions
-derived from agent state: `permission` → Approve / Deny, `question` → Reply,
-`failed` → Retry / Stop, `review` → Open. The operator recognises the action; it
-is never recalled or composed. This needs no per-agent tuning and no learning.
+Text entry is the expensive act on a phone and reading is cheap, so every stage
+should either propose a choice or accept a single spoken sentence. Anything that
+asks the operator to compose prose twice is a design failure.
 
-**Character entry — does not.** `SessionComposerKeys.tsx` renders `Esc`, `Tab`,
-`←↑↓→`, `⌫`, `Ctrl` (armed, 4s timeout), `Paste`, `Mic`, with hold-to-repeat.
-These are terminal keys: a soft keyboard rebuilt inside the surface whose purpose
-is to replace the terminal. The component name says *Keys*, not *Actions*.
+## Two defects to fix before any design work
 
-A composer cannot be made intuitive, because it has no semantics. It expresses
-anything, so it guides nothing, and every affordance added to it is a guess about
-what the operator might type. That is why this UX feels hard — the effort is
-going into the one element that cannot repay it.
+**1. Task creation captures no prompt.** `NewTaskSheet.tsx` holds `repo`,
+`title`, `agent` — grep for `prompt` returns zero. The operator fills a
+three-field form, the task starts, and the actual instruction is typed again
+into the session composer. Two text-entry moments, the first of which names a
+thing before it exists.
 
-## The rule
+**2. The feed is not ordered.** `sessionCards.ts::buildSessionFeed` maps
+messages to cards, then `push`es tool progress, then file progress, then
+decisions. There is no timestamp field and no `sort` anywhere in the file. Tool
+calls and file edits therefore accumulate at the bottom regardless of when they
+happened, detached from the reasoning that produced them. On a phone showing one
+or two cards at a time this is disorienting, and no layout design survives it.
 
-> **The agent's state proposes the next moves. Typing is the escape hatch.**
+Fix 2 first; it is a bug, not a preference.
 
-Recognition over recall. On a phone, reading three buttons is nearly free and
-typing a sentence one-handed is expensive, so the surface must propose rather
-than await. The composer becomes to the session what the terminal is to the
-product: one tap away, never the default path.
+## Stage 1 — Starting: the prompt *is* the task
 
-## Scope
+Replace the three-field form with a single utterance.
 
-- Define the state → actions matrix below as the session's primary surface.
-- Move quick actions onto transcript cards where they are contextual.
-- Demote `SessionComposerKeys` from primary strip to collapsed escape hatch.
+- One field: **"What do you want done?"** with Mic promoted beside it. Speaking a
+  sentence is the cheapest input on a phone and the natural way to start work.
+- **Title is derived, never typed** — first clause of the prompt, or generated.
+- **Repo defaults** from current project context; **agent defaults** to whichever
+  has quota headroom (see `product-direction.md` step 6).
+- Repo / agent / branch overrides collapse behind one chevron for the minority of
+  starts that need them.
+- Submit sends the prompt as the first turn. There is no gap between "task
+  exists" and "agent knows what to do".
 
-## Non-goals
+Result: one utterance starts work, and the first thing on screen is the agent
+already working rather than an empty composer.
 
-- Removing the composer or the terminal escape. Both stay.
-- Removing `SessionComposerKeys`. Free-form and key input remain reachable.
-- Per-agent action tuning. Actions derive from ACP state, so they must work for
-  any conforming agent.
-- New backend capability. Everything below maps to states #775 already models.
+## Stage 2 — Reading: three regions, not one log
 
-## State → actions matrix
+An agent turn is a firehose — reasoning, tool calls, file edits, test output. A
+chat log is the wrong shape: it scrolls forever and answers no question quickly.
+Split the surface by the three questions an operator actually asks.
 
-Primary action first; it is the one a thumb reaches without looking.
+| Region | Question it answers | Behaviour |
+| --- | --- | --- |
+| **Now** (pinned, one line) | *What is it doing this second?* | `Editing src/auth.rs` · `Running cargo test`. Glanceable, never scrolls away. |
+| **Timeline** (scroll) | *How did it get here?* | Chronological. Every card **collapsed to one line** by default; tap to expand. |
+| **Changed files** (persistent chip) | *What has it actually changed?* | `12 files changed` opens the cumulative diff. |
 
-| Agent state | Primary | Secondary | Notes |
+**Collapse by default is the core move.** A phone fits one or two expanded cards
+but roughly fifteen collapsed lines. Density is comprehension. Collapsed forms:
+
+- reasoning → one-line summary
+- tool call → `⚙ cargo test — 3 failed`
+- file edit → `± src/auth.rs +12/−4`
+- decision → stays expanded; it is the exception that must interrupt
+
+The changed-files chip matters most for the merge end of the journey. In a chat
+log the diff is scattered across forty cards; a persistent cumulative view is
+what makes reviewing on a phone possible at all.
+
+## Stage 3 — Acting: three tiers by urgency
+
+| Tier | Trigger | Placement | Status |
 | --- | --- | --- | --- |
-| `running` | Stop | Show diff so far | Watching is the default; do not demand input |
-| `waiting` · permission | Approve | Deny · Allow for this session | Already built; keep verbatim |
-| `waiting` · question | Reply | Suggested answers when closed-form | Offer parsed choices before the text box |
-| `settled` (turn done) | Run tests | Show diff · Continue · Ship | The highest-value screen; currently the emptiest |
-| `failed` | Retry | Show error · Stop | Already built |
-| `review` ready | Open diff | Ship · Request changes | Bridges session into the existing ship path |
-| `idle` / no session | Start task | Resume last | Entry point |
+| **Blocking** | permission, question | Pinned banner, interrupts | Built — `SessionAttentionBanner` |
+| **Proposed** | turn settles | Action bar above composer | Missing |
+| **Contextual** | a specific card | On the card itself | Missing |
 
-`settled` is the gap that matters. When a turn ends, the operator today faces a
-blank composer — maximum ambiguity at the exact moment a small set of moves is
-obvious. This is where "quick actions direct an agent" is won or lost.
+State → proposed actions:
 
-## Placement
+| State | Primary | Secondary |
+| --- | --- | --- |
+| `running` | Stop | Show diff so far |
+| `waiting` · permission | Approve | Deny · Allow this session |
+| `waiting` · question | Reply | Parsed choices when closed-form |
+| `settled` | Run tests | Show diff · Continue · Ship |
+| `failed` | Retry | Show error · Stop |
 
-1. **Card-level actions.** `renderMessage.tsx` / `sessionCards.ts` already render
-   structured tool and diff cards. Actions belong on the card they concern — a
-   diff card carries Apply / Revert / Explain; a tool-call card carries Approve /
-   Skip. Contextual beats a global toolbar, and it scales as card kinds grow.
-2. **One action bar above the composer.** Holds the current state's primary and
-   secondaries from the matrix. It replaces the key strip as the resting surface.
-3. **Composer collapsed by default.** Tap to expand for free-form. `Esc`/`Tab`/
-   arrows/`Ctrl` move inside the expanded composer, where they make sense,
-   instead of occupying the primary strip.
-4. **Mic stays promoted.** Speech is the cheapest way to express free-form intent
-   on a phone and is the right partner to a proposed-action UI.
+`settled` is the emptiest screen in the product today and the one where "quick
+actions direct an agent" is won or lost: a turn ends and the operator faces a
+blank composer at the exact moment the useful moves are obvious.
 
-## Why this also delivers cross-vendor
+Contextual examples: a diff card carries Apply / Revert / Explain; a tool card
+carries Approve / Skip. Cap at one primary plus two secondaries per card, or
+this becomes the "overbuilt IDE shell" anti-reference.
 
-Actions derive from ACP state, which is uniform across conforming agents. A
-state-driven surface gets the same UX on every ACP agent for free, whereas a
-composer-plus-keys surface has to be tuned to each agent's text conventions.
-`PRODUCT.md` principle 3 ("every harness is a peer, over one protocol") is
-delivered by this design rather than merely asserted by it.
+## Stage 4 — The last mile: ship → CI → merge
+
+`crates/ajax-core/src/commands/merge.rs` already has `merge_task_plan` with
+preflight blocking, and CI evidence already arrives via `gh`. None of it is
+reachable from the session, so the journey dead-ends at ship and the operator
+leaves Ajax to merge. Extend the state machine to the end:
+
+| State | Primary | Secondary |
+| --- | --- | --- |
+| `review` ready | Open diff | Ship · Request changes |
+| shipped, CI running | — (watch) | Open PR |
+| **CI green** | **Merge** | Open PR |
+| **CI red** | **Fix it** | Open PR · Show failure |
+
+**Fix it** is the highest-value action in the whole flow: one tap sends the CI
+failure back to the agent as the next prompt. The loop closes without the
+operator typing anything, which is the entire thesis in one button.
 
 ## Task checklist
 
-- [ ] Approve the matrix; adjust labels to operator vocabulary
-- [ ] Wave 1 — action bar driven by session state; `settled` row first
-- [ ] Wave 2 — card-level actions on diff and tool cards
-- [ ] Wave 3 — collapse composer + key strip behind expand; keep Mic promoted
-- [ ] Wave 4 — suggested answers for closed-form questions
+- [ ] Approve the shape; adjust labels to operator vocabulary
+- [ ] Wave 0 — order `buildSessionFeed` chronologically (bug)
+- [ ] Wave 1 — prompt-is-the-task creation; derive title; collapse overrides
+- [ ] Wave 2 — three regions: Now band, collapsed timeline, changed-files chip
+- [ ] Wave 3 — proposed action bar, `settled` row first
+- [ ] Wave 4 — contextual actions on diff and tool cards
+- [ ] Wave 5 — ship → CI → merge states, including **Fix it**
 
 ## Validation
 
 ```bash
-cd crates/ajax-web/web && npm test -- --run src/features/session
+cd crates/ajax-web/web && npm test -- --run src/features/session src/features/task
 npm run verify:slice -- operate
 ```
 
-Per-wave focused vitest first. The real test is manual and on a phone: from a
-locked iPhone, take a settled task to shipped without opening the composer once.
-If that is impossible, the matrix is wrong, not the implementation.
+The real test is manual and on a phone: **start a task by speaking one sentence,
+and take it to merged without typing again.** Every step that forces the keyboard
+open is a defect in this design, not in its implementation.
 
 ## Risks
 
-- The matrix hard-codes an opinion about what operators want next. It is drawn
-  from Ajax's own verbs (`resume`, `review`, `ship`, `repair`, `drop`), so it
-  should be checked against real usage before Wave 2 widens it.
-- Card-level actions can re-create the "overbuilt IDE shell" anti-reference if
-  every card sprouts a button row. Cap it: at most one primary plus two
-  secondaries per card.
-- `settled` actions like Run tests depend on a configured `[[test_commands]]`
-  entry for the repo; degrade to hidden, not broken, when absent.
+- Deriving titles from prompts changes task handles, which appear in worktree
+  paths and tmux session names. Check `start` naming before Wave 1.
+- Collapse-by-default can hide the one line that mattered. Keep expansion sticky
+  per card kind so an operator who always opens diffs stops re-tapping.
+- **Fix it** re-prompts an agent whose session may have settled or been dropped;
+  it must degrade to "open PR" rather than silently failing.
+- Wave 5 assumes `gh` is authenticated in the worktree; README already documents
+  that Ajax skips CI evidence when it is not. Merge must stay hidden, not broken.
