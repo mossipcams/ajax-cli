@@ -458,11 +458,39 @@ is.
 
 ## 5b. The direction, stated
 
-> **Ajax is a mobile-first cockpit for a cross-vendor agent fleet.**
+> **Ajax is a mobile orchestrator for a cross-vendor agent fleet — quick
+> actions direct any agent, from the phone.**
 >
 > You hold several vendor subscriptions because cheap inference is siloed per
 > vendor. Ajax keeps all of it busy on useful work in isolated worktrees, and
-> keeps you able to place, unblock, review and ship from a phone.
+> keeps you able to direct, unblock, review and ship from a phone.
+
+### PR #775 is this direction, already two-thirds built
+
+Read 2026-08-06: `feat(web): Ajax Web Session over Cursor ACP with Operate UX`,
+82 files, +9,624/−264, five completed waves. Mobile-first session UI, ACP bridge
+over `cursor agent acp`, composer quick-action keys, symbol context attachment,
+structured tool/diff cards, ACP → `live_status` bridging.
+
+**ACP supersedes T1.1.** This plan argued the closed `AgentClient` enum was
+existential and proposed a config manifest describing each vendor's quirks. ACP
+is the better answer: an open protocol, so any conforming agent is a peer with
+no per-vendor description at all. It also retires pane scraping —
+`pane_fallback.rs` calls visible-pane text "weak evidence"; structured
+`session/update` events are strong evidence. Keep T1.1's *goal* (no vendor is
+first-class, adding one is not a release); drop its proposed mechanism.
+
+**Open decisions this creates:**
+
+1. The PR exceeds its recorded approval. `ajax-web-session-poc.md` authorises a
+   flag-gated Cursor-only alternate surface with the terminal still default; the
+   PR makes ACP primary under a host preference. That crosses `architecture.md`
+   (no replacing xterm/tmux-first as the default path) and the AGENTS.md Web
+   Cockpit guardrail on composer-as-default. Both require explicit approval.
+2. Cursor-only today. The cross-vendor claim only becomes true when a second
+   ACP agent is wired.
+3. Single-session, not yet fleet-level. Directing *one* agent well is built;
+   directing *many* from one surface is not.
 
 Written into `PRODUCT.md` (2026-08-05). Everything below follows from it.
 
@@ -488,14 +516,22 @@ first-class; expose a public-internet path.
 
 ### Concrete sequence
 
+Reordered 2026-08-06 around PR #775, which is already in flight.
+
 | # | Work | Size | Done when |
 | --- | --- | --- | --- |
-| 1 | Thesis into `PRODUCT.md` + `architecture.md` invariants | S | Done 2026-08-05 |
-| 2 | Define the mobile operator bar | S | Each terminal/mobile item classified loop-blocking or parity-chasing |
-| 3 | Open the agent set | M | A new harness is added by config and appears in Web, CLI and TUI together |
-| 4 | Quota headroom | M | Cockpit answers "which vendor has room right now"; unknown states degrade honestly |
-| 5 | Placement + triage | M | Inbox ranks by dwell/staleness; new task suggests a vendor from quota |
-| 6 | Review depth | L | Diff review flags blast radius and what changed since last look |
+| 1 | Thesis into `PRODUCT.md` | S | Done |
+| 2 | Decide the terminal's new role | S | Approve or refuse ACP-primary; update the two guardrails to match |
+| 3 | Land #775 | — | CI green; manual iOS smoke in the PR's own test plan done |
+| 4 | Second ACP agent | M | A non-Cursor ACP agent works in Ajax Web Session — proves "every harness is a peer" |
+| 5 | Session → fleet | M | Quick actions reach *any* task from one surface, not just the open one |
+| 6 | Quota headroom | M | Session/placement answers "which vendor has room right now" |
+| 7 | Review depth | L | Diff cards flag blast radius and what changed since last look |
+
+Step 2 is a decision, not code, and it gates step 3: #775 cannot honestly merge
+while `architecture.md` still says the terminal is the default path. Steps 4–5
+are the gap between what #775 built (direct *one* agent well) and the stated
+goal (a full mobile orchestrator).
 
 ### On step 2 — cap parity, not capability
 

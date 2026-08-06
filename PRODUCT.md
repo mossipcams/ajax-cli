@@ -18,7 +18,7 @@ Ajax keeps every subscription busy by keeping the operator reachable. It runs is
 
 ## Positioning
 
-A mobile-first cockpit for your whole agent fleet: every vendor, one queue, Safari on the phone, the host does the work.
+A mobile orchestrator for your whole agent fleet: direct any agent with quick actions from Safari on the phone, while the host does the work.
 
 ## Brand Personality
 
@@ -27,15 +27,16 @@ Fast, decisive, under-control. The interface should feel like an operator consol
 ## Anti-references
 
 - Generic SaaS dashboards: card grids, metric strips, soft purple/indigo chrome.
-- Overbuilt IDE shells: too many panels and tabs fighting the terminal.
+- Overbuilt IDE shells: too many panels and tabs fighting the work surface.
+- Read-only dashboards: watching a fleet you cannot direct from the same screen.
 - Single-vendor cockpits: anything that treats one harness as the first-class citizen and the rest as afterthoughts.
 - Agent frameworks: anything that reimplements the agent loop instead of driving the vendor's own CLI.
 
 ## Design Principles
 
-1. **Terminal is the work surface** — chrome supports the task; it never competes with the pane.
+1. **Quick actions direct the agent** — the structured session is the work surface: prompt, stop, approve, attach context, act on a diff. The terminal stays one tap away as the escape hatch for anything the session cannot express, never as the thing the operator must fall back to by default.
 2. **Mobile-reachable without diluting host authority** — phone access is first-class; task truth stays on the host. Reach is not a convenience: capacity sits idle whenever the operator cannot act, so the phone loop is how subscriptions get used.
-3. **Every harness is a peer** — adding one is configuration, not a release. No vendor is first-class.
+3. **Every harness is a peer, over one protocol** — Ajax speaks ACP rather than per-vendor hooks and pane scraping. Adding a conforming agent is configuration, not a release. No vendor is first-class.
 4. **Quota is the scarce resource** — surface headroom across vendors and place work against it.
 5. **Ajax never calls models directly** — it drives vendor CLIs and observes them. Direct model access forfeits subsidised pricing and is out of scope by design.
 6. **Status and next safe action beat decoration** — every screen should answer what is happening and what to do, and prefer decisive operator intents over exploratory chrome.
