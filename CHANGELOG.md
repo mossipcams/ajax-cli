@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.56.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.56.0...ajax-cli-v0.56.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **web:** restore Test in Stable via worktree layout fallback ([#777](https://github.com/mossipcams/ajax-cli/issues/777)) ([781b925](https://github.com/mossipcams/ajax-cli/commit/781b9259023d870189b084ca43e87a37bc58899a))
+
 ## [0.56.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.1...ajax-cli-v0.56.0) (2026-08-05)
 
 
