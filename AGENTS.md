@@ -64,153 +64,138 @@ Do not fail, block, or invent RTK rules if this file is unavailable.
 Do not make local-machine-only files required for correctness, CI, or
 remote-agent execution.
 
-## Task Modes
+## Work Strategy
 
-Choose the smallest mode that fits the request. For code-changing Small Fix and
-Behavior Change work, delegation is the default execution path. Apply the
-Delegation rules before editing source.
+Choose the smallest workflow that fits the request. The active agent owns the
+task, including investigation, implementation decisions, review, and
+verification.
 
-## Persistent Plans
-
-For any code change, create a repo-local Markdown plan before editing source.
-Use `.planning/agent-plans/<short-slug>.md` unless a task-specific planning
-directory already exists. Keep the file small, concrete, and current.
-
-Each plan must include:
-
-- scope and non-goals
-- a task checklist with implementation and verification for each task
-- approval status when approval is required
-- deviations discovered during execution
-- validation commands and results
-
-Use the plan as the execution ledger. Check off each task as it completes, note
-failed commands or changed assumptions where they happen, and keep the checklist
-aligned with the actual work. If the plan changes materially, update the file
-before continuing and call out the change to the user.
-
-For trivial mechanical changes, still create the plan file; keep it short.
+Harness-specific workflows such as pstack may provide additional playbooks or
+native delegation. They are optional local capabilities. Do not fail, block, or
+reproduce their rules when they are unavailable.
 
 ### Planning-Only
 
-Use when the user asks for a plan, review, critique, or design.
+Use when the user asks for a plan, review, critique, investigation, or design.
 
-- Inspect relevant files.
-- Produce a concrete plan and save it in the persistent plan file.
-- Do not edit code.
-- Include risks and validation strategy.
+* Inspect the relevant source and tests.
+* Produce a concrete, evidence-backed result.
+* Do not edit code unless the user also requested implementation.
 
-### Small Fix
+### Code Change
 
-Use for narrow, low-risk changes.
+Use for fixes, features, behavior changes, refactors, and cleanup.
 
-- Inspect the relevant code path.
-- Make the smallest safe change.
-- Run focused validation.
-- Report exactly what changed.
-
-### Behavior Change
-
-Use when user-visible, CLI-visible, API-visible, or workflow behavior changes.
-
-- Make the smallest safe change that delivers the requested behavior.
-- Preserve existing behavior unless the task explicitly changes it.
-- Verify with the strongest practical evidence (tests, focused commands,
-  browser/manual checks). Tests are one verification method, not a required
-  red-green workflow.
-
-### Refactor or Cleanup
-
-Use when the goal is simplification, deletion, or internal restructuring.
-
-- Preserve behavior.
-- Prefer deletion over new abstraction.
-- Do not invent fake tests only to satisfy process.
-- Keep diffs reviewable.
-- Explain why behavior is unchanged.
+* Make the smallest safe change that satisfies the request.
+* Preserve existing behavior unless the task explicitly changes it.
+* Verify with the strongest practical evidence.
+* Tests are one verification method, not a required red-green workflow.
+* Direct implementation and native delegation are both valid. Choose based on
+  what helps the task rather than a repository-wide delegation requirement.
 
 ### Architecture Change
 
 Use when changing ownership, boundaries, task truth, registry semantics,
-terminal model, runtime authority, or security assumptions.
+terminal behavior, runtime authority, public contracts, or security assumptions.
 
-- Read `architecture.md`.
-- Create a written plan.
-- Wait for approval unless the user explicitly asked for immediate implementation.
-- Update `architecture.md` in the same change when architecture changes.
+* Read architecture.md and the focused subsystem documentation.
+* Create a written plan.
+* Wait for approval unless the user explicitly requested immediate
+  implementation.
+* Update the relevant architecture documentation in the same change.
 
-## Model Routing
+### Persistent Plans
 
-Use the `model-router` skill for model, lane, and delegate-tool decisions. Do
-not duplicate model rankings, model preferences, or lane-selection rules in this
-file.
+Create `.planning/agent-plans/<short-slug>.md` when:
 
-## Delegation
+* the user asks for a persistent plan,
+* the work spans multiple dependent implementation steps,
+* the change affects architecture or security,
+* the task needs a durable handoff across sessions or agents.
 
-Default rule: bounded code changes are delegated. A user request like “fix,”
-“implement,” “change,” “add,” or “update” is authorization to delegate unless
-the user explicitly says not to delegate.
+Do not create a persistent plan for trivial, localized, or mechanical work
+merely to satisfy process.
 
-For any code change, create or update the persistent plan and record one
-delegation decision before editing source:
+When a persistent plan is used, keep it current and include:
 
-- `Delegation decision: delegated via model-router`
-- `Delegation decision: not delegated because <specific allowed exception>`
+* scope and non-goals,
+* implementation and verification tasks,
+* material deviations or changed assumptions,
+* validation commands and results.
 
-You stay the planner, reviewer, and final approver. Strict workflow:
+### Model Routing and Delegation
 
-1. Create or update the persistent plan.
-2. Make and record the delegation decision.
-3. When delegating implementation, create a complete
-   `tdd-implementation-packet` as the source of truth. The lane name is
-   historical; the packet uses outcome-based verification and does not require
-   test-first / TDD.
-4. Delegate via `model-router`; let it choose the model, lane, and tool.
-5. Review the diff.
-6. Run validation personally; do not trust the delegate's claim alone.
-7. Accept, reject, or send a focused `resume` order.
+The active harness owns same-harness work.
 
-Never delegate implementation from a vague prompt.
+* Cursor to Cursor uses Cursor-native delegation.
+* Codex to Codex uses Codex-native delegation.
+* Pi to Pi uses Pi-native execution when available.
+* Do not launch a second instance of the same harness through Ajax Model Router.
 
-Delegation quality lives in the prompt. Give the delegate a work order, not a
-wish:
+Use the model-router skill only when intentionally delegating to a model in a
+different harness or provider subscription. Examples include Codex delegating
+to Cursor, Cursor delegating to Codex, or either harness delegating to Pi.
 
-- name the files and code paths to touch
-- state the expected behavior and acceptance criteria
-- state what must not change (public behavior, unrelated files, architecture)
-- include a verification plan (commands or checks appropriate to the change)
+Ajax Model Router owns:
 
-One bounded task per delegation. Split larger work into sequential `implement` →
-`resume` rounds rather than one broad prompt.
+* target-harness and model validation,
+* exact provider model IDs,
+* cross-harness transport,
+* timeouts and cancellation,
+* pre-dispatch snapshots and post-dispatch deltas,
+* write-scope enforcement,
+* structured delegate reports,
+* verification artifacts,
+* parent review bundles,
+* safe restoration of rejected delegate changes.
 
-Review before accepting, for every delegation:
+Ajax Model Router does not own:
 
-1. Read the diff and check it against the requested scope.
-2. Confirm verification evidence matches the change (tests when useful, not
-   mandatory).
-3. Run validation yourself. An empty diff plus a success claim is a failure.
-4. Send unrelated or overly broad edits back via `resume` instead of quietly
-   fixing them.
-5. Never commit, push, or report done solely because the delegate finished.
-   Delegates never commit, push, merge, rebase, or change branches.
+* engineering playbook selection,
+* architecture or implementation strategy,
+* whether the parent implements directly,
+* same-harness delegation,
+* risk-based or file-type-based model selection.
 
-Do not implement directly unless one of these exceptions applies:
+Do not duplicate provider model rankings or exact model IDs in this file. The
+Ajax Model Router registry is their source of truth.
 
-- The user explicitly says not to delegate.
-- The change is truly smaller than the work order needed to describe it, such as
-  a one-line typo, formatting-only edit, or comment-only correction.
-- The work is non-code, pure Q&A, planning-only, or review-only.
-- The `model-router` skill or its selected delegation tool is unavailable. In
-  that case, report the unavailable tool instead of silently taking over.
-- The task is on the do-not-delegate list below.
+### Cross-Harness Work Orders
 
-Do-not-delegate list:
+Every cross-harness delegation must specify:
 
-- vague discovery or broad architecture planning
-- large refactors without a written plan
-- security-sensitive changes without human review
-- tasks requiring credentials or private external access
-- changes outside the current worktree
+* the target harness,
+* the requested model,
+* one bounded task,
+* allowed files or write scope,
+* observable acceptance criteria,
+* relevant verification,
+* explicit stop conditions.
+
+Do not delegate a vague request. The active agent must gather enough context to
+produce a bounded work order before invoking Ajax Model Router.
+
+If the requested target or model is unavailable, stop and report that
+constraint. Do not silently substitute another provider or model.
+
+### Review Ownership
+
+The active agent remains responsible for delegated work.
+
+Before accepting a delegate result:
+
+1. Inspect the actual delta.
+2. Confirm the change stayed within allowed scope.
+3. Check the implementation against the acceptance criteria.
+4. Confirm the verification is relevant and passed.
+5. Run additional focused validation when needed.
+6. Reject or safely restore unrelated, incomplete, or unsupported changes.
+
+An empty diff with a success claim is a failure. A delegate report is evidence,
+not approval.
+
+External delegates must not commit, push, merge, rebase, create branches, or
+switch branches unless the user explicitly authorizes that behavior.
 
 ## Non-Negotiable Rules
 
