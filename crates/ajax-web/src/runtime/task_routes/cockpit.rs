@@ -16,7 +16,7 @@ use axum::{
 };
 use std::time::Instant;
 
-use super::live::{axum_task_stt, axum_task_terminal};
+use super::live::{axum_task_session, axum_task_stt, axum_task_terminal};
 
 pub(crate) async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
 where
@@ -176,6 +176,15 @@ where
             );
         };
         return axum_task_stt(State(state), task_handle.to_string(), req).await;
+    }
+    if req.uri().path().ends_with("/session") {
+        let Some(task_handle) = handle.strip_suffix("/session") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
+        return axum_task_session(State(state), task_handle.to_string(), req).await;
     }
     if handle.ends_with("/snapshot") {
         return json_value_response(

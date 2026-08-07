@@ -11,13 +11,23 @@ Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
-Web Cockpit is a first-class browser operator surface that is dashboard-first,
-with an authenticated raw xterm.js/tmux terminal bridge for existing Ajax task tmux
-sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
-task-operation contracts; neither surface owns task truth. The browser
-experience should lead with task state, required decisions, and next actions,
-then open the embedded raw terminal for the selected task on both mobile and
-desktop. From a selected task, swipe-left navigation opens Diff Review
+Web Cockpit is a first-class browser operator surface. By default it is
+dashboard-first, with an authenticated raw xterm.js/tmux terminal bridge for
+existing Ajax task tmux sessions. Native Cockpit and Web Cockpit consume shared
+Cockpit projections and task-operation contracts; neither surface owns task
+truth. The default experience should lead with task state, required decisions,
+and next actions, then open the embedded raw terminal for the selected task on
+both mobile and desktop.
+
+An optional **orchestration chat** session mode (Settings → Ajax web session
+feature flag) may replace that default presentation for the same contracts:
+pre-execution task definition and post-execution orchestration stay in one
+chat-first session, with structured inline artifacts, contextual quick actions,
+attention banners, and the terminal as an optional escape hatch. See
+[Orchestration chat session](#orchestration-chat-session). When the flag is
+off, dashboard + embedded terminal behavior is unchanged.
+
+From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
@@ -61,6 +71,83 @@ construction, static browser shell serving, TLS wiring, and future stream/WebSoc
 endpoints. It does not own task lifecycle, action policy, registry truth, or
 substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
+
+## Orchestration chat session
+
+Optional presentation mode for Ajax Web. It does not move task truth into the
+browser and does not replace core operate / cockpit / terminal contracts.
+
+### Feature flag
+
+- Settings section **Ajax web session** exposes one client preference
+  (localStorage; default **off**).
+- **Off:** unchanged dashboard + `NewTaskSheet` + `TaskDetail` with embedded
+  raw `TaskTerminal`.
+- **On:** new work and in-task interaction use the orchestration chat session
+  UI described below; the normal terminal remains reachable as an escape hatch.
+  Initial agent support is **Cursor only** (ACP).
+
+### Session modes (same page)
+
+1. **Task starter (before execution)** — operator defines title/intent, repo,
+   constraints, and expected outcome. Agent is locked to Cursor. Starting the
+   task uses the existing start path to create worktree + **tmux session**,
+   but does **not** launch the interactive Cursor CLI into tmux as the chat
+   agent. The starter is a dedicated fresh route (for example `#/session`)
+   whose chrome is the Ajax header only — no bottom nav, no dashboard density.
+2. **Orchestration chat (after execution starts)** — the same session
+   transitions in place (for example `#/session/<handle>`). Do not send the
+   operator to a separate dashboard or terminal-first view as the primary path.
+
+### ACP-primary interaction (required)
+
+Agent conversation for orchestration chat **must** use the Agent Client
+Protocol. PTY paste is not a chat transport.
+
+```text
+Browser session UI
+  -> authenticated task-scoped session WebSocket (JSON chat events)
+  -> ajax-web web_session / ACP host
+  -> Cursor ACP over stdio (initialize, session/new, session/prompt)
+  <- session/update stream (messages, plans, tool calls, permissions)
+  -> inline artifacts + attention banners in the chat thread
+```
+
+- Full chat thread + text composer remain available at all times; chat is the
+  primary surface for questions, corrections, redirection, and follow-ups.
+- Plans, progress, agent activity, blockers, diffs, tests, and previews appear
+  as structured **inline artifacts** driven primarily by ACP `session/update`
+  (with cockpit/task/diff projections as secondary context) — not a parallel
+  browser task model.
+- Contextual **quick actions** (Approve, Reject, Show diff, Run tests, Retry,
+  Try another approach, ACP permission replies, and core-projected `WebAction`s)
+  supplement chat; they must never replace the composer. Task-mutating actions
+  still go through existing operate APIs and confirmation rules; ACP permission
+  replies go through the ACP host.
+- Ask the operator only when judgment, permission, or missing context is
+  required. Attention requests appear as top-of-session banners that
+  scroll/navigate to the relevant message or artifact.
+- Terminal access is optional (sheet/overlay escape hatch attaching to the
+  task tmux session), not the default surface. Switching between chat,
+  artifacts, and terminal must preserve conversation and task context.
+- Mobile-first for iOS Safari / optional Home Screen shell: composer reachable
+  with one hand; avoid dashboard chrome on the session page.
+
+### Ownership
+
+| Concern | Owner |
+| --- | --- |
+| Feature flag preference | Browser localStorage + Settings UI |
+| Chat thread presentation | Browser session UI |
+| ACP conversation (prompt/update/permissions) | `ajax-web` ACP host + Cursor ACP process |
+| Task lifecycle, registry, operate actions, diffs | Core + ajax-web DTOs (unchanged) |
+| Worktree + tmux session creation | Existing start / operate path |
+| Terminal attach | Existing `TaskTerminal` / PTY bridge, escape hatch only |
+
+Ajax orchestrates the Cursor agent through ACP while the flag is on. The
+operator steers intent and decisions through chat; the UI must not become a
+manual multi-agent dashboard. Codex / Claude / Pi ACP are out of scope for
+this MVP.
 
 ## Speech Input Architecture
 

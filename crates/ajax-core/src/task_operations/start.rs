@@ -4,7 +4,7 @@ use crate::{
         self, CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode,
         StartPlanObservation, StartProvisioningStep,
     },
-    models::{StepReceipt, Task, TaskIntent, TaskOperationKind},
+    models::{AgentClient, StepReceipt, Task, TaskIntent, TaskOperationKind},
     registry::Registry,
     task_operations::kernel::execute_external_plan_with_success,
 };
@@ -104,6 +104,32 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
         };
     let mut outputs = external_outputs;
 
+    if request.orchestration_chat && agent_from_request(request) == AgentClient::Cursor {
+        let agent_sent = context
+            .registry
+            .step_receipts_for_task(&task.id)
+            .into_iter()
+            .any(|receipt| {
+                receipt.operation == TaskOperationKind::Start
+                    && receipt.step_key == "agent_command_sent"
+            });
+        if !agent_sent {
+            commands::mark_new_task_provisioning_step_completed(
+                context,
+                &task.id,
+                StartProvisioningStep::AgentCommandSent,
+            )?;
+            context
+                .registry
+                .record_step_receipt(start_step_receipt(
+                    &task,
+                    StartProvisioningStep::AgentCommandSent,
+                ))
+                .map_err(CommandError::Registry)?;
+            checkpoint(context)?;
+        }
+    }
+
     commands::mark_task_opened(context, &task.qualified_handle())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
     outputs.extend(crate::task_operations::kernel::execute_external_plan(
@@ -113,6 +139,16 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
     let task = context.registry.get_task(&task.id).cloned().unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+fn agent_from_request(request: &NewTaskRequest) -> AgentClient {
+    match request.agent.to_ascii_lowercase().as_str() {
+        "claude" => AgentClient::Claude,
+        "codex" => AgentClient::Codex,
+        "cursor" => AgentClient::Cursor,
+        "pi" => AgentClient::Pi,
+        _ => AgentClient::Other,
+    }
 }
 
 fn start_step_receipt(task: &Task, step: StartProvisioningStep) -> StepReceipt {

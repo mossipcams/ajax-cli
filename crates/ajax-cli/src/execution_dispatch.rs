@@ -566,6 +566,7 @@ mod tests {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
+            orchestration_chat: false,
         };
 
         let observation = start_plan_observation(&context, &request);

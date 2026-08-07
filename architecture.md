@@ -155,9 +155,22 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   separate typed inputs.
 - Web Cockpit targets normal iOS Safari without requiring Home Screen install
   for core Cockpit use, without classic PWA packaging (manifest, icons, service
-  worker), without a service-worker offline mutation model, and without
-  replacing the raw xterm/tmux-first terminal model as the default path.
-  Optional Home Screen install enables Declarative Web Push only.
+  worker), and without a service-worker offline mutation model. Optional Home
+  Screen install enables Declarative Web Push only.
+- The **default** Web Cockpit path remains dashboard + raw xterm/tmux terminal
+  (`TaskDetail` embeds `TaskTerminal`). An optional **orchestration chat**
+  session mode may replace that presentation when enabled under Settings →
+  Ajax web session; when that flag is off, behavior is unchanged. Chat mode
+  is presentation only over core/backend contracts: composer + structured
+  artifacts are primary, terminal is an optional escape hatch, and the browser
+  must never become a second registry, lifecycle owner, or task source of truth.
+- When orchestration chat is on, **agent conversation must use ACP** (Agent
+  Client Protocol). Composer prompts and agent updates travel
+  `session/prompt` / `session/update` through an `ajax-web` ACP host — never
+  through PTY paste or a terminal composer. Initial MVP is **Cursor only**.
+  Task start still creates the Ajax worktree and **tmux session**; the
+  interactive Cursor CLI is not the chat path. Terminal attach remains the
+  escape hatch to that tmux session.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

@@ -499,6 +499,234 @@ header .bar h1 {
   overflow-wrap: anywhere;
 }
 
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-body);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* SESSION ORCHESTRATION CHAT ---------------------------------------------- */
+.session-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  padding: 0 16px 16px;
+  gap: 12px;
+}
+
+.session-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.session-header .back {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--text-body);
+  padding: 8px 0;
+}
+
+.session-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--text-title);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.session-starter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-starter-form label,
+.session-starter-form .field-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.session-starter-form input,
+.session-starter-form select,
+.session-starter-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-body);
+}
+
+.session-starter-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.session-error,
+.session-composer-hint {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--danger);
+}
+
+.session-chat {
+  position: relative;
+  padding-bottom: 0;
+}
+
+.session-attention-banner {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 600;
+  text-align: left;
+}
+
+.session-thread {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+
+.session-message {
+  max-width: 92%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-body);
+  line-height: 1.45;
+}
+
+.session-message-user {
+  align-self: flex-end;
+  background: var(--accent-deep);
+  border: 1px solid var(--accent);
+}
+
+.session-message-system {
+  align-self: flex-start;
+  background: var(--paper-tint);
+  border: 1px solid var(--rule);
+}
+
+.session-artifact {
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+}
+
+.session-artifact-label {
+  margin: 0 0 8px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.session-artifact-meta {
+  margin: 8px 0 0;
+  font-size: var(--text-label);
+  color: var(--ink-soft);
+}
+
+.session-artifact-warning {
+  margin: 0 0 8px;
+  color: var(--danger);
+}
+
+.session-artifact ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.session-diff-action {
+  margin-top: 10px;
+}
+
+.session-composer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, transparent, var(--paper) 24%);
+  border-top: 1px solid var(--rule);
+}
+
+.session-composer textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-body);
+  resize: vertical;
+}
+
+.session-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-terminal-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(88vh, var(--app-height, 100dvh));
+  padding: 16px;
+  background: var(--paper);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.session-terminal-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) .session-page {
+  flex: 1 1 auto;
+}
+
 /* PAGE LEAD / UPDATE BANNER ----------------------------------------------- */
 .page-lead {
   width: min(var(--shell), 100%);

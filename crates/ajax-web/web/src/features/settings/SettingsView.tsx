@@ -14,6 +14,10 @@ import {
   isTelemetryInitialized,
   readAppVersion,
 } from "@/shared/lib/telemetry";
+import {
+  readOrchestrationChatEnabled,
+  writeOrchestrationChatEnabled,
+} from "@/features/session/sessionMode";
 import { Button } from "@/shared/ui/button";
 import {
   runPushNotificationTest,
@@ -44,6 +48,7 @@ export default function SettingsView({
   const [pushSubscriptionStatus, setPushSubscriptionStatus] =
     useState<PushSubscriptionStatus>("disabled");
   const [testingPush, setTestingPush] = useState(false);
+  const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatEnabled);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function refreshPushSubscriptionStatus() {
@@ -177,6 +182,28 @@ export default function SettingsView({
           Back
         </Button>
         <h2 id="settings-heading">Settings</h2>
+      </div>
+
+      <div className="settings-section" data-testid="ajax-web-session-settings">
+        <h3>Ajax web session</h3>
+        <p className="settings-note">
+          Chat-first orchestration session with inline artifacts. Terminal remains available as an
+          escape hatch.
+        </p>
+        <label className="settings-toggle" htmlFor="orchestration-chat-toggle">
+          <input
+            id="orchestration-chat-toggle"
+            data-testid="orchestration-chat-toggle"
+            type="checkbox"
+            checked={orchestrationChat}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              setOrchestrationChat(enabled);
+              writeOrchestrationChatEnabled(enabled);
+            }}
+          />
+          Orchestration chat session
+        </label>
       </div>
 
       <div className="settings-section" data-testid="dev-settings">

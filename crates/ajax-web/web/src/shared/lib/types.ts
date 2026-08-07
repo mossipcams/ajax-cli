@@ -17,7 +17,7 @@ export type ConnectionState =
   | "stale session";
 
 /** Hash-route kinds. */
-export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings";
+export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
 
 /** Read-only Diff Review projection (mirrors ajax-web `diff_review` DTOs). */
 export interface PullRequestView {
@@ -186,6 +186,7 @@ export interface StartTaskRequest {
   title: string;
   agent: string;
   request_id: string;
+  orchestration_chat?: boolean;
 }
 
 export interface OperationRequest {

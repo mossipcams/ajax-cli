@@ -976,4 +976,24 @@ describe("App shell", () => {
     await screen.findByText("Fix login");
     expect(detailCalls).toBe(callsBeforeRetry + 1);
   });
+
+  it("routes New to session starter and hides bottom nav when orchestration chat is on", async () => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByTestId("outlet-dashboard");
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    expect(await screen.findByTestId("session-starter")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Mobile navigation" })).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#/session");
+  });
 });
