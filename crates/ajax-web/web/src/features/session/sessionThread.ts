@@ -80,6 +80,22 @@ export const initialSessionState: SessionState = {
   seq: 0,
 };
 
+/** Sized to fit the head's two-line clamp at phone width. Longer than this and
+ * the clamp hides the newest words again — which is the defect this exists to
+ * prevent, so the bound and the clamp must stay in agreement. */
+const THOUGHT_TAIL_CHARS = 100;
+
+/** The head answers "what is the agent doing *now*", so reasoning keeps its
+ * tail. Accumulating the whole block and clamping to two lines in CSS showed
+ * the opening words frozen for the rest of the turn — and grew without bound. */
+export function thoughtTail(text: string): string {
+  const collapsed = text.replace(/\s+/g, " ");
+  if (collapsed.length <= THOUGHT_TAIL_CHARS) return collapsed;
+  const tail = collapsed.slice(-THOUGHT_TAIL_CHARS);
+  const boundary = tail.indexOf(" ");
+  return `…${boundary === -1 ? tail : tail.slice(boundary + 1)}`;
+}
+
 const TOOL_STATUSES: ToolStatus[] = ["pending", "in_progress", "completed", "failed"];
 
 function toolStatus(raw: string): ToolStatus {
@@ -217,7 +233,11 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
     case "message": {
       if (!event.text) return state;
       if (event.role === "thought") {
-        return { ...state, busy: true, thought: (state.thought ?? "") + event.text };
+        return {
+          ...state,
+          busy: true,
+          thought: thoughtTail((state.thought ?? "") + event.text),
+        };
       }
       if (event.role === "agent") {
         return { ...appendProse(state, "agent", event.text), busy: true, thought: null };

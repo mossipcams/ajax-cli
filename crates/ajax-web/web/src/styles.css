@@ -566,6 +566,14 @@ header .bar h1 {
   min-height: 44px;
 }
 
+/* Keyboard focus follows the shell convention: a colour or border shift, never
+   a glow ring (DESIGN.md §5 Buttons). */
+.session-header-back:hover,
+.session-header-back:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
 .session-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -657,9 +665,12 @@ header .bar h1 {
 }
 
 .session-head-details:hover,
-.session-head-stop:hover {
+.session-head-details:focus-visible,
+.session-head-stop:hover,
+.session-head-stop:focus-visible {
   color: var(--ink);
   border-color: var(--ink-soft);
+  outline: none;
 }
 
 .status-dot.is-live {
@@ -690,8 +701,11 @@ header .bar h1 {
   line-height: 1.45;
   color: var(--ink-faint);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  /* One line of headroom over the tail bound in sessionThread.ts: real
+     reasoning fits two lines, and wider glyphs get a third rather than hiding
+     the newest words, which is the whole point of keeping the tail. */
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1015,6 +1029,12 @@ header .bar h1 {
   cursor: pointer;
 }
 
+.session-jump:hover,
+.session-jump:focus-visible {
+  border-color: var(--ink-soft);
+  outline: none;
+}
+
 /* Composer ---------------------------------------------------------------- */
 .session-composer {
   position: sticky;
@@ -1039,7 +1059,9 @@ header .bar h1 {
   max-height: 30vh;
   padding: 11px 15px;
   border: 1px solid var(--rule);
-  border-radius: 999px;
+  /* Documented scale, not a half-height pill: the composer grows to several
+     rows, and a full pill radius turns a tall box into a lozenge. */
+  border-radius: var(--radius-lg);
   background: var(--paper-raised);
   color: var(--ink);
   font-size: 16px;

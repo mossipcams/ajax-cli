@@ -239,3 +239,37 @@ test("decision with typed draft screenshot", async ({ page }, testInfo) => {
     fullPage: false,
   });
 });
+
+test("polish: long reasoning keeps its tail and the composer grows", async ({ page }, testInfo) => {
+  await bootSession(page, [
+    { delay: 20, payload: { type: "tool_call", callId: "c1", title: "Search the operate slice for every start_task caller", kind: "search", status: "in_progress", locations: ["/repo/crates/ajax-web/src/slices/operate/mod.rs"] } },
+  ]);
+
+  // Reasoning streams for a long time; the head must show the newest words.
+  await page.evaluate(() => {
+    const emit = (globalThis as unknown as { __ajaxEmit: (p: unknown) => void }).__ajaxEmit;
+    for (let i = 0; i < 120; i += 1) {
+      emit({ type: "message", role: "thought", text: `considering branch ${i} of the guard ordering ` });
+    }
+    emit({ type: "message", role: "thought", text: "SETTLED ON REORDERING THE GUARDS" });
+  });
+  // In the DOM *and* inside the clamped box — the newest words must be the
+  // visible ones, not merely present.
+  const thought = page.getByTestId("session-thought");
+  await expect(thought).toContainText("SETTLED ON REORDERING THE GUARDS");
+  const clipped = await thought.evaluate((n) => n.scrollHeight > n.clientHeight + 1);
+  expect(clipped).toBe(false);
+
+  // A multi-line draft must grow the box rather than scroll inside one row.
+  const composer = page.getByLabel("Message");
+  const before = (await composer.boundingBox())!.height;
+  await composer.fill("first line\nsecond line\nthird line\nfourth line");
+  const after = (await composer.boundingBox())!.height;
+  expect(after).toBeGreaterThan(before);
+
+  await page.waitForTimeout(300);
+  await page.screenshot({
+    path: shotPath(testInfo, `session-polish-${testInfo.project.name}.png`),
+    fullPage: false,
+  });
+});

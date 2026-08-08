@@ -6,6 +6,7 @@ import {
   initialSessionState,
   sessionReducer,
   toolCallCount,
+  thoughtTail,
   type SessionState,
 } from "./sessionThread";
 
@@ -170,5 +171,35 @@ describe("explainOpenFailure", () => {
 
   it("still says something actionable with no detail at all", () => {
     expect(explainOpenFailure(null)).toMatch(/worktree/i);
+  });
+});
+
+describe("thoughtTail", () => {
+  it("keeps short reasoning verbatim", () => {
+    expect(thoughtTail("Checking the router")).toBe("Checking the router");
+  });
+
+  it("keeps the tail, not the opening, once reasoning runs long", () => {
+    const long = "word ".repeat(200) + "the actual latest thought";
+    const tail = thoughtTail(long);
+    expect(tail).toContain("the actual latest thought");
+    expect(tail.startsWith("…")).toBe(true);
+    expect(tail.length).toBeLessThan(200);
+  });
+
+  it("collapses newlines so the head stays two readable lines", () => {
+    expect(thoughtTail("one\n\n  two")).toBe("one two");
+  });
+
+  it("bounds growth across a whole streaming turn", () => {
+    let state = initialSessionState;
+    for (let i = 0; i < 400; i += 1) {
+      state = sessionReducer(state, {
+        type: "event",
+        event: { type: "message", role: "thought", text: `chunk ${i} ` },
+      });
+    }
+    expect((state.thought ?? "").length).toBeLessThan(200);
+    expect(state.thought).toContain("chunk 399");
   });
 });

@@ -96,6 +96,14 @@ interface Props {
   onRetry?: () => void;
 }
 
+/** Grow the composer to its content. CSS `max-height` caps it, after which the
+ * textarea scrolls internally — a one-row box that scrolls is unusable on a
+ * phone, which is where this surface lives. */
+function autoGrow(node: HTMLTextAreaElement) {
+  node.style.height = "auto";
+  node.style.height = `${node.scrollHeight}px`;
+}
+
 export function formatSessionBrief(context: SessionStarterContext): string {
   const lines = [context.title.trim()];
   if (context.constraints.trim()) lines.push(`\nConstraints: ${context.constraints.trim()}`);
@@ -119,6 +127,7 @@ export default function SessionChat({
 }: Props) {
   const composerId = useId();
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
   // The starter brief seeds the ACP session exactly once. Holding it in a ref
   // keeps it out of the transport effect's deps — when it was a dependency, a
@@ -266,6 +275,9 @@ export default function SessionChat({
     transportRef.current?.sendPrompt(text);
     dispatch({ type: "prompt", text });
     setDraft("");
+    if (composerRef.current) {
+      composerRef.current.style.height = "";
+    }
     scrollToLive();
   }
 
@@ -394,8 +406,12 @@ export default function SessionChat({
             !connected ? "Reconnecting…" : state.busy ? "Steer the agent…" : "Message…"
           }
           aria-label="Message"
+          ref={composerRef}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            autoGrow(e.currentTarget);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
