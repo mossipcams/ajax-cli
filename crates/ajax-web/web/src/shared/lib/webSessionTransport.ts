@@ -2,6 +2,11 @@
 
 const OPEN_READY_STATE = 1;
 
+/** Emitted when the upgrade is refused. The browser cannot expose the HTTP
+ * status or body of a failed WebSocket handshake, so this string carries no
+ * reason — callers recover one from task truth. */
+export const OPEN_FAILURE = "Session WebSocket failed to open";
+
 type SocketListener = (event: Event | MessageEvent) => void;
 
 export interface WebSessionSocket {
@@ -172,7 +177,7 @@ export function connectWebSessionTransport(
   socket.addEventListener("close", closeListener);
   socket.addEventListener("error", closeListener);
   void waitForSocketOpen(socket).catch(() => {
-    callbacks.onEvent({ type: "error", message: "Session WebSocket failed to open" });
+    callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });
 
   return {

@@ -7,6 +7,24 @@
 // and they are only cheap to prove in a reducer test.
 
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
+export { OPEN_FAILURE } from "@/shared/lib/webSessionTransport";
+
+/** `prepare_task_session` refuses the upgrade when the task is not a Cursor
+ * orchestration task or its worktree is gone. Both facts are already in the
+ * detail payload, so no extra request is needed to say which one it was. */
+export function explainOpenFailure(
+  detail: { agent?: string | null; status_explanation?: string | null } | null,
+): string {
+  const agent = detail?.agent?.trim();
+  if (agent && agent.toLowerCase() !== "cursor") {
+    return `Orchestration chat needs a Cursor task — this one runs ${agent}. Open it from the task view instead.`;
+  }
+  const explanation = detail?.status_explanation?.trim();
+  if (explanation) {
+    return `Can't start the session: ${explanation}`;
+  }
+  return "Can't start the session. Check the task's worktree still exists.";
+}
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 

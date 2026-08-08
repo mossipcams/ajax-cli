@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 import {
   activeTool,
+  explainOpenFailure,
   initialSessionState,
   sessionReducer,
   toolCallCount,
@@ -151,5 +152,23 @@ describe("sessionReducer", () => {
     expect(empty.entries).toHaveLength(0);
     const kept = run([{ type: "artifact", kind: "x", title: "Modes", body: "{}" }]);
     expect(kept.entries[0]).toMatchObject({ kind: "note", text: "Modes", body: "{}" });
+  });
+});
+
+describe("explainOpenFailure", () => {
+  it("names the agent when the task cannot host an orchestration session", () => {
+    const message = explainOpenFailure({ agent: "Claude", status_explanation: "Running" });
+    expect(message).toContain("Cursor");
+    expect(message).toContain("Claude");
+  });
+
+  it("passes through the server's own explanation for a Cursor task", () => {
+    expect(
+      explainOpenFailure({ agent: "Cursor", status_explanation: "Worktree missing" }),
+    ).toContain("Worktree missing");
+  });
+
+  it("still says something actionable with no detail at all", () => {
+    expect(explainOpenFailure(null)).toMatch(/worktree/i);
   });
 });

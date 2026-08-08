@@ -56,6 +56,8 @@ import {
   initialSessionState,
   sessionReducer,
   toolCallCount,
+  explainOpenFailure,
+  OPEN_FAILURE,
   type ThreadEntry,
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
@@ -67,6 +69,8 @@ const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 const PIN_THRESHOLD_PX = 48;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 8000;
+/** Each attempt spawns an agent process host-side; never retry unbounded. */
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 interface Props {
   handle: string | null;
@@ -121,6 +125,8 @@ export default function SessionChat({
   // new object identity tore down the socket and killed the ACP child process
   // mid-turn.
   const starterRef = useRef(starterContext);
+  // Read inside the transport effect without making it a dependency.
+  const detailRef = useRef(detail);
   const seededRef = useRef(false);
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ entries: ThreadEntry[]; tools: number }>({
@@ -137,6 +143,7 @@ export default function SessionChat({
   const [terminalOpen, setTerminalOpen] = useState(false);
 
   starterRef.current = starterContext;
+  detailRef.current = detail;
 
   const scrollToLive = useCallback(() => {
     const node = threadRef.current;
@@ -158,13 +165,36 @@ export default function SessionChat({
           attempt = 0;
           setConnected(true);
         },
-        onEvent: (event) => dispatch({ type: "event", event }),
+        onEvent: (event) => {
+          // The socket cannot report why an upgrade was refused, so swap its
+          // blank failure for the reason the task detail already carries.
+          if (event.type === "error" && event.message === OPEN_FAILURE) {
+            dispatch({
+              type: "event",
+              event: { type: "error", message: explainOpenFailure(detailRef.current) },
+            });
+            return;
+          }
+          dispatch({ type: "event", event });
+        },
         onClosed: () => {
           setConnected(false);
           if (disposed) return;
           // The socket owns a holder count on the ACP process; a dropped
           // connection must come back on its own or the session is stranded.
+          // Bounded, though: every attempt spawns a fresh agent process on the
+          // host, so a server-side failure must not retry forever.
           attempt += 1;
+          if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            dispatch({
+              type: "event",
+              event: {
+                type: "error",
+                message: "Lost the session connection. Reopen the task to try again.",
+              },
+            });
+            return;
+          }
           retryTimer = setTimeout(
             open,
             Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS),

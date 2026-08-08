@@ -121,6 +121,9 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
                 .map(str::to_string);
             vec![SessionServerEvent::Status { state, detail }]
         }
+        // Capability announcements, not conversation: Cursor emits these on
+        // every session/new and they carry nothing an operator can act on.
+        "available_commands_update" | "current_mode_update" => Vec::new(),
         other if !other.is_empty() => vec![SessionServerEvent::Artifact {
             kind: other.to_string(),
             title: None,
@@ -462,13 +465,28 @@ mod tests {
     #[test]
     fn unknown_update_body_is_pretty_printed_not_a_single_line_dump() {
         let update = serde_json::json!({
-            "update": { "sessionUpdate": "available_commands_update", "commands": ["a"] }
+            "update": { "sessionUpdate": "some_future_update", "detail": ["a"] }
         });
         let events = map_acp_session_update(&update);
         let SessionServerEvent::Artifact { body, .. } = &events[0] else {
             panic!("expected artifact, got {events:?}");
         };
         assert!(body.as_deref().unwrap_or_default().contains('\n'));
+    }
+
+    /// Cursor emits these on every `session/new`; they are capability
+    /// announcements, not conversation, and must not reach the transcript.
+    #[test]
+    fn capability_announcements_are_dropped() {
+        for kind in ["available_commands_update", "current_mode_update"] {
+            let update = serde_json::json!({
+                "update": { "sessionUpdate": kind, "availableCommands": [] }
+            });
+            assert!(
+                map_acp_session_update(&update).is_empty(),
+                "{kind} should not reach the transcript"
+            );
+        }
     }
 
     #[test]

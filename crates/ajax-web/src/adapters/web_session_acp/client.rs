@@ -128,10 +128,7 @@ impl AcpStdioClient {
     }
 
     fn session_new(&mut self, worktree_path: &Path) -> Result<String, String> {
-        let response = self.call(
-            "session/new",
-            json!({ "cwd": worktree_path.display().to_string() }),
-        )?;
+        let response = self.call("session/new", session_new_params(worktree_path))?;
         response
             .get("sessionId")
             .and_then(Value::as_str)
@@ -204,6 +201,16 @@ fn write_line(stdin: &mut ChildStdin, payload: &Value) -> Result<(), String> {
     stdin
         .write_all(line.as_bytes())
         .map_err(|error| format!("acp stdin write failed: {error}"))
+}
+
+/// `mcpServers` is required and must be an array. Omitting it fails Cursor's
+/// schema validation, which it surfaces only as JSON-RPC "Internal error" —
+/// the orchestration session could never start without this key.
+fn session_new_params(worktree_path: &Path) -> Value {
+    json!({
+        "cwd": worktree_path.display().to_string(),
+        "mcpServers": [],
+    })
 }
 
 pub(crate) fn cursor_acp_program_candidates() -> [(&'static str, &'static [&'static str]); 2] {
@@ -291,6 +298,22 @@ fn read_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Cursor validates `session/new` params and rejects a missing
+    /// `mcpServers` with an opaque JSON-RPC "Internal error", so the session
+    /// could never start. Keep the key present and an array.
+    #[test]
+    fn session_new_params_carry_mcp_servers_array() {
+        let params = session_new_params(Path::new("/repo/worktree"));
+        assert_eq!(
+            params.get("cwd").and_then(Value::as_str),
+            Some("/repo/worktree")
+        );
+        assert_eq!(
+            params.get("mcpServers").and_then(Value::as_array),
+            Some(&vec![])
+        );
+    }
 
     #[test]
     fn cursor_acp_command_prefers_agent_binary() {
