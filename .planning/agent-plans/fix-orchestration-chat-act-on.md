@@ -29,15 +29,15 @@ Ship the four Act-on items from the chat UX critique, sequenced into verifiable 
 - [x] Unit 2: one brief including title
 - [x] Unit 3: coalesce + artifact cards; Cancel button
 - [x] Focused verify: `cargo test -p ajax-web`, web session tests
-- [ ] Open/update PR (out of scope — no commit/push)
+- [x] Open/update PR 779
 
 ## Deviations
 
 - Did not add `clientMessageId` / `PromptAccepted` wire events (deferred per synthesis).
-- Did not add dedicated `begin_prompt` integration test against live ACP; hub `HolderCount` unit test covers refcount semantics.
-- `npm ci` required before `npm run web:test` in this worktree (vitest not on PATH until install).
+- Hub refcount helps concurrent holders; single-tab iOS reconnect still drops at holders==0 (grace deferred).
+- `npm ci` was required once in this worktree before vitest was available.
 
 ## Validation
 
-- `cargo test -p ajax-web --lib` — **258 passed**
-- `npm run web:test -- --run src/features/session/` — **12 passed** (2 files)
+- Parent: `cargo test -p ajax-web --lib` — 258 passed
+- Parent: `npm run web:test -- --run src/features/session/` — 12 passed
