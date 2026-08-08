@@ -348,8 +348,9 @@ export default function App() {
   }, [route.kind, sheetOpen]);
 
   useEffect(() => {
-    if (route.kind !== "session" || route.handle) return;
-    setSessionStarterContext(null);
+    if (route.kind !== "session" || !route.handle) {
+      setSessionStarterContext(null);
+    }
   }, [route.kind, route.handle]);
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent, screen, waitFor } from "@testing-library/react";
+import { render, fireEvent, screen, waitFor, act } from "@testing-library/react";
 import SessionStarter from "./SessionStarter";
 import SessionChat from "./SessionChat";
 import * as api from "@/shared/lib/api";
@@ -42,6 +42,7 @@ describe("SessionStarter", () => {
       }),
     );
     expect(onStarted).toHaveBeenCalledWith("web/fix-login", {
+      title: "Fix login",
       constraints: "No API changes",
       expectedOutcome: "Green tests",
     });
@@ -50,6 +51,8 @@ describe("SessionStarter", () => {
 
 describe("SessionChat", () => {
   beforeEach(() => {
+    transport.sendPrompt.mockClear();
+    transport.sendCancel.mockClear();
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
       (_handle, callbacks) => {
         callbacks.onReady();
@@ -94,19 +97,90 @@ describe("SessionChat", () => {
     );
   });
 
-  it("seeds starter constraints via ACP after ready", async () => {
+  it("sends one starter brief via ACP after ready", async () => {
     render(
       <SessionChat
         handle="web/fix-login"
         detail={taskDetail as BrowserTaskDetail}
         detailStatus="ready"
-        starterContext={{ constraints: "No API changes", expectedOutcome: "Green tests" }}
+        starterContext={{
+          title: "Fix login",
+          constraints: "No API changes",
+          expectedOutcome: "Green tests",
+        }}
       />,
     );
-    await waitFor(() =>
-      expect(transport.sendPrompt).toHaveBeenCalledWith("Constraints: No API changes"),
+    await waitFor(() => expect(transport.sendPrompt).toHaveBeenCalledOnce());
+    expect(transport.sendPrompt).toHaveBeenCalledWith(
+      "Task: Fix login\n\nConstraints:\nNo API changes\n\nExpected outcome:\nGreen tests",
     );
-    expect(transport.sendPrompt).toHaveBeenCalledWith("Expected outcome: Green tests");
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("Task: Fix login");
+  });
+
+  it("coalesces consecutive agent message chunks", () => {
+    let onEvent: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
+    vi.mocked(webSessionTransport.connectWebSessionTransport).mockImplementation(
+      (_handle, callbacks) => {
+        callbacks.onReady();
+        onEvent = callbacks.onEvent;
+        return transport;
+      },
+    );
+    render(
+      <SessionChat
+        handle="web/fix-login"
+        detail={taskDetail as BrowserTaskDetail}
+        detailStatus="ready"
+      />,
+    );
+    act(() => {
+      onEvent?.({ type: "message", role: "agent", text: "Hello " });
+      onEvent?.({ type: "message", role: "agent", text: "world" });
+    });
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Hello world");
+  });
+
+  it("renders transport artifacts as structured cards", () => {
+    let onEvent: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
+    vi.mocked(webSessionTransport.connectWebSessionTransport).mockImplementation(
+      (_handle, callbacks) => {
+        callbacks.onReady();
+        onEvent = callbacks.onEvent;
+        return transport;
+      },
+    );
+    render(
+      <SessionChat
+        handle="web/fix-login"
+        detail={taskDetail as BrowserTaskDetail}
+        detailStatus="ready"
+      />,
+    );
+    act(() => {
+      onEvent?.({
+        type: "artifact",
+        kind: "plan",
+        title: "Implementation plan",
+        body: "Step one",
+      });
+    });
+    expect(screen.getByTestId("session-transport-artifact-plan")).toHaveTextContent(
+      "Implementation plan",
+    );
+    expect(screen.getByTestId("session-transport-artifact-plan")).toHaveTextContent("Step one");
+    expect(screen.queryByText(/Artifact \(plan\):/)).not.toBeInTheDocument();
+  });
+
+  it("sends cancel when Cancel is clicked", () => {
+    render(
+      <SessionChat
+        handle="web/fix-login"
+        detail={taskDetail as BrowserTaskDetail}
+        detailStatus="ready"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(transport.sendCancel).toHaveBeenCalledOnce();
   });
 
   it("hides the attention banner when the task is running", () => {

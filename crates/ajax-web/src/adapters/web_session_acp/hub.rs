@@ -11,8 +11,38 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+struct HolderCount(usize);
+
+impl HolderCount {
+    fn acquire(&mut self) {
+        self.0 += 1;
+    }
+
+    fn release(&mut self) -> bool {
+        if self.0 > 0 {
+            self.0 -= 1;
+        }
+        self.0 == 0
+    }
+}
+
+struct SessionSlot {
+    client: Arc<Mutex<AcpStdioClient>>,
+    holders: HolderCount,
+}
+
+impl SessionSlot {
+    fn add_holder(&mut self) {
+        self.holders.acquire();
+    }
+
+    fn release_holder(&mut self) -> bool {
+        self.holders.release()
+    }
+}
+
 pub struct WebSessionHub {
-    sessions: Mutex<HashMap<String, Arc<Mutex<AcpStdioClient>>>>,
+    sessions: Mutex<HashMap<String, SessionSlot>>,
 }
 
 impl Default for WebSessionHub {
@@ -34,16 +64,29 @@ impl WebSessionHub {
         worktree_path: &Path,
     ) -> Result<Arc<Mutex<AcpStdioClient>>, String> {
         let mut sessions = self.sessions.lock().unwrap();
-        if let Some(client) = sessions.get(qualified_handle) {
-            return Ok(Arc::clone(client));
+        if let Some(slot) = sessions.get_mut(qualified_handle) {
+            slot.add_holder();
+            return Ok(Arc::clone(&slot.client));
         }
         let client = Arc::new(Mutex::new(AcpStdioClient::spawn(worktree_path)?));
-        sessions.insert(qualified_handle.to_string(), Arc::clone(&client));
+        sessions.insert(
+            qualified_handle.to_string(),
+            SessionSlot {
+                client: Arc::clone(&client),
+                holders: HolderCount(1),
+            },
+        );
         Ok(client)
     }
 
     pub fn release(&self, handle: &str) {
-        self.sessions.lock().unwrap().remove(handle);
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(slot) = sessions.get_mut(handle) else {
+            return;
+        };
+        if slot.release_holder() {
+            sessions.remove(handle);
+        }
     }
 }
 
@@ -67,6 +110,11 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {
                         }
                     }
                     events.push(mapped);
+                }
+            }
+            AcpClientEvent::RequestFinished { result, .. } => {
+                if let Err(message) = result {
+                    events.push(SessionServerEvent::Error { message });
                 }
             }
             AcpClientEvent::Error(message) => {
@@ -94,10 +142,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hub_release_drops_cached_session() {
+    fn hub_release_is_noop_when_handle_missing() {
         let hub = WebSessionHub::new();
         hub.release("web/fix-login");
         assert!(hub.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn holder_count_retains_across_one_release_when_two_acquires() {
+        let mut holders = HolderCount(2);
+        assert!(!holders.release());
+        assert!(holders.release());
     }
 
     #[test]

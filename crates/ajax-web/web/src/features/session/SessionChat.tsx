@@ -27,11 +27,20 @@ import type { SessionStarterContext } from "./SessionStarter";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
-export interface SessionThreadMessage {
-  id: string;
-  role: "user" | "agent" | "system";
-  text: string;
-}
+export type SessionThreadItem =
+  | {
+      kind: "message";
+      id: string;
+      role: "user" | "agent" | "system";
+      text: string;
+    }
+  | {
+      kind: "artifact";
+      id: string;
+      artifactKind: string;
+      title?: string;
+      body?: string;
+    };
 
 type AttentionTarget = "status" | "activity" | "annotation";
 
@@ -63,30 +72,91 @@ function nextMessageId(): string {
   return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function formatStarterMessages(context: SessionStarterContext): SessionThreadMessage[] {
-  const messages: SessionThreadMessage[] = [];
-  if (context.constraints) {
-    messages.push({ id: nextMessageId(), role: "user", text: `Constraints: ${context.constraints}` });
-  }
-  if (context.expectedOutcome) {
-    messages.push({
-      id: nextMessageId(),
-      role: "user",
-      text: `Expected outcome: ${context.expectedOutcome}`,
-    });
-  }
-  return messages;
+function formatSessionBrief(context: SessionStarterContext): string {
+  const constraints = context.constraints.trim() || "None specified.";
+  const expectedOutcome = context.expectedOutcome.trim() || "Not specified.";
+  return `Task: ${context.title.trim()}\n\nConstraints:\n${constraints}\n\nExpected outcome:\n${expectedOutcome}`;
 }
 
-function starterPromptParts(context: SessionStarterContext): string[] {
-  const parts: string[] = [];
-  if (context.constraints.trim()) {
-    parts.push(`Constraints: ${context.constraints.trim()}`);
+function starterBriefItem(context: SessionStarterContext): SessionThreadItem {
+  return {
+    kind: "message",
+    id: nextMessageId(),
+    role: "user",
+    text: formatSessionBrief(context),
+  };
+}
+
+function coalesceMessage(
+  items: SessionThreadItem[],
+  role: "user" | "agent" | "system",
+  text: string,
+): SessionThreadItem[] {
+  const last = items[items.length - 1];
+  if (last?.kind === "message" && last.role === role) {
+    return [...items.slice(0, -1), { ...last, text: last.text + text }];
   }
-  if (context.expectedOutcome.trim()) {
-    parts.push(`Expected outcome: ${context.expectedOutcome.trim()}`);
+  return [...items, { kind: "message", id: nextMessageId(), role, text }];
+}
+
+function appendTransportEvent(
+  setItems: Dispatch<SetStateAction<SessionThreadItem[]>>,
+  setPermission: Dispatch<
+    SetStateAction<{ requestId: string; title: string; detail: string } | null>
+  >,
+  event: WebSessionServerEvent,
+) {
+  if (event.type === "message" && event.text.trim()) {
+    const role =
+      event.role === "agent" ? "agent" : event.role === "user" ? "user" : "system";
+    setItems((prev) => coalesceMessage(prev, role, event.text));
+    return;
   }
-  return parts;
+  if (event.type === "artifact") {
+    const title = event.title?.trim();
+    const body = event.body?.trim();
+    if (!title && !body && !event.kind.trim()) return;
+    setItems((prev) => [
+      ...prev,
+      {
+        kind: "artifact",
+        id: nextMessageId(),
+        artifactKind: event.kind,
+        title: title || undefined,
+        body: body || undefined,
+      },
+    ]);
+    return;
+  }
+  if (event.type === "permission_request") {
+    setPermission({
+      requestId: event.requestId,
+      title: event.title?.trim() || "Permission required",
+      detail: event.detail?.trim() || "",
+    });
+    setItems((prev) => [
+      ...prev,
+      {
+        kind: "message",
+        id: nextMessageId(),
+        role: "system",
+        text: event.title?.trim() || "Agent needs permission",
+      },
+    ]);
+    return;
+  }
+  if (event.type === "status" && event.state.trim()) {
+    const detail = event.detail?.trim();
+    setItems((prev) => [
+      ...prev,
+      {
+        kind: "message",
+        id: nextMessageId(),
+        role: "system",
+        text: detail ? `Status: ${event.state} — ${detail}` : `Status: ${event.state}`,
+      },
+    ]);
+  }
 }
 
 function needsAttention(detail: BrowserTaskDetail): boolean {
@@ -98,60 +168,6 @@ function attentionLabel(detail: BrowserTaskDetail): string {
   if (detail.status === "waiting") return "Waiting for you";
   if (detail.status === "error") return "Needs attention";
   return "Needs attention";
-}
-
-function appendTransportEvent(
-  setMessages: Dispatch<SetStateAction<SessionThreadMessage[]>>,
-  setPermission: Dispatch<
-    SetStateAction<{ requestId: string; title: string; detail: string } | null>
-  >,
-  event: WebSessionServerEvent,
-) {
-  if (event.type === "message" && event.text.trim()) {
-    const role =
-      event.role === "agent" ? "agent" : event.role === "user" ? "user" : "system";
-    setMessages((prev) => [...prev, { id: nextMessageId(), role, text: event.text }]);
-    return;
-  }
-  if (event.type === "artifact") {
-    const title = event.title?.trim();
-    const body = event.body?.trim();
-    const text = [title ?? event.kind, body].filter(Boolean).join("\n");
-    if (text) {
-      setMessages((prev) => [
-        ...prev,
-        { id: nextMessageId(), role: "system", text: `Artifact (${event.kind}): ${text}` },
-      ]);
-    }
-    return;
-  }
-  if (event.type === "permission_request") {
-    setPermission({
-      requestId: event.requestId,
-      title: event.title?.trim() || "Permission required",
-      detail: event.detail?.trim() || "",
-    });
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: nextMessageId(),
-        role: "system",
-        text: event.title?.trim() || "Agent needs permission",
-      },
-    ]);
-    return;
-  }
-  if (event.type === "status" && event.state.trim()) {
-    const detail = event.detail?.trim();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: nextMessageId(),
-        role: "system",
-        text: detail ? `Status: ${event.state} — ${detail}` : `Status: ${event.state}`,
-      },
-    ]);
-  }
 }
 
 export default function SessionChat({
@@ -177,7 +193,7 @@ export default function SessionChat({
   const acpSeededRef = useRef(false);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
 
-  const [messages, setMessages] = useState<SessionThreadMessage[]>([]);
+  const [threadItems, setThreadItems] = useState<SessionThreadItem[]>([]);
   const [draft, setDraft] = useState("");
   const [composerError, setComposerError] = useState<string | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -190,10 +206,7 @@ export default function SessionChat({
 
   useEffect(() => {
     if (!starterContext || threadSeededRef.current) return;
-    const seeded = formatStarterMessages(starterContext);
-    if (seeded.length) {
-      setMessages((prev) => [...prev, ...seeded]);
-    }
+    setThreadItems((prev) => [...prev, starterBriefItem(starterContext)]);
     threadSeededRef.current = true;
   }, [starterContext]);
 
@@ -209,9 +222,7 @@ export default function SessionChat({
         setTransportReady(true);
         queueMicrotask(() => {
           if (!starterContext || acpSeededRef.current) return;
-          for (const part of starterPromptParts(starterContext)) {
-            transportRef.current?.sendPrompt(part);
-          }
+          transportRef.current?.sendPrompt(formatSessionBrief(starterContext));
           acpSeededRef.current = true;
         });
       },
@@ -220,7 +231,7 @@ export default function SessionChat({
           setComposerError(event.message);
           return;
         }
-        appendTransportEvent(setMessages, setPermission, event);
+        appendTransportEvent(setThreadItems, setPermission, event);
       },
       onClosed: () => setTransportReady(false),
     });
@@ -270,7 +281,7 @@ export default function SessionChat({
     if (!text) return;
     setComposerError(null);
     transportRef.current?.sendPrompt(text);
-    setMessages((prev) => [...prev, { id: nextMessageId(), role: "user", text }]);
+    setThreadItems((prev) => coalesceMessage(prev, "user", text));
     setDraft("");
     if (!transportReady) {
       setComposerError("Composer will deliver when the ACP session connects");
@@ -348,15 +359,26 @@ export default function SessionChat({
       ) : null}
 
       <div className="session-thread" ref={threadRef} data-testid="session-thread">
-        {messages.map((message) => (
-          <article
-            key={message.id}
-            className={`session-message session-message-${message.role}`}
-            data-testid={`session-message-${message.role}`}
-          >
-            <p>{message.text}</p>
-          </article>
-        ))}
+        {threadItems.map((item) =>
+          item.kind === "artifact" ? (
+            <article
+              key={item.id}
+              className="session-artifact session-artifact-transport"
+              data-testid={`session-transport-artifact-${item.artifactKind}`}
+            >
+              <h2 className="session-artifact-label">{item.title ?? item.artifactKind}</h2>
+              {item.body ? <p>{item.body}</p> : null}
+            </article>
+          ) : (
+            <article
+              key={item.id}
+              className={`session-message session-message-${item.role}`}
+              data-testid={`session-message-${item.role}`}
+            >
+              <p>{item.text}</p>
+            </article>
+          ),
+        )}
 
         <article
           ref={statusArtifactRef}
@@ -465,6 +487,15 @@ export default function SessionChat({
           </Button>
           <Button type="submit" variant="default" disabled={!draft.trim()}>
             Send
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="session-cancel"
+            disabled={!transportReady}
+            onClick={() => transportRef.current?.sendCancel()}
+          >
+            Cancel
           </Button>
         </div>
         {composerError ? <p className="session-composer-hint">{composerError}</p> : null}

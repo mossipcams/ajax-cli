@@ -90,7 +90,7 @@ async fn handle_client_message(
         SessionClientMessage::Prompt { text } => {
             let result = {
                 let mut guard = client.lock().unwrap();
-                guard.send_prompt(&text)
+                guard.begin_prompt(&text)
             };
             if let Err(error) = result {
                 return send_event(socket, &SessionServerEvent::Error { message: error }).await;
@@ -100,7 +100,7 @@ async fn handle_client_message(
         SessionClientMessage::Cancel => {
             let result = {
                 let mut guard = client.lock().unwrap();
-                guard.cancel_prompt()
+                guard.begin_cancel()
             };
             if let Err(error) = result {
                 return send_event(socket, &SessionServerEvent::Error { message: error }).await;

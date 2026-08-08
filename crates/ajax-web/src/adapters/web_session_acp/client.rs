@@ -20,7 +20,12 @@ use std::{
     time::Duration,
 };
 
-type PendingResponses = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
+enum PendingResponse {
+    Blocking(Sender<Result<Value, String>>),
+    Streaming { method: &'static str },
+}
+
+type PendingResponses = Arc<Mutex<HashMap<u64, PendingResponse>>>;
 
 #[derive(Debug, Clone)]
 pub enum AcpClientEvent {
@@ -29,6 +34,11 @@ pub enum AcpClientEvent {
         id: Value,
         method: String,
         params: Value,
+    },
+    RequestFinished {
+        id: u64,
+        method: &'static str,
+        result: Result<Value, String>,
     },
     Error(String),
     Exited,
@@ -86,20 +96,18 @@ impl AcpStdioClient {
         self.events.recv_timeout(timeout).ok()
     }
 
-    pub fn send_prompt(&mut self, text: &str) -> Result<(), String> {
-        self.call(
+    pub fn begin_prompt(&mut self, text: &str) -> Result<u64, String> {
+        self.begin_request(
             "session/prompt",
             json!({
                 "sessionId": self.session_id,
                 "prompt": [{ "type": "text", "text": text }],
             }),
-        )?;
-        Ok(())
+        )
     }
 
-    pub fn cancel_prompt(&mut self) -> Result<(), String> {
-        self.call("session/cancel", json!({ "sessionId": self.session_id }))?;
-        Ok(())
+    pub fn begin_cancel(&mut self) -> Result<u64, String> {
+        self.begin_request("session/cancel", json!({ "sessionId": self.session_id }))
     }
 
     pub fn respond_client_request(&mut self, id: &Value, result: Value) -> Result<(), String> {
@@ -135,13 +143,30 @@ impl AcpStdioClient {
         let id = self.next_id;
         self.next_id += 1;
         let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(id, PendingResponse::Blocking(tx));
         self.write_request(method, params, id)?;
         match rx.recv_timeout(Duration::from_secs(120)) {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(message)) => Err(message),
             Err(_) => Err(format!("acp request timed out: {method}")),
         }
+    }
+
+    fn begin_request(&mut self, method: &'static str, params: Value) -> Result<u64, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(id, PendingResponse::Streaming { method });
+        if let Err(error) = self.write_request(method, params, id) {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(error);
+        }
+        Ok(id)
     }
 
     fn write_request(&mut self, method: &str, params: Value, id: u64) -> Result<(), String> {
@@ -237,18 +262,25 @@ fn read_loop(
             }
         }
         if let Some(id) = value.get("id").and_then(Value::as_u64) {
-            let responder = pending.lock().unwrap().remove(&id);
-            if let Some(tx) = responder {
-                if let Some(error) = value.get("error") {
-                    let message = error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("acp error")
-                        .to_string();
-                    let _ = tx.send(Err(message));
-                } else {
-                    let result = value.get("result").cloned().unwrap_or(Value::Null);
-                    let _ = tx.send(Ok(result));
+            let pending_entry = pending.lock().unwrap().remove(&id);
+            let Some(pending_entry) = pending_entry else {
+                continue;
+            };
+            let result = if let Some(error) = value.get("error") {
+                Err(error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("acp error")
+                    .to_string())
+            } else {
+                Ok(value.get("result").cloned().unwrap_or(Value::Null))
+            };
+            match pending_entry {
+                PendingResponse::Blocking(tx) => {
+                    let _ = tx.send(result);
+                }
+                PendingResponse::Streaming { method } => {
+                    let _ = event_tx.send(AcpClientEvent::RequestFinished { id, method, result });
                 }
             }
         }

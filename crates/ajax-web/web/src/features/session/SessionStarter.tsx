@@ -23,6 +23,7 @@ function initialRepo(repos: RepoSummary[], selectedProject: string | null): stri
 }
 
 export interface SessionStarterContext {
+  title: string;
   constraints: string;
   expectedOutcome: string;
 }
@@ -70,9 +71,10 @@ export default function SessionStarter({
     setError(null);
     setSubmitting(true);
     try {
+      const normalizedTitle = title.trim();
       const result = await startTask({
         repo,
-        title: title.trim(),
+        title: normalizedTitle,
         agent: CURSOR_AGENT,
         orchestration_chat: true,
         request_id: requestId(),
@@ -83,7 +85,8 @@ export default function SessionStarter({
         return;
       }
       savePrefs();
-      onStarted?.(startTaskHandle(repo, title), {
+      onStarted?.(startTaskHandle(repo, normalizedTitle), {
+        title: normalizedTitle,
         constraints: constraints.trim(),
         expectedOutcome: expectedOutcome.trim(),
       });
