@@ -829,7 +829,7 @@ header .bar h1 {
   max-height: min(88vh, var(--app-height, 100dvh));
   padding: 16px;
   background: var(--paper);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 .session-terminal-sheet-header {

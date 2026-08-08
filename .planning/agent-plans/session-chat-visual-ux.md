@@ -22,6 +22,6 @@ Make orchestration chat read as a conversation, not a TaskDetail dump.
 
 ## Checklist
 
-- [ ] SessionChat layout + styles + tests
-- [ ] Verify session tests
-- [ ] Commit + push PR 779
+- [x] SessionChat layout + styles + tests
+- [x] Verify session tests (13 pass) + web:check
+- [x] Commit + push PR 779
