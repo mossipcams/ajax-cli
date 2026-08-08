@@ -591,35 +591,82 @@ header .bar h1 {
 .session-chat {
   position: relative;
   padding-bottom: 0;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
-.session-attention-banner {
+.session-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-attention-banner,
+.session-permission-banner {
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid var(--warn);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--ink);
   font-size: var(--text-body);
   font-weight: 600;
   text-align: left;
 }
 
+.session-attention-banner {
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.session-permission-banner {
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.session-permission-banner p {
+  margin: 8px 0 0;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.session-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .session-thread {
   flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-bottom: 12px;
+  gap: 10px;
+  padding: 4px 0 8px;
   overflow-y: auto;
 }
 
+.session-thread-empty {
+  margin: auto 0;
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: var(--text-body-sm);
+}
+
 .session-message {
-  max-width: 92%;
+  max-width: min(92%, 36rem);
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   font-size: var(--text-body);
   line-height: 1.45;
+}
+
+.session-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .session-message-user {
@@ -628,17 +675,87 @@ header .bar h1 {
   border: 1px solid var(--accent);
 }
 
-.session-message-system {
+.session-message-agent {
   align-self: flex-start;
-  background: var(--paper-tint);
+  background: var(--paper-raised);
   border: 1px solid var(--rule);
 }
 
-.session-artifact {
-  padding: 12px 14px;
+.session-message-system {
+  align-self: stretch;
+  max-width: 100%;
+  background: transparent;
+  border: none;
+  padding: 4px 2px;
+  color: var(--ink-muted);
+  font-size: var(--text-body-sm);
+}
+
+.session-transport-card {
+  align-self: stretch;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
+}
+
+.session-transport-body {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+.session-task-panel {
+  flex: none;
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   background: var(--paper-raised);
+}
+
+.session-task-panel-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.session-task-panel-summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-task-panel-summary::before {
+  content: "▸ ";
+  color: var(--ink-faint);
+}
+
+.session-task-panel[open] > .session-task-panel-summary::before {
+  content: "▾ ";
+}
+
+.session-task-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.session-artifact {
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
 }
 
 .session-artifact-label {
@@ -666,25 +783,23 @@ header .bar h1 {
   padding-left: 18px;
 }
 
-.session-diff-action {
-  margin-top: 10px;
-}
-
 .session-composer {
   position: sticky;
   bottom: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 0 -16px;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-  background: linear-gradient(180deg, transparent, var(--paper) 24%);
+  background: var(--paper);
   border-top: 1px solid var(--rule);
 }
 
 .session-composer textarea {
   width: 100%;
-  min-height: 72px;
+  min-height: 56px;
+  max-height: 30vh;
   padding: 12px 14px;
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
@@ -696,8 +811,15 @@ header .bar h1 {
 
 .session-composer-actions {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.session-composer-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .session-terminal-sheet {
@@ -725,6 +847,7 @@ header .bar h1 {
 
 [data-testid="route-scroll"]:has([data-outlet="session"]) .session-page {
   flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* PAGE LEAD / UPDATE BANNER ----------------------------------------------- */

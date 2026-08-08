@@ -61,7 +61,7 @@ describe("SessionChat", () => {
     );
   });
 
-  it("renders orchestration artifacts and composer", () => {
+  it("renders conversation thread with task details collapsed", () => {
     render(
       <SessionChat
         handle="web/fix-login"
@@ -70,10 +70,14 @@ describe("SessionChat", () => {
       />,
     );
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("session-thread")).toBeInTheDocument();
+    expect(screen.getByTestId("session-thread-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("session-task-panel")).not.toHaveAttribute("open");
     expect(screen.getByTestId("session-artifact-status")).toHaveTextContent("Waiting for approval");
     expect(screen.getByTestId("session-artifact-activity")).toHaveTextContent("waiting for review");
     expect(screen.getByTestId("session-artifact-annotations")).toBeInTheDocument();
     expect(screen.getByTestId("session-quick-actions")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(screen.getByTestId("session-composer")).toBeInTheDocument();
     expect(screen.getByTestId("session-attention-banner")).toBeInTheDocument();
     expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalled();
@@ -200,7 +204,7 @@ describe("SessionChat", () => {
     expect(screen.queryByTestId("session-attention-banner")).not.toBeInTheDocument();
   });
 
-  it("fills Retry / Try another approach into the composer without sending", () => {
+  it("opens task details when the attention banner is clicked", () => {
     render(
       <SessionChat
         handle="web/fix-login"
@@ -208,9 +212,23 @@ describe("SessionChat", () => {
         detailStatus="ready"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(screen.getByLabelText("Message")).toHaveValue("Retry the last step");
-    fireEvent.click(screen.getByRole("button", { name: "Try another approach" }));
-    expect(screen.getByLabelText("Message")).toHaveValue("Try another approach");
+    const panel = screen.getByTestId("session-task-panel");
+    expect(panel).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByTestId("session-attention-banner"));
+    expect(panel).toHaveAttribute("open");
+  });
+
+  it("sends on Enter and keeps Shift+Enter as newline", () => {
+    render(
+      <SessionChat
+        handle="web/fix-login"
+        detail={taskDetail as BrowserTaskDetail}
+        detailStatus="ready"
+      />,
+    );
+    const message = screen.getByLabelText("Message");
+    fireEvent.change(message, { target: { value: "Ship it" } });
+    fireEvent.keyDown(message, { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).toHaveBeenCalledWith("Ship it");
   });
 });
