@@ -415,7 +415,7 @@ export default function App() {
   const swipeOutletClass = swipeEnterClassName(swipeEnter);
 
   const chrome = (
-    <div className="cockpit-chrome">
+    <div className="cockpit-chrome" data-testid="cockpit-chrome">
       <header>
         <div className="bar">
           <h1>Ajax</h1>
@@ -453,7 +453,8 @@ export default function App() {
     </div>
   );
 
-  const hideBottomNav = route.kind === "session";
+  const isSessionRoute = route.kind === "session";
+  const hideBottomNav = isSessionRoute;
 
   const nav = hideBottomNav ? null : (
     <nav className="bottom-nav" aria-label="Mobile navigation">
@@ -480,7 +481,11 @@ export default function App() {
 
   return (
     <AppViewport>
-      <AppShell chrome={chrome} nav={nav}>
+      <AppShell
+        chrome={isSessionRoute ? null : chrome}
+        nav={nav}
+        className={isSessionRoute ? "app-shell--session" : undefined}
+      >
         <RouteScroll>
           {route.kind === "settings" ? (
             <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">

@@ -72,15 +72,19 @@ describe("SessionChat", () => {
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
     expect(screen.getByTestId("session-thread")).toBeInTheDocument();
     expect(screen.getByTestId("session-thread-empty")).toBeInTheDocument();
-    expect(screen.getByTestId("session-task-panel")).not.toHaveAttribute("open");
+    expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-artifact-status")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-composer")).toBeInTheDocument();
+    expect(screen.getByTestId("session-attention-banner")).toBeInTheDocument();
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("session-more"));
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
     expect(screen.getByTestId("session-artifact-status")).toHaveTextContent("Waiting for approval");
     expect(screen.getByTestId("session-artifact-activity")).toHaveTextContent("waiting for review");
     expect(screen.getByTestId("session-artifact-annotations")).toBeInTheDocument();
     expect(screen.getByTestId("session-quick-actions")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("session-composer")).toBeInTheDocument();
-    expect(screen.getByTestId("session-attention-banner")).toBeInTheDocument();
-    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalled();
   });
 
   it("sends composer messages through ACP transport", () => {
@@ -168,14 +172,13 @@ describe("SessionChat", () => {
         body: "Step one",
       });
     });
-    expect(screen.getByTestId("session-transport-artifact-plan")).toHaveTextContent(
-      "Implementation plan",
-    );
-    expect(screen.getByTestId("session-transport-artifact-plan")).toHaveTextContent("Step one");
+    const artifact = screen.getByTestId("session-transport-artifact-plan");
+    expect(artifact).toHaveTextContent("Implementation plan");
+    expect(artifact).toHaveTextContent("Step one");
     expect(screen.queryByText(/Artifact \(plan\):/)).not.toBeInTheDocument();
   });
 
-  it("sends cancel when Cancel is clicked", () => {
+  it("sends cancel when Stop is clicked", () => {
     render(
       <SessionChat
         handle="web/fix-login"
@@ -183,7 +186,7 @@ describe("SessionChat", () => {
         detailStatus="ready"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByTestId("session-cancel"));
     expect(transport.sendCancel).toHaveBeenCalledOnce();
   });
 
@@ -212,10 +215,10 @@ describe("SessionChat", () => {
         detailStatus="ready"
       />,
     );
-    const panel = screen.getByTestId("session-task-panel");
-    expect(panel).not.toHaveAttribute("open");
+    expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-attention-banner"));
-    expect(panel).toHaveAttribute("open");
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("session-artifact-status")).toHaveTextContent("Waiting for approval");
   });
 
   it("sends on Enter and keeps Shift+Enter as newline", () => {

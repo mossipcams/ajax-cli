@@ -994,6 +994,7 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "New" }));
     expect(await screen.findByTestId("session-starter")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Mobile navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("cockpit-chrome")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("#/session");
   });
 });

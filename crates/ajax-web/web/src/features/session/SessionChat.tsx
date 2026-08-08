@@ -170,6 +170,12 @@ function attentionLabel(detail: BrowserTaskDetail): string {
   return "Needs attention";
 }
 
+function attentionScrollTarget(detail: BrowserTaskDetail, activityLine: string | null): AttentionTarget {
+  if (detail.status_explanation?.trim()) return "status";
+  if (activityLine) return "activity";
+  return "annotation";
+}
+
 export default function SessionChat({
   handle,
   detail,
@@ -186,7 +192,6 @@ export default function SessionChat({
 }: Props) {
   const composerId = useId();
   const threadRef = useRef<HTMLDivElement | null>(null);
-  const taskPanelRef = useRef<HTMLDetailsElement | null>(null);
   const statusArtifactRef = useRef<HTMLElement | null>(null);
   const activityArtifactRef = useRef<HTMLElement | null>(null);
   const annotationArtifactRef = useRef<HTMLElement | null>(null);
@@ -197,8 +202,10 @@ export default function SessionChat({
   const [threadItems, setThreadItems] = useState<SessionThreadItem[]>([]);
   const [draft, setDraft] = useState("");
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [taskSheetOpen, setTaskSheetOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [transportReady, setTransportReady] = useState(false);
+  const [attentionFocus, setAttentionFocus] = useState<AttentionTarget | null>(null);
   const [permission, setPermission] = useState<{
     requestId: string;
     title: string;
@@ -255,36 +262,32 @@ export default function SessionChat({
   const actions = detail ? visibleTaskActions(detail.actions) : [];
   const activityLine =
     detail && (detail.agent_activity ?? detail.live_status_summary) !== detail.status_explanation
-      ? (detail.agent_activity ?? detail.live_status_summary)
+      ? (detail.agent_activity ?? detail.live_status_summary ?? null)
       : null;
   const showAttention = detail ? needsAttention(detail) : false;
 
-  function scrollToAttention(target: AttentionTarget) {
+  useEffect(() => {
+    if (!taskSheetOpen || !attentionFocus) return;
     const node =
-      target === "status"
+      attentionFocus === "status"
         ? statusArtifactRef.current
-        : target === "activity"
+        : attentionFocus === "activity"
           ? activityArtifactRef.current
           : annotationArtifactRef.current;
     if (node && typeof node.scrollIntoView === "function") {
       node.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+    setAttentionFocus(null);
+  }, [taskSheetOpen, attentionFocus]);
+
+  function openTaskSheet(focus?: AttentionTarget) {
+    if (focus) setAttentionFocus(focus);
+    setTaskSheetOpen(true);
   }
 
   function handleAttentionBannerClick() {
     if (!detail) return;
-    if (taskPanelRef.current) {
-      taskPanelRef.current.open = true;
-    }
-    if (detail.status_explanation?.trim()) {
-      scrollToAttention("status");
-      return;
-    }
-    if (activityLine) {
-      scrollToAttention("activity");
-      return;
-    }
-    scrollToAttention("annotation");
+    openTaskSheet(attentionScrollTarget(detail, activityLine));
   }
 
   function sendDraft() {
@@ -302,6 +305,11 @@ export default function SessionChat({
   function submitComposer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     sendDraft();
+  }
+
+  function openTerminalFromSheet() {
+    setTaskSheetOpen(false);
+    setTerminalOpen(true);
   }
 
   if (!handle) {
@@ -324,15 +332,110 @@ export default function SessionChat({
     );
   }
 
+  const taskPanelBody = (
+    <div className="session-task-panel-body">
+      <article
+        ref={statusArtifactRef}
+        className="session-artifact session-artifact-status"
+        data-testid="session-artifact-status"
+      >
+        <h2 className="session-artifact-label">Status</h2>
+        {detail.runtime_observation_error ? (
+          <p className="session-artifact-warning">{detail.runtime_observation_error}</p>
+        ) : null}
+        {detail.status_explanation ? <p>{detail.status_explanation}</p> : null}
+        <p className="session-artifact-meta">
+          {detail.lifecycle} · {detail.agent} · {detail.branch}
+        </p>
+      </article>
+
+      {activityLine ? (
+        <article
+          ref={activityArtifactRef}
+          className="session-artifact session-artifact-activity"
+          data-testid="session-artifact-activity"
+        >
+          <h2 className="session-artifact-label">Activity</h2>
+          <p>{activityLine}</p>
+        </article>
+      ) : null}
+
+      {detail.annotations.length ? (
+        <article
+          ref={annotationArtifactRef}
+          className="session-artifact session-artifact-annotations"
+          data-testid="session-artifact-annotations"
+        >
+          <h2 className="session-artifact-label">Annotations</h2>
+          <ul>
+            {detail.annotations.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </article>
+      ) : null}
+
+      <article
+        className="session-artifact session-artifact-actions"
+        data-testid="session-quick-actions"
+      >
+        <h2 className="session-artifact-label">Actions</h2>
+        {actions.length ? (
+          <ActionBar
+            actions={actions}
+            handle={detail.qualified_handle}
+            onCockpit={onCockpit}
+            onResult={onResult}
+            onMutated={onMutated}
+            onDismiss={onDismiss}
+          />
+        ) : (
+          <p className="session-artifact-meta">No task actions right now.</p>
+        )}
+        {onOpenDiff ? (
+          <div className="session-banner-actions">
+            <Button type="button" variant="secondary" onClick={onOpenDiff}>
+              Show diff
+            </Button>
+          </div>
+        ) : null}
+      </article>
+
+      <div className="session-task-sheet-tools">
+        <Button
+          type="button"
+          variant="secondary"
+          data-testid="session-terminal-toggle"
+          onClick={openTerminalFromSheet}
+        >
+          Terminal
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <section className="session-page session-chat" data-testid="session-chat" data-handle={handle}>
-      <div className="session-header">
-        <button type="button" className="back" onClick={onBack}>
+      <header className="session-header">
+        <button type="button" className="session-header-back" onClick={onBack}>
           ← Back
         </button>
-        <h1 className="session-title">{detail.title || detail.qualified_handle}</h1>
-        {meta ? <span className={`interact-pill tone-${meta.tone}`}>{meta.label}</span> : null}
-      </div>
+        <div className="session-header-main">
+          <h1 className="session-title">{detail.title || detail.qualified_handle}</h1>
+          {meta ? (
+            <span className={`session-status-pill tone-${meta.tone}`}>{meta.label}</span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="session-header-more"
+          data-testid="session-more"
+          aria-label="More"
+          onClick={() => openTaskSheet()}
+        >
+          ⋯
+        </button>
+      </header>
 
       {showAttention ? (
         <button
@@ -374,110 +477,34 @@ export default function SessionChat({
         </div>
       ) : null}
 
-      <div className="session-chat-body">
-        <div className="session-thread" ref={threadRef} data-testid="session-thread">
-          {threadItems.length === 0 ? (
-            <p className="session-thread-empty" data-testid="session-thread-empty">
-              Send a message to steer the agent.
-            </p>
-          ) : null}
-          {threadItems.map((item) =>
-            item.kind === "artifact" ? (
-              <article
-                key={item.id}
-                className="session-transport-card"
-                data-testid={`session-transport-artifact-${item.artifactKind}`}
-              >
-                <h2 className="session-artifact-label">{item.title ?? item.artifactKind}</h2>
-                {item.body ? <pre className="session-transport-body">{item.body}</pre> : null}
-              </article>
-            ) : (
-              <article
-                key={item.id}
-                className={`session-message session-message-${item.role}`}
-                data-testid={`session-message-${item.role}`}
-              >
-                <p>{item.text}</p>
-              </article>
-            ),
-          )}
-        </div>
-
-        <details
-          ref={taskPanelRef}
-          className="session-task-panel"
-          data-testid="session-task-panel"
-        >
-          <summary className="session-task-panel-summary">Task details</summary>
-          <div className="session-task-panel-body">
-            <article
-              ref={statusArtifactRef}
-              className="session-artifact session-artifact-status"
-              data-testid="session-artifact-status"
+      <div className="session-thread" ref={threadRef} data-testid="session-thread">
+        {threadItems.length === 0 ? (
+          <p className="session-thread-empty" data-testid="session-thread-empty">
+            Send a message to steer the agent.
+          </p>
+        ) : null}
+        {threadItems.map((item) =>
+          item.kind === "artifact" ? (
+            <details
+              key={item.id}
+              className="session-transport-card"
+              data-testid={`session-transport-artifact-${item.artifactKind}`}
             >
-              <h2 className="session-artifact-label">Status</h2>
-              {detail.runtime_observation_error ? (
-                <p className="session-artifact-warning">{detail.runtime_observation_error}</p>
-              ) : null}
-              {detail.status_explanation ? <p>{detail.status_explanation}</p> : null}
-              <p className="session-artifact-meta">
-                {detail.lifecycle} · {detail.agent} · {detail.branch}
-              </p>
-            </article>
-
-            {activityLine ? (
-              <article
-                ref={activityArtifactRef}
-                className="session-artifact session-artifact-activity"
-                data-testid="session-artifact-activity"
-              >
-                <h2 className="session-artifact-label">Activity</h2>
-                <p>{activityLine}</p>
-              </article>
-            ) : null}
-
-            {detail.annotations.length ? (
-              <article
-                ref={annotationArtifactRef}
-                className="session-artifact session-artifact-annotations"
-                data-testid="session-artifact-annotations"
-              >
-                <h2 className="session-artifact-label">Annotations</h2>
-                <ul>
-                  {detail.annotations.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </article>
-            ) : null}
-
+              <summary className="session-transport-summary">
+                {item.title ?? item.artifactKind}
+              </summary>
+              {item.body ? <pre className="session-transport-body">{item.body}</pre> : null}
+            </details>
+          ) : (
             <article
-              className="session-artifact session-artifact-actions"
-              data-testid="session-quick-actions"
+              key={item.id}
+              className={`session-message session-message-${item.role}`}
+              data-testid={`session-message-${item.role}`}
             >
-              <h2 className="session-artifact-label">Actions</h2>
-              {actions.length ? (
-                <ActionBar
-                  actions={actions}
-                  handle={detail.qualified_handle}
-                  onCockpit={onCockpit}
-                  onResult={onResult}
-                  onMutated={onMutated}
-                  onDismiss={onDismiss}
-                />
-              ) : (
-                <p className="session-artifact-meta">No task actions right now.</p>
-              )}
-              {onOpenDiff ? (
-                <div className="session-banner-actions">
-                  <Button type="button" variant="secondary" onClick={onOpenDiff}>
-                    Show diff
-                  </Button>
-                </div>
-              ) : null}
+              <p>{item.text}</p>
             </article>
-          </div>
-        </details>
+          ),
+        )}
       </div>
 
       <form
@@ -486,47 +513,68 @@ export default function SessionChat({
         aria-label="Session composer"
         onSubmit={submitComposer}
       >
-        <textarea
-          id={composerId}
-          rows={2}
-          enterKeyHint="send"
-          placeholder="Steer the agent…"
-          aria-label="Message"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendDraft();
-            }
-          }}
-        />
-        <div className="session-composer-actions">
-          <div className="session-composer-secondary">
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="session-terminal-toggle"
-              onClick={() => setTerminalOpen(true)}
-            >
-              Terminal
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="session-cancel"
-              disabled={!transportReady}
-              onClick={() => transportRef.current?.sendCancel()}
-            >
-              Cancel
-            </Button>
-          </div>
+        <div className="session-composer-bar">
+          <textarea
+            id={composerId}
+            rows={1}
+            enterKeyHint="send"
+            placeholder="Message…"
+            aria-label="Message"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendDraft();
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="session-cancel"
+            disabled={!transportReady}
+            onClick={() => transportRef.current?.sendCancel()}
+          >
+            Stop
+          </Button>
           <Button type="submit" variant="default" disabled={!draft.trim()}>
             Send
           </Button>
         </div>
         {composerError ? <p className="session-composer-hint">{composerError}</p> : null}
       </form>
+
+      {taskSheetOpen ? (
+        <FullscreenLayer zIndex={50}>
+          <Sheet
+            open
+            onOpenChange={(open) => {
+              if (!open) setTaskSheetOpen(false);
+            }}
+          >
+            <SheetContent aria-describedby={undefined}>
+              <div
+                className="session-task-sheet"
+                data-testid="session-task-panel"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Task details"
+              >
+                <div className="session-task-sheet-header">
+                  <SheetTitle asChild>
+                    <h2>Task details</h2>
+                  </SheetTitle>
+                  <Button type="button" variant="secondary" onClick={() => setTaskSheetOpen(false)}>
+                    Close
+                  </Button>
+                </div>
+                {taskPanelBody}
+              </div>
+            </SheetContent>
+          </Sheet>
+        </FullscreenLayer>
+      ) : null}
 
       {terminalOpen ? (
         <FullscreenLayer zIndex={50}>
