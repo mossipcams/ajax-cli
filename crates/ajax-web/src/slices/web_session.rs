@@ -48,14 +48,41 @@ pub enum SessionServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        #[serde(rename = "callId")]
+        call_id: String,
+        title: String,
+        kind: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        locations: Vec<String>,
+    },
+    #[serde(rename = "plan")]
+    Plan { entries: Vec<PlanEntry> },
     #[serde(rename = "status")]
     Status {
         state: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    #[serde(rename = "turn_end")]
+    TurnEnd {
+        #[serde(
+            rename = "stopReason",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        stop_reason: Option<String>,
+    },
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanEntry {
+    pub content: String,
+    pub status: String,
 }
 
 pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
@@ -75,14 +102,10 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         "user_message" | "user_message_chunk" => {
             message_event("user", extract_message_text(update_body))
         }
-        "thought" | "thought_chunk" => message_event("system", extract_message_text(update_body)),
-        "plan" | "plan_update" => vec![SessionServerEvent::Artifact {
-            kind: "plan".to_string(),
-            title: update_body
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            body: Some(update_body.to_string()),
+        "thought" | "thought_chunk" => message_event("thought", extract_message_text(update_body)),
+        "tool_call" | "tool_call_update" => tool_call_event(update_body),
+        "plan" | "plan_update" => vec![SessionServerEvent::Plan {
+            entries: extract_plan_entries(update_body),
         }],
         "state_update" => {
             let state = update_body
@@ -101,10 +124,93 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         other if !other.is_empty() => vec![SessionServerEvent::Artifact {
             kind: other.to_string(),
             title: None,
-            body: Some(update_body.to_string()),
+            body: serde_json::to_string_pretty(update_body).ok(),
         }],
         _ => Vec::new(),
     }
+}
+
+/// ACP tool calls are the bulk of a turn. `tool_call` opens one and
+/// `tool_call_update` revises it, so both map to the same event keyed by
+/// `toolCallId`; the browser merges by that key and keeps the fields an update
+/// omits.
+fn tool_call_event(update_body: &Value) -> Vec<SessionServerEvent> {
+    let call_id = update_body
+        .get("toolCallId")
+        .or_else(|| update_body.get("tool_call_id"))
+        .or_else(|| update_body.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if call_id.is_empty() {
+        return Vec::new();
+    }
+    vec![SessionServerEvent::ToolCall {
+        call_id,
+        title: update_body
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        kind: update_body
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        status: update_body
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        locations: extract_tool_locations(update_body),
+    }]
+}
+
+fn extract_tool_locations(update_body: &Value) -> Vec<String> {
+    update_body
+        .get("locations")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(path) => Some(path.clone()),
+                    _ => item.get("path").and_then(Value::as_str).map(str::to_string),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_plan_entries(update_body: &Value) -> Vec<PlanEntry> {
+    update_body
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let content = item
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    if content.is_empty() {
+                        return None;
+                    }
+                    Some(PlanEntry {
+                        content,
+                        status: item
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("pending")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn map_acp_client_request(method: &str, params: &Value) -> Option<SessionServerEvent> {
@@ -248,6 +354,121 @@ mod tests {
         let context = test_support::context_with_tasks(&["web"], vec![task]);
         let error = prepare_task_session(&context, "web/fix-login").unwrap_err();
         assert_eq!(error, SessionRouteError::NotOrchestrationChat);
+    }
+
+    #[test]
+    fn map_tool_call_to_structured_event_not_raw_json() {
+        let update = serde_json::json!({
+            "sessionId": "sess_1",
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call_001",
+                "title": "Read configuration",
+                "kind": "read",
+                "status": "pending",
+                "locations": [{ "path": "/repo/config.json" }]
+            }
+        });
+        assert_eq!(
+            map_acp_session_update(&update),
+            vec![SessionServerEvent::ToolCall {
+                call_id: "call_001".to_string(),
+                title: "Read configuration".to_string(),
+                kind: "read".to_string(),
+                status: "pending".to_string(),
+                locations: vec!["/repo/config.json".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn map_tool_call_update_keeps_call_id_when_title_absent() {
+        let update = serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call_001",
+                "status": "completed"
+            }
+        });
+        let events = map_acp_session_update(&update);
+        let SessionServerEvent::ToolCall {
+            call_id,
+            title,
+            status,
+            ..
+        } = &events[0]
+        else {
+            panic!("expected tool call, got {events:?}");
+        };
+        assert_eq!(call_id, "call_001");
+        assert_eq!(title, "");
+        assert_eq!(status, "completed");
+    }
+
+    #[test]
+    fn map_tool_call_without_id_is_dropped() {
+        let update = serde_json::json!({
+            "update": { "sessionUpdate": "tool_call", "title": "Nameless" }
+        });
+        assert!(map_acp_session_update(&update).is_empty());
+    }
+
+    #[test]
+    fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
+        let update = serde_json::json!({
+            "update": {
+                "sessionUpdate": "thought_chunk",
+                "content": { "type": "text", "text": "Checking the router" }
+            }
+        });
+        assert_eq!(
+            map_acp_session_update(&update),
+            vec![SessionServerEvent::Message {
+                role: "thought".to_string(),
+                text: "Checking the router".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn map_plan_to_structured_entries() {
+        let update = serde_json::json!({
+            "update": {
+                "sessionUpdate": "plan",
+                "entries": [
+                    { "content": "Read the router", "status": "completed" },
+                    { "content": "Patch the guard", "status": "in_progress" },
+                    { "content": "   ", "status": "pending" }
+                ]
+            }
+        });
+        assert_eq!(
+            map_acp_session_update(&update),
+            vec![SessionServerEvent::Plan {
+                entries: vec![
+                    PlanEntry {
+                        content: "Read the router".to_string(),
+                        status: "completed".to_string(),
+                    },
+                    PlanEntry {
+                        content: "Patch the guard".to_string(),
+                        status: "in_progress".to_string(),
+                    },
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn unknown_update_body_is_pretty_printed_not_a_single_line_dump() {
+        let update = serde_json::json!({
+            "update": { "sessionUpdate": "available_commands_update", "commands": ["a"] }
+        });
+        let events = map_acp_session_update(&update);
+        let SessionServerEvent::Artifact { body, .. } = &events[0] else {
+            panic!("expected artifact, got {events:?}");
+        };
+        assert!(body.as_deref().unwrap_or_default().contains('\n'));
     }
 
     #[test]

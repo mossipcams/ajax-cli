@@ -99,69 +99,80 @@ export default function SessionStarter({
 
   return (
     <section className="session-page session-starter" data-testid="session-starter">
-      <div className="session-header">
+      <header className="session-header">
         {onBack ? (
-          <button type="button" className="back" onClick={onBack}>
+          <button type="button" className="session-header-back" onClick={onBack}>
             ← Back
           </button>
         ) : null}
         <h1 className="session-title">New session</h1>
-      </div>
+        <span className="session-status-pill tone-muted" data-testid="session-agent-lock">
+          Cursor
+        </span>
+      </header>
 
       <form className="session-starter-form" aria-label="Start session" onSubmit={submit}>
-        <label htmlFor="session-repo">Repository</label>
-        {repos.length ? (
-          <select id="session-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
-            {repos.map((option) => (
-              <option key={option.name} value={option.name}>
-                {option.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <select id="session-repo" disabled>
-            <option value="">No repositories configured</option>
-          </select>
-        )}
+        <div className="session-field">
+          <label htmlFor="session-repo">Repository</label>
+          {repos.length ? (
+            <select id="session-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
+              {repos.map((option) => (
+                <option key={option.name} value={option.name}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select id="session-repo" disabled>
+              <option value="">No repositories configured</option>
+            </select>
+          )}
+        </div>
 
-        <label htmlFor="session-title">Title</label>
-        <input
-          id="session-title"
-          type="text"
-          maxLength={80}
-          enterKeyHint="next"
-          placeholder="Short title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
+        <div className="session-field">
+          <label htmlFor="session-title">Title</label>
+          <input
+            id="session-title"
+            type="text"
+            maxLength={80}
+            enterKeyHint="next"
+            placeholder="What should the agent do?"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </div>
 
-        <label htmlFor="session-constraints">Constraints</label>
-        <textarea
-          id="session-constraints"
-          rows={3}
-          placeholder="Boundaries, must-nots, style"
-          value={constraints}
-          onChange={(e) => setConstraints(e.target.value)}
-        />
+        <div className="session-starter-brief">
+          <p className="session-starter-brief-label">Brief — optional</p>
 
-        <label htmlFor="session-outcome">Expected outcome</label>
-        <textarea
-          id="session-outcome"
-          rows={3}
-          placeholder="What done looks like"
-          value={expectedOutcome}
-          onChange={(e) => setExpectedOutcome(e.target.value)}
-        />
+          <div className="session-field">
+            <label htmlFor="session-constraints">Constraints</label>
+            <textarea
+              id="session-constraints"
+              rows={2}
+              placeholder="Boundaries, must-nots, style"
+              value={constraints}
+              onChange={(e) => setConstraints(e.target.value)}
+            />
+          </div>
 
-        <p className="session-agent-lock" data-testid="session-agent-lock">
-          Agent: Cursor (ACP orchestration chat)
-        </p>
+          <div className="session-field">
+            <label htmlFor="session-outcome">Expected outcome</label>
+            <textarea
+              id="session-outcome"
+              rows={2}
+              placeholder="What done looks like"
+              value={expectedOutcome}
+              onChange={(e) => setExpectedOutcome(e.target.value)}
+            />
+          </div>
+        </div>
 
         {error ? <p className="session-error">{error}</p> : null}
 
         <div className="session-starter-actions">
           <Button type="submit" variant="default" disabled={submitting}>
-            Start session
+            {submitting ? "Starting…" : "Start session"}
           </Button>
         </div>
       </form>

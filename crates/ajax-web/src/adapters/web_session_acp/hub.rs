@@ -112,10 +112,8 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {
                     events.push(mapped);
                 }
             }
-            AcpClientEvent::RequestFinished { result, .. } => {
-                if let Err(message) = result {
-                    events.push(SessionServerEvent::Error { message });
-                }
+            AcpClientEvent::RequestFinished { result, method, .. } => {
+                events.extend(map_request_finished(method, result));
             }
             AcpClientEvent::Error(message) => {
                 events.push(SessionServerEvent::Error { message });
@@ -128,6 +126,25 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {
         }
     }
     events
+}
+
+/// A finished `session/prompt` is the only signal the browser gets that the
+/// agent stopped working, so it must reach the client even when the turn
+/// succeeded. Other completed requests carry nothing the chat can show.
+fn map_request_finished(
+    method: &'static str,
+    result: Result<Value, String>,
+) -> Option<SessionServerEvent> {
+    match result {
+        Ok(value) if method == "session/prompt" => Some(SessionServerEvent::TurnEnd {
+            stop_reason: value
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }),
+        Ok(_) => None,
+        Err(message) => Some(SessionServerEvent::Error { message }),
+    }
 }
 
 pub fn permission_response(approved: bool, reason: Option<&str>) -> Value {
@@ -153,6 +170,33 @@ mod tests {
         let mut holders = HolderCount(2);
         assert!(!holders.release());
         assert!(holders.release());
+    }
+
+    #[test]
+    fn finished_prompt_reports_turn_end_with_stop_reason() {
+        let event = map_request_finished("session/prompt", Ok(json!({ "stopReason": "end_turn" })));
+        assert_eq!(
+            event,
+            Some(SessionServerEvent::TurnEnd {
+                stop_reason: Some("end_turn".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn finished_non_prompt_request_reports_nothing() {
+        assert_eq!(map_request_finished("session/cancel", Ok(json!({}))), None);
+    }
+
+    #[test]
+    fn failed_request_reports_error() {
+        let event = map_request_finished("session/prompt", Err("boom".to_string()));
+        assert_eq!(
+            event,
+            Some(SessionServerEvent::Error {
+                message: "boom".to_string(),
+            })
+        );
     }
 
     #[test]

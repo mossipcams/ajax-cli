@@ -21,12 +21,22 @@ export type WebSessionServerEvent =
   | { type: "message"; role: string; text: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
+      type: "tool_call";
+      callId: string;
+      title: string;
+      kind: string;
+      status: string;
+      locations?: string[];
+    }
+  | { type: "plan"; entries: { content: string; status: string }[] }
+  | {
       type: "permission_request";
       requestId: string;
       title?: string | null;
       detail?: string | null;
     }
   | { type: "status"; state: string; detail?: string | null }
+  | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
 
 export interface WebSessionTransportCallbacks {
