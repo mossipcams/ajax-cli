@@ -38,6 +38,8 @@ pub struct StartTaskRequest {
     pub agent: String,
     #[serde(default)]
     pub request_id: String,
+    #[serde(default)]
+    pub orchestration_chat: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,11 +184,17 @@ fn start_task_with_checkpoint_inner<R: Registry>(
     if !supported_start_agent(&request.agent) {
         return Err(OperateError::UnsupportedCapability("unsupported agent"));
     }
+    if request.orchestration_chat && request.agent != "cursor" {
+        return Err(OperateError::UnsupportedCapability(
+            "orchestration chat requires the cursor agent",
+        ));
+    }
 
     let core_request = NewTaskRequest {
         repo: request.repo,
         title: request.title,
         agent: request.agent,
+        orchestration_chat: request.orchestration_chat,
     };
     let observation = start_plan_observation(context, &core_request);
     let (_intent, plan) =

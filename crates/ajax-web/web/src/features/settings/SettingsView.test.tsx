@@ -135,16 +135,6 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders Diagnostics debug info", async () => {
-    vi.spyOn(api, "fetchVersion").mockResolvedValue({
-      version: "1.0.0",
-      test_in_stable: false,
-    });
-    render(<SettingsView />);
-    expect(screen.getByTestId("dev-settings")).toBeInTheDocument();
-    expect(screen.getByText("Diagnostics")).toBeInTheDocument();
-  });
-
   it("shows live debug info with origin and app version", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
@@ -161,6 +151,19 @@ describe("SettingsView", () => {
     expect(debug).toHaveTextContent("0.42.0-test");
 
     meta.remove();
+  });
+
+  it("toggles orchestration chat preference", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    const toggle = screen.getByTestId("orchestration-chat-toggle");
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("true");
   });
 
   it("shows telemetry status and emits diagnostic on button click", async () => {

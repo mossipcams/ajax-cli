@@ -24,6 +24,8 @@ pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    /// When true with Cursor, create worktree + tmux but skip interactive CLI send-keys.
+    pub orchestration_chat: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,13 +160,16 @@ pub fn new_task_plan_with_observation<R: Registry>(
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
-    let agent_launch_line =
-        fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
-    plan.commands.push(tmux.send_agent_command(
-        &tmux_session,
-        DEFAULT_TASK_WINDOW_NAME,
-        &agent_launch_line,
-    ));
+    let skip_agent_send_keys = request.orchestration_chat && selected_agent == AgentClient::Cursor;
+    if !skip_agent_send_keys {
+        let agent_launch_line =
+            fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
+        plan.commands.push(tmux.send_agent_command(
+            &tmux_session,
+            DEFAULT_TASK_WINDOW_NAME,
+            &agent_launch_line,
+        ));
+    }
 
     Ok(plan)
 }

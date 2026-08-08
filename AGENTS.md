@@ -234,14 +234,19 @@ Safari.
 
 Do not change these without explicit approval:
 
-- raw xterm/tmux-first terminal behavior
+- raw xterm/tmux-first terminal behavior as the **default** when the Ajax web
+  session orchestration-chat flag is off
 - normal iOS Safari as the target browser mode (full Cockpit without install)
 - no classic PWA packaging (`manifest.webmanifest`, app icons, service worker)
 - Home Screen install remains optional and is required only for Declarative Web
   Push phone pings — not for core Cockpit use
 - no service worker/offline mutation model
 - no browser-owned task records
-- no Live/snapshot/composer terminal model as the default path
+- no Live/snapshot/composer terminal model as the default path (orchestration
+  chat is a separate presentation mode behind Settings → Ajax web session; it
+  must not invent browser task truth or replace core operate contracts)
+- orchestration-chat agent conversation must use **ACP** (never PTY paste as
+  the chat channel); terminal remains escape-hatch only
 - no public-internet product path unless the security model is explicitly changed
 
 Web Cockpit should feel immediate and mobile-friendly, but correctness comes from
