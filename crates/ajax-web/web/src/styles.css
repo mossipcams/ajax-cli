@@ -656,11 +656,13 @@ header .bar h1 {
   cursor: pointer;
 }
 
+/* Stop is reached urgently, mid-turn, one-handed — it gets the full 44px
+   primary target, not the 34px chip height. */
 .session-head-stop {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
-  min-height: 34px;
-  padding: 6px 14px;
+  min-height: 44px;
+  padding: 6px 16px;
   color: var(--ink);
 }
 
@@ -689,17 +691,30 @@ header .bar h1 {
   }
 }
 
+/* The shell's global reduce rule collapses every animation to ~0ms, which would
+   leave the running dot visually identical to a resting one. Liveness is state,
+   not decoration, so it survives as a static ring instead of a pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.is-live {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--tone-bg, transparent);
+  }
+}
+
 .session-head-quiet {
   margin: 6px 0 0;
   font-size: var(--text-body-sm);
   color: var(--ink-muted);
 }
 
+/* --ink-faint is CLI-locked (xterm 244) and measures 4.27:1 on this surface,
+   below WCAG AA for body text, so reading text in this route sits one rung up
+   at --ink-muted (7.09:1). Decorative marks keep the fainter rung. */
 .session-thought {
   margin: 8px 0 0;
   font-size: var(--text-body-sm);
   line-height: 1.45;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   display: -webkit-box;
   /* One line of headroom over the tail bound in sessionThread.ts: real
      reasoning fits two lines, and wider glyphs get a third rather than hiding
@@ -810,7 +825,7 @@ header .bar h1 {
   flex: none;
   margin-left: auto;
   padding-left: 8px;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -839,7 +854,7 @@ header .bar h1 {
   margin: auto 0;
   padding: 32px 12px;
   text-align: center;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   font-size: var(--text-body-sm);
 }
 
@@ -913,7 +928,7 @@ header .bar h1 {
 }
 
 .session-plan li[data-status="completed"] {
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 
 .session-plan-mark {
@@ -1016,8 +1031,8 @@ header .bar h1 {
   bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 3;
-  padding: 8px 16px;
-  min-height: 34px;
+  padding: 8px 18px;
+  min-height: 44px;
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   background: var(--paper-raised);
@@ -1130,7 +1145,7 @@ header .bar h1 {
 
 .session-field input::placeholder,
 .session-field textarea::placeholder {
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 
 .session-starter-brief {
@@ -1147,7 +1162,7 @@ header .bar h1 {
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 
 .session-starter-actions {
