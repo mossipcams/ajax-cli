@@ -1,6 +1,6 @@
 //! Authenticated orchestration-chat WebSocket bridge over the ACP host.
 
-use super::hub::{drain_acp_events, permission_response, WebSessionHub};
+use super::hub::{permission_response, WebSessionHub};
 use crate::slices::web_session::SessionAttachPlan;
 use crate::slices::web_session::{SessionClientMessage, SessionServerEvent};
 use axum::extract::ws::{Message, WebSocket};
@@ -36,12 +36,15 @@ pub async fn bridge_task_session_socket(
         return;
     }
 
+    // This socket's position in the shared transcript.
+    let mut cursor = 0usize;
+
     loop {
         tokio::select! {
             inbound = socket.recv() => {
                 match inbound {
                     Some(Ok(Message::Text(text))) => {
-                        if !handle_client_message(&mut socket, &client, &text).await {
+                        if !handle_client_message(&mut socket, &client, &hub, &handle, &text).await {
                             break;
                         }
                     }
@@ -51,10 +54,13 @@ pub async fn bridge_task_session_socket(
                 }
             }
             _ = sleep(Duration::from_millis(EVENT_POLL_MS)) => {
-                let outbound = {
-                    let guard = client.lock().unwrap();
-                    drain_acp_events(&guard)
-                };
+                // Cursor starts at 0, so the first pass replays the whole
+                // transcript — that is what makes a reload resume mid-turn and
+                // lets a second device see the same conversation rather than
+                // half of it.
+                hub.pump(&handle);
+                let (outbound, next) = hub.read_from(&handle, cursor);
+                cursor = next;
                 for event in outbound {
                     if !send_event(&mut socket, &event).await {
                         hub.release(&handle);
@@ -71,6 +77,8 @@ pub async fn bridge_task_session_socket(
 async fn handle_client_message(
     socket: &mut WebSocket,
     client: &std::sync::Mutex<super::client::AcpStdioClient>,
+    hub: &WebSessionHub,
+    handle: &str,
     text: &str,
 ) -> bool {
     let message: SessionClientMessage = match serde_json::from_str(text) {
@@ -95,6 +103,15 @@ async fn handle_client_message(
             if let Err(error) = result {
                 return send_event(socket, &SessionServerEvent::Error { message: error }).await;
             }
+            // The transcript is the server's, so the operator's own turn is
+            // recorded here rather than only in the sending browser.
+            hub.record(
+                handle,
+                SessionServerEvent::Message {
+                    role: "user".to_string(),
+                    text,
+                },
+            );
             true
         }
         SessionClientMessage::Cancel => {

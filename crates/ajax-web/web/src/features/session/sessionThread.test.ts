@@ -135,7 +135,14 @@ describe("sessionReducer", () => {
   it("tracks the turn: busy on prompt, settled on turn_end", () => {
     const busy = run([{ prompt: "Fix the test" }]);
     expect(busy.busy).toBe(true);
-    expect(busy.entries[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix the test" });
+    // The host owns the transcript and streams the prompt back, so sending
+    // marks the turn in flight without writing an entry the log lacks.
+    expect(busy.entries).toHaveLength(0);
+    const echoed = sessionReducer(busy, {
+      type: "event",
+      event: { type: "message", role: "user", text: "Fix the test" },
+    });
+    expect(echoed.entries[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix the test" });
 
     const settled = sessionReducer(busy, { type: "event", event: { type: "turn_end" } });
     expect(settled.busy).toBe(false);
@@ -145,7 +152,7 @@ describe("sessionReducer", () => {
   it("ends the turn on error and records it as a transcript note", () => {
     const state = run([{ prompt: "go" }, { type: "error", message: "ACP process exited" }]);
     expect(state.busy).toBe(false);
-    expect(state.entries[1]).toMatchObject({ kind: "note", tone: "error", text: "ACP process exited" });
+    expect(state.entries[0]).toMatchObject({ kind: "note", tone: "error", text: "ACP process exited" });
   });
 
   it("drops empty artifacts and keeps ones carrying a body", () => {

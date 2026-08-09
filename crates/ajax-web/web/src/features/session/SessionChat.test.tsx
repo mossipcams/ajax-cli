@@ -127,6 +127,8 @@ describe("SessionChat", () => {
     });
     fireEvent.submit(screen.getByRole("form", { name: "Session composer" }));
     expect(transport.sendPrompt).toHaveBeenCalledWith("Please fix the flaky test");
+    // The host records the prompt in the shared transcript and streams it back.
+    send({ type: "message", role: "user", text: "Please fix the flaky test" });
     expect(screen.getByTestId("session-message-user")).toHaveTextContent(
       "Please fix the flaky test",
     );
@@ -154,6 +156,7 @@ describe("SessionChat", () => {
     expect(transport.sendPrompt).toHaveBeenCalledWith(
       "Fix login\n\nConstraints: No API changes\n\nDone when: Green tests",
     );
+    send({ type: "message", role: "user", text: "Fix login" });
     expect(screen.getByTestId("session-message-user")).toHaveTextContent("Fix login");
   });
 

@@ -217,8 +217,12 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     case "reset":
       return initialSessionState;
 
+    // The prompt is not appended here: the host records it in the shared
+    // transcript and streams it back, so one socket cannot show a message the
+    // log does not have — and a reload replays your turns as well as the
+    // agent's. This only marks the turn in flight.
     case "prompt":
-      return { ...appendProse(state, "user", action.text), busy: true, thought: null };
+      return { ...state, busy: true, thought: null };
 
     case "decided":
       return { ...state, decision: null };
