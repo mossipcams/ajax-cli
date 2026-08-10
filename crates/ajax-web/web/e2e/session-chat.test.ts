@@ -68,6 +68,17 @@ async function bootSession(page: Page, script: Scripted) {
   await expect(page.getByTestId("session-head")).toBeVisible({ timeout: 10_000 });
 }
 
+/** Stand in for the iOS soft keyboard: the band initViewport would publish. */
+async function simulateKeyboardBand(page: Page) {
+  return page.evaluate(() => {
+    const height = Math.round(window.innerHeight * 0.7);
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty("--app-height", `${height}px`);
+    document.documentElement.style.setProperty("--app-top", "0px");
+    return { height, bottom: height };
+  });
+}
+
 const WORKING_TURN: Scripted = [
   { delay: 20, payload: { type: "message", role: "thought", text: "The failure is in the session router, not the guard itself." } },
   { delay: 40, payload: { type: "tool_call", callId: "c1", title: "Read session router", kind: "read", status: "completed", locations: ["/repo/crates/ajax-web/src/runtime/task_routes/live.rs"] } },
@@ -171,6 +182,59 @@ test("the transcript holds its position while new output streams in", async ({ p
   await page.getByTestId("session-jump").click();
   await expect(page.getByTestId("session-jump")).toBeHidden();
   expect(await thread.evaluate((node) => node.scrollTop)).toBeGreaterThan(before);
+});
+
+// The composer is the surface's resting primary action, so any gap under it is
+// dead space between the operator's thumb and the keys. This route renders no
+// bottom nav, but it used to inherit the generic route's 72px of nav clearance
+// and pad the home-indicator inset the keyboard already covers.
+test("the composer sits on the band bottom, at rest and under the keyboard", async ({ page }) => {
+  await bootSession(page, WORKING_TURN);
+  const composer = page.getByTestId("session-composer");
+
+  const restGap = await composer.evaluate(
+    (node) => window.innerHeight - node.getBoundingClientRect().bottom,
+  );
+  expect(restGap, "gap below the composer at rest").toBeLessThanOrEqual(1);
+
+  await page.getByLabel("Message").click();
+  const band = await simulateKeyboardBand(page);
+  const keyboardGap = await composer.evaluate(
+    (node, bandBottom) => bandBottom - node.getBoundingClientRect().bottom,
+    band.bottom,
+  );
+  expect(keyboardGap, "gap between the composer and the keyboard").toBeLessThanOrEqual(1);
+
+  // A composer capped in `vh` measures the layout viewport, which iOS never
+  // shrinks for the keyboard — it must cap against the visible band instead.
+  const maxHeight = await page
+    .getByLabel("Message")
+    .evaluate((node) => Number.parseFloat(getComputedStyle(node).maxHeight));
+  expect(maxHeight).toBeLessThan(band.height / 2);
+});
+
+// Growing the composer shrinks the transcript out from under a pinned reader:
+// the line you were reading slides behind the composer as you type a reply, and
+// the agent's next message snaps it back. Every other way the thread loses
+// height (the head gaining a decision, the keyboard band resizing) does the
+// same, so the re-pin watches the thread's own box.
+test("the transcript holds the live edge while the composer grows", async ({ page }) => {
+  await bootSession(page, WORKING_TURN);
+  const thread = page.getByTestId("session-thread");
+  const composer = page.getByLabel("Message");
+  await composer.click();
+
+  const distanceFromLiveEdge = () =>
+    thread.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
+  await expect.poll(distanceFromLiveEdge).toBeLessThanOrEqual(1);
+
+  const before = (await composer.boundingBox())!.height;
+  await composer.fill("one\ntwo\nthree\nfour\nfive");
+  expect((await composer.boundingBox())!.height).toBeGreaterThan(before);
+
+  await expect
+    .poll(distanceFromLiveEdge, { message: "transcript drifted off the live edge" })
+    .toBeLessThanOrEqual(1);
 });
 
 test("session chat screenshots", async ({ page }, testInfo) => {

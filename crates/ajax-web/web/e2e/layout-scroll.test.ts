@@ -125,6 +125,29 @@ test("dashboard has exactly one normal route scroll owner", async ({ page }) => 
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
 });
 
+// `overflow: hidden` stops the *user* scrolling a shell, not iOS: when it
+// reveals a focused composer it pans hidden overflow just the same, and
+// initViewport then yanks it back — the visible snap. So the shells must carry
+// no overflow at all, not merely a hidden one. A stray `padding-bottom: 72px`
+// on a `height: 100dvh` body bought exactly that 72px of pan budget.
+test("html, body, and #app carry no scrollable overflow to pan into", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  const overflow = await page.evaluate(() => ({
+    html: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+    body: document.body.scrollHeight - document.body.clientHeight,
+    app: (() => {
+      const el = document.getElementById("app")!;
+      return el.scrollHeight - el.clientHeight;
+    })(),
+  }));
+  expect(overflow.html, "html overflow").toBeLessThanOrEqual(1);
+  expect(overflow.body, "body overflow").toBeLessThanOrEqual(1);
+  expect(overflow.app, "#app overflow").toBeLessThanOrEqual(1);
+});
+
 test("html, body, and #app never become scroll containers on the dashboard", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");

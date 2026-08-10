@@ -151,8 +151,10 @@ body {
   line-height: 1.5;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  /* Clears .bottom-nav, which no longer pads by the safe-area inset. */
-  padding-bottom: 72px;
+  /* No bottom padding here. .bottom-nav is fixed and lives inside #app, which
+     route-scroll already clears; a pad on a `height: 100dvh; border-box` body
+     only buys the document 72px of overflow, and that overflow is exactly the
+     budget iOS pans into when it reveals a focused composer. */
 }
 
 button {
@@ -1075,11 +1077,19 @@ header .bar h1 {
   backdrop-filter: saturate(140%) blur(10px);
 }
 
+/* The home indicator is behind the keyboard, so reserving its inset while
+   typing is pure gap between the composer and the keys. */
+html.keyboard-open .session-composer {
+  padding-bottom: 10px;
+}
+
 .session-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 44px;
-  max-height: 30vh;
+  /* Against the visible band, not `vh`: iOS never shrinks the layout viewport
+     for the keyboard, so a `30vh` cap lets a grown composer eat the band. */
+  max-height: calc(var(--app-height, 100dvh) * 0.3);
   padding: 11px 15px;
   border: 1px solid var(--rule);
   /* Documented scale, not a half-height pill: the composer grows to several
@@ -1305,6 +1315,11 @@ header .bar h1 {
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
+  /* The generic route padding is dead space here: this route renders no bottom
+     nav and no page lead, so its 72px of nav clearance only stranded the
+     composer that far above the keyboard. The session page owns its own gutter;
+     only the landscape notch insets survive. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
 [data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {

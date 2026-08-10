@@ -147,6 +147,8 @@ export default function SessionChat({
     entries: [],
     tools: 0,
   });
+  // Read inside the resize observer without resubscribing on every pin flip.
+  const pinnedRef = useRef(true);
 
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [draft, setDraft] = useState("");
@@ -158,6 +160,7 @@ export default function SessionChat({
 
   starterRef.current = starterContext;
   detailRef.current = detail;
+  pinnedRef.current = pinned;
 
   const scrollToLive = useCallback(() => {
     const node = threadRef.current;
@@ -263,6 +266,26 @@ export default function SessionChat({
     }
     if (state.entries !== seenRef.current.entries) setBehind(true);
   }, [state.entries, pinned, state]);
+
+  // The effect above re-pins when *entries* change, which leaves every other
+  // way the transcript loses height unhandled — the composer growing under a
+  // multi-line draft, the head gaining a decision panel, the keyboard band
+  // resizing. Each of those slid the live edge out from under a pinned reader
+  // (a four-line draft moved it 62px), and the next message then snapped it
+  // back. Observing the thread's own box catches all of them at once.
+  //
+  // Keyed on detailStatus, not []: the first render is the loading skeleton,
+  // which has no thread to observe, and a mount-only effect would bail there
+  // and never retry.
+  useEffect(() => {
+    const node = threadRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [handle, detailStatus]);
 
   function onThreadScroll(event: UIEvent<HTMLDivElement>) {
     const node = event.currentTarget;
