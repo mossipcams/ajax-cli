@@ -991,6 +991,7 @@ export default function TaskTerminal({ handle }: Props) {
           <AjaxTerminalKeyboard
             onKey={(data) => sendKey(consumeCtrl(data))}
             onHide={closeAjaxKeyboard}
+            onGeometryChange={scheduleBandSettle}
           />
         ) : null}
       </div>

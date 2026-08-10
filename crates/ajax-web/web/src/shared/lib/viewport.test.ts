@@ -361,11 +361,11 @@ describe("isKeyboardOpen", () => {
 });
 
 describe("setSoftwareKeyboardOpen", () => {
-  it("opens keyboard-open and subtracts height from visualViewport", () => {
+  it("opens keyboard-open and keeps full visualViewport height", () => {
     start();
     setSoftwareKeyboardOpen(true, 200);
     expect(isKeyboardOpen()).toBe(true);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("600px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
   it("wins over native visualViewport close while software keyboard is open", () => {
@@ -374,7 +374,7 @@ describe("setSoftwareKeyboardOpen", () => {
     vvHeight = 800;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("620px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
   it("clears keyboard-open when software keyboard closes without a native keyboard", () => {
@@ -385,10 +385,12 @@ describe("setSoftwareKeyboardOpen", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
-  it("updates height when the software keyboard resizes", () => {
+  it("tracks visualViewport height while software keyboard stays open", () => {
     start();
     setSoftwareKeyboardOpen(true, 160);
-    setSoftwareKeyboardOpen(true, 220);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("580px");
+    vvHeight = 760;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("760px");
   });
 });

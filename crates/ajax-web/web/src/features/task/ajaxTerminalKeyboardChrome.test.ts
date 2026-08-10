@@ -13,6 +13,15 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
   });
 
+  it("pins the Ajax board to the keyboard-open band bottom", () => {
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.terminal-panel:not\(\.is-expanded\)\s+\[data-testid="terminal-bottom-controls"\]\s*\{[^}]*margin-top:\s*auto/,
+    );
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s*\{[^}]*padding:[^;]*env\(safe-area-inset-bottom/,
+    );
+  });
+
   it("uses compact button chrome for the Ajax theme", () => {
     expect(stylesSource).toMatch(
       /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*34px/,

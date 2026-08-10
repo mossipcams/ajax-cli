@@ -9,8 +9,9 @@
  * it. Ported from the Codeman project's mobile-handlers.js.
  *
  * Ajax's on-screen keyboard does not shrink `visualViewport`. Callers report it
- * through `setSoftwareKeyboardOpen`, which shares the same `keyboard-open`
- * class and `--app-height` contract.
+ * through `setSoftwareKeyboardOpen`, which toggles the same `keyboard-open`
+ * class while keeping `--app-height` at the full visualViewport (the board
+ * lives inside the pinned band under the hotbar).
  */
 
 // Keyboard show/hide thresholds. The 100px close threshold (vs 50) absorbs iOS
@@ -26,8 +27,8 @@ const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
 const APP_TOP_VAR = "--app-top";
 
-/** Height of the Ajax software keyboard; 0 means software keyboard is closed. */
-let softwareKeyboardHeightPx = 0;
+/** Whether the Ajax on-screen keyboard is open (lives inside the band). */
+let softwareKeyboardOpen = false;
 let softwareKeyboardSync: (() => void) | null = null;
 
 /**
@@ -44,18 +45,19 @@ export function isKeyboardOpen(): boolean {
 }
 
 /**
- * Drive `keyboard-open` / `--app-height` from the Ajax on-screen keyboard.
- * When open, software override wins over visualViewport hysteresis so the
- * terminal band pin still works without a native soft keyboard.
+ * Drive `keyboard-open` from the Ajax on-screen keyboard.
+ * The Ajax keyboard is rendered inside the pinned band (under the hotbar), so
+ * `--app-height` stays the full visualViewport — do not subtract keyboard
+ * height (that left a gap below the floating board).
  */
-export function setSoftwareKeyboardOpen(open: boolean, heightPx = 0): void {
-  softwareKeyboardHeightPx = open ? Math.max(0, heightPx) : 0;
+export function setSoftwareKeyboardOpen(open: boolean, _heightPx = 0): void {
+  softwareKeyboardOpen = open;
   softwareKeyboardSync?.();
 }
 
 /** Test helper: clear software keyboard override without requiring initViewport. */
 export function resetSoftwareKeyboardForTests(): void {
-  softwareKeyboardHeightPx = 0;
+  softwareKeyboardOpen = false;
 }
 
 /**
@@ -106,10 +108,10 @@ export function initViewport(): () => void {
   };
 
   const applySoftwareOverride = (): boolean => {
-    if (softwareKeyboardHeightPx <= 0) return false;
+    if (!softwareKeyboardOpen) return false;
     root.classList.add(KEYBOARD_OPEN_CLASS);
-    setAppHeight(Math.max(0, vv.height - softwareKeyboardHeightPx));
-    setAppTop(vv.offsetTop ?? 0);
+    // Full visualViewport: Ajax keyboard sits inside the pinned band.
+    syncViewportGeometry();
     return true;
   };
 
@@ -151,7 +153,7 @@ export function initViewport(): () => void {
       if (closeSettleTimer === undefined) {
         closeSettleTimer = setTimeout(() => {
           closeSettleTimer = undefined;
-          if (!nativeKeyboardOpen || softwareKeyboardHeightPx > 0) return;
+          if (!nativeKeyboardOpen || softwareKeyboardOpen) return;
           const settledDelta = baselineHeight - vv.height;
           if (settledDelta < KEYBOARD_CLOSE_DELTA_PX) {
             nativeKeyboardOpen = false;
@@ -231,7 +233,7 @@ export function initViewport(): () => void {
   return () => {
     cancelCloseSettle();
     softwareKeyboardSync = null;
-    softwareKeyboardHeightPx = 0;
+    softwareKeyboardOpen = false;
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     document.removeEventListener("gesturestart", onGesture);

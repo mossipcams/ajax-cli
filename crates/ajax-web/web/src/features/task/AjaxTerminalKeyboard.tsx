@@ -15,13 +15,15 @@ import {
 interface Props {
   onKey: (data: string) => void;
   onHide: () => void;
+  /** Called after keyboard-open band geometry is applied / resized. */
+  onGeometryChange?: () => void;
 }
 
 /**
  * Compact on-screen keyboard for touch/narrow terminal typing.
  * Emits PTY bytes via `onKey`; does not own an input buffer.
  */
-export function AjaxTerminalKeyboard({ onKey, onHide }: Props) {
+export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [layoutName, setLayoutName] = useState<AjaxKeyboardLayoutName>("default");
   const bkspRepeaterRef = useRef<ReturnType<typeof createHeldKeyRepeater> | null>(null);
@@ -29,24 +31,27 @@ export function AjaxTerminalKeyboard({ onKey, onHide }: Props) {
   onKeyRef.current = onKey;
   const onHideRef = useRef(onHide);
   onHideRef.current = onHide;
+  const onGeometryChangeRef = useRef(onGeometryChange);
+  onGeometryChangeRef.current = onGeometryChange;
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
 
-    const publishHeight = () => {
-      const height = Math.ceil(root.getBoundingClientRect().height);
-      setSoftwareKeyboardOpen(true, height);
+    const publishOpen = () => {
+      setSoftwareKeyboardOpen(true);
+      onGeometryChangeRef.current?.();
     };
-    publishHeight();
+    publishOpen();
 
-    const observer = new ResizeObserver(publishHeight);
+    const observer = new ResizeObserver(publishOpen);
     observer.observe(root);
     return () => {
       observer.disconnect();
       bkspRepeaterRef.current?.stop();
       bkspRepeaterRef.current = null;
       setSoftwareKeyboardOpen(false);
+      onGeometryChangeRef.current?.();
     };
   }, []);
 
