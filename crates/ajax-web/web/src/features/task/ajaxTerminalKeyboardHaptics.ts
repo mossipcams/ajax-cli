@@ -1,11 +1,22 @@
-/** WebKit `switch` checkbox overlays — real user taps get iOS key haptics. */
+/** WebKit `switch` overlays — sibling of each key button (never nested in <button>). */
 
+const WRAP_CLASS = "ajax-kb-key-wrap";
+const LABEL_CLASS = "ajax-kb-haptic-label";
 const HIT_CLASS = "ajax-kb-haptic-hit";
 
 export interface AjaxKeyboardHapticHandlers {
   onPress: (button: string) => void;
   onRelease: (button: string) => void;
 }
+
+const WRAP_MOD_CLASS: Record<string, string> = {
+  "ajax-kb-half": "ajax-kb-wrap-half",
+  "ajax-kb-enter": "ajax-kb-wrap-enter",
+  "ajax-kb-bksp": "ajax-kb-wrap-bksp",
+  "ajax-kb-done": "ajax-kb-wrap-done",
+  "ajax-kb-mod": "ajax-kb-wrap-mod",
+  "ajax-kb-space": "ajax-kb-wrap-space",
+};
 
 function skbtnOf(button: Element): string {
   return button.getAttribute("data-skbtn") ?? "";
@@ -15,16 +26,34 @@ function isSpacer(button: string): boolean {
   return button === "{half}";
 }
 
+function wrapClassFor(button: HTMLElement): string {
+  for (const [buttonClass, wrapClass] of Object.entries(WRAP_MOD_CLASS)) {
+    if (button.classList.contains(buttonClass)) return wrapClass;
+  }
+  return "";
+}
+
 function attachHitTarget(
   button: HTMLElement,
   handlers: AjaxKeyboardHapticHandlers,
 ): void {
   const skbtn = skbtnOf(button);
-  if (!skbtn || isSpacer(skbtn)) {
-    button.querySelector(`.${HIT_CLASS}`)?.remove();
-    return;
-  }
-  if (button.querySelector(`.${HIT_CLASS}`)) return;
+  if (!skbtn || isSpacer(skbtn)) return;
+  if (button.closest(`.${WRAP_CLASS}`)) return;
+
+  const parent = button.parentElement;
+  if (!parent) return;
+
+  const wrap = document.createElement("span");
+  wrap.className = WRAP_CLASS;
+  const mod = wrapClassFor(button);
+  if (mod) wrap.classList.add(mod);
+
+  parent.insertBefore(wrap, button);
+  wrap.appendChild(button);
+
+  const label = document.createElement("label");
+  label.className = LABEL_CLASS;
 
   const input = document.createElement("input");
   input.type = "checkbox";
@@ -33,43 +62,45 @@ function attachHitTarget(
   input.setAttribute("switch", "");
   input.setAttribute("aria-hidden", "true");
 
-  // Keep simple-keyboard's own listeners from also firing (bubble phase).
-  for (const type of [
-    "pointerdown",
-    "pointerup",
-    "pointercancel",
-    "mousedown",
-    "mouseup",
-    "touchstart",
-    "touchend",
-    "click",
-  ] as const) {
-    input.addEventListener(
-      type,
-      (event) => {
-        event.stopPropagation();
-      },
-      { passive: true },
-    );
-  }
-
+  // Real user toggle → native switch haptic, then emit the key.
+  // pointerup is a typing fallback if change does not fire on a stretched switch.
+  let delivered = false;
+  input.addEventListener("pointerdown", () => {
+    delivered = false;
+  });
   input.addEventListener("change", () => {
     input.checked = false;
-    handlers.onPress(skbtn);
+    if (!delivered) {
+      delivered = true;
+      handlers.onPress(skbtn);
+    }
   });
   input.addEventListener("pointerup", () => {
+    if (!delivered) {
+      delivered = true;
+      handlers.onPress(skbtn);
+    }
     handlers.onRelease(skbtn);
   });
   input.addEventListener("pointercancel", () => {
     handlers.onRelease(skbtn);
   });
 
-  button.appendChild(input);
+  label.appendChild(input);
+  wrap.appendChild(label);
+}
+
+function unwrapAll(root: HTMLElement): void {
+  for (const wrap of [...root.querySelectorAll<HTMLElement>(`.${WRAP_CLASS}`)]) {
+    const button = wrap.querySelector<HTMLElement>(".hg-button");
+    if (button) wrap.parentElement?.insertBefore(button, wrap);
+    wrap.remove();
+  }
 }
 
 /**
- * Overlay each rendered key with a WebKit `switch` checkbox so taps get
- * native iOS haptics, then forward press/release to Ajax handlers.
+ * Cover each key with a label+switch sibling (HapticButton pattern).
+ * Input is never nested inside the <button> — that nesting blocked typing.
  */
 export function attachAjaxKeyboardHaptics(
   root: HTMLElement,
@@ -87,8 +118,6 @@ export function attachAjaxKeyboardHaptics(
 
   return () => {
     observer.disconnect();
-    for (const hit of root.querySelectorAll(`.${HIT_CLASS}`)) {
-      hit.remove();
-    }
+    unwrapAll(root);
   };
 }

@@ -54,28 +54,27 @@ describe("ajax terminal keyboard compact chrome", () => {
       /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s+\.hg-button:not\(:last-child\)[\s\S]*?\{[^}]*margin-right:\s*0/,
     );
     expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-half\s*\{[^}]*flex:\s*0\.5/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-mod\s*\{[^}]*flex:\s*1\.5/,
     );
     expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-mod\s*\{[^}]*flex:\s*1\.5/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-bksp\s*\{[^}]*flex:\s*1\.5/,
     );
     expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-bksp\s*\{[^}]*flex:\s*1\.5/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-enter\s*\{[^}]*flex:\s*2\b/,
     );
     expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-enter\s*\{[^}]*flex:\s*2\b/,
-    );
-    expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-space\s*\{[^}]*flex:\s*5\.25/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-space\s*\{[^}]*flex:\s*5\.25/,
     );
   });
 
-  it("ships WebKit switch haptic hit-targets on keys", () => {
+  it("ships WebKit switch haptic hit-targets as siblings of keys", () => {
+    expect(stylesSource).toMatch(/\.ajax-terminal-keyboard\s+\.ajax-kb-key-wrap\s*\{/);
     expect(stylesSource).toMatch(
       /\.ajax-terminal-keyboard\s+\.ajax-kb-haptic-hit\s*\{[^}]*opacity:\s*0\.001/,
     );
     const haptics = readFileSync(join(here, "ajaxTerminalKeyboardHaptics.ts"), "utf8");
     expect(haptics).toMatch(/setAttribute\(\s*"switch"\s*,\s*""\s*\)/);
+    expect(haptics).toMatch(/ajax-kb-key-wrap/);
     const keyboard = readFileSync(join(here, "AjaxTerminalKeyboard.tsx"), "utf8");
     expect(keyboard).toMatch(/attachAjaxKeyboardHaptics/);
   });

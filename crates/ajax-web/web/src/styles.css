@@ -1714,8 +1714,40 @@ header .bar h1 {
   margin-bottom: 0;
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button {
+/* Flex width lives on the wrap so the switch label can cover the key
+   without nesting <input> inside <button> (that nesting blocked typing). */
+.ajax-terminal-keyboard .ajax-kb-key-wrap {
   position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 42px;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-half {
+  flex: 0.5 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-mod {
+  flex: 1.5 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-bksp {
+  flex: 1.5 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-done {
+  flex: 1.25 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-enter {
+  flex: 2 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-space {
+  flex: 5.25 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button {
   flex: 1 1 0;
   height: 42px;
   min-height: 42px;
@@ -1739,34 +1771,50 @@ header .bar h1 {
   -webkit-tap-highlight-color: transparent;
 }
 
+.ajax-terminal-keyboard .ajax-kb-key-wrap > .hg-button {
+  width: 100%;
+  height: 100%;
+  flex: none;
+  pointer-events: none;
+}
+
 /* Beat `.hg-theme-default .hg-row .hg-button:not(:last-child) { margin-right: 5px }`. */
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row .hg-button:not(:last-child),
-.ajax-terminal-keyboard .ajax-kb-theme .hg-row .hg-button-container {
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row .hg-button-container,
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row .ajax-kb-key-wrap:not(:last-child) {
   margin-right: 0;
 }
 
-/* WebKit switch hit-target — real user tap drives iOS key haptics. */
-.ajax-terminal-keyboard .ajax-kb-haptic-hit {
+/* HapticButton-style label+switch sibling covering the key. */
+.ajax-terminal-keyboard .ajax-kb-haptic-label {
   position: absolute;
   inset: 0;
   z-index: 1;
   margin: 0;
+  display: block;
+}
+
+.ajax-terminal-keyboard .ajax-kb-haptic-hit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
-  border: 0;
   opacity: 0.001;
   cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button span {
   pointer-events: none;
-  position: relative;
-  z-index: 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button:active,
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button:has(.ajax-kb-haptic-hit:active) {
+.ajax-terminal-keyboard
+  .ajax-kb-key-wrap:has(.ajax-kb-haptic-hit:active)
+  > .hg-button {
   background: var(--paper-high);
   color: var(--ink);
 }
@@ -1800,8 +1848,8 @@ header .bar h1 {
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:active,
 .ajax-terminal-keyboard
-  .ajax-kb-theme
-  .hg-button.ajax-kb-enter:has(.ajax-kb-haptic-hit:active) {
+  .ajax-kb-key-wrap:has(.ajax-kb-haptic-hit:active)
+  > .hg-button.ajax-kb-enter {
   background: var(--soft-steel-blue-bright);
   border-color: var(--soft-steel-blue-bright);
   color: var(--soft-charcoal);
@@ -1832,8 +1880,8 @@ header .bar h1 {
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done:active,
 .ajax-terminal-keyboard
-  .ajax-kb-theme
-  .hg-button.ajax-kb-done:has(.ajax-kb-haptic-hit:active) {
+  .ajax-kb-key-wrap:has(.ajax-kb-haptic-hit:active)
+  > .hg-button.ajax-kb-done {
   background: var(--paper-raised);
   color: var(--ink-soft);
 }
