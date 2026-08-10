@@ -7,12 +7,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
 
 describe("ajax terminal keyboard compact chrome", () => {
-  it("caps board height below a typical iOS soft keyboard", () => {
-    expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s*\{[^}]*max-height:\s*220px/,
-    );
-  });
-
   it("pins the Ajax board to the page bottom", () => {
     expect(stylesSource).toMatch(
       /\.ajax-terminal-keyboard\s*\{[^}]*position:\s*fixed/,
@@ -43,15 +37,21 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
   });
 
-  it("uses compact button chrome for the Ajax theme", () => {
+  it("matches iOS portrait letter-key height and gaps", () => {
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*36px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*42px/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*min-height:\s*36px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*min-height:\s*42px/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*max-height:\s*38px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*max-height:\s*42px/,
+    );
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-rows\s*\{[^}]*gap:\s*12px/,
+    );
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s*\{[^}]*gap:\s*6px/,
     );
   });
 

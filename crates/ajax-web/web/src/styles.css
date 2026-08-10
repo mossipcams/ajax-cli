@@ -1668,9 +1668,10 @@ header .bar h1 {
   vertical-align: middle;
 }
 
-/* Compact Ajax on-screen keyboard (replaces OS soft keyboard on mobile).
-   Fixed to the page bottom; viewport subtracts its height so the hotbar band
-   ends flush above it. Soft Charcoal paper steps + Soft Steel Blue return. */
+/* Ajax on-screen keyboard — iOS portrait key metrics (points ≈ CSS px):
+   letter-key height 42, column gap 6, row gap 12, side inset 3.
+   Fixed to the page bottom; viewport subtracts measured height so the hotbar
+   band ends flush above it. Soft Charcoal paper + Soft Steel Blue return. */
 .ajax-terminal-keyboard {
   position: fixed;
   left: 0;
@@ -1678,8 +1679,7 @@ header .bar h1 {
   bottom: 0;
   z-index: 50;
   width: 100%;
-  max-height: 220px;
-  padding: 8px 6px 0;
+  padding: 8px 3px 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
   background: var(--paper-tint);
@@ -1699,29 +1699,29 @@ header .bar h1 {
 .ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
   justify-content: center;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
   flex: 1 1 0;
-  height: 36px;
-  min-height: 36px;
-  max-height: 38px;
+  height: 42px;
+  min-height: 42px;
+  max-height: 42px;
   margin: 0;
   padding: 0 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   border: 1px solid var(--rule-strong);
   background: var(--paper-raised);
   color: var(--ink);
-  font-size: 0.875rem; /* narrow-body — letter keys */
-  font-weight: 500;
+  font-size: 22px; /* iOS letter-key glyph scale */
+  font-weight: 400;
   font-family: var(--sans);
   line-height: 1;
   box-shadow: none;
@@ -1771,7 +1771,7 @@ header .bar h1 {
   flex: 1.2 1 0;
   background: var(--paper-high);
   color: var(--ink-soft);
-  font-size: var(--text-heading);
+  font-size: 22px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done {
@@ -1794,7 +1794,7 @@ header .bar h1 {
   flex: 1.15 1 0;
   background: var(--paper);
   color: var(--ink-muted);
-  font-size: var(--text-micro);
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
 }
