@@ -37,22 +37,18 @@ export const AJAX_KEYBOARD_DISPLAY: Record<string, string> = {
   "{numbers}": "123",
   "{symbols}": "#+=",
   "{abc}": "ABC",
-  "{hide}": "done",
+  "{hide}": "Done",
 };
 
 export const AJAX_KEYBOARD_BUTTON_THEME = [
-  {
-    class: "ajax-kb-action",
-    buttons: "{enter} {bksp} {hide}",
-  },
+  { class: "ajax-kb-enter", buttons: "{enter}" },
+  { class: "ajax-kb-bksp", buttons: "{bksp}" },
+  { class: "ajax-kb-done", buttons: "{hide}" },
   {
     class: "ajax-kb-mod",
     buttons: "{shift} {numbers} {symbols} {abc}",
   },
-  {
-    class: "ajax-kb-space",
-    buttons: "{space}",
-  },
+  { class: "ajax-kb-space", buttons: "{space}" },
 ];
 
 const LAYOUT_SWITCH: Record<string, AjaxKeyboardLayoutName> = {

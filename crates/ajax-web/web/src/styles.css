@@ -1670,7 +1670,7 @@ header .bar h1 {
 
 /* Compact Ajax on-screen keyboard (replaces OS soft keyboard on mobile).
    Fixed to the page bottom; viewport subtracts its height so the hotbar band
-   ends flush above it. */
+   ends flush above it. Soft Charcoal paper steps + Soft Steel Blue return. */
 .ajax-terminal-keyboard {
   position: fixed;
   left: 0;
@@ -1679,11 +1679,12 @@ header .bar h1 {
   z-index: 50;
   width: 100%;
   max-height: 220px;
-  padding: 4px 4px 0;
+  padding: 8px 6px 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
-  background: var(--paper);
+  background: var(--paper-tint);
   border-top: 1px solid var(--rule);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
@@ -1698,55 +1699,119 @@ header .bar h1 {
 .ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row {
   display: flex;
-  gap: 3px;
+  gap: 4px;
   margin: 0;
   justify-content: center;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
   flex: 1 1 0;
-  height: 34px;
-  min-height: 34px;
-  max-height: 36px;
+  height: 36px;
+  min-height: 36px;
+  max-height: 38px;
   margin: 0;
   padding: 0 2px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--rule-strong);
   background: var(--paper-raised);
   color: var(--ink);
-  font-size: 14px;
+  font-size: 0.875rem; /* narrow-body — letter keys */
+  font-weight: 500;
   font-family: var(--sans);
+  line-height: 1;
   box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background 120ms var(--ease), border-color 120ms var(--ease),
+    color 120ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button:active,
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button:focus {
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:active {
   background: var(--paper-high);
   color: var(--ink);
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-action {
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:focus-visible {
+  outline: none;
+  border-color: var(--soft-steel-blue);
+  color: var(--ink);
+}
+
+/* Primary commit — Soft Steel Blue, same role as New / primary pills. */
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter {
+  flex: 1.35 1 0;
+  background: var(--soft-steel-blue);
+  border-color: var(--soft-steel-blue);
+  color: var(--soft-charcoal);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:active {
+  background: var(--soft-steel-blue-bright);
+  border-color: var(--soft-steel-blue-bright);
+  color: var(--soft-charcoal);
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:focus-visible {
+  border-color: var(--soft-steel-blue-bright);
+  color: var(--soft-charcoal);
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-bksp {
+  flex: 1.2 1 0;
   background: var(--paper-high);
   color: var(--ink-soft);
-  flex: 1.2 1 0;
+  font-size: var(--text-heading);
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done {
+  flex: 1.15 1 0;
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink-muted);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done:active {
+  background: var(--paper-raised);
+  color: var(--ink-soft);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-mod {
   flex: 1.15 1 0;
+  background: var(--paper);
   color: var(--ink-muted);
-  font-size: 12px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-space {
   flex: 4 1 0;
+  color: var(--ink-soft);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
+    transition: none;
+  }
 }
 
 .terminal-speech-status {

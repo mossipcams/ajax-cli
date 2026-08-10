@@ -23,20 +23,35 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
   });
 
-  it("labels the dismiss key as done", () => {
+  it("labels the dismiss key as Done", () => {
     const layout = readFileSync(join(here, "ajaxTerminalKeyboardLayout.ts"), "utf8");
-    expect(layout).toMatch(/"\{hide\}":\s*"done"/);
+    expect(layout).toMatch(/"\{hide\}":\s*"Done"/);
+  });
+
+  it("uses Soft Steel Blue return and Soft Charcoal paper steps", () => {
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s*\{[^}]*background:\s*var\(--paper-tint\)/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-enter\s*\{[^}]*background:\s*var\(--soft-steel-blue\)/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-enter\s*\{[^}]*color:\s*var\(--soft-charcoal\)/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-done\s*\{[^}]*background:\s*transparent/,
+    );
   });
 
   it("uses compact button chrome for the Ajax theme", () => {
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*34px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*36px/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*min-height:\s*34px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*min-height:\s*36px/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*max-height:\s*36px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*max-height:\s*38px/,
     );
   });
 
