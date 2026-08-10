@@ -37,7 +37,7 @@ export const AJAX_KEYBOARD_DISPLAY: Record<string, string> = {
   "{numbers}": "123",
   "{symbols}": "#+=",
   "{abc}": "ABC",
-  "{hide}": "⌄",
+  "{hide}": "done",
 };
 
 export const AJAX_KEYBOARD_BUTTON_THEME = [

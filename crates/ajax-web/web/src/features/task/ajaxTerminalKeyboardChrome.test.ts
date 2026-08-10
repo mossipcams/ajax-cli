@@ -13,13 +13,19 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
   });
 
-  it("pins the Ajax board to the keyboard-open band bottom", () => {
+  it("pins the Ajax board to the page bottom", () => {
     expect(stylesSource).toMatch(
-      /html\.keyboard-open\s+\.terminal-panel:not\(\.is-expanded\)\s+\[data-testid="terminal-bottom-controls"\]\s*\{[^}]*margin-top:\s*auto/,
+      /\.ajax-terminal-keyboard\s*\{[^}]*position:\s*fixed/,
     );
+    expect(stylesSource).toMatch(/\.ajax-terminal-keyboard\s*\{[^}]*bottom:\s*0/);
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s*\{[^}]*padding:[^;]*env\(safe-area-inset-bottom/,
+      /\.ajax-terminal-keyboard\s*\{[^}]*padding-bottom:\s*env\(safe-area-inset-bottom/,
     );
+  });
+
+  it("labels the dismiss key as done", () => {
+    const layout = readFileSync(join(here, "ajaxTerminalKeyboardLayout.ts"), "utf8");
+    expect(layout).toMatch(/"\{hide\}":\s*"done"/);
   });
 
   it("uses compact button chrome for the Ajax theme", () => {

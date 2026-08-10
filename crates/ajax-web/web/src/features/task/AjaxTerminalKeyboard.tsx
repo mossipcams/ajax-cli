@@ -21,7 +21,7 @@ interface Props {
 
 /**
  * Compact on-screen keyboard for touch/narrow terminal typing.
- * Emits PTY bytes via `onKey`; does not own an input buffer.
+ * Fixed to the page bottom; emits PTY bytes via `onKey`.
  */
 export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -39,7 +39,8 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
     if (!root) return;
 
     const publishOpen = () => {
-      setSoftwareKeyboardOpen(true);
+      const height = Math.ceil(root.getBoundingClientRect().height);
+      setSoftwareKeyboardOpen(true, height);
       onGeometryChangeRef.current?.();
     };
     publishOpen();
@@ -88,7 +89,6 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
     const payload = mapAjaxKeyboardButton(button);
     if (payload !== null) {
       onKeyRef.current(payload);
-      // One-shot shift: return to lowercase after a character.
       if (layoutName === "shift" && payload.length === 1) {
         setLayoutName("default");
       }
@@ -104,7 +104,12 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
       ref={rootRef}
       className="ajax-terminal-keyboard"
       data-testid="ajax-terminal-keyboard"
-      onPointerDown={(event) => event.preventDefault()}>
+      onPointerDown={(event) => {
+        // Keep terminal focus; stop the gesture from falling through to the
+        // terminal after dismiss and immediately re-opening the board.
+        event.preventDefault();
+        event.stopPropagation();
+      }}>
       <Keyboard
         layoutName={layoutName}
         layout={AJAX_KEYBOARD_LAYOUT}

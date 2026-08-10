@@ -6,6 +6,7 @@ import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import { isMobileTerminalLayout } from "@/shared/lib/terminalGeometry";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
 import { AjaxTerminalKeyboard } from "./AjaxTerminalKeyboard";
+import { BACKSPACE_SENTINEL, seedBackspaceSentinel, seedSentinelFromFocus } from "./backspaceSentinel";
 import { mountTaskTerminalSession } from "./mountTaskTerminalSession";
 import { TaskTerminalClipboardSheets } from "./TaskTerminalClipboardSheets";
 import { useTaskTerminalSpeech } from "./useTaskTerminalSpeech";
@@ -16,24 +17,6 @@ import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
 interface Props {
   handle: string;
 }
-
-// iOS only starts its hold-to-delete repeat loop when the focused field has
-// deletable content, so the xterm helper textarea always carries a sentinel.
-const BACKSPACE_SENTINEL = "\u200B";
-
-const seedBackspaceSentinel = (input: HTMLTextAreaElement | null) => {
-  if (input && !input.value.includes(BACKSPACE_SENTINEL)) {
-    input.value = BACKSPACE_SENTINEL;
-  }
-};
-
-// Module scope on purpose: registered from hardenMobileTextarea and removed in
-// the effect cleanup, which see different render closures. One stable identity
-// is the only way both sides name the same function.
-const seedSentinelFromFocus = (event: Event) => {
-  const input = event.currentTarget;
-  seedBackspaceSentinel(input instanceof HTMLTextAreaElement ? input : null);
-};
 
 export default function TaskTerminal({ handle }: Props) {
   const hostElRef = useRef<HTMLDivElement | null>(null);
@@ -85,12 +68,18 @@ export default function TaskTerminal({ handle }: Props) {
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
 
-  const isPhoneTerminalLayout = () => isMobileTerminalLayout();
+  const ajaxKbSuppressUntilRef = useRef(0);
 
   const openAjaxKeyboard = useEffectEvent(() => {
-    if (isMobileTerminalLayout()) setAjaxKeyboardOpen(true);
+    if (!isMobileTerminalLayout()) return;
+    if (performance.now() < ajaxKbSuppressUntilRef.current) return;
+    setAjaxKeyboardOpen(true);
   });
-  const closeAjaxKeyboard = () => setAjaxKeyboardOpen(false);
+  const closeAjaxKeyboard = () => {
+    ajaxKbSuppressUntilRef.current = performance.now() + 400;
+    setAjaxKeyboardOpen(false);
+    termRef.current?.blur();
+  };
 
   const clearExpandedInert = () => {
     for (const el of inertedElementsRef.current) {
@@ -101,7 +90,7 @@ export default function TaskTerminal({ handle }: Props) {
 
   const applyExpandedInert = () => {
     clearExpandedInert();
-    if (!isPhoneTerminalLayout()) return;
+    if (!isMobileTerminalLayout()) return;
 
     const panel = hostElRef.current?.closest<HTMLElement>('[data-testid="task-terminal-panel"]');
     const taskDetail = panel?.closest<HTMLElement>(".task-detail");

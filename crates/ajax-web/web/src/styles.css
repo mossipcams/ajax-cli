@@ -1669,13 +1669,18 @@ header .bar h1 {
 }
 
 /* Compact Ajax on-screen keyboard (replaces OS soft keyboard on mobile).
-   Lives inside the keyboard-open band under the hotbar — attached to the
-   page bottom when the band is pinned to full visualViewport height. */
+   Fixed to the page bottom; viewport subtracts its height so the hotbar band
+   ends flush above it. */
 .ajax-terminal-keyboard {
-  flex: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
   width: 100%;
   max-height: 220px;
-  padding: 2px 4px max(4px, env(safe-area-inset-bottom, 0px));
+  padding: 4px 4px 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
   background: var(--paper);
   border-top: 1px solid var(--rule);
@@ -1835,14 +1840,7 @@ header .bar h1 {
 
   html.keyboard-open .terminal-panel:not(.is-expanded) [data-testid="terminal-bottom-controls"] {
     flex: none;
-    margin-top: auto;
     width: 100%;
-  }
-
-  /* Ajax board is the page-bottom surface while open; hotbar sits above it. */
-  html.keyboard-open .ajax-terminal-keyboard {
-    margin: 0;
-    border-bottom: 0;
   }
 
   html.keyboard-open .terminal-keys {
