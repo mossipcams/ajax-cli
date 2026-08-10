@@ -1668,10 +1668,10 @@ header .bar h1 {
   vertical-align: middle;
 }
 
-/* Ajax on-screen keyboard — iOS portrait key metrics (points ≈ CSS px):
-   letter-key height 42, column gap 6, row gap 12, side inset 3.
-   Fixed to the page bottom; viewport subtracts measured height so the hotbar
-   band ends flush above it. Soft Charcoal paper + Soft Steel Blue return. */
+/* Ajax on-screen keyboard — iOS-like inter-key gaps only via flex gap.
+   Library theme uses margin-right/bottom 5px; those must stay zeroed or gaps
+   double. Fixed to page bottom; viewport subtracts measured height so the
+   hotbar band ends flush above it. Soft Charcoal paper + Soft Steel Blue. */
 .ajax-terminal-keyboard {
   position: fixed;
   left: 0;
@@ -1679,7 +1679,7 @@ header .bar h1 {
   bottom: 0;
   z-index: 50;
   width: 100%;
-  padding: 8px 3px 0;
+  padding: 8px 6px 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
   background: var(--paper-tint);
@@ -1699,29 +1699,34 @@ header .bar h1 {
 .ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 11px; /* iOS portrait row gap */
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row {
   display: flex;
-  gap: 6px;
+  gap: 6px; /* iOS portrait column gap */
   margin: 0;
   justify-content: center;
 }
 
+/* Beat `.hg-theme-default .hg-row:not(:last-child) { margin-bottom: 5px }`. */
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row:not(:last-child) {
+  margin-bottom: 0;
+}
+
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
   flex: 1 1 0;
-  height: 42px;
-  min-height: 42px;
-  max-height: 42px;
+  height: 36px;
+  min-height: 36px;
+  max-height: 36px;
   margin: 0;
   padding: 0 2px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--rule-strong);
   background: var(--paper-raised);
   color: var(--ink);
-  font-size: 22px; /* iOS letter-key glyph scale */
-  font-weight: 400;
+  font-size: 0.875rem;
+  font-weight: 500;
   font-family: var(--sans);
   line-height: 1;
   box-shadow: none;
@@ -1731,6 +1736,12 @@ header .bar h1 {
   transition: background 120ms var(--ease), border-color 120ms var(--ease),
     color 120ms var(--ease);
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Beat `.hg-theme-default .hg-row .hg-button:not(:last-child) { margin-right: 5px }`. */
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row .hg-button:not(:last-child),
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row .hg-button-container {
+  margin-right: 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button:active {
@@ -1771,7 +1782,7 @@ header .bar h1 {
   flex: 1.2 1 0;
   background: var(--paper-high);
   color: var(--ink-soft);
-  font-size: 22px;
+  font-size: var(--text-heading);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done {
