@@ -10,7 +10,6 @@ export interface AjaxKeyboardHapticHandlers {
 }
 
 const WRAP_MOD_CLASS: Record<string, string> = {
-  "ajax-kb-half": "ajax-kb-wrap-half",
   "ajax-kb-enter": "ajax-kb-wrap-enter",
   "ajax-kb-bksp": "ajax-kb-wrap-bksp",
   "ajax-kb-done": "ajax-kb-wrap-done",

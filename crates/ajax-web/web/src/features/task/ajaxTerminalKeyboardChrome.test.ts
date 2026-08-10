@@ -13,7 +13,7 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
     expect(stylesSource).toMatch(/\.ajax-terminal-keyboard\s*\{[^}]*bottom:\s*0/);
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s*\{[^}]*padding-bottom:\s*calc\(4px\s*\+\s*env\(safe-area-inset-bottom/,
+      /\.ajax-terminal-keyboard\s*\{[^}]*padding-bottom:\s*calc\(var\(--ajax-kb-bottom\)\s*\+\s*env\(safe-area-inset-bottom/,
     );
   });
 
@@ -32,38 +32,33 @@ describe("ajax terminal keyboard compact chrome", () => {
     expect(stylesSource).toMatch(
       /\.hg-button\.ajax-kb-enter\s*\{[^}]*color:\s*var\(--soft-charcoal\)/,
     );
-    expect(stylesSource).toMatch(
-      /\.hg-button\.ajax-kb-done\s*\{[^}]*background:\s*transparent/,
-    );
   });
 
-  it("matches iOS portrait key-plane metrics and width units", () => {
+  it("matches measured iOS portrait key-plane metrics", () => {
+    expect(stylesSource).toMatch(/--ajax-kb-gap-x:\s*6px/);
+    expect(stylesSource).toMatch(/--ajax-kb-gap-y:\s*10px/);
+    expect(stylesSource).toMatch(/--ajax-kb-side:\s*3px/);
+    expect(stylesSource).toMatch(/--ajax-kb-key-h:\s*clamp\(39px/);
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*42px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-rows\s*\{[^}]*gap:\s*var\(--ajax-kb-gap-y\)/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-rows\s*\{[^}]*gap:\s*12px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s*\{[^}]*gap:\s*var\(--ajax-kb-gap-x\)/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s*\{[^}]*gap:\s*6px/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-mod\s*\{[^}]*flex:\s*1\.33/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row:not\(:last-child\)\s*\{[^}]*margin-bottom:\s*0/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-bksp\s*\{[^}]*flex:\s*1\.33/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s+\.hg-button:not\(:last-child\)[\s\S]*?\{[^}]*margin-right:\s*0/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-enter\s*\{[^}]*flex:\s*2\.78/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-kb-key-wrap\.ajax-kb-wrap-mod\s*\{[^}]*flex:\s*1\.5/,
+      /\.ajax-kb-key-wrap\.ajax-kb-wrap-space\s*\{[^}]*flex:\s*5\.79/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-kb-key-wrap\.ajax-kb-wrap-bksp\s*\{[^}]*flex:\s*1\.5/,
-    );
-    expect(stylesSource).toMatch(
-      /\.ajax-kb-key-wrap\.ajax-kb-wrap-enter\s*\{[^}]*flex:\s*2\b/,
-    );
-    expect(stylesSource).toMatch(
-      /\.ajax-kb-key-wrap\.ajax-kb-wrap-space\s*\{[^}]*flex:\s*5\.25/,
+      /\.hg-button\.ajax-kb-half\s*\{[^}]*margin:\s*0\s+calc\(var\(--ajax-kb-gap-x\)\s*\/\s*-2\)/,
     );
   });
 

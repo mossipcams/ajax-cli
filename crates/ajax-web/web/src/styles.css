@@ -1668,19 +1668,28 @@ header .bar h1 {
   vertical-align: middle;
 }
 
-/* Ajax on-screen keyboard — iOS portrait letter-plane metrics (216pt):
-   key height 42, column gap 6, row gap 12, side inset 3, top/bottom 8/4.
-   Library theme margins stay zeroed so flex gaps are the only spacing.
-   Fixed to page bottom; viewport subtracts measured height for hotbar flush. */
+/* Ajax on-screen keyboard — iOS portrait letter-plane (≈216pt + home inset).
+   Measured iPhone ratios (tasty-imitation-keyboard / iPhone 6+ family):
+   side 3, top 10, bottom 3, gap-x 6, gap-y ≈10, key-h scales with width,
+   letter=1, shift/bksp≈1.33, 123/Done≈1.30, return≈2.78, space≈5.79.
+   Half-row inset uses half-key spacers with -3px to cancel half a column gap
+   so ASDF lands at 0.5*(key+gap) like iOS. */
 .ajax-terminal-keyboard {
+  --ajax-kb-gap-x: 6px;
+  --ajax-kb-gap-y: 10px;
+  --ajax-kb-side: 3px;
+  --ajax-kb-top: 10px;
+  --ajax-kb-bottom: 3px;
+  --ajax-kb-key-h: clamp(39px, calc(100vw * 0.072 + 15.727px), 46px);
+  --ajax-kb-radius: 5px;
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 50;
   width: 100%;
-  padding: 8px 3px 4px;
-  padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ajax-kb-top) var(--ajax-kb-side) var(--ajax-kb-bottom);
+  padding-bottom: calc(var(--ajax-kb-bottom) + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--paper-tint);
   border-top: 1px solid var(--rule);
@@ -1694,19 +1703,23 @@ header .bar h1 {
   background: transparent;
   padding: 0;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ajax-kb-gap-y);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row {
   display: flex;
-  gap: 6px;
+  gap: var(--ajax-kb-gap-x);
   margin: 0;
   justify-content: center;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* Beat `.hg-theme-default .hg-row:not(:last-child) { margin-bottom: 5px }`. */
@@ -1719,55 +1732,55 @@ header .bar h1 {
 .ajax-terminal-keyboard .ajax-kb-key-wrap {
   position: relative;
   flex: 1 1 0;
+  width: 0;
   min-width: 0;
-  height: 42px;
-}
-
-.ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-half {
-  flex: 0.5 1 0;
+  height: var(--ajax-kb-key-h);
+  box-sizing: border-box;
 }
 
 .ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-mod {
-  flex: 1.5 1 0;
+  flex: 1.33 1 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-bksp {
-  flex: 1.5 1 0;
+  flex: 1.33 1 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-done {
-  flex: 1.25 1 0;
+  flex: 1.3 1 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-enter {
-  flex: 2 1 0;
+  flex: 2.78 1 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-key-wrap.ajax-kb-wrap-space {
-  flex: 5.25 1 0;
+  flex: 5.79 1 0;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
   flex: 1 1 0;
-  height: 42px;
-  min-height: 42px;
-  max-height: 42px;
+  width: 0;
+  min-width: 0;
+  height: var(--ajax-kb-key-h);
+  min-height: var(--ajax-kb-key-h);
+  max-height: var(--ajax-kb-key-h);
   margin: 0;
-  padding: 0 2px;
-  border-radius: 8.5px;
-  border: 1px solid var(--rule-strong);
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: var(--ajax-kb-radius);
+  border: 0;
   background: var(--paper-raised);
   color: var(--ink);
   font-size: 22px;
   font-weight: 400;
   font-family: var(--sans);
   line-height: 1;
-  box-shadow: none;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 120ms var(--ease), border-color 120ms var(--ease),
-    color 120ms var(--ease);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1821,24 +1834,26 @@ header .bar h1 {
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button:focus-visible {
   outline: none;
-  border-color: var(--soft-steel-blue);
+  box-shadow: 0 0 0 2px var(--soft-steel-blue);
   color: var(--ink);
 }
 
-/* iOS width units: letter=1, half=0.5, shift/bksp/123=1.5, return=2, space=5.25. */
+/* ASDF-row half spacers: 0.5 letter, minus half a gap so inset = 0.5*(key+gap). */
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-half {
   flex: 0.5 1 0;
+  width: 0;
   visibility: hidden;
   pointer-events: none;
   border: 0;
   background: transparent;
+  box-shadow: none;
+  margin: 0 calc(var(--ajax-kb-gap-x) / -2);
 }
 
 /* Primary commit — Soft Steel Blue, same role as New / primary pills. */
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter {
-  flex: 2 1 0;
   background: var(--soft-steel-blue);
-  border-color: var(--soft-steel-blue);
+  box-shadow: none;
   color: var(--soft-charcoal);
   font-size: 16px;
   font-weight: 600;
@@ -1851,26 +1866,22 @@ header .bar h1 {
   .ajax-kb-key-wrap:has(.ajax-kb-haptic-hit:active)
   > .hg-button.ajax-kb-enter {
   background: var(--soft-steel-blue-bright);
-  border-color: var(--soft-steel-blue-bright);
   color: var(--soft-charcoal);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:focus-visible {
-  border-color: var(--soft-steel-blue-bright);
+  box-shadow: 0 0 0 2px var(--soft-steel-blue-bright);
   color: var(--soft-charcoal);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-bksp {
-  flex: 1.5 1 0;
   background: var(--paper-high);
   color: var(--ink-soft);
   font-size: 22px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done {
-  flex: 1.25 1 0;
-  background: transparent;
-  border-color: var(--rule-strong);
+  background: var(--paper);
   color: var(--ink-muted);
   font-size: 16px;
   font-weight: 600;
@@ -1887,7 +1898,6 @@ header .bar h1 {
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-mod {
-  flex: 1.5 1 0;
   background: var(--paper);
   color: var(--ink-muted);
   font-size: 16px;
@@ -1896,7 +1906,6 @@ header .bar h1 {
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-space {
-  flex: 5.25 1 0;
   color: var(--ink-soft);
   font-size: 16px;
   font-weight: 400;
