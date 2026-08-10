@@ -1668,10 +1668,10 @@ header .bar h1 {
   vertical-align: middle;
 }
 
-/* Ajax on-screen keyboard — iOS-like inter-key gaps only via flex gap.
-   Library theme uses margin-right/bottom 5px; those must stay zeroed or gaps
-   double. Fixed to page bottom; viewport subtracts measured height so the
-   hotbar band ends flush above it. Soft Charcoal paper + Soft Steel Blue. */
+/* Ajax on-screen keyboard — iOS portrait letter-plane metrics (216pt):
+   key height 42, column gap 6, row gap 12, side inset 3, top/bottom 8/4.
+   Library theme margins stay zeroed so flex gaps are the only spacing.
+   Fixed to page bottom; viewport subtracts measured height for hotbar flush. */
 .ajax-terminal-keyboard {
   position: fixed;
   left: 0;
@@ -1679,8 +1679,8 @@ header .bar h1 {
   bottom: 0;
   z-index: 50;
   width: 100%;
-  padding: 8px 6px 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding: 8px 3px 4px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--paper-tint);
   border-top: 1px solid var(--rule);
@@ -1699,12 +1699,12 @@ header .bar h1 {
 .ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
   display: flex;
   flex-direction: column;
-  gap: 11px; /* iOS portrait row gap */
+  gap: 12px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-row {
   display: flex;
-  gap: 6px; /* iOS portrait column gap */
+  gap: 6px;
   margin: 0;
   justify-content: center;
 }
@@ -1715,18 +1715,19 @@ header .bar h1 {
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button {
+  position: relative;
   flex: 1 1 0;
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
+  height: 42px;
+  min-height: 42px;
+  max-height: 42px;
   margin: 0;
   padding: 0 2px;
-  border-radius: var(--radius-sm);
+  border-radius: 8.5px;
   border: 1px solid var(--rule-strong);
   background: var(--paper-raised);
   color: var(--ink);
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 22px;
+  font-weight: 400;
   font-family: var(--sans);
   line-height: 1;
   box-shadow: none;
@@ -1744,7 +1745,28 @@ header .bar h1 {
   margin-right: 0;
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button:active {
+/* WebKit switch hit-target — real user tap drives iOS key haptics. */
+.ajax-terminal-keyboard .ajax-kb-haptic-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0.001;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button span {
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:active,
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:has(.ajax-kb-haptic-hit:active) {
   background: var(--paper-high);
   color: var(--ink);
 }
@@ -1755,19 +1777,31 @@ header .bar h1 {
   color: var(--ink);
 }
 
+/* iOS width units: letter=1, half=0.5, shift/bksp/123=1.5, return=2, space=5.25. */
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-half {
+  flex: 0.5 1 0;
+  visibility: hidden;
+  pointer-events: none;
+  border: 0;
+  background: transparent;
+}
+
 /* Primary commit — Soft Steel Blue, same role as New / primary pills. */
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter {
-  flex: 1.35 1 0;
+  flex: 2 1 0;
   background: var(--soft-steel-blue);
   border-color: var(--soft-steel-blue);
   color: var(--soft-charcoal);
-  font-size: var(--text-label);
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  text-transform: none;
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:active {
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-enter:active,
+.ajax-terminal-keyboard
+  .ajax-kb-theme
+  .hg-button.ajax-kb-enter:has(.ajax-kb-haptic-hit:active) {
   background: var(--soft-steel-blue-bright);
   border-color: var(--soft-steel-blue-bright);
   color: var(--soft-charcoal);
@@ -1779,44 +1813,47 @@ header .bar h1 {
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-bksp {
-  flex: 1.2 1 0;
+  flex: 1.5 1 0;
   background: var(--paper-high);
   color: var(--ink-soft);
-  font-size: var(--text-heading);
+  font-size: 22px;
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done {
-  flex: 1.15 1 0;
+  flex: 1.25 1 0;
   background: transparent;
   border-color: var(--rule-strong);
   color: var(--ink-muted);
-  font-size: var(--text-label);
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  text-transform: none;
 }
 
-.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done:active {
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-done:active,
+.ajax-terminal-keyboard
+  .ajax-kb-theme
+  .hg-button.ajax-kb-done:has(.ajax-kb-haptic-hit:active) {
   background: var(--paper-raised);
   color: var(--ink-soft);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-mod {
-  flex: 1.15 1 0;
+  flex: 1.5 1 0;
   background: var(--paper);
   color: var(--ink-muted);
-  font-size: var(--text-label);
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
 }
 
 .ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-space {
-  flex: 4 1 0;
+  flex: 5.25 1 0;
   color: var(--ink-soft);
-  font-size: var(--text-label);
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 400;
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

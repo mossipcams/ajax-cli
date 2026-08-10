@@ -29,6 +29,7 @@ describe("mapAjaxKeyboardButton", () => {
     expect(mapAjaxKeyboardButton("{symbols}")).toBeNull();
     expect(mapAjaxKeyboardButton("{abc}")).toBeNull();
     expect(mapAjaxKeyboardButton("{hide}")).toBeNull();
+    expect(mapAjaxKeyboardButton("{half}")).toBeNull();
   });
 });
 
@@ -54,6 +55,7 @@ describe("isAjaxKeyboardLayoutButton", () => {
   it("recognizes layout-only buttons", () => {
     expect(isAjaxKeyboardLayoutButton("{hide}")).toBe(true);
     expect(isAjaxKeyboardLayoutButton("{shift}")).toBe(true);
+    expect(isAjaxKeyboardLayoutButton("{half}")).toBe(true);
     expect(isAjaxKeyboardLayoutButton("{enter}")).toBe(false);
   });
 });

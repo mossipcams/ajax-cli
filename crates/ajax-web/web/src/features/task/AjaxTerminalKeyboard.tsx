@@ -3,11 +3,13 @@ import Keyboard from "react-simple-keyboard";
 import "react-simple-keyboard/build/css/index.css";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import { setSoftwareKeyboardOpen } from "@/shared/lib/viewport";
+import { attachAjaxKeyboardHaptics } from "./ajaxTerminalKeyboardHaptics";
 import {
   AJAX_KEYBOARD_BUTTON_THEME,
   AJAX_KEYBOARD_DISPLAY,
   AJAX_KEYBOARD_LAYOUT,
   type AjaxKeyboardLayoutName,
+  isAjaxKeyboardSpacerButton,
   mapAjaxKeyboardButton,
   nextAjaxKeyboardLayout,
 } from "./ajaxTerminalKeyboardLayout";
@@ -20,8 +22,9 @@ interface Props {
 }
 
 /**
- * Compact on-screen keyboard for touch/narrow terminal typing.
+ * iOS-sized on-screen keyboard for touch/narrow terminal typing.
  * Fixed to the page bottom; emits PTY bytes via `onKey`.
+ * Key taps use WebKit switch-checkbox overlays for native haptics.
  */
 export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -33,28 +36,8 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
   onHideRef.current = onHide;
   const onGeometryChangeRef = useRef(onGeometryChange);
   onGeometryChangeRef.current = onGeometryChange;
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const publishOpen = () => {
-      const height = Math.ceil(root.getBoundingClientRect().height);
-      setSoftwareKeyboardOpen(true, height);
-      onGeometryChangeRef.current?.();
-    };
-    publishOpen();
-
-    const observer = new ResizeObserver(publishOpen);
-    observer.observe(root);
-    return () => {
-      observer.disconnect();
-      bkspRepeaterRef.current?.stop();
-      bkspRepeaterRef.current = null;
-      setSoftwareKeyboardOpen(false);
-      onGeometryChangeRef.current?.();
-    };
-  }, []);
+  const layoutNameRef = useRef(layoutName);
+  layoutNameRef.current = layoutName;
 
   const stopBkspRepeat = () => {
     bkspRepeaterRef.current?.stop();
@@ -72,8 +55,9 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
     repeater.start();
   };
 
-  const onKeyPress = (button: string) => {
-    const next = nextAjaxKeyboardLayout(layoutName, button);
+  const handlePress = (button: string) => {
+    if (isAjaxKeyboardSpacerButton(button)) return;
+    const next = nextAjaxKeyboardLayout(layoutNameRef.current, button);
     if (next) {
       setLayoutName(next);
       return;
@@ -89,15 +73,44 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
     const payload = mapAjaxKeyboardButton(button);
     if (payload !== null) {
       onKeyRef.current(payload);
-      if (layoutName === "shift" && payload.length === 1) {
+      if (layoutNameRef.current === "shift" && payload.length === 1) {
         setLayoutName("default");
       }
     }
   };
 
-  const onKeyReleased = (button: string) => {
+  const handleRelease = (button: string) => {
     if (button === "{bksp}") stopBkspRepeat();
   };
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const publishOpen = () => {
+      const height = Math.ceil(root.getBoundingClientRect().height);
+      setSoftwareKeyboardOpen(true, height);
+      onGeometryChangeRef.current?.();
+    };
+    publishOpen();
+
+    const resizeObserver = new ResizeObserver(publishOpen);
+    resizeObserver.observe(root);
+    const detachHaptics = attachAjaxKeyboardHaptics(root, {
+      onPress: handlePress,
+      onRelease: handleRelease,
+    });
+
+    return () => {
+      detachHaptics();
+      resizeObserver.disconnect();
+      stopBkspRepeat();
+      setSoftwareKeyboardOpen(false);
+      onGeometryChangeRef.current?.();
+    };
+    // Handlers close over refs; attach once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
@@ -105,10 +118,13 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
       className="ajax-terminal-keyboard"
       data-testid="ajax-terminal-keyboard"
       onPointerDown={(event) => {
-        // Keep terminal focus; stop the gesture from falling through to the
-        // terminal after dismiss and immediately re-opening the board.
-        event.preventDefault();
+        // Keep terminal focus; stop fall-through reopen after dismiss.
+        // Do not preventDefault on the haptic switch hit-target — WebKit only
+        // fires switch haptics when the checkbox receives a real toggle.
         event.stopPropagation();
+        const target = event.target as HTMLElement | null;
+        if (target?.classList?.contains("ajax-kb-haptic-hit")) return;
+        event.preventDefault();
       }}>
       <Keyboard
         layoutName={layoutName}
@@ -120,8 +136,10 @@ export function AjaxTerminalKeyboard({ onKey, onHide, onGeometryChange }: Props)
         useButtonTag
         preventMouseDownDefault
         disableCaretPositioning
-        onKeyPress={onKeyPress}
-        onKeyReleased={onKeyReleased}
+        // Haptic overlays own press/release; keep library callbacks as a
+        // non-touch fallback (pointer / accessibility paths).
+        onKeyPress={handlePress}
+        onKeyReleased={handleRelease}
       />
     </div>
   );

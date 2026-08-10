@@ -5,13 +5,13 @@ export type AjaxKeyboardLayoutName = "default" | "shift" | "numbers" | "symbols"
 export const AJAX_KEYBOARD_LAYOUT: Record<AjaxKeyboardLayoutName, string[]> = {
   default: [
     "q w e r t y u i o p",
-    "a s d f g h j k l",
+    "{half} a s d f g h j k l {half}",
     "{shift} z x c v b n m {bksp}",
     "{numbers} {hide} {space} {enter}",
   ],
   shift: [
     "Q W E R T Y U I O P",
-    "A S D F G H J K L",
+    "{half} A S D F G H J K L {half}",
     "{shift} Z X C V B N M {bksp}",
     "{numbers} {hide} {space} {enter}",
   ],
@@ -38,6 +38,7 @@ export const AJAX_KEYBOARD_DISPLAY: Record<string, string> = {
   "{symbols}": "#+=",
   "{abc}": "ABC",
   "{hide}": "Done",
+  "{half}": " ",
 };
 
 export const AJAX_KEYBOARD_BUTTON_THEME = [
@@ -49,6 +50,7 @@ export const AJAX_KEYBOARD_BUTTON_THEME = [
     buttons: "{shift} {numbers} {symbols} {abc}",
   },
   { class: "ajax-kb-space", buttons: "{space}" },
+  { class: "ajax-kb-half", buttons: "{half}" },
 ];
 
 const LAYOUT_SWITCH: Record<string, AjaxKeyboardLayoutName> = {
@@ -58,9 +60,18 @@ const LAYOUT_SWITCH: Record<string, AjaxKeyboardLayoutName> = {
   "{abc}": "default",
 };
 
+/** Invisible half-key spacer for iOS ASDF-row inset. */
+export function isAjaxKeyboardSpacerButton(button: string): boolean {
+  return button === "{half}";
+}
+
 /** Layout-only buttons that must not emit PTY bytes. */
 export function isAjaxKeyboardLayoutButton(button: string): boolean {
-  return button in LAYOUT_SWITCH || button === "{hide}";
+  return (
+    button in LAYOUT_SWITCH ||
+    button === "{hide}" ||
+    isAjaxKeyboardSpacerButton(button)
+  );
 }
 
 /**

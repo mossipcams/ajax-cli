@@ -13,7 +13,7 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
     expect(stylesSource).toMatch(/\.ajax-terminal-keyboard\s*\{[^}]*bottom:\s*0/);
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s*\{[^}]*padding-bottom:\s*env\(safe-area-inset-bottom/,
+      /\.ajax-terminal-keyboard\s*\{[^}]*padding-bottom:\s*calc\(4px\s*\+\s*env\(safe-area-inset-bottom/,
     );
   });
 
@@ -37,9 +37,12 @@ describe("ajax terminal keyboard compact chrome", () => {
     );
   });
 
-  it("uses iOS inter-key gaps and zeros library button margins", () => {
+  it("matches iOS portrait key-plane metrics and width units", () => {
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-rows\s*\{[^}]*gap:\s*11px/,
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*42px/,
+    );
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-rows\s*\{[^}]*gap:\s*12px/,
     );
     expect(stylesSource).toMatch(
       /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s*\{[^}]*gap:\s*6px/,
@@ -51,8 +54,30 @@ describe("ajax terminal keyboard compact chrome", () => {
       /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-row\s+\.hg-button:not\(:last-child\)[\s\S]*?\{[^}]*margin-right:\s*0/,
     );
     expect(stylesSource).toMatch(
-      /\.ajax-terminal-keyboard\s+\.ajax-kb-theme\s+\.hg-button\s*\{[^}]*height:\s*36px/,
+      /\.hg-button\.ajax-kb-half\s*\{[^}]*flex:\s*0\.5/,
     );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-mod\s*\{[^}]*flex:\s*1\.5/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-bksp\s*\{[^}]*flex:\s*1\.5/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-enter\s*\{[^}]*flex:\s*2\b/,
+    );
+    expect(stylesSource).toMatch(
+      /\.hg-button\.ajax-kb-space\s*\{[^}]*flex:\s*5\.25/,
+    );
+  });
+
+  it("ships WebKit switch haptic hit-targets on keys", () => {
+    expect(stylesSource).toMatch(
+      /\.ajax-terminal-keyboard\s+\.ajax-kb-haptic-hit\s*\{[^}]*opacity:\s*0\.001/,
+    );
+    const haptics = readFileSync(join(here, "ajaxTerminalKeyboardHaptics.ts"), "utf8");
+    expect(haptics).toMatch(/setAttribute\(\s*"switch"\s*,\s*""\s*\)/);
+    const keyboard = readFileSync(join(here, "AjaxTerminalKeyboard.tsx"), "utf8");
+    expect(keyboard).toMatch(/attachAjaxKeyboardHaptics/);
   });
 
   it("ships inputMode=none hardening in TaskTerminal", () => {
