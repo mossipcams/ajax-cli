@@ -850,6 +850,14 @@ header .bar h1 {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
 }
 
+/* Anchor a short conversation to the composer instead of stranding it at the
+   top over dead space. `margin-top: auto` rather than `justify-content` on the
+   scroller: the auto margin collapses to zero once content overflows, so the
+   top of a long transcript stays reachable. */
+.session-thread > :first-child {
+  margin-top: auto;
+}
+
 .session-thread-empty {
   margin: auto 0;
   padding: 32px 12px;
