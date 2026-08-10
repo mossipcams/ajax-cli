@@ -9,14 +9,19 @@ export const MOBILE_SCROLLBACK_LINES = 2000;
 /** xterm scrollback cap for desktop viewports. */
 export const DESKTOP_SCROLLBACK_LINES = 10000;
 
-const MOBILE_MEDIA_QUERY =
+export const MOBILE_MEDIA_QUERY =
   "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
 
-export function terminalScrollbackLines(): number {
-  if (
+/** Touch/narrow viewport gate shared by terminal layout and Ajax keyboard. */
+export function isMobileTerminalLayout(): boolean {
+  return (
     typeof window !== "undefined" &&
-    window.matchMedia?.(MOBILE_MEDIA_QUERY).matches
-  ) {
+    Boolean(window.matchMedia?.(MOBILE_MEDIA_QUERY).matches)
+  );
+}
+
+export function terminalScrollbackLines(): number {
+  if (isMobileTerminalLayout()) {
     return MOBILE_SCROLLBACK_LINES;
   }
   return DESKTOP_SCROLLBACK_LINES;

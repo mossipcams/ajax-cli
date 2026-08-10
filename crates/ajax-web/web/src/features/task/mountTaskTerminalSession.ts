@@ -104,6 +104,8 @@ export type MountTaskTerminalSessionDeps = {
   onPaste: (event: ClipboardEvent) => void;
   onSeedTermSentinel: () => void;
   onRestorePinnedScroll: () => boolean;
+  /** Mobile soft-keyboard replacement: open Ajax keyboard on typing intent. */
+  onTypingIntent?: () => void;
 };
 
 export function mountTaskTerminalSession(
@@ -142,6 +144,7 @@ export function mountTaskTerminalSession(
     onPaste,
     onSeedTermSentinel,
     onRestorePinnedScroll,
+    onTypingIntent,
   } = deps;
 
   const hostEl = hostElRef.current;
@@ -471,8 +474,9 @@ export function mountTaskTerminalSession(
     if (textarea) {
       resetDocumentScroll();
       textarea.focus({ preventScroll: true });
-      // Tap opens (or keeps) the iOS keyboard; settle so inline and fullscreen
-      // bands both track the animated visual viewport.
+      // Tap opens (or keeps) the Ajax software keyboard on touch/narrow;
+      // settle so inline and fullscreen bands track the band height change.
+      onTypingIntent?.();
       onBandSettle();
       return;
     }

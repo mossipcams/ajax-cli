@@ -3,8 +3,11 @@ import "@xterm/xterm/css/xterm.css";
 import { copyText, readPasteText } from "@/shared/lib/clipboard";
 import type { TerminalConnection, TerminalConnectionStatus } from "@/shared/lib/terminalConnection";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
+import { isMobileTerminalLayout } from "@/shared/lib/terminalGeometry";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
+import { AjaxTerminalKeyboard } from "./AjaxTerminalKeyboard";
 import { mountTaskTerminalSession } from "./mountTaskTerminalSession";
+import { TaskTerminalClipboardSheets } from "./TaskTerminalClipboardSheets";
 import { useTaskTerminalSpeech } from "./useTaskTerminalSpeech";
 import type { Terminal } from "@xterm/xterm";
 import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
@@ -73,6 +76,7 @@ export default function TaskTerminal({ handle }: Props) {
     x: number;
     y: number;
   } | null>(null);
+  const [ajaxKeyboardOpen, setAjaxKeyboardOpen] = useState(false);
   const linkServiceRef = useRef<TerminalLinkService | undefined>(undefined);
   const terminalSnapshotRef = useRef<
     ReturnType<typeof attachTerminalAddons>["snapshot"] | undefined
@@ -81,8 +85,12 @@ export default function TaskTerminal({ handle }: Props) {
   const statusVisible = status !== "connected" || statusDetail.length > 0;
   const showReconnect = status === "reconnecting" || status === "unavailable";
 
-  const isPhoneTerminalLayout = () =>
-    window.matchMedia("(max-width: 767px), (pointer: coarse) and (max-height: 500px)").matches;
+  const isPhoneTerminalLayout = () => isMobileTerminalLayout();
+
+  const openAjaxKeyboard = useEffectEvent(() => {
+    if (isMobileTerminalLayout()) setAjaxKeyboardOpen(true);
+  });
+  const closeAjaxKeyboard = () => setAjaxKeyboardOpen(false);
 
   const clearExpandedInert = () => {
     for (const el of inertedElementsRef.current) {
@@ -266,6 +274,8 @@ export default function TaskTerminal({ handle }: Props) {
     input.setAttribute("autocorrect", "off");
     input.setAttribute("autocomplete", "off");
     input.setAttribute("spellcheck", "false");
+    // Suppress the OS soft keyboard; Ajax keyboard + hardware still work.
+    input.setAttribute("inputmode", "none");
     input.style.fontSize = "16px";
     input.style.position = "absolute";
     input.style.bottom = "0";
@@ -519,6 +529,7 @@ export default function TaskTerminal({ handle }: Props) {
     setPasteNotice(notice);
     setPasteFallbackText(text);
     setPasteFallbackOpen(true);
+    closeAjaxKeyboard();
   };
 
   const retainUnsentPaste = (text: string, ownedFocus: boolean) => {
@@ -628,6 +639,7 @@ export default function TaskTerminal({ handle }: Props) {
     }
     setCopyFallbackText(text);
     setCopyFallbackOpen(true);
+    closeAjaxKeyboard();
   };
 
   const requestReconnect = () => {
@@ -731,6 +743,7 @@ export default function TaskTerminal({ handle }: Props) {
       onPaste,
       onSeedTermSentinel,
       onRestorePinnedScroll,
+      onTypingIntent: openAjaxKeyboard,
     });
   }, [handle]);
 
@@ -832,6 +845,7 @@ export default function TaskTerminal({ handle }: Props) {
                   }
                   setCopyFallbackText(url);
                   setCopyFallbackOpen(true);
+                  closeAjaxKeyboard();
                 })();
               },
             },
@@ -840,42 +854,22 @@ export default function TaskTerminal({ handle }: Props) {
           ariaLabel="Terminal link actions"
         />
       ) : null}
-      {copyFallbackOpen ? (
-        <div className="terminal-paste-fallback">
-          <p className="terminal-paste-notice" role="status">
-            Clipboard unavailable — copy below.
-          </p>
-          <textarea
-            className="terminal-paste-input"
-            readOnly
-            aria-label="Copy text"
-            value={copyFallbackText}></textarea>
-          <div className="terminal-paste-actions">
-            <button type="button" className="terminal-key" onClick={() => dismissCopyFallback()}>
-              Done
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {pasteFallbackOpen ? (
-        <div className="terminal-paste-fallback">
-          <p className="terminal-paste-notice" role="status">
-            {pasteNotice}
-          </p>
-          <textarea
-            className="terminal-paste-input"
-            aria-label="Paste text"
-            value={pasteFallbackText}
-            onChange={(event) => setPasteFallbackText(event.target.value)}></textarea>
-          <div className="terminal-paste-actions">
-            <button type="button" className="terminal-key" onClick={() => sendPasteFallback()}>
-              Send
-            </button>
-            <button type="button" className="terminal-key" onClick={() => cancelPasteFallback()}>
-              Cancel
-            </button>
-          </div>
-        </div>
+      {copyFallbackOpen || pasteFallbackOpen ? (
+        <TaskTerminalClipboardSheets
+          copy={{
+            open: copyFallbackOpen,
+            text: copyFallbackText,
+            onDone: () => dismissCopyFallback(),
+          }}
+          paste={{
+            open: pasteFallbackOpen,
+            notice: pasteNotice,
+            text: pasteFallbackText,
+            onTextChange: setPasteFallbackText,
+            onSend: () => sendPasteFallback(),
+            onCancel: () => cancelPasteFallback(),
+          }}
+        />
       ) : null}
       <div role="status" className="terminal-speech-status">
         {speechModel.state === "connecting" ? <span>Connecting…</span> : null}
@@ -993,6 +987,12 @@ export default function TaskTerminal({ handle }: Props) {
             Mic
           </button>
         </div>
+        {ajaxKeyboardOpen ? (
+          <AjaxTerminalKeyboard
+            onKey={(data) => sendKey(consumeCtrl(data))}
+            onHide={closeAjaxKeyboard}
+          />
+        ) : null}
       </div>
     </section>
   );

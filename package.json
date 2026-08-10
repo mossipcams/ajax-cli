@@ -60,6 +60,7 @@
     "posthog-js": "^1.410.9",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "react-simple-keyboard": "^3.8.256",
     "tailwind-merge": "^3.6.0"
   }
 }

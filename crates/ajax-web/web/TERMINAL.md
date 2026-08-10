@@ -13,8 +13,9 @@ mobile-WebKit behavior suite including the viewport-burst case passes as of
 | Concern | Owner |
 | --- | --- |
 | Lifecycle, DOM, accessibility, composition | `TaskTerminal.tsx` |
+| Compact Ajax soft keyboard (mobile) | `AjaxTerminalKeyboard.tsx` + `ajaxTerminalKeyboardLayout.ts` |
 | WebSocket lifecycle / transport | `terminalConnection.ts` |
-| Document viewport + keyboard truth | `viewport.ts` |
+| Document viewport + keyboard truth (VV + software) | `viewport.ts` |
 | Pure grid/scale/row/font persistence math | `terminalGeometry.ts` |
 | Frame coalescing, two-frame settling, 100 ms PTY debounce, dimension dedupe, disposal | `terminalRefit.ts` |
 | xterm addon attach/dispose (fit, web-links, serialize) | `terminalAddons.ts` |

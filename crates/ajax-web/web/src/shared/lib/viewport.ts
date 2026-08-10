@@ -7,6 +7,10 @@
  * fixed, full-screen terminal layer can size itself to the truly-visible band
  * above the keyboard, and toggle a `keyboard-open` class for layout that needs
  * it. Ported from the Codeman project's mobile-handlers.js.
+ *
+ * Ajax's on-screen keyboard does not shrink `visualViewport`. Callers report it
+ * through `setSoftwareKeyboardOpen`, which shares the same `keyboard-open`
+ * class and `--app-height` contract.
  */
 
 // Keyboard show/hide thresholds. The 100px close threshold (vs 50) absorbs iOS
@@ -22,6 +26,10 @@ const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
 const APP_TOP_VAR = "--app-top";
 
+/** Height of the Ajax software keyboard; 0 means software keyboard is closed. */
+let softwareKeyboardHeightPx = 0;
+let softwareKeyboardSync: (() => void) | null = null;
+
 /**
  * The single keyboard-open truth. `initViewport` maintains the class with
  * baseline rebasing and open/close hysteresis; every consumer (CSS takeover,
@@ -33,6 +41,21 @@ export function isKeyboardOpen(): boolean {
     typeof document !== "undefined" &&
     document.documentElement.classList.contains(KEYBOARD_OPEN_CLASS)
   );
+}
+
+/**
+ * Drive `keyboard-open` / `--app-height` from the Ajax on-screen keyboard.
+ * When open, software override wins over visualViewport hysteresis so the
+ * terminal band pin still works without a native soft keyboard.
+ */
+export function setSoftwareKeyboardOpen(open: boolean, heightPx = 0): void {
+  softwareKeyboardHeightPx = open ? Math.max(0, heightPx) : 0;
+  softwareKeyboardSync?.();
+}
+
+/** Test helper: clear software keyboard override without requiring initViewport. */
+export function resetSoftwareKeyboardForTests(): void {
+  softwareKeyboardHeightPx = 0;
 }
 
 /**
@@ -68,7 +91,7 @@ export function initViewport(): () => void {
   const root = document.documentElement;
   let baselineHeight = vv.height;
   let baselineWidth = window.innerWidth;
-  let keyboardOpen = false;
+  let nativeKeyboardOpen = false;
 
   const setAppHeight = (height: number) => {
     root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
@@ -81,7 +104,14 @@ export function initViewport(): () => void {
     setAppHeight(vv.height);
     setAppTop(vv.offsetTop ?? 0);
   };
-  syncViewportGeometry();
+
+  const applySoftwareOverride = (): boolean => {
+    if (softwareKeyboardHeightPx <= 0) return false;
+    root.classList.add(KEYBOARD_OPEN_CLASS);
+    setAppHeight(Math.max(0, vv.height - softwareKeyboardHeightPx));
+    setAppTop(vv.offsetTop ?? 0);
+    return true;
+  };
 
   let closeSettleTimer: ReturnType<typeof setTimeout> | undefined;
   const cancelCloseSettle = () => {
@@ -92,12 +122,17 @@ export function initViewport(): () => void {
   };
 
   const onViewportResize = () => {
+    if (applySoftwareOverride()) {
+      cancelCloseSettle();
+      return;
+    }
+
     const current = vv.height;
     const currentWidth = window.innerWidth;
     if (currentWidth !== baselineWidth) {
       // Rotation: a real geometry change, close immediately.
       cancelCloseSettle();
-      keyboardOpen = false;
+      nativeKeyboardOpen = false;
       root.classList.remove(KEYBOARD_OPEN_CLASS);
       syncViewportGeometry();
       baselineHeight = current;
@@ -105,21 +140,21 @@ export function initViewport(): () => void {
       return;
     }
     const delta = baselineHeight - current;
-    if (delta > KEYBOARD_OPEN_DELTA_PX && !keyboardOpen) {
+    if (delta > KEYBOARD_OPEN_DELTA_PX && !nativeKeyboardOpen) {
       cancelCloseSettle();
-      keyboardOpen = true;
+      nativeKeyboardOpen = true;
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
-    } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
+    } else if (delta < KEYBOARD_CLOSE_DELTA_PX && nativeKeyboardOpen) {
       // Hold the pinned band (class AND geometry) until the expansion proves
       // it is a real keyboard dismissal, not a mid-typing transient.
       if (closeSettleTimer === undefined) {
         closeSettleTimer = setTimeout(() => {
           closeSettleTimer = undefined;
-          if (!keyboardOpen) return;
+          if (!nativeKeyboardOpen || softwareKeyboardHeightPx > 0) return;
           const settledDelta = baselineHeight - vv.height;
           if (settledDelta < KEYBOARD_CLOSE_DELTA_PX) {
-            keyboardOpen = false;
+            nativeKeyboardOpen = false;
             root.classList.remove(KEYBOARD_OPEN_CLASS);
             resetDocumentScroll();
             syncViewportGeometry();
@@ -129,7 +164,7 @@ export function initViewport(): () => void {
         }, KEYBOARD_CLOSE_SETTLE_MS);
       }
       return;
-    } else if (keyboardOpen && closeSettleTimer !== undefined) {
+    } else if (nativeKeyboardOpen && closeSettleTimer !== undefined) {
       // Shrank back under the close threshold: the expansion was a transient.
       cancelCloseSettle();
     }
@@ -137,11 +172,32 @@ export function initViewport(): () => void {
     // this also tracks address-bar / orientation changes and re-bases the
     // threshold so the next keyboard open is measured from the right height.
     syncViewportGeometry();
-    if (!keyboardOpen) {
+    if (!nativeKeyboardOpen) {
       baselineHeight = current;
       baselineWidth = currentWidth;
     }
   };
+
+  softwareKeyboardSync = () => {
+    if (applySoftwareOverride()) {
+      cancelCloseSettle();
+      resetDocumentScroll();
+      return;
+    }
+    // Software keyboard closed: re-evaluate native VV state.
+    if (!nativeKeyboardOpen) {
+      root.classList.remove(KEYBOARD_OPEN_CLASS);
+      syncViewportGeometry();
+      baselineHeight = vv.height;
+      baselineWidth = window.innerWidth;
+      return;
+    }
+    syncViewportGeometry();
+  };
+
+  if (!applySoftwareOverride()) {
+    syncViewportGeometry();
+  }
 
   // Suppress pinch / double-tap zoom (iOS ignores user-scalable=no since iOS 10).
   const onGesture = (event: Event) => event.preventDefault();
@@ -174,6 +230,8 @@ export function initViewport(): () => void {
 
   return () => {
     cancelCloseSettle();
+    softwareKeyboardSync = null;
+    softwareKeyboardHeightPx = 0;
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     document.removeEventListener("gesturestart", onGesture);

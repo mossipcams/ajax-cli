@@ -1667,6 +1667,80 @@ header .bar h1 {
   vertical-align: middle;
 }
 
+/* Compact Ajax on-screen keyboard (replaces OS soft keyboard on mobile). */
+.ajax-terminal-keyboard {
+  flex: none;
+  width: 100%;
+  max-height: 220px;
+  padding: 2px 4px 4px;
+  box-sizing: border-box;
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme.hg-theme-default {
+  background: transparent;
+  padding: 0;
+  width: 100%;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-row {
+  display: flex;
+  gap: 3px;
+  margin: 0;
+  justify-content: center;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button {
+  flex: 1 1 0;
+  height: 34px;
+  min-height: 34px;
+  max-height: 36px;
+  margin: 0;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 14px;
+  font-family: var(--sans);
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:active,
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button:focus {
+  background: var(--paper-high);
+  color: var(--ink);
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-action {
+  background: var(--paper-high);
+  color: var(--ink-soft);
+  flex: 1.2 1 0;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-mod {
+  flex: 1.15 1 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.ajax-terminal-keyboard .ajax-kb-theme .hg-button.ajax-kb-space {
+  flex: 4 1 0;
+}
+
 .terminal-speech-status {
   display: flex;
   gap: 8px;

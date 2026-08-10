@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { initViewport, isKeyboardOpen, resetDocumentScroll } from "./viewport";
+import {
+  initViewport,
+  isKeyboardOpen,
+  resetDocumentScroll,
+  resetSoftwareKeyboardForTests,
+  setSoftwareKeyboardOpen,
+} from "./viewport";
 
 // Drive a fake visualViewport: capture the handlers it registers and replay
 // them after mutating the height. The keyboard band pin contract that consumes
@@ -27,6 +33,7 @@ beforeEach(() => {
   vvHeight = 800;
   vvOffsetTop = 0;
   disposers = [];
+  resetSoftwareKeyboardForTests();
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
   vi.stubGlobal("visualViewport", {
@@ -350,5 +357,38 @@ describe("isKeyboardOpen", () => {
     vvHeight = 200;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
+  });
+});
+
+describe("setSoftwareKeyboardOpen", () => {
+  it("opens keyboard-open and subtracts height from visualViewport", () => {
+    start();
+    setSoftwareKeyboardOpen(true, 200);
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("600px");
+  });
+
+  it("wins over native visualViewport close while software keyboard is open", () => {
+    start();
+    setSoftwareKeyboardOpen(true, 180);
+    vvHeight = 800;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("620px");
+  });
+
+  it("clears keyboard-open when software keyboard closes without a native keyboard", () => {
+    start();
+    setSoftwareKeyboardOpen(true, 200);
+    setSoftwareKeyboardOpen(false);
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+  });
+
+  it("updates height when the software keyboard resizes", () => {
+    start();
+    setSoftwareKeyboardOpen(true, 160);
+    setSoftwareKeyboardOpen(true, 220);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("580px");
   });
 });

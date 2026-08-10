@@ -716,15 +716,19 @@ supported browser task-control APIs.
 `TaskDetail.tsx` mounts one `TaskTerminal.tsx` surface per task route.
 The component uses xterm.js for rendering and `terminalConnection.ts` for the
 WebSocket lifecycle contract; general viewport helpers remain in `viewport.ts`.
-`crates/ajax-web/web/TERMINAL.md` records frontend ownership. The Rust
-PTY/WebSocket backend (`/api/tasks/{handle}/terminal` route,
+On touch/narrow viewports, soft typing uses Ajax `react-simple-keyboard`
+(`AjaxTerminalKeyboard.tsx`) under the terminal hotbar instead of the OS soft
+keyboard; `viewport.ts` owns both visualViewport and software keyboard-open
+truth for the band pin. `crates/ajax-web/web/TERMINAL.md` records frontend
+ownership. The Rust PTY/WebSocket backend (`/api/tasks/{handle}/terminal` route,
 `ajax-web::slices::terminal`, `ajax-web::adapters::terminal_pty`) is unchanged.
 
 Frontend ownership:
 
 - `TaskTerminal.tsx`: lifecycle, DOM, accessibility, composition.
+- `AjaxTerminalKeyboard.tsx` / `ajaxTerminalKeyboardLayout.ts`: compact Ajax soft keyboard.
 - `terminalConnection.ts`: WebSocket lifecycle/transport.
-- `viewport.ts`: document viewport and keyboard truth.
+- `viewport.ts`: document viewport and keyboard truth (VV + software).
 - `terminalGeometry.ts`: pure grid/scale/row/font persistence math.
 - `terminalRefit.ts`: frame coalescing, two-frame settling, 100 ms
   PTY debounce, dimension dedupe, and disposal.
