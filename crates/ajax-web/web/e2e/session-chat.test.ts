@@ -112,10 +112,10 @@ test("live head reports the running tool while the transcript settles", async ({
   // Prose arrives as real markdown, not a raw blob.
   await expect(page.locator(".session-reply pre code")).toContainText("WorktreeMissing");
   await expect(page.locator(".session-reply li").first()).toContainText("prepare_task_session");
-  await expect(page.getByTestId("session-plan")).toContainText("Cover both orders");
+  await expect(page.getByTestId("session-plan-step")).toContainText("Return WorktreeMissing");
 
-  // Tool calls are labelled rows, never a JSON dump.
-  await expect(page.getByTestId("session-tools").first()).toContainText("Read session router");
+  // Tool calls stay in the head, never as a JSON dump or transcript rows.
+  await expect(page.getByTestId("session-tools")).toHaveCount(0);
   await expect(page.getByText("sessionUpdate")).toHaveCount(0);
 });
 
@@ -150,7 +150,7 @@ test("the transcript holds its position while new output streams in", async ({ p
   ];
   await bootSession(page, long);
   const thread = page.getByTestId("session-thread");
-  await expect(page.getByTestId("session-plan")).toBeVisible();
+  await expect(page.getByTestId("session-plan-step")).toBeVisible();
   await expect(page.getByText("Checked sibling guard 8")).toBeVisible();
 
   // The transcript must be tall enough that scrolling away is meaningful, and
@@ -239,7 +239,7 @@ test("the transcript holds the live edge while the composer grows", async ({ pag
 
 test("session chat screenshots", async ({ page }, testInfo) => {
   await bootSession(page, WORKING_TURN);
-  await expect(page.getByTestId("session-plan")).toBeVisible();
+  await expect(page.getByTestId("session-plan-step")).toBeVisible();
   await page.waitForTimeout(700);
   await page.screenshot({
     path: shotPath(testInfo, `session-working-${testInfo.project.name}.png`),
@@ -304,25 +304,13 @@ test("decision with typed draft screenshot", async ({ page }, testInfo) => {
   });
 });
 
-test("polish: long reasoning keeps its tail and the composer grows", async ({ page }, testInfo) => {
+test("polish: the composer grows while the head stays on the running tool", async ({ page }, testInfo) => {
   await bootSession(page, [
     { delay: 20, payload: { type: "tool_call", callId: "c1", title: "Search the operate slice for every start_task caller", kind: "search", status: "in_progress", locations: ["/repo/crates/ajax-web/src/slices/operate/mod.rs"] } },
   ]);
 
-  // Reasoning streams for a long time; the head must show the newest words.
-  await page.evaluate(() => {
-    const emit = (globalThis as unknown as { __ajaxEmit: (p: unknown) => void }).__ajaxEmit;
-    for (let i = 0; i < 120; i += 1) {
-      emit({ type: "message", role: "thought", text: `considering branch ${i} of the guard ordering ` });
-    }
-    emit({ type: "message", role: "thought", text: "SETTLED ON REORDERING THE GUARDS" });
-  });
-  // In the DOM *and* inside the clamped box — the newest words must be the
-  // visible ones, not merely present.
-  const thought = page.getByTestId("session-thought");
-  await expect(thought).toContainText("SETTLED ON REORDERING THE GUARDS");
-  const clipped = await thought.evaluate((n) => n.scrollHeight > n.clientHeight + 1);
-  expect(clipped).toBe(false);
+  await expect(page.getByTestId("session-head-tool")).toContainText("Search the operate slice");
+  await expect(page.getByTestId("session-thought")).toHaveCount(0);
 
   // A multi-line draft must grow the box rather than scroll inside one row.
   const composer = page.getByLabel("Message");

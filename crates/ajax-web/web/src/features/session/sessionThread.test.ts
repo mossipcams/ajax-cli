@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 import {
+  activePlanStep,
   activeTool,
   explainOpenFailure,
   initialSessionState,
   sessionReducer,
+  summarizeTurn,
   toolCallCount,
-  thoughtTail,
   type SessionState,
+  type ToolCall,
 } from "./sessionThread";
 
 function run(events: (WebSessionServerEvent | { prompt: string })[]): SessionState {
@@ -49,7 +51,10 @@ describe("sessionReducer", () => {
       toolCall("c1"),
       { type: "message", role: "agent", text: "Done" },
     ]);
-    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose", "tools", "prose"]);
+    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose", "prose"]);
+    expect(state.entries[0]).toMatchObject({ text: "Reading" });
+    expect(state.entries[1]).toMatchObject({ text: "Done" });
+    expect(toolCallCount(state)).toBe(1);
   });
 
   it("merges tool_call_update into the open call instead of appending a row", () => {
@@ -65,16 +70,17 @@ describe("sessionReducer", () => {
       kind: "read",
       locations: ["/repo/src/config.ts"],
     });
+    expect(state.entries).toHaveLength(0);
   });
 
-  it("revises a tool call that prose has already scrolled past", () => {
+  it("revises a tool call after prose has already arrived", () => {
     const state = run([
       toolCall("c1"),
       { type: "message", role: "agent", text: "thinking out loud" },
       toolCall("c1", { status: "completed" }),
     ]);
     expect(toolCallCount(state)).toBe(1);
-    expect(state.entries.map((entry) => entry.kind)).toEqual(["tools", "prose"]);
+    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose"]);
   });
 
   it("prefers a still-running tool over a finished one in the head", () => {
@@ -82,19 +88,18 @@ describe("sessionReducer", () => {
     expect(activeTool(state)?.callId).toBe("c2");
   });
 
-  it("keeps reasoning out of the transcript and clears it on real output", () => {
+  it("keeps reasoning out of the transcript and the head", () => {
     const thinking = run([
       { type: "message", role: "thought", text: "Checking " },
       { type: "message", role: "thought", text: "the router" },
     ]);
-    expect(thinking.thought).toBe("Checking the router");
+    expect(thinking.busy).toBe(true);
     expect(thinking.entries).toHaveLength(0);
 
     const answered = sessionReducer(thinking, {
       type: "event",
       event: { type: "message", role: "agent", text: "Found it" },
     });
-    expect(answered.thought).toBeNull();
     expect(answered.entries).toHaveLength(1);
   });
 
@@ -107,7 +112,7 @@ describe("sessionReducer", () => {
     expect(state.status).toBe("waiting");
   });
 
-  it("revises a plan in place so a long turn does not stack plan cards", () => {
+  it("revises a plan in place and never puts it in the transcript", () => {
     const state = run([
       { type: "plan", entries: [{ content: "Read", status: "pending" }] },
       {
@@ -118,9 +123,12 @@ describe("sessionReducer", () => {
         ],
       },
     ]);
-    const plans = state.entries.filter((entry) => entry.kind === "plan");
-    expect(plans).toHaveLength(1);
-    expect(plans[0]).toMatchObject({ entries: [{ status: "completed" }, { status: "in_progress" }] });
+    expect(state.entries).toHaveLength(0);
+    expect(state.plan).toEqual([
+      { content: "Read", status: "completed" },
+      { content: "Patch", status: "in_progress" },
+    ]);
+    expect(activePlanStep(state.plan)).toBe("Patch");
   });
 
   it("puts a permission request in the decision slot only, never the transcript", () => {
@@ -146,7 +154,26 @@ describe("sessionReducer", () => {
 
     const settled = sessionReducer(busy, { type: "event", event: { type: "turn_end" } });
     expect(settled.busy).toBe(false);
-    expect(settled.thought).toBeNull();
+  });
+
+  it("folds a turn's tools into one summary note on settle", () => {
+    const state = run([
+      toolCall("c1", { kind: "read", status: "completed" }),
+      toolCall("c2", { kind: "read", status: "completed" }),
+      toolCall("c3", { kind: "edit", status: "completed" }),
+      toolCall("c4", { kind: "search", status: "failed" }),
+      { type: "turn_end" },
+    ]);
+    expect(state.busy).toBe(false);
+    expect(state.tools).toHaveLength(0);
+    expect(state.entries).toEqual([
+      expect.objectContaining({ kind: "note", tone: "info", text: "2 read · 1 edit · 1 search · 1 failed" }),
+    ]);
+  });
+
+  it("does not invent a summary when the turn used no tools", () => {
+    const state = run([{ prompt: "hi" }, { type: "message", role: "agent", text: "ok" }, { type: "turn_end" }]);
+    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose"]);
   });
 
   it("ends the turn on error and records it as a transcript note", () => {
@@ -155,11 +182,11 @@ describe("sessionReducer", () => {
     expect(state.entries[0]).toMatchObject({ kind: "note", tone: "error", text: "ACP process exited" });
   });
 
-  it("drops empty artifacts and keeps ones carrying a body", () => {
+  it("drops unknown artifacts instead of pretty-printing them", () => {
     const empty = run([{ type: "artifact", kind: "x", title: "", body: "" }]);
     expect(empty.entries).toHaveLength(0);
-    const kept = run([{ type: "artifact", kind: "x", title: "Modes", body: "{}" }]);
-    expect(kept.entries[0]).toMatchObject({ kind: "note", text: "Modes", body: "{}" });
+    const dumped = run([{ type: "artifact", kind: "x", title: "Modes", body: "{}" }]);
+    expect(dumped.entries).toHaveLength(0);
   });
 });
 
@@ -181,32 +208,20 @@ describe("explainOpenFailure", () => {
   });
 });
 
-describe("thoughtTail", () => {
-  it("keeps short reasoning verbatim", () => {
-    expect(thoughtTail("Checking the router")).toBe("Checking the router");
+describe("summarizeTurn", () => {
+  const call = (kind: string, status: ToolCall["status"] = "completed"): ToolCall => ({
+    callId: kind,
+    title: kind,
+    kind,
+    status,
+    locations: [],
   });
 
-  it("keeps the tail, not the opening, once reasoning runs long", () => {
-    const long = "word ".repeat(200) + "the actual latest thought";
-    const tail = thoughtTail(long);
-    expect(tail).toContain("the actual latest thought");
-    expect(tail.startsWith("…")).toBe(true);
-    expect(tail.length).toBeLessThan(200);
+  it("returns null for an empty turn", () => {
+    expect(summarizeTurn([])).toBeNull();
   });
 
-  it("collapses newlines so the head stays two readable lines", () => {
-    expect(thoughtTail("one\n\n  two")).toBe("one two");
-  });
-
-  it("bounds growth across a whole streaming turn", () => {
-    let state = initialSessionState;
-    for (let i = 0; i < 400; i += 1) {
-      state = sessionReducer(state, {
-        type: "event",
-        event: { type: "message", role: "thought", text: `chunk ${i} ` },
-      });
-    }
-    expect((state.thought ?? "").length).toBeLessThan(200);
-    expect(state.thought).toContain("chunk 399");
+  it("keeps first-seen kind order", () => {
+    expect(summarizeTurn([call("edit"), call("read"), call("edit")])).toBe("2 edit · 1 read");
   });
 });

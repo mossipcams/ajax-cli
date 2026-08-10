@@ -72,7 +72,8 @@ interface Props {
   detail: BrowserTaskDetail | null;
   decision: Decision | null;
   tool: ToolCall | null;
-  thought: string | null;
+  /** In-progress ACP plan step, if any. Not the whole checklist. */
+  planStep: string | null;
   status: string | null;
   connected: boolean;
   /** The task's own actions, rendered by the caller so the head stays free of
@@ -90,7 +91,7 @@ export default function LiveHead({
   detail,
   decision,
   tool,
-  thought,
+  planStep,
   status,
   connected,
   actions,
@@ -163,12 +164,12 @@ export default function LiveHead({
       {state === "working" ? (
         <div className="session-working" aria-live="polite">
           {tool ? <ToolRow call={tool} /> : null}
-          {thought ? (
-            <p className="session-thought" data-testid="session-thought">
-              {thought}
+          {planStep ? (
+            <p className="session-head-quiet" data-testid="session-plan-step">
+              {planStep}
             </p>
           ) : null}
-          {!tool && !thought ? (
+          {!tool && !planStep ? (
             <p className="session-head-quiet">{status ?? "Thinking…"}</p>
           ) : null}
         </div>

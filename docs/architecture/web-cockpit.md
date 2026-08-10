@@ -22,7 +22,7 @@ both mobile and desktop.
 An optional **orchestration chat** session mode (Settings → Ajax web session
 feature flag) may replace that default presentation for the same contracts:
 pre-execution task definition and post-execution orchestration stay in one
-chat-first session, with structured inline artifacts, contextual quick actions,
+chat-first session, with a live head over a settled transcript, contextual quick actions,
 attention banners, and the terminal as an optional escape hatch. See
 [Orchestration chat session](#orchestration-chat-session). When the flag is
 off, dashboard + embedded terminal behavior is unchanged.
@@ -110,15 +110,16 @@ Browser session UI
   -> ajax-web web_session / ACP host
   -> Cursor ACP over stdio (initialize, session/new, session/prompt)
   <- session/update stream (messages, plans, tool calls, permissions)
-  -> inline artifacts + attention banners in the chat thread
+  -> live head (current tool / decision) + settled transcript
 ```
 
 - Full chat thread + text composer remain available at all times; chat is the
   primary surface for questions, corrections, redirection, and follow-ups.
-- Plans, progress, agent activity, blockers, diffs, tests, and previews appear
-  as structured **inline artifacts** driven primarily by ACP `session/update`
-  (with cockpit/task/diff projections as secondary context) — not a parallel
-  browser task model.
+- The live head shows the current tool and in-progress plan step. The
+  transcript is conversation plus one turn-level work summary, not a per-call
+  tool trace. Unknown ACP update kinds are dropped. Cockpit/task/diff
+  projections remain secondary context in Details — not a parallel browser
+  task model.
 - Contextual **quick actions** (Approve, Reject, Show diff, Run tests, Retry,
   Try another approach, ACP permission replies, and core-projected `WebAction`s)
   supplement chat; they must never replace the composer. Task-mutating actions

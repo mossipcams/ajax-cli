@@ -712,20 +712,6 @@ header .bar h1 {
 /* --ink-faint is CLI-locked (xterm 244) and measures 4.27:1 on this surface,
    below WCAG AA for body text, so reading text in this route sits one rung up
    at --ink-muted (7.09:1). Decorative marks keep the fainter rung. */
-.session-thought {
-  margin: 8px 0 0;
-  font-size: var(--text-body-sm);
-  line-height: 1.45;
-  color: var(--ink-muted);
-  display: -webkit-box;
-  /* One line of headroom over the tail bound in sessionThread.ts: real
-     reasoning fits two lines, and wider glyphs get a third rather than hiding
-     the newest words, which is the whole point of keeping the tail. */
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* Decision — the loudest thing on the surface when it exists. */
 .session-decision {
@@ -892,88 +878,11 @@ header .bar h1 {
   line-height: 1.55;
 }
 
-.session-tools {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 9px 11px;
-  border-left: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper-tint) 60%, transparent);
-  border-radius: var(--radius-sm);
-}
-
-.session-plan {
-  align-self: stretch;
-  padding: 11px 13px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--paper-tint);
-}
-
-.session-plan-label {
-  margin: 0 0 8px;
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
-
-.session-plan ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.session-plan li {
-  display: flex;
-  gap: 8px;
-  font-size: var(--text-body-sm);
-  line-height: 1.45;
-  color: var(--ink-soft);
-}
-
-.session-plan li[data-status="completed"] {
-  color: var(--ink-muted);
-}
-
-.session-plan-mark {
-  flex: none;
-  color: var(--ink-faint);
-}
-
-.session-plan li[data-status="completed"] .session-plan-mark {
-  color: var(--ok);
-}
-
-.session-plan li[data-status="in_progress"] .session-plan-mark {
-  color: var(--accent);
-}
-
 .session-note {
   align-self: stretch;
   font-size: var(--text-body-sm);
   line-height: 1.45;
   color: var(--tone, var(--ink-muted));
-  overflow-wrap: anywhere;
-}
-
-.session-note-body {
-  margin: 6px 0 0;
-  padding: 8px 10px;
-  max-height: 11rem;
-  overflow: auto;
-  border-radius: var(--radius-sm);
-  background: var(--paper-tint);
-  font-family: var(--mono);
-  font-size: var(--text-label);
-  line-height: 1.45;
-  color: var(--ink-soft);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

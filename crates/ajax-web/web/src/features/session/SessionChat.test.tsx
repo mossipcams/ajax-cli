@@ -175,7 +175,47 @@ describe("SessionChat", () => {
     expect(tool).toHaveTextContent("read");
     expect(tool).toHaveTextContent("Read configuration");
     expect(tool).toHaveTextContent("…/src/lib.rs");
+    expect(screen.queryByTestId("session-tools")).not.toBeInTheDocument();
     expect(screen.queryByText(/sessionUpdate/)).not.toBeInTheDocument();
+  });
+
+  it("summarizes a turn's tools into one transcript note", () => {
+    mountChat();
+    send({
+      type: "tool_call",
+      callId: "c1",
+      title: "Read configuration",
+      kind: "read",
+      status: "completed",
+      locations: ["/repo/a.ts"],
+    });
+    send({
+      type: "tool_call",
+      callId: "c2",
+      title: "Edit web_session.rs",
+      kind: "edit",
+      status: "completed",
+      locations: ["/repo/b.ts"],
+    });
+    expect(screen.queryByTestId("session-tools")).not.toBeInTheDocument();
+    send({ type: "turn_end", stopReason: "end_turn" });
+    expect(screen.getByTestId("session-note-info")).toHaveTextContent("1 read · 1 edit");
+  });
+
+  it("shows only the in-progress plan step in the head", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    send({
+      type: "plan",
+      entries: [
+        { content: "Read", status: "completed" },
+        { content: "Patch the router", status: "in_progress" },
+        { content: "Cover both orders", status: "pending" },
+      ],
+    });
+    expect(screen.getByTestId("session-plan-step")).toHaveTextContent("Patch the router");
+    expect(screen.queryByTestId("session-plan")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cover both orders")).not.toBeInTheDocument();
   });
 
   it("renders agent markdown as real code and list elements", () => {
@@ -223,13 +263,14 @@ describe("SessionChat", () => {
     expect(screen.queryByTestId("session-cancel")).not.toBeInTheDocument();
   });
 
-  it("shows live reasoning in the head and never in the transcript", () => {
+  it("keeps reasoning out of the transcript and the head", () => {
     mountChat();
     send({ type: "message", role: "thought", text: "Checking the router" });
-    expect(screen.getByTestId("session-thought")).toHaveTextContent("Checking the router");
+    expect(screen.getByTestId("session-head")).toHaveAttribute("data-state", "working");
+    expect(screen.queryByTestId("session-thought")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
     send({ type: "message", role: "agent", text: "Found it" });
-    expect(screen.queryByTestId("session-thought")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Found it");
   });
 
   it("keeps run status out of the transcript", () => {

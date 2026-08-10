@@ -2,9 +2,9 @@
 //
 // THESIS: this surface is an instrument with a live head, not a message list.
 //   What the agent is doing right now — the tool it is in, the file it touches,
-//   the decision it needs — holds one fixed panel that never scrolls away, and
-//   everything finished falls into a transcript below that reads freely because
-//   nothing pushes it. It refuses the messenger arrangement the category ships,
+//   the decision it needs — holds one fixed panel that never scrolls away.
+//   Settled turns fall into a transcript as conversation plus one work summary,
+//   not a tool trace. It refuses the messenger arrangement the category ships,
 //   where streaming output, reasoning noise and the one approval you owe all
 //   compete inside a single auto-scrolling column.
 // OWN-WORLD: Ajax Cockpit, unchanged. Soft Charcoal paper steps, hairline
@@ -52,6 +52,7 @@ import {
 } from "@/shared/lib/webSessionTransport";
 import type { SessionStarterContext } from "./SessionStarter";
 import {
+  activePlanStep,
   activeTool,
   initialSessionState,
   sessionReducer,
@@ -264,7 +265,12 @@ export default function SessionChat({
       seenRef.current = { entries: state.entries, tools: toolCallCount(state) };
       return;
     }
-    if (state.entries !== seenRef.current.entries) setBehind(true);
+    if (
+      state.entries !== seenRef.current.entries ||
+      toolCallCount(state) !== seenRef.current.tools
+    ) {
+      setBehind(true);
+    }
   }, [state.entries, pinned, state]);
 
   // The effect above re-pins when *entries* change, which leaves every other
@@ -370,7 +376,7 @@ export default function SessionChat({
         detail={detail}
         decision={state.decision}
         tool={activeTool(state)}
-        thought={state.thought}
+        planStep={activePlanStep(state.plan)}
         status={state.status}
         connected={connected}
         actions={
