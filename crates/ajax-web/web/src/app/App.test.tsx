@@ -407,6 +407,17 @@ describe("App shell", () => {
     expect(currentPageRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
   });
 
+  it("anchors the result toast above the bottom nav with full-width actions", () => {
+    const stylesSource = loadStylesSource();
+    const panelRule = stylesSource.match(/\.result-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(panelRule).toMatch(/bottom:\s*calc\(72px\s*\+\s*12px\)/);
+    expect(panelRule).toMatch(/left:\s*50%/);
+    expect(panelRule).toMatch(/transform:\s*translateX\(-50%\)/);
+    expect(panelRule).not.toMatch(/top:\s*calc\(env\(safe-area-inset-top\)/);
+    expect(stylesSource).toMatch(/\.result-actions\s*\{/);
+    expect(stylesSource).toMatch(/\.result-actions\s+\.pill[\s\S]*?min-height:\s*44px/);
+  });
+
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
     render(<App />);
     expect(screen.getByTestId("dashboard-skeleton")).toBeInTheDocument();
