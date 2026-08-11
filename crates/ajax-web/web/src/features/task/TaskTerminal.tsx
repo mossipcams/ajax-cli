@@ -1,6 +1,6 @@
 import { useState, useEffect, useEffectEvent, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
-import { copyText, looksLikeHttpUrl, readPasteText } from "@/shared/lib/clipboard";
+import { copyText, readPasteText } from "@/shared/lib/clipboard";
 import type { TerminalConnection, TerminalConnectionStatus } from "@/shared/lib/terminalConnection";
 import { createHeldKeyRepeater } from "@/shared/lib/keyRepeat";
 import { FloatingContextMenu } from "@/shared/ui/FloatingContextMenu";
@@ -15,6 +15,12 @@ import {
   seedBackspaceSentinel,
   seedSentinelFromFocus,
 } from "./terminalBackspaceSentinel";
+import {
+  deleteInputPayload,
+  pasteRawFromExpectValue,
+  pasteTextFromBeforeInput,
+  readToolbarPasteText,
+} from "./terminalPaste";
 
 interface Props {
   handle: string;
@@ -274,14 +280,8 @@ export default function TaskTerminal({ handle }: Props) {
 
   // Measured on an iOS 26 Simulator: a held Delete repeats deleteContentBackward
   // at ~100ms, then escalates to deleteWordBackward after ~800ms. Ignoring the
-  // escalation strands the rest of the hold.
-  const deleteInputPayload = (inputType: string): string | null => {
-    if (inputType === "deleteWordBackward") return "\x17";
-    if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
-      return "\x7f";
-    }
-    return null;
-  };
+  // escalation strands the rest of the hold. deleteInputPayload is in
+  // terminalPaste.ts.
 
   // Backspace is the one key we leave uncancelled (cancelling it kills the iOS
   // hold-to-delete repeat), so WebKit really edits the helper textarea and then
@@ -330,25 +330,8 @@ export default function TaskTerminal({ handle }: Props) {
   };
 
   const onTextareaPasteBeforeInput = (event: InputEvent) => {
-    // iOS keyboard "Paste" / QuickType link often uses beforeinput with the
-    // URL in event.data and an empty ClipboardEvent.clipboardData. WebKit may
-    // also deliver that gesture as insertText / insertReplacementText (not
-    // insertFromPaste) with the full URL in event.data in one shot.
-    const fromPaste =
-      event.inputType === "insertFromPaste" ||
-      event.inputType === "insertFromPasteAsQuotation";
-    const fromInsert =
-      event.inputType === "insertText" || event.inputType === "insertReplacementText";
-    if (!fromPaste && !fromInsert) return;
-
-    const text =
-      (event.dataTransfer ? readPasteText(event.dataTransfer) : "") ||
-      (event.data ?? "").trim();
+    const text = pasteTextFromBeforeInput(event);
     if (!text) return;
-    // insertText is also normal typing (one codepoint per event). Only treat
-    // it as paste when the payload is a full http(s) URL.
-    if (fromInsert && !fromPaste && !looksLikeHttpUrl(text)) return;
-
     event.preventDefault();
     sendPastedText(text);
   };
@@ -388,7 +371,7 @@ export default function TaskTerminal({ handle }: Props) {
     ) {
       const textarea = event.currentTarget;
       if (textarea instanceof HTMLTextAreaElement) {
-        const raw = textarea.value.replaceAll(BACKSPACE_SENTINEL, "");
+        const raw = pasteRawFromExpectValue(textarea.value);
         pasteExpectRef.current = false;
         // Force-clear: seedBackspaceSentinel no-ops when ZWS is still present
         // beside the pasted text.
@@ -548,39 +531,11 @@ export default function TaskTerminal({ handle }: Props) {
 
   const requestPaste = async (ownedFocus: boolean) => {
     try {
-      const clipboard = navigator.clipboard;
-      if (!clipboard) {
+      const text = await readToolbarPasteText();
+      if (text === null) {
         openPasteFallback(ownedFocus, "Clipboard unavailable — paste below.");
         return;
       }
-      // Typed read recovers rich link clips (html/uri-list) that readText loses.
-      if (typeof clipboard.read === "function") {
-        try {
-          const items = await clipboard.read();
-          const dt = new DataTransfer();
-          for (const item of items) {
-            for (const type of item.types) {
-              if (type !== "text/plain" && type !== "text/html" && type !== "text/uri-list") {
-                continue;
-              }
-              dt.setData(type, await (await item.getType(type)).text());
-            }
-          }
-          const rich = readPasteText(dt);
-          if (rich) {
-            pasteThroughTerm(rich, ownedFocus);
-            return;
-          }
-        } catch {
-          // NotAllowedError / insecure context — fall through to readText.
-        }
-      }
-      const readText = clipboard.readText;
-      if (!readText) {
-        openPasteFallback(ownedFocus, "Clipboard unavailable — paste below.");
-        return;
-      }
-      const text = await readText.call(clipboard);
       if (!text) {
         refocusTermIfOwned(ownedFocus);
         return;
