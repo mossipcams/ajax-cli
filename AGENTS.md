@@ -210,6 +210,8 @@ switch branches unless the user explicitly authorizes that behavior.
 - Do not add generated code, large snapshots, or lockstep rewrites unless required.
 - Do not perform broad rewrites when a small behavior-preserving change would
   solve the task.
+- Do not ship a confirmed defect fix without a `mossipcams/ajax-cli` GitHub
+  issue and a regression test (or a documented untestable exception).
 
 ## Ajax Architecture Guardrails
 
@@ -259,6 +261,27 @@ Evidence that the change works is required. Test-first / TDD is not.
 - Do not add meaningless tests that assert implementation details.
 - For mechanical changes (formatting, comments, pure renames, proven dead-code
   deletion), compiler/lint coverage is usually enough.
+
+## Defect Process
+
+Ajax product defects are tracked only as GitHub issues on
+[`mossipcams/ajax-cli`](https://github.com/mossipcams/ajax-cli). Chat notes,
+plans, and local TODOs are not tracking.
+
+Recognize a **defect** when expected product behavior is broken (user-reported
+or agent-proven with a repro). That is not a missing feature, intentional
+design, docs-only typo, local env misconfig, or speculation without evidence.
+
+When a confirmed defect is in scope:
+
+1. Search existing `mossipcams/ajax-cli` issues for a duplicate.
+2. If none exists, open a GitHub issue before or in the same session as the fix
+   (use `.github/ISSUE_TEMPLATE/defect.yml` / `docs/defect-process.md`).
+3. Do not silently fix a confirmed defect without an issue.
+4. Add a focused regression test that would have failed on the buggy behavior.
+5. Link the fix PR with `Fixes #N` or `Closes #N`.
+
+Full classify / issue / regression / PR workflow: `docs/defect-process.md`.
 
 ## Validation Commands
 
@@ -406,6 +429,7 @@ Use the right destination:
 | durable architecture, layers, invariants | `architecture.md` |
 | subsystem architecture detail | `docs/architecture/*` |
 | repo-wide agent rules | `AGENTS.md` |
+| defect tracking and regression workflow | `docs/defect-process.md` |
 | contributor workflow | `CONTRIBUTING.md` |
 | user-facing behavior | `README` or relevant docs |
 | implementation notes | nearest module docs or focused docs file |

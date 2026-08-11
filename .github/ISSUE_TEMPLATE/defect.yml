@@ -1,0 +1,91 @@
+name: Defect
+description: Report a confirmed Ajax product defect (broken expected behavior).
+title: "[defect] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Track Ajax defects on this repo only. See `docs/defect-process.md`.
+        Search existing issues before filing a duplicate.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing the broken behavior.
+      placeholder: Web Cockpit Drop of the last task fails to persist an empty registry.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Where the defect shows up.
+      options:
+        - CLI
+        - core
+        - Web Cockpit
+        - native Cockpit
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps another person can follow.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happens instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: ajax-cli version, git SHA, or "unknown".
+      placeholder: unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - blocker
+        - high
+        - medium
+        - low
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Logs, screenshots, related PRs, or harness limits for regression tests.
+    validations:
+      required: false
