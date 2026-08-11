@@ -1,6 +1,11 @@
 // Clipboard write with an execCommand fallback for plain-http LAN origins,
 // where navigator.clipboard does not exist.
 
+/** True when trimmed text is an http(s) URL (optionally with trailing path junk). */
+export function looksLikeHttpUrl(text: string): boolean {
+  return /^https?:\/\//i.test(text.trim());
+}
+
 /**
  * Read native paste payload. Prefers an http(s) URL from plain text, uri-list,
  * or an HTML href when plain is empty or only a link title; never returns raw
@@ -10,7 +15,7 @@ export function readPasteText(data: DataTransfer | null): string {
   if (!data) return "";
   // Some WebKit builds expose plain as "text" rather than "text/plain".
   const plain = (data.getData("text/plain") || data.getData("text")).trim();
-  if (/^https?:\/\//i.test(plain)) return plain;
+  if (looksLikeHttpUrl(plain)) return plain;
 
   const uri =
     data
@@ -18,8 +23,11 @@ export function readPasteText(data: DataTransfer | null): string {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .find((line) => line && !line.startsWith("#")) ?? "";
-  const href = data.getData("text/html").match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]?.trim() ?? "";
-  const richUrl = [uri, href].find((candidate) => /^https?:\/\//i.test(candidate));
+  const html = data.getData("text/html");
+  const href =
+    html.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i)?.slice(1).find(Boolean)?.trim() ??
+    "";
+  const richUrl = [uri, href].find((candidate) => looksLikeHttpUrl(candidate));
 
   if (plain) return richUrl ?? plain;
   return richUrl ?? uri;

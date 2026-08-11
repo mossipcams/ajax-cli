@@ -499,6 +499,31 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
   });
 
+  it("treats insertText beforeinput with a full http(s) URL as paste", () => {
+    const beforePaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const onTextareaPasteBeforeInput\s*=\s*\(event:\s*InputEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(beforePaste).toMatch(/insertFromPaste/);
+    expect(beforePaste).toMatch(/insertText/);
+    expect(beforePaste).toMatch(/insertReplacementText/);
+    expect(beforePaste).toMatch(/looksLikeHttpUrl/);
+    expect(beforePaste).toMatch(/sendPastedText\(text\)/);
+    expect(beforePaste).toMatch(/preventDefault/);
+  });
+
+  it("toolbar Paste prefers clipboard.read rich types before readText", () => {
+    const requestPaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const requestPaste\s*=\s*async\s*\(ownedFocus:\s*boolean\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(requestPaste).toMatch(/clipboard\.read/);
+    expect(requestPaste).toMatch(/readPasteText\(dt\)/);
+    expect(requestPaste).toMatch(/readText/);
+  });
+
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {
     const onInput = extractBlock(
       taskTerminalFeatureSource,

@@ -35,6 +35,17 @@ describe("readPasteText", () => {
     ).toBe("https://example.com/b");
   });
 
+  it("reads unquoted html href attributes", () => {
+    expect(
+      readPasteText(
+        pasteData({
+          "text/html": "<a href=https://example.com/unquoted>label</a>",
+          "text/plain": "",
+        }),
+      ),
+    ).toBe("https://example.com/unquoted");
+  });
+
   it("prefers an http(s) href when plain text is only a link title", () => {
     expect(
       readPasteText(
