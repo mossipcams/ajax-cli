@@ -12,6 +12,7 @@ const repos = [{ name: "web" }];
 const transport = {
   sendPrompt: vi.fn(),
   sendCancel: vi.fn(),
+  setModel: vi.fn(),
   respondPermission: vi.fn(),
   dispose: vi.fn(),
 };
@@ -36,9 +37,27 @@ function send(event: webSessionTransport.WebSessionServerEvent) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe("SessionStarter", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+          ],
+        }),
+      }),
+    );
+  });
+
   it("submits cursor orchestration_chat startTask and reports handle with starter context", async () => {
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     const onStarted = vi.fn();
@@ -79,13 +98,27 @@ describe("SessionChat", () => {
     closeSocket = undefined;
     transport.sendPrompt.mockClear();
     transport.sendCancel.mockClear();
+    transport.setModel.mockClear();
     transport.respondPermission.mockClear();
     transport.dispose.mockClear();
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+          ],
+        }),
+      }),
+    );
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
       (_handle, callbacks) => {
         emit = callbacks.onEvent;
         closeSocket = callbacks.onClosed;
-        callbacks.onReady();
+        callbacks.onReady("auto");
         return transport;
       },
     );
@@ -423,5 +456,19 @@ describe("SessionChat", () => {
     );
     expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledOnce();
     expect(transport.dispose).not.toHaveBeenCalled();
+  });
+
+  it("sends set_model when the operator picks a different model mid-chat", async () => {
+    mountChat();
+    const select = await screen.findByTestId("session-model-select");
+    await waitFor(() => expect(select).toContainHTML("composer-2.5"));
+    fireEvent.change(select, { target: { value: "composer-2.5" } });
+    expect(transport.setModel).toHaveBeenCalledWith("composer-2.5");
+    expect(screen.getByTestId("session-model-switching")).toHaveTextContent("Switching model…");
+    const lastCall = vi.mocked(webSessionTransport.connectWebSessionTransport).mock.calls.at(-1);
+    const callbacks = lastCall?.[1] as webSessionTransport.WebSessionTransportCallbacks;
+    act(() => callbacks.onReady("composer-2.5"));
+    expect(screen.queryByTestId("session-model-switching")).not.toBeInTheDocument();
+    expect(select).toHaveValue("composer-2.5");
   });
 });

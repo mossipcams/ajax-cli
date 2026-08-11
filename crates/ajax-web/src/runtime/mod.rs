@@ -80,6 +80,7 @@ where
         .route("/terminal.js", get(axum_terminal_js))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
+        .route("/api/session/models", get(axum_session_models))
         .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
         .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
@@ -313,6 +314,10 @@ async fn axum_terminal_js() -> AxumResponse {
 
 async fn axum_health() -> AxumResponse {
     json_value_response(200, serde_json::json!({ "ok": true }))
+}
+
+async fn axum_session_models() -> AxumResponse {
+    Json(crate::slices::session_models::list_session_models()).into_response()
 }
 
 async fn axum_version() -> AxumResponse {

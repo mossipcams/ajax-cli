@@ -29,7 +29,7 @@ async function bootSession(page: Page, script: Scripted) {
           super();
           setTimeout(() => {
             this.dispatchEvent(new Event("open"));
-            this.emit({ type: "ready" });
+            this.emit({ type: "ready", model: "auto" });
             for (const step of events) {
               setTimeout(
                 () => this.emit(step.payload as Record<string, unknown>),

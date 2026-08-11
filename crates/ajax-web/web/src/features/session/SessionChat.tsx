@@ -63,6 +63,11 @@ import {
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
+import SessionModelSelect from "./SessionModelSelect";
+import {
+  readSessionModel,
+  useSessionModelPreference,
+} from "./sessionModel";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
@@ -132,6 +137,7 @@ export default function SessionChat({
   onRetry,
 }: Props) {
   const composerId = useId();
+  const modelSelectId = useId();
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
@@ -143,6 +149,7 @@ export default function SessionChat({
   // Read inside the transport effect without making it a dependency.
   const detailRef = useRef(detail);
   const seededRef = useRef(false);
+  const switchingModelRef = useRef(false);
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ entries: ThreadEntry[]; tools: number }>({
     entries: [],
@@ -158,6 +165,9 @@ export default function SessionChat({
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [model, setModelPreference] = useSessionModelPreference();
+  const [activeModel, setActiveModel] = useState(model);
+  const [switchingModel, setSwitchingModel] = useState(false);
 
   starterRef.current = starterContext;
   detailRef.current = detail;
@@ -176,49 +186,66 @@ export default function SessionChat({
     let disposed = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const connectModel = readSessionModel();
 
     const open = () => {
-      const transport = connectWebSessionTransport(handle, {
-        onReady: () => {
-          attempt = 0;
-          setConnected(true);
+      const transport = connectWebSessionTransport(
+        handle,
+        {
+          onReady: (nextModel) => {
+            attempt = 0;
+            setActiveModel(nextModel);
+            // Preference hook writes localStorage and refreshes React state.
+            setModelPreference(nextModel);
+            if (switchingModelRef.current) {
+              switchingModelRef.current = false;
+              setSwitchingModel(false);
+            } else {
+              // Fresh connect, reconnect, or peer model recovery: clear before
+              // the host transcript replays so entries are not duplicated.
+              dispatch({ type: "reset" });
+            }
+            setConnected(true);
+          },
+          onEvent: (event) => {
+            // The socket cannot report why an upgrade was refused, so swap its
+            // blank failure for the reason the task detail already carries.
+            if (event.type === "error" && event.message === OPEN_FAILURE) {
+              dispatch({
+                type: "event",
+                event: { type: "error", message: explainOpenFailure(detailRef.current) },
+              });
+              return;
+            }
+            dispatch({ type: "event", event });
+          },
+          onClosed: () => {
+            setConnected(false);
+            if (disposed) return;
+            // The socket owns a holder count on the ACP process; a dropped
+            // connection must come back on its own or the session is stranded.
+            // Bounded, though: every attempt spawns a fresh agent process on the
+            // host, so a server-side failure must not retry forever.
+            attempt += 1;
+            if (attempt > MAX_RECONNECT_ATTEMPTS) {
+              dispatch({
+                type: "event",
+                event: {
+                  type: "error",
+                  message: "Lost the session connection. Reopen the task to try again.",
+                },
+              });
+              return;
+            }
+            retryTimer = setTimeout(
+              open,
+              Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS),
+            );
+          },
         },
-        onEvent: (event) => {
-          // The socket cannot report why an upgrade was refused, so swap its
-          // blank failure for the reason the task detail already carries.
-          if (event.type === "error" && event.message === OPEN_FAILURE) {
-            dispatch({
-              type: "event",
-              event: { type: "error", message: explainOpenFailure(detailRef.current) },
-            });
-            return;
-          }
-          dispatch({ type: "event", event });
-        },
-        onClosed: () => {
-          setConnected(false);
-          if (disposed) return;
-          // The socket owns a holder count on the ACP process; a dropped
-          // connection must come back on its own or the session is stranded.
-          // Bounded, though: every attempt spawns a fresh agent process on the
-          // host, so a server-side failure must not retry forever.
-          attempt += 1;
-          if (attempt > MAX_RECONNECT_ATTEMPTS) {
-            dispatch({
-              type: "event",
-              event: {
-                type: "error",
-                message: "Lost the session connection. Reopen the task to try again.",
-              },
-            });
-            return;
-          }
-          retryTimer = setTimeout(
-            open,
-            Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS),
-          );
-        },
-      });
+        undefined,
+        connectModel,
+      );
       transportRef.current = transport;
     };
 
@@ -230,7 +257,7 @@ export default function SessionChat({
       transportRef.current = undefined;
       setConnected(false);
     };
-  }, [handle]);
+  }, [handle, setModelPreference]);
 
   useEffect(() => {
     if (!handle) return;
@@ -327,6 +354,18 @@ export default function SessionChat({
     dispatch({ type: "decided" });
   }
 
+  function changeModel(next: string) {
+    if (next === activeModel) return;
+    setModelPreference(next);
+    setActiveModel(next);
+    if (!transportRef.current || !connected) {
+      return;
+    }
+    switchingModelRef.current = true;
+    setSwitchingModel(true);
+    transportRef.current.setModel(next);
+  }
+
   if (!handle) return null;
 
   if (detailStatus === "loading") {
@@ -369,6 +408,20 @@ export default function SessionChat({
           <span className={`session-status-pill tone-${meta.tone}`}>{meta.label}</span>
         ) : null}
       </header>
+
+      <div className="session-model-bar">
+        <SessionModelSelect
+          id={modelSelectId}
+          value={activeModel}
+          disabled={switchingModel}
+          onChange={changeModel}
+        />
+        {switchingModel ? (
+          <span className="session-model-switching" data-testid="session-model-switching">
+            Switching model…
+          </span>
+        ) : null}
+      </div>
 
       <LiveHead
         state={state_}

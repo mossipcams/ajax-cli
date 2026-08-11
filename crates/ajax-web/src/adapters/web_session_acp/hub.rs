@@ -65,6 +65,10 @@ impl TranscriptLog {
 
 struct SessionSlot {
     client: Arc<Mutex<AcpStdioClient>>,
+    /// Normalized model id (`auto` when using Cursor's default).
+    model: String,
+    /// Bumped when the ACP child is replaced so live sockets replay the log.
+    generation: u64,
     holders: HolderCount,
     log: TranscriptLog,
     last_released: Option<Instant>,
@@ -108,24 +112,64 @@ impl WebSessionHub {
         &self,
         qualified_handle: &str,
         worktree_path: &Path,
+        model: &str,
     ) -> Result<Arc<Mutex<AcpStdioClient>>, String> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.get_mut(qualified_handle) {
+            if slot.model != model {
+                replace_slot_client(slot, worktree_path, model)?;
+            }
             slot.add_holder();
             return Ok(Arc::clone(&slot.client));
         }
         evict_idle_over_limit(&mut sessions);
-        let client = Arc::new(Mutex::new(AcpStdioClient::spawn(worktree_path)?));
+        let client = Arc::new(Mutex::new(AcpStdioClient::spawn(
+            worktree_path,
+            spawn_model_arg(model),
+        )?));
         sessions.insert(
             qualified_handle.to_string(),
             SessionSlot {
                 client: Arc::clone(&client),
+                model: model.to_string(),
+                generation: 0,
                 holders: HolderCount(1),
                 log: TranscriptLog::default(),
                 last_released: None,
             },
         );
         Ok(client)
+    }
+
+    /// Replace the ACP child for an existing slot, keeping the transcript.
+    /// Returns the new generation so the calling socket can reset its cursor.
+    pub fn respawn(
+        &self,
+        qualified_handle: &str,
+        worktree_path: &Path,
+        model: &str,
+    ) -> Result<(Arc<Mutex<AcpStdioClient>>, u64), String> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(slot) = sessions.get_mut(qualified_handle) else {
+            return Err("session slot missing".to_string());
+        };
+        if slot.model != model {
+            replace_slot_client(slot, worktree_path, model)?;
+        }
+        Ok((Arc::clone(&slot.client), slot.generation))
+    }
+
+    pub fn model(&self, handle: &str) -> Option<String> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(handle).map(|slot| slot.model.clone())
+    }
+
+    pub fn generation(&self, handle: &str) -> u64 {
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .get(handle)
+            .map(|slot| slot.generation)
+            .unwrap_or(0)
     }
 
     /// The slot deliberately outlives its last socket: dropping it here would
@@ -194,6 +238,36 @@ fn evict_idle_over_limit(sessions: &mut HashMap<String, SessionSlot>) {
     for (handle, _) in idle.iter().take(idle.len() - MAX_IDLE_SESSIONS + 1) {
         sessions.remove(handle);
     }
+}
+
+fn spawn_model_arg(model: &str) -> Option<&str> {
+    if model.is_empty() || model == "auto" {
+        None
+    } else {
+        Some(model)
+    }
+}
+
+/// Best-effort cancel, then drop and replace the ACP child. Transcript stays.
+fn replace_slot_client(
+    slot: &mut SessionSlot,
+    worktree_path: &Path,
+    model: &str,
+) -> Result<(), String> {
+    {
+        let mut client = slot.client.lock().unwrap();
+        let _ = client.begin_cancel();
+    }
+    // Drop the old Arc so the child exits when this was the last strong ref.
+    // Holders still share the Arc — replace the mutex contents instead.
+    let new_client = AcpStdioClient::spawn(worktree_path, spawn_model_arg(model))?;
+    {
+        let mut guard = slot.client.lock().unwrap();
+        *guard = new_client;
+    }
+    slot.model = model.to_string();
+    slot.generation = slot.generation.saturating_add(1);
+    Ok(())
 }
 
 pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {

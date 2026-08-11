@@ -14,6 +14,8 @@ pub enum SessionClientMessage {
     Prompt { text: String },
     #[serde(rename = "cancel")]
     Cancel,
+    #[serde(rename = "set_model")]
+    SetModel { model: String },
     #[serde(rename = "permission")]
     Permission {
         #[serde(rename = "requestId")]
@@ -28,7 +30,10 @@ pub enum SessionClientMessage {
 #[serde(tag = "type")]
 pub enum SessionServerEvent {
     #[serde(rename = "ready")]
-    Ready,
+    Ready {
+        #[serde(default = "default_session_model")]
+        model: String,
+    },
     #[serde(rename = "message")]
     Message { role: String, text: String },
     #[serde(rename = "artifact")]
@@ -77,6 +82,26 @@ pub enum SessionServerEvent {
     },
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+fn default_session_model() -> String {
+    "auto".to_string()
+}
+
+/// Normalize a client-supplied model id for ACP spawn.
+/// Empty / whitespace → `auto`. Rejects control chars, spaces, and oversized ids.
+pub fn normalize_session_model(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(default_session_model());
+    }
+    if trimmed.len() > 128 {
+        return Err("model id too long".to_string());
+    }
+    if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("model id must not contain whitespace".to_string());
+    }
+    Ok(trimmed.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +321,8 @@ fn extract_content_text(content: &Value) -> String {
 pub struct SessionAttachPlan {
     pub qualified_handle: String,
     pub worktree_path: PathBuf,
+    /// Normalized Cursor model id (`auto` for CLI default).
+    pub model: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -308,6 +335,7 @@ pub enum SessionRouteError {
 pub fn prepare_task_session<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
+    model: &str,
 ) -> Result<SessionAttachPlan, SessionRouteError> {
     let task = context
         .registry
@@ -323,9 +351,12 @@ pub fn prepare_task_session<R: Registry>(
         return Err(SessionRouteError::WorktreeMissing);
     }
 
+    let model = normalize_session_model(model).unwrap_or_else(|_| default_session_model());
+
     Ok(SessionAttachPlan {
         qualified_handle: qualified_handle.to_string(),
         worktree_path: task.worktree_path.clone(),
+        model,
     })
 }
 
@@ -343,8 +374,9 @@ mod tests {
         std::fs::create_dir_all(&worktree).expect("worktree dir");
         task.worktree_path = worktree;
         let context = test_support::context_with_tasks(&["web"], vec![task]);
-        let plan = prepare_task_session(&context, "web/fix-login").expect("plan");
+        let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
         assert_eq!(plan.qualified_handle, "web/fix-login");
+        assert_eq!(plan.model, "auto");
         assert!(plan
             .worktree_path
             .ends_with("ajax-web-session-test-fix-login"));
@@ -355,8 +387,24 @@ mod tests {
         let mut task = test_support::fix_login_task();
         task.selected_agent = ajax_core::models::AgentClient::Codex;
         let context = test_support::context_with_tasks(&["web"], vec![task]);
-        let error = prepare_task_session(&context, "web/fix-login").unwrap_err();
+        let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
         assert_eq!(error, SessionRouteError::NotOrchestrationChat);
+    }
+
+    #[test]
+    fn normalize_session_model_defaults_and_rejects_junk() {
+        assert_eq!(normalize_session_model("").unwrap(), "auto");
+        assert_eq!(normalize_session_model("  ").unwrap(), "auto");
+        assert_eq!(
+            normalize_session_model("composer-2.5").unwrap(),
+            "composer-2.5"
+        );
+        assert_eq!(
+            normalize_session_model("claude-opus-4-8[context=1m,effort=high,fast=false]").unwrap(),
+            "claude-opus-4-8[context=1m,effort=high,fast=false]"
+        );
+        assert!(normalize_session_model("bad model").is_err());
+        assert!(normalize_session_model(&"x".repeat(129)).is_err());
     }
 
     #[test]

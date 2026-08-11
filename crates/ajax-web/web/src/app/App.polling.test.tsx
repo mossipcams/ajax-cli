@@ -116,13 +116,22 @@ describe("App polling cadence", () => {
 
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+    // cockpitCalls ticks when the GET starts, before React applies the idle
+    // projection and reschedules the interval from 3s → 10s. Flush that commit
+    // or the next 3s advance still hits the active-cadence timer.
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     // Quiet fleet cadence is 10s: 3s active would add a poll here.
     await vi.advanceTimersByTimeAsync(3000);
     expect(cockpitCalls).toBe(1);
 
     await vi.advanceTimersByTimeAsync(7000);
-    await vi.waitFor(() => expect(cockpitCalls).toBe(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(cockpitCalls).toBe(2);
   });
 
   it("reschedules the cockpit interval when the route cadence changes", async () => {

@@ -22,7 +22,7 @@ export interface WebSessionTransportPlatform {
 }
 
 export type WebSessionServerEvent =
-  | { type: "ready" }
+  | { type: "ready"; model?: string }
   | { type: "message"; role: string; text: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
@@ -45,7 +45,7 @@ export type WebSessionServerEvent =
   | { type: "error"; message: string };
 
 export interface WebSessionTransportCallbacks {
-  onReady: () => void;
+  onReady: (model: string) => void;
   onEvent: (event: WebSessionServerEvent) => void;
   onClosed: () => void;
 }
@@ -53,15 +53,18 @@ export interface WebSessionTransportCallbacks {
 export interface WebSessionTransport {
   sendPrompt(text: string): void;
   sendCancel(): void;
+  setModel(model: string): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
   dispose(): void;
 }
 
-function sessionSocketUrl(handle: string): string {
+function sessionSocketUrl(handle: string, model?: string): string {
   const protocol =
     typeof location !== "undefined" && location.protocol === "https:" ? "wss:" : "ws:";
   const host = typeof location !== "undefined" ? location.host : "localhost";
-  return `${protocol}//${host}/api/tasks/${encodeURIComponent(handle)}/session`;
+  const base = `${protocol}//${host}/api/tasks/${encodeURIComponent(handle)}/session`;
+  if (!model) return base;
+  return `${base}?model=${encodeURIComponent(model)}`;
 }
 
 function wrapNativeSocket(socket: WebSocket): WebSessionSocket {
@@ -136,6 +139,7 @@ export function connectWebSessionTransport(
   handle: string,
   callbacks: WebSessionTransportCallbacks,
   platform: WebSessionTransportPlatform = createBrowserWebSessionPlatform(),
+  model = "auto",
 ): WebSessionTransport {
   let socket: WebSessionSocket | undefined;
   let ready = false;
@@ -149,7 +153,9 @@ export function connectWebSessionTransport(
     if (!parsed) return;
     if (parsed.type === "ready") {
       ready = true;
-      callbacks.onReady();
+      const nextModel =
+        typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
+      callbacks.onReady(nextModel);
       while (pendingPrompts.length > 0) {
         const text = pendingPrompts.shift();
         if (text) sendPromptNow(text);
@@ -172,7 +178,7 @@ export function connectWebSessionTransport(
     sendJson({ type: "prompt", text });
   }
 
-  socket = platform.openSocket(sessionSocketUrl(handle));
+  socket = platform.openSocket(sessionSocketUrl(handle, model));
   socket.addEventListener("message", messageListener);
   socket.addEventListener("close", closeListener);
   socket.addEventListener("error", closeListener);
@@ -192,6 +198,10 @@ export function connectWebSessionTransport(
     },
     sendCancel() {
       sendJson({ type: "cancel" });
+    },
+    setModel(nextModel) {
+      const trimmed = nextModel.trim() || "auto";
+      sendJson({ type: "set_model", model: trimmed });
     },
     respondPermission(requestId, approved, reason) {
       sendJson({

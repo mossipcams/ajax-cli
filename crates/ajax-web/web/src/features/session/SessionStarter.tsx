@@ -3,6 +3,8 @@ import type { BrowserCockpitView, RepoSummary } from "@/shared/lib/types";
 import { requestId, startTask } from "@/shared/lib/api";
 import { startTaskHandle } from "@/features/task/taskSlug";
 import { Button } from "@/shared/ui/button";
+import SessionModelSelect from "./SessionModelSelect";
+import { useSessionModelPreference } from "./sessionModel";
 
 const LAST_REPO_KEY = "ajax.newTask.repo";
 const CURSOR_AGENT = "cursor";
@@ -49,6 +51,7 @@ export default function SessionStarter({
   const [expectedOutcome, setExpectedOutcome] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [model, setModel] = useSessionModelPreference();
 
   function savePrefs() {
     try {
@@ -128,6 +131,8 @@ export default function SessionStarter({
             </select>
           )}
         </div>
+
+        <SessionModelSelect id="session-model" value={model} onChange={setModel} />
 
         <div className="session-field">
           <label htmlFor="session-title">Title</label>

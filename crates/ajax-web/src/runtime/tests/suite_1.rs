@@ -21,6 +21,7 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
 
     for (method, path) in [
         ("GET", "/api/session"),
+        ("GET", "/api/session/models"),
         ("GET", "/api/cockpit"),
         ("GET", "/api/version"),
         ("GET", "/api/push/vapid"),

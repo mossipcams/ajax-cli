@@ -55,8 +55,10 @@ pub struct AcpStdioClient {
 }
 
 impl AcpStdioClient {
-    pub fn spawn(worktree_path: &Path) -> Result<Self, String> {
-        let mut child = spawn_cursor_acp_process(worktree_path)?;
+    /// Spawn Cursor ACP. `model` of `None`/`Some("auto")` omits `--model` so
+    /// Cursor's default applies; any other id is pinned at process start.
+    pub fn spawn(worktree_path: &Path, model: Option<&str>) -> Result<Self, String> {
+        let mut child = spawn_cursor_acp_process(worktree_path, model)?;
         let stdin = child
             .stdin
             .take()
@@ -213,15 +215,46 @@ fn session_new_params(worktree_path: &Path) -> Value {
     })
 }
 
+/// True when `--model` should be omitted (Cursor default / Auto).
+pub(crate) fn model_uses_cli_default(model: Option<&str>) -> bool {
+    match model.map(str::trim) {
+        None | Some("") | Some("auto") => true,
+        Some(_) => false,
+    }
+}
+
+/// Argv templates for spawning Cursor ACP (`--model` is inserted later).
 pub(crate) fn cursor_acp_program_candidates() -> [(&'static str, &'static [&'static str]); 2] {
     [("agent", &["acp"]), ("cursor", &["agent", "acp"])]
 }
 
-fn spawn_cursor_acp_process(worktree_path: &Path) -> Result<Child, String> {
+/// Build argv for one candidate program, inserting `--model <id>` before `acp`.
+pub(crate) fn cursor_acp_args_for_program(base_args: &[&str], model: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = base_args.iter().map(|s| (*s).to_string()).collect();
+    if model_uses_cli_default(model) {
+        return args;
+    }
+    let Some(model) = model.map(str::trim).filter(|s| !s.is_empty()) else {
+        return args;
+    };
+    // `agent acp` → `agent --model ID acp`; `cursor agent acp` → `cursor agent --model ID acp`.
+    if let Some(acp_at) = args.iter().position(|a| a == "acp") {
+        args.insert(acp_at, "--model".to_string());
+        args.insert(acp_at + 1, model.to_string());
+    } else {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+        args.push("acp".to_string());
+    }
+    args
+}
+
+fn spawn_cursor_acp_process(worktree_path: &Path, model: Option<&str>) -> Result<Child, String> {
     let mut last_error = String::from("failed to spawn cursor acp process");
-    for (program, args) in cursor_acp_program_candidates() {
+    for (program, base_args) in cursor_acp_program_candidates() {
+        let args = cursor_acp_args_for_program(base_args, model);
         let mut command = Command::new(program);
-        command.args(args.iter().copied());
+        command.args(&args);
         command
             .current_dir(worktree_path)
             .stdin(Stdio::piped())
@@ -319,7 +352,25 @@ mod tests {
     fn cursor_acp_command_prefers_agent_binary() {
         let candidates = cursor_acp_program_candidates();
         assert_eq!(candidates[0].0, "agent");
-        assert_eq!(candidates[0].1, &["acp"]);
+        assert_eq!(candidates[0].1, &["acp"][..]);
         assert_eq!(candidates[1].0, "cursor");
+        assert_eq!(candidates[1].1, &["agent", "acp"][..]);
+    }
+
+    #[test]
+    fn cursor_acp_args_insert_model_before_acp() {
+        assert_eq!(
+            cursor_acp_args_for_program(&["acp"], Some("composer-2.5")),
+            vec!["--model", "composer-2.5", "acp"]
+        );
+        assert_eq!(
+            cursor_acp_args_for_program(&["agent", "acp"], Some("gpt-5.6-sol-medium")),
+            vec!["agent", "--model", "gpt-5.6-sol-medium", "acp"]
+        );
+        assert_eq!(
+            cursor_acp_args_for_program(&["acp"], Some("auto")),
+            vec!["acp"]
+        );
+        assert_eq!(cursor_acp_args_for_program(&["acp"], None), vec!["acp"]);
     }
 }

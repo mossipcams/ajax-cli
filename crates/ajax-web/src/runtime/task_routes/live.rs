@@ -171,9 +171,22 @@ where
     }
     state.mark_browser_cockpit_seen();
 
+    let model_raw = req
+        .uri()
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key == "model").then_some(value)
+            })
+        })
+        .map(percent_decode_model)
+        .unwrap_or_else(|| "auto".to_string());
+
     let plan = {
         let guard = state.shared();
-        match crate::slices::web_session::prepare_task_session(&guard.context, &handle) {
+        match crate::slices::web_session::prepare_task_session(&guard.context, &handle, &model_raw)
+        {
             Ok(plan) => plan,
             Err(crate::slices::web_session::SessionRouteError::TaskNotFound) => {
                 return json_value_response(
@@ -234,6 +247,37 @@ pub(crate) fn origin_authority(origin: &str) -> Option<&str> {
         return None;
     }
     Some(authority)
+}
+
+fn percent_decode_model(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
+                out.push(char::from(hi * 16 + lo));
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(' ');
+        } else {
+            out.push(char::from(bytes[i]));
+        }
+        i += 1;
+    }
+    out
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub(crate) async fn axum_task_post<C, B>(

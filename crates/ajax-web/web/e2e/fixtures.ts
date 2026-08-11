@@ -78,6 +78,12 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
   const routes: Record<string, unknown> = {
     "/api/cockpit":    COCKPIT_FIXTURE,
     "/api/version":    VERSION_A,
+    "/api/session/models": {
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "composer-2.5", label: "Composer 2.5" },
+      ],
+    },
     "/api/health":     { status: "ok" },
     "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
     "/api/server/restart": {},

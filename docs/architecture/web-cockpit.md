@@ -106,13 +106,19 @@ Protocol. PTY paste is not a chat transport.
 
 ```text
 Browser session UI
-  -> authenticated task-scoped session WebSocket (JSON chat events)
+  -> authenticated task-scoped session WebSocket (JSON chat events; ?model=)
   -> ajax-web web_session / ACP host
-  -> Cursor ACP over stdio (initialize, session/new, session/prompt)
+  -> Cursor ACP over stdio (`agent --model <id> acp`, then initialize / session/new / session/prompt)
   <- session/update stream (messages, plans, tool calls, permissions)
   -> live head (current tool / decision) + settled transcript
 ```
 
+- Operators pick a Cursor model on the starter and in the chat header. The
+  catalog comes from `GET /api/session/models` (`agent models`). The chosen id
+  is pinned at ACP spawn with `--model` (or omitted for `auto`). Mid-chat
+  changes respawn the ACP child under the same hub slot while keeping the host
+  transcript so the UI recovers; the new process does not inherit prior agent
+  memory.
 - Full chat thread + text composer remain available at all times; chat is the
   primary surface for questions, corrections, redirection, and follow-ups.
 - The live head shows the current tool and in-progress plan step. The

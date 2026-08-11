@@ -57,13 +57,25 @@ describe("connectWebSessionTransport", () => {
   it("opens the task session websocket and handles ready + prompt", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
-    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    const openSocket = vi.fn(() => socket);
+    const transport = connectWebSessionTransport(
+      "web/fix-login",
+      cbs,
+      { openSocket },
+      "composer-2.5",
+    );
+
+    expect(openSocket).toHaveBeenCalledWith(
+      expect.stringContaining("/api/tasks/web%2Ffix-login/session?model=composer-2.5"),
+    );
 
     socket.readyState = OPEN_READY_STATE;
     socket.emit("open");
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", {
+      data: JSON.stringify({ type: "ready", model: "composer-2.5" }),
+    } as MessageEvent);
 
-    expect(cbs.onReady).toHaveBeenCalledOnce();
+    expect(cbs.onReady).toHaveBeenCalledWith("composer-2.5");
     transport.sendPrompt("Ship it");
     expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "Ship it" }));
 
@@ -75,6 +87,11 @@ describe("connectWebSessionTransport", () => {
       role: "agent",
       text: "On it",
     });
+
+    transport.setModel("gpt-5.6-sol-medium");
+    expect(socket.sent).toContainEqual(
+      JSON.stringify({ type: "set_model", model: "gpt-5.6-sol-medium" }),
+    );
 
     transport.dispose();
     expect(socket.close).toHaveBeenCalled();
