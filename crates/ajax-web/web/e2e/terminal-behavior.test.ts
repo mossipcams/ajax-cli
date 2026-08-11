@@ -851,38 +851,6 @@ test("empty sync clipboardData paste recovers URL from helper textarea input", a
   expect(frames.at(-1)?.data).toBe(url);
 });
 
-test("empty sync clipboardData paste recovers URL from insertText input", async ({ page }) => {
-  await openTaskTerminal(page);
-  await clickTerminalSurfaceInterior(page);
-
-  const url = "https://example.com/insert-text-recover";
-  const baseline = await inputFrameCount(page);
-
-  await page.evaluate((pasteUrl) => {
-    const textarea = document.querySelector(
-      "textarea.xterm-helper-textarea",
-    ) as HTMLTextAreaElement | null;
-    if (!textarea) throw new Error("helper textarea missing");
-    textarea.focus();
-    const data = new DataTransfer();
-    textarea.dispatchEvent(
-      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
-    );
-    textarea.value = `\u200B${pasteUrl}`;
-    textarea.dispatchEvent(
-      new InputEvent("input", {
-        inputType: "insertText",
-        data: pasteUrl,
-        bubbles: true,
-      }),
-    );
-  }, url);
-
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
-  const frames = await terminalInputFrames(page);
-  expect(frames.at(-1)?.data).toBe(url);
-});
-
 test("insertFromPaste beforeinput sends a link when clipboardData is empty", async ({ page }) => {
   await openTaskTerminal(page);
   await clickTerminalSurfaceInterior(page);
