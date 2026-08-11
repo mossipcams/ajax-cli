@@ -97,25 +97,27 @@ export default function ResultPanel({
     >
       <p className="result-message">{message}</p>
       {trimmedOutput ? <pre className="result-output">{trimmedOutput}</pre> : null}
-      {confirmMode ? (
-        <>
-          <Button type="button" variant="default" onClick={confirm}>
-            Confirm
+      <div className="result-actions" data-testid="result-actions">
+        {confirmMode ? (
+          <>
+            <Button type="button" variant="default" onClick={confirm}>
+              Confirm
+            </Button>
+            <Button type="button" variant="secondary" onClick={cancelConfirm}>
+              Cancel
+            </Button>
+          </>
+        ) : undoArmed ? (
+          <Button type="button" variant="default" onClick={dismiss}>
+            Undo
           </Button>
-          <Button type="button" variant="secondary" onClick={cancelConfirm}>
-            Cancel
+        ) : null}
+        {!confirmMode ? (
+          <Button type="button" variant="secondary" onClick={dismiss}>
+            Dismiss
           </Button>
-        </>
-      ) : undoArmed ? (
-        <Button type="button" variant="default" onClick={dismiss}>
-          Undo
-        </Button>
-      ) : null}
-      {!confirmMode ? (
-        <Button type="button" variant="secondary" onClick={dismiss}>
-          Dismiss
-        </Button>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -363,10 +363,6 @@ export default function TaskTerminal({ handle }: Props) {
   // next repeat tick.
   const onTextareaInput = (event: Event) => {
     const inputType = (event as InputEvent).inputType ?? "";
-    if (inputType === "insertText") {
-      pasteExpectRef.current = false;
-      return;
-    }
     if (inputType.startsWith("delete")) {
       pasteExpectRef.current = false;
       seedTermSentinel();
@@ -375,9 +371,12 @@ export default function TaskTerminal({ handle }: Props) {
       requestAnimationFrame(clearInteractionScrollPin);
       return;
     }
+    // Safari often recovers empty clipboardData pastes as insertText (not
+    // insertFromPaste). Only ignore insertText when we are not expecting paste.
     if (
       inputType === "insertFromPaste" ||
       inputType === "insertFromPasteAsQuotation" ||
+      inputType === "insertReplacementText" ||
       pasteExpectRef.current
     ) {
       const textarea = event.currentTarget;
@@ -389,7 +388,9 @@ export default function TaskTerminal({ handle }: Props) {
         textarea.value = BACKSPACE_SENTINEL;
         sendPastedText(raw);
       }
+      return;
     }
+    if (inputType === "insertText") return;
   };
 
   const onTextareaPaste = (event: ClipboardEvent) => {

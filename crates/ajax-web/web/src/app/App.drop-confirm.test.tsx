@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
+import { DROP_UNDO_MS } from "@/shared/lib/polling";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
@@ -92,5 +94,78 @@ describe("App drop shell confirm", () => {
       expect.objectContaining({ ok: false, op: "drop", error_kind: "undo" }),
     );
     expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+  });
+
+  it("keeps the switched-to task after Drop finishes for the previous task", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/tasks/web%2Fother")
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: "web/other", title: "Other task" }),
+          );
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    setHash("#/t/web%2Fother");
+    expect(await screen.findByText("Other task")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(true);
+    });
+    expect(window.location.hash).toBe("#/t/web%2Fother");
+    expect(screen.getByText("Other task")).toBeInTheDocument();
+    expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
+  });
+
+  it("leaves the dropped task detail for the dashboard when Drop finishes in place", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#/");
+    });
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
   });
 });

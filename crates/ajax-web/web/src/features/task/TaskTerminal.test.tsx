@@ -486,11 +486,17 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\n {2}\};/,
     );
     expect(onInput).toMatch(/insertFromPaste/);
+    expect(onInput).toMatch(/insertReplacementText/);
     expect(onInput).toMatch(/pasteExpectRef\.current/);
     expect(onInput).toMatch(/replaceAll\(BACKSPACE_SENTINEL/);
     expect(onInput).toMatch(/textarea\.value\s*=\s*BACKSPACE_SENTINEL/);
     expect(onInput).toMatch(/sendPastedText\(raw\)/);
-    expect(onInput).toMatch(/inputType === "insertText"/);
+    // insertText must not clear pasteExpect before recovery — Safari often
+    // delivers empty-clipboardData paste recovery as insertText.
+    expect(onInput).toMatch(/pasteExpectRef\.current/);
+    expect(onInput).toMatch(
+      /insertFromPaste[\s\S]*pasteExpectRef\.current[\s\S]*insertText/,
+    );
   });
 
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {

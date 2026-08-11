@@ -1,5 +1,12 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { dashboardHash, projectHash, settingsHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
+import {
+  dashboardHash,
+  parseRoute,
+  projectHash,
+  settingsHash,
+  taskDiffHash,
+  taskHash,
+} from "@/shared/lib/routes";
 import {
   cockpitRefreshIntervalMs,
   REFRESH_INTERVAL_ACTIVE_MS,
@@ -158,6 +165,14 @@ export default function App() {
     if (!pendingConfirm) return;
     const { action, handle, interactionId } = pendingConfirm;
     dismissPendingConfirm();
+    // Drop's undo timer outlives ActionBar. Treat "still on this task" as mounted
+    // so a late commit does not yank the operator off a task they switched to.
+    const viewingDroppedHandle = () => {
+      const current = parseRoute(location.hash);
+      return (
+        (current.kind === "task" || current.kind === "diff") && current.handle === handle
+      );
+    };
     commitConfirmedAction(
       action,
       handle,
@@ -169,6 +184,7 @@ export default function App() {
           if (route.kind === "task" && route.handle) reload();
           else void loadCockpit();
         },
+        isMounted: viewingDroppedHandle,
         onDismiss: () => go(dashboardHash()),
       },
       dropHandles,
