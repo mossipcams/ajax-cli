@@ -9,6 +9,7 @@ import { useTaskTerminalSpeech } from "./useTaskTerminalSpeech";
 import type { Terminal } from "@xterm/xterm";
 import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
 import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
+import { filterTerminalInputReports } from "@/shared/lib/terminalInputFilter";
 
 interface Props {
   handle: string;
@@ -231,7 +232,9 @@ export default function TaskTerminal({ handle }: Props) {
 
   const sendKey = (data: string) => {
     if (!connectionRef.current?.isOpen()) return;
-    connectionRef.current.sendInput(data);
+    const filtered = filterTerminalInputReports(data);
+    if (!filtered) return;
+    connectionRef.current.sendInput(filtered);
   };
 
   const stopHeldKeyRepeat = () => {
