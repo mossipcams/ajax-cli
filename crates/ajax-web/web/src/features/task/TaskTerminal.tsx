@@ -9,28 +9,16 @@ import { useTaskTerminalSpeech } from "./useTaskTerminalSpeech";
 import type { Terminal } from "@xterm/xterm";
 import { attachTerminalAddons } from "@/shared/lib/terminalAddons";
 import type { TerminalLinkService } from "@/shared/lib/terminalLinkService";
+import { filterTerminalInputReports } from "@/shared/lib/terminalInputFilter";
+import {
+  BACKSPACE_SENTINEL,
+  seedBackspaceSentinel,
+  seedSentinelFromFocus,
+} from "./terminalBackspaceSentinel";
 
 interface Props {
   handle: string;
 }
-
-// iOS only starts its hold-to-delete repeat loop when the focused field has
-// deletable content, so the xterm helper textarea always carries a sentinel.
-const BACKSPACE_SENTINEL = "\u200B";
-
-const seedBackspaceSentinel = (input: HTMLTextAreaElement | null) => {
-  if (input && !input.value.includes(BACKSPACE_SENTINEL)) {
-    input.value = BACKSPACE_SENTINEL;
-  }
-};
-
-// Module scope on purpose: registered from hardenMobileTextarea and removed in
-// the effect cleanup, which see different render closures. One stable identity
-// is the only way both sides name the same function.
-const seedSentinelFromFocus = (event: Event) => {
-  const input = event.currentTarget;
-  seedBackspaceSentinel(input instanceof HTMLTextAreaElement ? input : null);
-};
 
 export default function TaskTerminal({ handle }: Props) {
   const hostElRef = useRef<HTMLDivElement | null>(null);
@@ -231,7 +219,9 @@ export default function TaskTerminal({ handle }: Props) {
 
   const sendKey = (data: string) => {
     if (!connectionRef.current?.isOpen()) return;
-    connectionRef.current.sendInput(data);
+    const filtered = filterTerminalInputReports(data);
+    if (!filtered) return;
+    connectionRef.current.sendInput(filtered);
   };
 
   const stopHeldKeyRepeat = () => {

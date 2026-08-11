@@ -5,10 +5,11 @@ import { dirname, join } from "node:path";
 import taskTerminalSource from "./TaskTerminal.tsx?raw";
 import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
 import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
+import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw";
 
 /** Shell + peeled mount/speech modules for source-contract asserts. */
 const taskTerminalFeatureSource =
-  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}`;
+  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}`;
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -425,7 +426,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("seeds a zero-width space so iOS has deletable content", () => {
-    expect(taskTerminalFeatureSource).toMatch(/const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/);
+    expect(terminalBackspaceSentinelSource).toMatch(
+      /export const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/,
+    );
 
     const hardenTextarea = extractBlock(
       taskTerminalFeatureSource,
@@ -538,7 +541,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
 
     for (const handler of [registeredFocus, registeredBeforeInput, registeredInput]) {
-      const moduleScope = new RegExp(`^const ${handler}\\s*=`, "m");
+      const moduleScope = new RegExp(`^(?:export )?const ${handler}\\s*=`, "m");
       const effectEvent = new RegExp(`const ${handler}\\s*=\\s*useEffectEvent\\(`);
       expect(
         moduleScope.test(taskTerminalFeatureSource) || effectEvent.test(taskTerminalFeatureSource),
