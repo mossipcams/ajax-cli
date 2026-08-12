@@ -1425,10 +1425,12 @@ html.terminal-expanded .result-panel {
   scrollbar-width: none;
 }
 
-/* Hide xterm content while seed parses; keep wrap background as the plate. */
+/* Hide xterm content while seed parses; keep wrap background as the plate.
+   visibility:hidden so WebKit cannot paint mid-parse scroll into the surface. */
 .terminal-interaction-wrap.is-seed-pending .terminal-host,
 .terminal-interaction-wrap.is-seed-pending .terminal-scroll-spacer {
   opacity: 0;
+  visibility: hidden;
 }
 
 .terminal-interaction-wrap::-webkit-scrollbar {

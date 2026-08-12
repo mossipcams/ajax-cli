@@ -852,6 +852,10 @@ export function mountTaskTerminalSession(
 
   let connection: TerminalConnection | undefined;
 
+  // Hide before the first paint/dial so open never shows an empty grid or a
+  // mid-seed wrap scroll. onOpen cancels this when the dial is unseeded.
+  beginSeedPending();
+
   // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
   // never constructs a socket on the aborted first mount; cleanup sets `disposed`.
   queueMicrotask(() => {
@@ -872,7 +876,15 @@ export function mountTaskTerminalSession(
           if (sawErase && !isSeedPending() && termRef.current?.options.scrollOnEraseInDisplay) {
             latchScrollOnEraseOff();
           }
-          scrollSync.applyOutput();
+          if (isSeedPending()) {
+            // Grow spacer + pin xterm only. Do not touch wrap.scrollTop here —
+            // incremental wrap pins during seed are what the operator sees as
+            // "scrolls all the way down" if any frame becomes visible.
+            scrollSync.syncSpacer();
+            termRef.current?.scrollToBottom();
+          } else {
+            scrollSync.applyOutput();
+          }
           deferSeedReveal();
         });
       },

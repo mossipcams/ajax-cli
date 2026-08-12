@@ -680,6 +680,7 @@ describe("TaskTerminal seeded history reveal", () => {
         /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     expect(seedPendingCss).toMatch(/opacity:\s*0/);
+    expect(seedPendingCss).toMatch(/visibility:\s*hidden/);
     expect(stylesSource).not.toMatch(
       /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
     );
@@ -694,7 +695,8 @@ describe("TaskTerminal seeded history reveal", () => {
         /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
-    // Hiding starts at the seeded open, not on a byte-size guess about the frame.
+    // Hiding starts at mount (before dial), not on a byte-size guess about the frame.
+    expect(mountBody).toMatch(/beginSeedPending\(\);\s*\n\s*\/\/ ponytail: defer dial/);
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)\s*\{\s*\n\s*beginSeedPending\(\)/);
@@ -705,10 +707,20 @@ describe("TaskTerminal seeded history reveal", () => {
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
+    expect(onOutputBody).toMatch(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{/);
+    expect(onOutputBody).toMatch(/scrollSync\.syncSpacer\(\)/);
+    expect(onOutputBody).toMatch(/scrollToBottom\(\)/);
     expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
     expect(onOutputBody).not.toMatch(/setFollowLive\(true\)/);
     expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
+    // Pending path must not drive wrap.scrollTop (no applyOutput while pending).
+    const pendingBranch =
+      onOutputBody.match(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{([\s\S]*?)\}\s*else\s*\{/)?.[1] ?? "";
+    expect(pendingBranch).toMatch(/syncSpacer/);
+    expect(pendingBranch).toMatch(/scrollToBottom/);
+    expect(pendingBranch).not.toMatch(/applyOutput/);
+    expect(pendingBranch).not.toMatch(/scrollInteractionToBottom/);
 
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
