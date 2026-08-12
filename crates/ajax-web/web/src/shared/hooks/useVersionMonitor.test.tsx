@@ -51,7 +51,7 @@ describe("useVersionMonitor", () => {
     expect(result.current.updateAvailable).toBe(true);
   });
 
-  it("keeps updateAvailable true once set", async () => {
+  it("clears updateAvailable when the server returns to the boot version", async () => {
     let versionCalls = 0;
     vi.stubGlobal(
       "fetch",
@@ -74,7 +74,7 @@ describe("useVersionMonitor", () => {
     await act(async () => {
       await result.current.checkVersion();
     });
-    expect(result.current.updateAvailable).toBe(true);
+    expect(result.current.updateAvailable).toBe(false);
   });
 
   it("ignores empty or missing version field", async () => {

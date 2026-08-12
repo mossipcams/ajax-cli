@@ -15,7 +15,7 @@ export function useVersionMonitor(): VersionMonitor {
       const { version } = await fetchVersion();
       if (!version) return;
       if (bootVersionRef.current === null) bootVersionRef.current = version;
-      else if (version !== bootVersionRef.current) setUpdateAvailable(true);
+      else setUpdateAvailable(version !== bootVersionRef.current);
     } catch {
       // Offline: keep the pinned version and retry later.
     }

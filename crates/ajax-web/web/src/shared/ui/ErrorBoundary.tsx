@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Button } from "./button";
 
 interface Props {
   children: ReactNode;
@@ -41,6 +42,9 @@ export class ErrorBoundary extends Component<Props, State> {
             : "Something went wrong rendering this view"}
         </p>
         <pre className="error-boundary-detail">{error.message}</pre>
+        <Button type="button" variant="secondary" onClick={() => this.setState({ error: null })}>
+          Retry
+        </Button>
       </div>
     );
   }
