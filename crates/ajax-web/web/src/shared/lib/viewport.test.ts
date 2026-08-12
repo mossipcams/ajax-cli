@@ -331,6 +331,48 @@ describe("initViewport", () => {
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
   });
+
+  it("init with visualViewport.height === 0 and usable innerHeight uses layout height (#850)", () => {
+    vvHeight = 0;
+    vi.stubGlobal("innerHeight", 812);
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("812px");
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("0px");
+  });
+
+  it("init with both visual and layout height 0 leaves --app-height unset (#850)", () => {
+    vvHeight = 0;
+    vi.stubGlobal("innerHeight", 0);
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("");
+  });
+
+  it("init at 0 then resize to real height updates --app-height without keyboard-open (#850)", () => {
+    vvHeight = 0;
+    vi.stubGlobal("innerHeight", 812);
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("812px");
+    expect(isKeyboardOpen()).toBe(false);
+
+    vvHeight = 812;
+    dispatchVV("resize");
+
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("812px");
+    expect(isKeyboardOpen()).toBe(false);
+  });
+
+  it("does not flag keyboard-open when visualViewport stays 0 after layout init (#850)", () => {
+    vvHeight = 0;
+    vi.stubGlobal("innerHeight", 812);
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("812px");
+
+    dispatchVV("resize");
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("812px");
+  });
 });
 
 describe("resetDocumentScroll", () => {

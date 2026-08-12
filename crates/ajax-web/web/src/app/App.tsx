@@ -52,6 +52,7 @@ import {
   commitConfirmedAction,
   type DropUndoHandles,
 } from "@/features/task/taskMutations";
+import { checkHealth } from "@/shared/lib/api";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -462,7 +463,24 @@ export default function App() {
   function reloadOnce() {
     if (reloadLatchRef.current) return;
     reloadLatchRef.current = true;
-    location.reload();
+    void (async () => {
+      try {
+        if (await checkHealth()) {
+          const { origin, hash } = window.location;
+          if (origin.startsWith("http://") || origin.startsWith("https://")) {
+            window.location.replace(`${origin}${hash}`);
+            return;
+          }
+          location.reload();
+          return;
+        }
+        await loadCockpit({ trailing: true });
+      } catch {
+        // Stay on the SPA; allow another tap.
+      }
+      // Keep the latch if we started a document navigation.
+      reloadLatchRef.current = false;
+    })();
   }
 
   const chrome = (

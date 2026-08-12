@@ -21,6 +21,14 @@ const KEYBOARD_CLOSE_SETTLE_MS = 250;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
 const APP_TOP_VAR = "--app-top";
+// iOS Home Screen PWA splash can report visualViewport.height === 0; pinning
+// that sets --app-height: 0px, so the CSS 100dvh fallback never applies and
+// max-height: 0px clips the shell (#850).
+const MIN_USABLE_HEIGHT_PX = 50;
+
+function isUsableHeight(height: number): boolean {
+  return height >= MIN_USABLE_HEIGHT_PX;
+}
 
 /**
  * The single keyboard-open truth. `initViewport` maintains the class with
@@ -76,11 +84,40 @@ export function initViewport(): () => void {
   const setAppTop = (offsetTop: number) => {
     root.style.setProperty(APP_TOP_VAR, `${offsetTop}px`);
   };
+  const clearAppGeometry = () => {
+    root.style.removeProperty(APP_HEIGHT_VAR);
+    root.style.removeProperty(APP_TOP_VAR);
+  };
+
+  const resolveViewportHeight = (): number | null => {
+    if (isUsableHeight(vv.height)) return vv.height;
+    const layoutHeight = window.innerHeight;
+    if (isUsableHeight(layoutHeight)) return layoutHeight;
+    return null;
+  };
+
+  const resolveViewportTop = (): number => {
+    if (isUsableHeight(vv.height)) return vv.offsetTop ?? 0;
+    return 0;
+  };
 
   const syncViewportGeometry = () => {
-    setAppHeight(vv.height);
-    setAppTop(vv.offsetTop ?? 0);
+    const height = resolveViewportHeight();
+    if (height === null) {
+      clearAppGeometry();
+      return;
+    }
+    setAppHeight(height);
+    setAppTop(resolveViewportTop());
   };
+
+  const rebaseBaselineFromResolved = () => {
+    const resolved = resolveViewportHeight();
+    baselineHeight = resolved ?? vv.height;
+    baselineWidth = window.innerWidth;
+  };
+
+  rebaseBaselineFromResolved();
   syncViewportGeometry();
 
   let closeSettleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -94,6 +131,17 @@ export function initViewport(): () => void {
   const onViewportResize = () => {
     const current = vv.height;
     const currentWidth = window.innerWidth;
+
+    // Splash can keep reporting height 0 after init already fell back to layout
+    // height; a shrink to unusable must not look like a keyboard opening (#850).
+    if (!isUsableHeight(current)) {
+      syncViewportGeometry();
+      if (!keyboardOpen) {
+        rebaseBaselineFromResolved();
+      }
+      return;
+    }
+
     if (currentWidth !== baselineWidth) {
       // Rotation: a real geometry change, close immediately.
       cancelCloseSettle();
@@ -133,13 +181,23 @@ export function initViewport(): () => void {
       // Shrank back under the close threshold: the expansion was a transient.
       cancelCloseSettle();
     }
+    // Splash recovery: visualViewport can jump from 0/unusable to full height.
+    // Rebase without treating the expansion as keyboard dismissal/opening.
+    if (!isUsableHeight(baselineHeight) && isUsableHeight(current)) {
+      cancelCloseSettle();
+      keyboardOpen = false;
+      root.classList.remove(KEYBOARD_OPEN_CLASS);
+      syncViewportGeometry();
+      rebaseBaselineFromResolved();
+      return;
+    }
+
     // Keep --app-height pinned to the visible band. While the keyboard is closed
     // this also tracks address-bar / orientation changes and re-bases the
     // threshold so the next keyboard open is measured from the right height.
     syncViewportGeometry();
     if (!keyboardOpen) {
-      baselineHeight = current;
-      baselineWidth = currentWidth;
+      rebaseBaselineFromResolved();
     }
   };
 
@@ -180,7 +238,7 @@ export function initViewport(): () => void {
       baselineHeight = layoutHeight;
     } else {
       syncViewportGeometry();
-      baselineHeight = visualHeight;
+      rebaseBaselineFromResolved();
     }
     baselineWidth = window.innerWidth;
     resetDocumentScroll();

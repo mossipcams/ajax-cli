@@ -3,7 +3,7 @@ import {
   fetchVersion,
   startTestInStable,
   TEST_IN_STABLE_TIMEOUT_MS,
-  waitForServerOnline,
+  waitForServerRestart,
 } from "@/shared/lib/api";
 import { buildDiagnosticsReport } from "./diagnostics";
 import { copyText } from "@/shared/lib/clipboard";
@@ -92,6 +92,17 @@ export default function SettingsView({
     }
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     setConfirmingTestInStable(false);
+    const resumeOrigin = window.location.origin;
+    const resumeHash = window.location.hash;
+    const resumeOriginOk =
+      resumeOrigin.startsWith("http://") || resumeOrigin.startsWith("https://");
+    let previousVersion: string | null = null;
+    try {
+      const version = await fetchVersion();
+      previousVersion = version.version;
+    } catch {
+      // Continue without a version baseline.
+    }
     setTestingInStable(true);
     setTestInStableStatus("Pulling main and rebuilding…");
     try {
@@ -99,11 +110,14 @@ export default function SettingsView({
     } catch {
       // A connection drop during restart is expected.
     }
-    const online = await waitForServerOnline(TEST_IN_STABLE_TIMEOUT_MS);
+    const online = await waitForServerRestart({
+      timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,
+      previousVersion,
+    });
     setTestingInStable(false);
-    if (online) {
+    if (online && resumeOriginOk) {
       setTestInStableStatus(null);
-      window.location.reload();
+      window.location.replace(`${resumeOrigin}${resumeHash}`);
       return;
     }
     setTestInStableStatus(null);

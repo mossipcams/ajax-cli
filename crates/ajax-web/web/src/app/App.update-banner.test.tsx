@@ -82,11 +82,19 @@ describe("App update banner", () => {
   it("reloads only once when the update banner is multi-tapped", async () => {
     vi.useFakeTimers();
     let versionCalls = 0;
+    const replace = vi.fn();
     const reload = vi.fn();
-    vi.stubGlobal("location", { ...window.location, hash: "", reload });
+    vi.stubGlobal("location", {
+      ...window.location,
+      hash: "",
+      origin: "https://ajax.local:8787",
+      replace,
+      reload,
+    });
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/health") return Promise.resolve(jsonResponse({ ok: true }));
       if (path === "/api/version") {
         versionCalls += 1;
         return Promise.resolve(jsonResponse({ version: versionCalls === 1 ? "v1" : "v2" }));
@@ -105,6 +113,10 @@ describe("App update banner", () => {
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(reload).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(replace).toHaveBeenCalledOnce(),
+    );
+    expect(replace).toHaveBeenCalledWith("https://ajax.local:8787");
+    expect(reload).not.toHaveBeenCalled();
   });
 });
