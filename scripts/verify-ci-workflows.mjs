@@ -79,6 +79,19 @@ function verifyExploratory(workflow, fail) {
     );
   }
 
+  const dispatchInputs = on?.workflow_dispatch?.inputs ?? {};
+  if (dispatchInputs.budget_minutes?.default !== "12") {
+    fail("exploratory workflow_dispatch budget_minutes default must be \"12\".");
+  }
+
+  const budgetEnv = workflow.env?.AJAX_EXPLORATORY_BUDGET_MINUTES ?? "";
+  if (!String(budgetEnv).includes("github.event.inputs.budget_minutes")) {
+    fail("exploratory-testing.yml must preserve budget_minutes workflow_dispatch override.");
+  }
+  if (!String(budgetEnv).includes("'12'")) {
+    fail("exploratory-testing.yml AJAX_EXPLORATORY_BUDGET_MINUTES fallback must be '12'.");
+  }
+
   const jobs = workflow.jobs ?? {};
   const explore = jobs.explore;
   if (!explore) {
@@ -103,12 +116,19 @@ function verifyExploratory(workflow, fail) {
     "scripts/exploratory/run-agent.sh",
     "scripts/exploratory/prepare-oracles.mjs",
     "scripts/exploratory/file-issues.mjs",
-    "npx playwright install --with-deps chromium",
+    "npx playwright install --with-deps webkit",
     "apt-get install -y tmux",
   ]) {
     if (!text.includes(needle)) {
       fail(`exploratory explore job must include ${needle}.`);
     }
+  }
+
+  if (
+    /playwright install[^\n]*chromium/i.test(text) ||
+    /playwright install[^\n]*firefox/i.test(text)
+  ) {
+    fail("exploratory explore job must not install chromium or firefox.");
   }
 
   if (text.includes("self-hosted") || text.includes("macos-") || text.includes("windows-")) {

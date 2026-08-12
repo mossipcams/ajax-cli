@@ -134,6 +134,7 @@ test("prepare-prompt embeds oracles and Garbage hashes charter", () => {
       ...process.env,
       AJAX_EXPLORATORY_RESULTS: resultsDir,
       AJAX_EXPLORATORY_MEMORY: join(resultsDir, "missing-memory.json"),
+      AJAX_EXPLORATORY_BUDGET_MINUTES: "12",
     },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -142,4 +143,84 @@ test("prepare-prompt embeds oracles and Garbage hashes charter", () => {
   assert.match(prompt, /## Oracles \(this run\)/);
   assert.match(prompt, /Garbage hashes/);
   assert.match(prompt, /abc fix\(web\): routes/);
+  assert.doesNotMatch(prompt, /minutes minimum/);
+  assert.doesNotMatch(prompt, /keep going until the runner stops you/i);
+  assert.match(prompt, /12 minutes maximum/i);
+  assert.match(prompt, /Stopping criteria/i);
+  assert.match(prompt, /WebKit/i);
+  assert.match(prompt, /information gained per action/i);
+  assert.match(prompt, /persisted memory/i);
+});
+
+test("assertWebkitMcpConfig accepts webkit and rejects chromium config", async () => {
+  const { assertWebkitMcpConfig } = await import("./exploratory/assert-webkit.mjs");
+  const webkitConfig = {
+    mcpServers: {
+      playwright: {
+        args: ["--browser", "webkit", "--headless"],
+      },
+    },
+  };
+  assert.doesNotThrow(() => assertWebkitMcpConfig(webkitConfig));
+
+  const chromiumConfig = {
+    mcpServers: {
+      playwright: {
+        args: ["--browser", "chromium", "--no-sandbox"],
+      },
+    },
+  };
+  assert.throws(() => assertWebkitMcpConfig(chromiumConfig), /--browser must be exactly webkit/);
+});
+
+test("mcp.json is WebKit-only and assert-webkit --config-only passes", () => {
+  const mcp = JSON.parse(
+    readFileSync(join(root, ".github/exploratory/mcp.json"), "utf8"),
+  );
+  const args = mcp.mcpServers.playwright.args;
+  const browserIdx = args.indexOf("--browser");
+  assert.equal(args[browserIdx + 1], "webkit");
+  assert.ok(!args.includes("chromium"));
+  assert.ok(!args.includes("firefox"));
+  assert.ok(!args.includes("--no-sandbox"));
+
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/exploratory/assert-webkit.mjs", "--config-only"],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ok/);
+});
+
+test("run-agent.sh caps relaunches and honors stop-reason", () => {
+  const script = readFileSync(join(root, "scripts/exploratory/run-agent.sh"), "utf8");
+  assert.match(script, /MAX_ATTEMPTS=2/);
+  assert.doesNotMatch(script, /MAX_ATTEMPTS=8/);
+  assert.match(script, /stop-reason\.json/);
+  assert.doesNotMatch(script, /finish checklist is not permission to stop early/i);
+  assert.match(script, /assert-webkit\.mjs/);
+});
+
+test("exploratory workflow uses WebKit and 12-minute default budget", () => {
+  const workflow = readFileSync(
+    join(root, ".github/workflows/exploratory-testing.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /default: "12"/);
+  assert.match(workflow, /playwright install --with-deps webkit/);
+  assert.doesNotMatch(workflow, /playwright install --with-deps chromium/);
+  assert.doesNotMatch(workflow, /playwright install --with-deps firefox/);
+  assert.match(workflow, /AJAX_EXPLORATORY_BUDGET_MINUTES: \$\{\{ github\.event\.inputs\.budget_minutes \|\| '12' \}\}/);
+});
+
+test("charter defines stopping criteria and maximum budget", () => {
+  const charter = readFileSync(join(root, ".github/exploratory/charter.md"), "utf8");
+  assert.match(charter, /## Stopping criteria/);
+  assert.match(charter, /stop-reason\.json/);
+  assert.match(charter, /\*\*maximum\*\*/i);
+  assert.doesNotMatch(charter, /minimum\*\*, not a target/);
+  assert.doesNotMatch(charter, /finish checklist is not permission to stop/i);
+  assert.doesNotMatch(charter, /keep exploring until the runner stops you/i);
+  assert.doesNotMatch(charter, /run it for several minutes/i);
 });

@@ -37,8 +37,8 @@
 - [x] Charter rewrite — session charters, forbid nav smoke tour as whole session
 - [x] `prepare-prompt.mjs` embeds oracles; charter start from bug neighborhood
 - [x] Workflow step after wait-ready, before prepare-prompt
-- [x] `run-agent.sh` relaunch continues charter / reads oracles
-- [x] Playwright MCP viewport `390x844` (iOS Safari-ish)
+- [x] `run-agent.sh` relaunch continues charter / reads oracles; max 2 attempts; honors stop-reason; budget is a maximum
+- [x] Playwright MCP viewport `390x844` (iOS Safari-ish WebKit)
 - [x] `scripts/exploratory-oracles.test.mjs`
 
 ## Verification
@@ -55,7 +55,8 @@
 - [x] prepare-instance seeds `origin/main` on demo repo (bare sibling remote)
 - [x] workflow installs tmux; agent stubs on ajax-cli web PATH only
 - [x] update-memory merges object `areasVisited`, `repoSha`, `observations.json`
-- [x] run-agent relaunches on early clean exit (≥60s attempts, max 8) until budget exhausted
+- [x] run-agent relaunches at most once on early clean exit (≥60s attempt, ≥120s remaining, no stop-reason)
+- [x] default exploration budget 12 minutes (maximum); WebKit-only MCP; assert-webkit preflight
 - [ ] Full GHA run with real `CURSOR_API_KEY` (requires secret in repo)
 
 ## Remaining
