@@ -31,6 +31,22 @@ export function parsePersistedFontSize(raw: string | null): number {
   return size;
 }
 
+export function loadPersistedFontSize(): number {
+  try {
+    return parsePersistedFontSize(localStorage.getItem(FONT_STORAGE_KEY));
+  } catch {
+    return DEFAULT_FONT_SIZE;
+  }
+}
+
+export function persistFontSize(size: number) {
+  try {
+    localStorage.setItem(FONT_STORAGE_KEY, String(size));
+  } catch {
+    // Storage may be unavailable in private mode.
+  }
+}
+
 export interface TerminalGeometryInput {
   proposedCols: number;
   proposedRows: number;
