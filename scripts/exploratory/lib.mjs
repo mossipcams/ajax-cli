@@ -6,9 +6,14 @@ import { fileURLToPath } from "node:url";
 
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const exploratoryDir = join(repoRoot, ".github", "exploratory");
-export const resultsDir = join(repoRoot, "exploratory-results");
-export const instanceDir = join(repoRoot, "target", "exploratory-instance");
-export const memoryPath = join(repoRoot, "exploratory-memory", "memory.json");
+export const resultsDir =
+  process.env.AJAX_EXPLORATORY_RESULTS || join(repoRoot, "exploratory-results");
+export const instanceDir =
+  process.env.AJAX_EXPLORATORY_INSTANCE ||
+  join(repoRoot, "target", "exploratory-instance");
+export const memoryPath =
+  process.env.AJAX_EXPLORATORY_MEMORY ||
+  join(repoRoot, "exploratory-memory", "memory.json");
 export const BASE_URL = process.env.AJAX_EXPLORATORY_BASE_URL ?? "https://127.0.0.1:18790";
 export const PORT = Number(process.env.AJAX_EXPLORATORY_PORT ?? 18790);
 
@@ -74,7 +79,7 @@ export function seedResultsSkeleton(runMeta) {
   });
 }
 
-const FINDING_AREAS = new Set([
+export const FINDING_AREAS = new Set([
   "cockpit",
   "session",
   "terminal",

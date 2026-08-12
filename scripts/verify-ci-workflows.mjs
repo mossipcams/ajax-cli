@@ -101,7 +101,10 @@ function verifyExploratory(workflow, fail) {
     "actions/upload-artifact@v4",
     "always()",
     "scripts/exploratory/run-agent.sh",
+    "scripts/exploratory/prepare-oracles.mjs",
+    "scripts/exploratory/file-issues.mjs",
     "npx playwright install --with-deps chromium",
+    "apt-get install -y tmux",
   ]) {
     if (!text.includes(needle)) {
       fail(`exploratory explore job must include ${needle}.`);
@@ -115,6 +118,9 @@ function verifyExploratory(workflow, fail) {
   const permissions = workflow.permissions ?? {};
   if (permissions.contents && permissions.contents !== "read") {
     fail("exploratory-testing.yml contents permission must stay read.");
+  }
+  if (permissions.issues !== "write") {
+    fail("exploratory-testing.yml must grant issues: write for defect filing.");
   }
 }
 

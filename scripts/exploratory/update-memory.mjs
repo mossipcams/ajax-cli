@@ -2,11 +2,14 @@
 // Merge agent memory-delta into the durable exploration corpus.
 // Cache restore failure is fine: missing memory starts empty.
 
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   emptyMemory,
+  FINDING_AREAS,
   memoryPath,
   readJson,
+  repoRoot,
   resultsDir,
   writeJson,
 } from "./lib.mjs";
@@ -19,11 +22,60 @@ function bumpArea(memory, area, at) {
   memory.areas[area].lastVisitedAt = at;
 }
 
+function normalizeAreaName(entry) {
+  if (typeof entry === "string") {
+    const trimmed = entry.trim();
+    return trimmed || null;
+  }
+  if (entry && typeof entry === "object" && typeof entry.area === "string") {
+    const trimmed = entry.area.trim();
+    return trimmed || null;
+  }
+  return null;
+}
+
+function resolveArea(memory, raw) {
+  if (!raw || raw === "[object Object]") return null;
+  if (FINDING_AREAS.has(raw)) return raw;
+  if (memory.areas[raw]) return raw;
+  return "other";
+}
+
 function uniquePush(list, value, max) {
   if (!value) return;
   const next = list.filter((item) => item !== value);
   next.push(value);
   return next.slice(-max);
+}
+
+function resolveHeadSha(run) {
+  if (run.headSha) return run.headSha;
+  if (run.repoSha) return run.repoSha;
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function mergeObservation(memory, summary, area, at) {
+  if (!summary) return;
+  const existing = memory.observations.find((item) => item.summary === summary);
+  if (existing) {
+    existing.count += 1;
+    existing.lastSeenAt = at;
+    if (area && FINDING_AREAS.has(area)) existing.area = area;
+  } else {
+    memory.observations.push({
+      summary,
+      area: area && FINDING_AREAS.has(area) ? area : "other",
+      count: 1,
+      lastSeenAt: at,
+    });
+  }
 }
 
 function main() {
@@ -40,12 +92,20 @@ function main() {
     version: 1,
     findings: [],
   });
+  const observationsDoc = readJson(join(resultsDir, "observations.json"), {
+    version: 1,
+    observations: [],
+  });
   const run = readJson(join(resultsDir, "run.json"), {});
   const at = new Date().toISOString();
-  const headSha = run.headSha ?? null;
+  const headSha = resolveHeadSha(run);
+  const recommendedFocus =
+    delta.recommendedFocus ?? delta.recommendedFocusNextRun ?? [];
 
-  for (const area of delta.areasVisited ?? []) {
-    bumpArea(memory, area, at);
+  for (const entry of delta.areasVisited ?? []) {
+    const raw = normalizeAreaName(entry);
+    const area = resolveArea(memory, raw);
+    if (area) bumpArea(memory, area, at);
   }
 
   for (const action of delta.dullActions ?? []) {
@@ -75,32 +135,34 @@ function main() {
   }
   memory.confirmedFindings = memory.confirmedFindings.slice(-50);
 
+  const observationSummaries = new Set();
   for (const finding of findingsDoc.findings ?? []) {
     if (finding.status !== "observation") continue;
     const summary = finding.title;
-    const existing = memory.observations.find((item) => item.summary === summary);
-    if (existing) {
-      existing.count += 1;
-      existing.lastSeenAt = at;
-    } else {
-      memory.observations.push({
-        summary,
-        area: finding.area,
-        count: 1,
-        lastSeenAt: at,
-      });
-    }
+    observationSummaries.add(summary);
+    mergeObservation(memory, summary, finding.area, at);
+  }
+  for (const item of observationsDoc.observations ?? []) {
+    const summary = item?.summary ?? item?.title;
+    if (!summary) continue;
+    observationSummaries.add(summary);
+    mergeObservation(memory, summary, item.area, at);
   }
   memory.observations = memory.observations.slice(-50);
+
+  const observationFindingCount = (findingsDoc.findings ?? []).filter(
+    (f) => f.status === "observation",
+  ).length;
+  const observationsJsonCount = (observationsDoc.observations ?? []).length;
+  const observationsCount = observationSummaries.size || observationsJsonCount + observationFindingCount;
 
   memory.runs.push({
     at,
     sha: headSha,
     confirmed: (findingsDoc.findings ?? []).filter((f) => f.status === "confirmed")
       .length,
-    observations: (findingsDoc.findings ?? []).filter((f) => f.status === "observation")
-      .length,
-    recommendedFocus: delta.recommendedFocus ?? [],
+    observations: observationsCount,
+    recommendedFocus,
   });
   memory.runs = memory.runs.slice(-14);
   memory.lastRunSha = headSha;

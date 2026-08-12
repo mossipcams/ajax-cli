@@ -27,6 +27,9 @@ fi
 mkdir -p "$(dirname "$STATE")" "$WORKTREE_ROOT"
 : >"$LOG"
 
+STUBS="$ROOT/scripts/exploratory/agent-stubs"
+export PATH="$STUBS:$PATH"
+
 nohup "$BIN" \
   --config "$CONFIG" \
   --state "$STATE" \
