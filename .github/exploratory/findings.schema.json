@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajax.local/exploratory/findings.schema.json",
+  "title": "Ajax exploratory findings document",
+  "type": "object",
+  "required": ["version", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "status",
+        "confidence",
+        "area",
+        "severity",
+        "reproductionAttempts",
+        "reproductionSuccesses",
+        "steps",
+        "expected",
+        "actual",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["confirmed", "observation", "rejected"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "area": {
+          "type": "string",
+          "enum": [
+            "cockpit",
+            "session",
+            "terminal",
+            "settings",
+            "diff-review",
+            "new-task",
+            "navigation",
+            "network",
+            "other"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "reproductionAttempts": { "type": "integer", "minimum": 0 },
+        "reproductionSuccesses": { "type": "integer", "minimum": 0 },
+        "steps": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string" },
+            "trace": { "type": ["string", "null"] },
+            "screenshots": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "consoleErrors": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "networkFailures": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "notes": { "type": "string" }
+          }
+        },
+        "fingerprint": { "type": "string" }
+      }
+    }
+  }
+}
