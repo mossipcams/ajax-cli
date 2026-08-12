@@ -60,7 +60,11 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
   };
 
   const dispatchSpeech = (action: Parameters<typeof speechReducer>[1]) => {
-    setSpeechModel((previous) => speechReducer(previous, action));
+    const previous = speechModelRef.current;
+    const next = speechReducer(previous, action);
+    if (next === previous) return;
+    speechModelRef.current = next;
+    setSpeechModel(next);
   };
 
   const cancelSpeechInput = () => {

@@ -255,4 +255,22 @@ describe("NewTaskSheet remembered defaults", () => {
     await waitFor(() => expect(localStorage.getItem("ajax.newTask.agent")).toBe("pi"));
     expect(localStorage.getItem("ajax.newTask.repo")).toBe("web");
   });
+
+  it("posts startTask only once under rapid double submit", async () => {
+    let resolveFirst!: (value: { ok: boolean; response: object }) => void;
+    const pending = new Promise<{ ok: boolean; response: object }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const spy = vi.spyOn(api, "startTask").mockReturnValue(pending as never);
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), {
+      target: { value: "Chaos duplicate" },
+    });
+    const form = screen.getByRole("form", { name: "New task" });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(spy).toHaveBeenCalledTimes(1);
+    resolveFirst({ ok: true, response: {} });
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  });
 });

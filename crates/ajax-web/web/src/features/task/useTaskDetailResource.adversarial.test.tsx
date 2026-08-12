@@ -69,7 +69,7 @@ describe.runIf(chaos)("useTaskDetailResource adversarial", () => {
     expect(result.current.detail.data?.title).toBe("FRESH TITLE");
   });
 
-  it("posts resume at most once per handle open under StrictMode-like double effect", async () => {
+  it("posts resume at most once while the same handle stays open", async () => {
     fetchDetail.mockResolvedValue(taskDetail);
     postOperation.mockResolvedValue({ ok: true, response: {} });
     const deps = {
@@ -81,16 +81,16 @@ describe.runIf(chaos)("useTaskDetailResource adversarial", () => {
       ({ handle }) => useTaskDetailResource(handle, deps),
       { initialProps: { handle: "web/fix-login" as string | null } },
     );
-    // Remount-equivalent: clear handle then set again quickly.
-    rerender({ handle: null });
+    await waitFor(() => expect(postOperation).toHaveBeenCalled());
     rerender({ handle: "web/fix-login" });
     rerender({ handle: "web/fix-login" });
-    await waitFor(() => expect(fetchDetail).toHaveBeenCalled());
-    await waitFor(() => expect(postOperation.mock.calls.length).toBeGreaterThan(0));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
     const resumes = postOperation.mock.calls.filter(
       (call) => (call[0] as { action?: string }).action === "resume",
     );
-    expect(resumes.length).toBeLessThanOrEqual(1);
+    expect(resumes).toHaveLength(1);
   });
 });
 
