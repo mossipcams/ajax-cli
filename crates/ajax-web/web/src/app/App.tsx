@@ -362,13 +362,14 @@ export default function App() {
     };
   }, [checkVersion, cockpitIntervalMs, hiddenStartupRetry, loadCockpit, versionIntervalMs]);
 
-  // Sheet is a list overlay. Clear it on task/diff — including a late reopen
-  // (e.g. iOS click-through onto New) so swipe-back never remounts it.
+  // Sheet is a list overlay only — clear on task/diff/settings (and any non-list
+  // route), including a late reopen so swipe-back never remounts it.
+  const sheetAllowed = route.kind === "dashboard" || route.kind === "project";
   useEffect(() => {
-    if ((route.kind === "task" || route.kind === "diff") && sheetOpen) {
+    if (sheetOpen && !sheetAllowed) {
       setSheetOpen(false);
     }
-  }, [route.kind, sheetOpen]);
+  }, [sheetAllowed, sheetOpen]);
 
   // Flip Drop leave latch as soon as React observes a non-dropped route so a
   // late Drop success cannot go(#/) after the operator has moved on.
@@ -544,6 +545,8 @@ export default function App() {
                   onResult={showResult}
                   onMutated={() => route.kind === "task" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
+                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
+                  onCancelPendingConfirm={cancelPendingConfirm}
                 />
               ) : (
                 <TaskLoadError message={detail.error.message} onRetry={reload} />
@@ -578,6 +581,8 @@ export default function App() {
                   onCockpit={applyCockpit}
                   onResult={showResult}
                   onMutated={() => loadCockpit()}
+                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
+                  onCancelPendingConfirm={cancelPendingConfirm}
                 />
               ) : (
                 <Skeleton testid="dashboard-skeleton" rows={4} />
@@ -608,7 +613,7 @@ export default function App() {
         />
       ) : null}
 
-      {sheetOpen && route.kind !== "task" && route.kind !== "diff" && (
+      {sheetOpen && sheetAllowed && (
         <NewTaskSheet
           repos={cockpit.data?.repos?.repos ?? []}
           selectedProject={selectedProject}

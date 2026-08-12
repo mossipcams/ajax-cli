@@ -33,6 +33,10 @@ interface Props {
   onMutated?: () => void;
   /** The task no longer exists (e.g. after Drop) — leave the detail page. */
   onDismiss?: () => void;
+  /** Shell confirm currently armed (`drop`, etc.). Sibling taps must not POST. */
+  pendingConfirmAction?: string | null;
+  /** Cancel that confirm when a different action is chosen. */
+  onCancelPendingConfirm?: () => void;
 }
 
 const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
@@ -63,6 +67,8 @@ export default function ActionBar({
   onResult,
   onMutated,
   onDismiss,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: Props) {
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -111,6 +117,12 @@ export default function ActionBar({
 
   const handleClick = (action: WebAction) => {
     if (runningAction) return;
+    // Confirm toast is non-modal; block sibling ActionBar posts while it is open.
+    // Re-tapping the same armed action keeps the first confirm (no re-arm).
+    if (pendingConfirmAction !== null) {
+      if (action.action !== pendingConfirmAction) onCancelPendingConfirm?.();
+      return;
+    }
     const needsConfirm = action.destructive || action.confirmation_required;
     if (needsConfirm) {
       const interactionId = beginInteraction(action.action);
