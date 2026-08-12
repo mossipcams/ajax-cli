@@ -346,6 +346,7 @@ fn read_refresh_updates_stale_git_substrate_evidence() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, "other-session\n"),
     ]);
     let output =

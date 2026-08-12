@@ -33,7 +33,8 @@ fn resume_plan_refreshes_stale_git_evidence_before_rendering_commands() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     let rendered = render_task_command(
         TaskCommandKind::Resume,
         subcommand,
@@ -123,7 +124,19 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, ""),
+        output(0, ""),
+        CommandOutput {
+            status_code: 128,
+            stdout: String::new(),
+            stderr: "fatal: not a git repository".to_string(),
+        },
+        CommandOutput {
+            status_code: 128,
+            stdout: String::new(),
+            stderr: "fatal: not a git repository".to_string(),
+        },
         CommandOutput {
             status_code: 128,
             stdout: String::new(),
@@ -139,7 +152,7 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
     assert_eq!(
         error,
         CliError::CommandFailedAfterStateChange(
-            "drop incomplete for web/fix-login at remove worktree: external resources still present after teardown attempt; retry with `ajax drop web/fix-login --execute`".to_string()
+            "drop incomplete for web/fix-login at delete branch: external resources still present after teardown attempt; retry with `ajax drop web/fix-login --execute`".to_string()
         )
     );
     assert_eq!(
@@ -166,6 +179,7 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
                     "--format=%(refname:short)"
                 ]
             ),
+            git_list_remote_branches_command(),
             CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
                 .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
@@ -186,7 +200,8 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
                     "branch",
                     "--format=%(refname:short)"
                 ]
-            )
+            ),
+            git_list_remote_branches_command(),
         ]
     );
     assert_eq!(
@@ -244,13 +259,15 @@ fn drop_execute_reports_registry_removal_when_no_external_resources_remain() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, ""),
         output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     let rendered = render_drop_command(subcommand, &mut context, &mut runner).unwrap();
     assert_eq!(rendered.output, "removed task: web/fix-login");
     assert!(context.registry.get_task(&task_id).is_none());
@@ -306,13 +323,15 @@ fn drop_execute_hard_removes_task_from_sqlite_state_file() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, ""),
         output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     let output = run_with_context_paths_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
         &CliContextPaths::new(&config_file, &state_file),
@@ -376,13 +395,15 @@ fn drop_execute_hard_remove_survives_subsequent_tasks_read() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, ""),
         output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     run_with_context_paths_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
         &paths,

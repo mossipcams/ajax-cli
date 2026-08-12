@@ -180,15 +180,10 @@ fn clean_plan_uses_policy_and_native_cleanup() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
+            GitAdapter::new("git").delete_branch_substrate(
+                "/Users/matt/projects/web",
+                "ajax/fix-login",
+                false,
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
         ]
@@ -287,15 +282,10 @@ fn remove_task_plan_force_removes_active_task_resources() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
+            GitAdapter::new("git").delete_branch_substrate(
+                "/Users/matt/projects/web",
+                "ajax/fix-login",
+                true,
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
         ]
@@ -365,9 +355,9 @@ fn remove_task_plan_keeps_removing_remaining_resources_for_invalid_tasks() {
             "invalid task should still remove remaining resources"
         );
         assert!(
-            plan.commands
-                .iter()
-                .all(|command| { command.program == "tmux" || command.program == "git" }),
+            plan.commands.iter().all(|command| {
+                command.program == "tmux" || command.program == "git" || command.program == "sh"
+            }),
             "unexpected teardown commands: {:?}",
             plan.commands
         );
@@ -471,6 +461,7 @@ fn observe_drop_resources_prefers_live_tmux_and_git_state_over_registry_cache() 
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
     ]);
 
     let observation = observe_drop_resources(&mut context, &task, &mut runner).unwrap();
@@ -502,6 +493,16 @@ fn observe_drop_resources_prefers_live_tmux_and_git_state_over_registry_cache() 
                     "--format=%(refname:short)"
                 ]
             ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-r",
+                    "--format=%(refname:short)"
+                ]
+            ),
         ]
     );
     let task = context.registry.get_task(&task_id).unwrap();
@@ -527,6 +528,7 @@ fn observe_drop_resources_marks_worktree_present_when_path_matches_even_if_branc
             "worktree /tmp/worktrees/web-fix-login\nHEAD 1111111\nbranch refs/heads/docs/other\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\n"),
     ]);
 
     let observation = observe_drop_resources(&mut context, &task, &mut runner).unwrap();
@@ -539,6 +541,26 @@ fn observe_drop_resources_marks_worktree_present_when_path_matches_even_if_branc
         .git_status
         .as_ref()
         .is_some_and(|status| status.worktree_exists && status.branch_exists));
+}
+
+#[test]
+fn observe_drop_resources_marks_branch_present_when_only_remote_exists() {
+    let mut context = context_with_cleanable_task();
+    let task_id = TaskId::new("task-1");
+    let task = context.registry.get_task(&task_id).unwrap().clone();
+    let mut runner = QueuedRunner::new(vec![
+        output(0, "\n"),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+        ),
+        output(0, "main\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+    ]);
+
+    let observation = observe_drop_resources(&mut context, &task, &mut runner).unwrap();
+
+    assert_eq!(observation.branch, ResourceState::Present);
 }
 
 #[test]
@@ -564,10 +586,9 @@ fn cleanup_and_remove_plans_are_distinct() {
             && command.args.iter().any(|arg| arg == "--force")
             && command.args.iter().any(|arg| arg == "worktree")
     }));
-    assert!(remove
-        .commands
-        .iter()
-        .any(|command| { command.program == "git" && command.args.iter().any(|arg| arg == "-D") }));
+    assert!(remove.commands.iter().any(|command| {
+        command.program == "sh" && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+    }));
 }
 
 #[test]

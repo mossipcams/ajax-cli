@@ -39,9 +39,10 @@ pub use task_window::{
 pub use teardown::{
     clean_task_plan, drop_op_label, ensure_cleanup_git_status,
     format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
-    is_fast_worktree_remove_command, mark_drop_agent_stopped, mark_task_cleanup_step_completed,
-    mark_task_force_removed, mark_task_removed, mark_task_removing, mark_task_teardown_incomplete,
-    observe_drop_resources, observe_drop_resources_with_cache, plan_drop_from_observation,
+    is_delete_branch_substrate_command, is_fast_worktree_remove_command, mark_drop_agent_stopped,
+    mark_task_cleanup_step_completed, mark_task_force_removed, mark_task_removed,
+    mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
+    observe_drop_resources_with_cache, plan_drop_from_observation,
     plan_drop_from_observation_for_task, remove_task_plan, sweep_cleanup_candidates,
     sweep_cleanup_plan, sweep_trash_commands, DropObservation, DropOp, RepoDropObservationCache,
     ResourceState, DROP_TEARDOWN_ORDER,

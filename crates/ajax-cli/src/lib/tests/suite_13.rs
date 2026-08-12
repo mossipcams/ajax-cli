@@ -265,7 +265,8 @@ fn failed_deferred_drop_restores_task_in_next_cockpit_snapshot() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
-            output(0, ""),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        output(0, ""),
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
@@ -277,6 +278,7 @@ fn failed_deferred_drop_restores_task_in_next_cockpit_snapshot() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         ]);
     let error = execute_pending_cockpit_action(
         &pending,
@@ -291,7 +293,7 @@ fn failed_deferred_drop_restores_task_in_next_cockpit_snapshot() {
     assert!(!handled);
     assert_eq!(
         flash.as_deref(),
-        Some("drop incomplete for web/fix-login at delete branch: git exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`")
+        Some("drop incomplete for web/fix-login at delete branch: sh exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`")
     );
     assert!(restored
         .cards

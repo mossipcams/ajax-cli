@@ -384,34 +384,20 @@ proptest! {
         .into_iter()
         .map(str::to_string)
         .collect();
-        let expected_branch_args: Vec<String> = if merged {
-            vec![
-                "-C",
-                "/Users/matt/projects/web",
-                "branch",
-                "-d",
-                "ajax/fix-login",
-            ]
-        } else {
-            vec![
-                "-C",
-                "/Users/matt/projects/web",
-                "branch",
-                "-D",
-                "ajax/fix-login",
-            ]
-        }
-        .into_iter()
-        .map(str::to_string)
-        .collect();
         let has_expected_worktree_command = plan
             .commands
             .iter()
             .any(|command| command.program == "git" && command.args == expected_worktree_args);
-        let has_expected_branch_command = plan
-            .commands
-            .iter()
-            .any(|command| command.program == "git" && command.args == expected_branch_args);
+        let has_expected_branch_command = plan.commands.iter().any(|command| {
+            command.program == "sh"
+                && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+                && command.args.get(4) == Some(&"ajax/fix-login".to_string())
+                && command.args[1].contains(if merged {
+                    "branch -d"
+                } else {
+                    "branch -D"
+                })
+        });
 
         prop_assert!(plan.blocked_reasons.is_empty());
         prop_assert_eq!(

@@ -40,7 +40,10 @@ fn sweep_cleanup_batches_repo_observations_across_candidates() {
         worktree_lists, 1,
         "repo worktree observation should be reused"
     );
-    assert_eq!(branch_lists, 1, "repo branch observation should be reused");
+    assert_eq!(
+        branch_lists, 2,
+        "local and remote branch observations should be reused once each"
+    );
 }
 
 #[test]
