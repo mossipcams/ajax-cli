@@ -251,19 +251,31 @@ fn task_is_known_invalid(task: &Task) -> bool {
             .as_ref()
             .is_some_and(|status| !status.exists || !status.points_at_expected_path)
         || task.live_status.as_ref().is_some_and(|live| {
-            matches!(
-                live.kind,
-                LiveStatusKind::WorktreeMissing
-                    | LiveStatusKind::TmuxMissing
-                    | LiveStatusKind::TaskWindowMissing
-            )
+            // Durable present facts refute stale live *Missing (#788–#790).
+            match live.kind {
+                LiveStatusKind::TmuxMissing => !task
+                    .tmux_status
+                    .as_ref()
+                    .is_some_and(|status| status.exists),
+                LiveStatusKind::TaskWindowMissing => !task
+                    .task_window_status
+                    .as_ref()
+                    .is_some_and(|status| status.exists && status.points_at_expected_path),
+                LiveStatusKind::WorktreeMissing => !task
+                    .git_status
+                    .as_ref()
+                    .is_some_and(|status| status.worktree_exists),
+                _ => false,
+            }
         })
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
     if let Some(live) = task.live_status.as_ref() {
-        if let Some(reason) = blocker_reason_for_live(live.kind) {
-            return Some(reason);
+        if !durable_facts_refute_live_missing(task, live.kind) {
+            if let Some(reason) = blocker_reason_for_live(live.kind) {
+                return Some(reason);
+            }
         }
     }
     if task.has_side_flag(SideFlag::NeedsInput) {
@@ -295,6 +307,24 @@ pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
         AgentRuntimeStatus::Blocked => Some("agent is blocked"),
         AgentRuntimeStatus::Dead => Some("agent appears dead"),
         _ => None,
+    }
+}
+
+fn durable_facts_refute_live_missing(task: &Task, kind: LiveStatusKind) -> bool {
+    match kind {
+        LiveStatusKind::TmuxMissing => task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| status.exists),
+        LiveStatusKind::TaskWindowMissing => task
+            .task_window_status
+            .as_ref()
+            .is_some_and(|status| status.exists && status.points_at_expected_path),
+        LiveStatusKind::WorktreeMissing => task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists),
+        _ => false,
     }
 }
 

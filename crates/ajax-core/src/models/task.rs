@@ -150,10 +150,7 @@ impl Task {
         self.has_missing_git_substrate()
             || self.side_flags().any(SideFlag::is_missing_substrate)
             || self.runtime_projection.health.is_missing_substrate()
-            || self
-                .live_status
-                .as_ref()
-                .is_some_and(|live_status| live_status.kind.is_missing_substrate())
+            || self.live_reports_unrefuted_missing_substrate()
     }
 
     pub fn has_missing_worktree(&self) -> bool {
@@ -163,10 +160,7 @@ impl Task {
                 .as_ref()
                 .is_some_and(|status| !status.worktree_exists)
             || self.runtime_projection.health == RuntimeHealth::MissingWorktree
-            || self
-                .live_status
-                .as_ref()
-                .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
+            || self.live_reports_unrefuted_worktree_missing()
     }
 
     pub fn has_missing_branch(&self) -> bool {
@@ -206,6 +200,7 @@ impl Task {
     pub fn apply_git_status(&mut self, status: GitStatus) {
         if status.worktree_exists {
             self.remove_side_flag(SideFlag::WorktreeMissing);
+            self.clear_live_status_if(LiveStatusKind::WorktreeMissing);
         } else {
             self.mark_resource_missing(SideFlag::WorktreeMissing);
         }
@@ -240,7 +235,10 @@ impl Task {
 
     pub fn apply_tmux_status(&mut self, status: Option<TmuxStatus>) {
         match status.as_ref() {
-            Some(status) if status.exists => self.remove_side_flag(SideFlag::TmuxMissing),
+            Some(status) if status.exists => {
+                self.remove_side_flag(SideFlag::TmuxMissing);
+                self.clear_live_status_if(LiveStatusKind::TmuxMissing);
+            }
             Some(_) | None => self.mark_resource_missing(SideFlag::TmuxMissing),
         }
 
@@ -252,12 +250,64 @@ impl Task {
         match status.as_ref() {
             Some(status) if status.exists && status.points_at_expected_path => {
                 self.remove_side_flag(SideFlag::TaskWindowMissing);
+                self.clear_live_status_if(LiveStatusKind::TaskWindowMissing);
             }
             Some(_) | None => self.mark_resource_missing(SideFlag::TaskWindowMissing),
         }
 
         self.task_window_status = status;
         self.refresh_runtime_projection();
+    }
+
+    /// Durable substrate facts win over a contradictory stale live missing
+    /// observation (#788–#791). Unrefuted live missing (no durable present
+    /// evidence yet) still counts.
+    fn live_reports_unrefuted_missing_substrate(&self) -> bool {
+        let Some(live) = self.live_status.as_ref() else {
+            return false;
+        };
+        match live.kind {
+            LiveStatusKind::TmuxMissing => !self.durable_tmux_present(),
+            LiveStatusKind::TaskWindowMissing => !self.durable_task_window_present(),
+            LiveStatusKind::WorktreeMissing => !self.durable_worktree_present(),
+            other => other.is_missing_substrate(),
+        }
+    }
+
+    fn live_reports_unrefuted_worktree_missing(&self) -> bool {
+        self.live_status
+            .as_ref()
+            .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
+            && !self.durable_worktree_present()
+    }
+
+    fn durable_tmux_present(&self) -> bool {
+        self.tmux_status
+            .as_ref()
+            .is_some_and(|status| status.exists)
+    }
+
+    fn durable_task_window_present(&self) -> bool {
+        self.task_window_status
+            .as_ref()
+            .is_some_and(|status| status.exists && status.points_at_expected_path)
+    }
+
+    fn durable_worktree_present(&self) -> bool {
+        self.git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists)
+    }
+
+    fn clear_live_status_if(&mut self, kind: LiveStatusKind) {
+        if self
+            .live_status
+            .as_ref()
+            .is_some_and(|live| live.kind == kind)
+        {
+            self.live_status = None;
+            self.live_status_observed_at = None;
+        }
     }
 
     pub(crate) fn refresh_runtime_projection(&mut self) {

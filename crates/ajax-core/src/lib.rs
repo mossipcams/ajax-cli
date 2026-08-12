@@ -31,6 +31,10 @@ pub mod validity;
 
 #[cfg(test)]
 mod architecture;
+#[cfg(test)]
+mod lifecycle_state_machine_tests;
+#[cfg(test)]
+mod shuttle_tests;
 
 #[cfg(test)]
 mod tests {

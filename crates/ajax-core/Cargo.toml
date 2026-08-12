@@ -24,3 +24,4 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 rstest = { workspace = true }
+shuttle = { workspace = true }
