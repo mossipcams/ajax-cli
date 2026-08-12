@@ -47,6 +47,76 @@ test("validateFindingsDocument rejects confirmed without reproduction", async ()
   assert.ok(problems.some((problem) => problem.includes("successful reproduction")));
 });
 
+test("normalizeFinding maps agent output to valid schema", async () => {
+  const {
+    normalizeFinding,
+    normalizeFindingsDocument,
+    validateFindingsDocument,
+  } = await import("./exploratory/lib.mjs");
+  const agentFinding = {
+    id: "finding-001",
+    status: "confirmed",
+    fingerprint: "disconnected-404-persists-dashboard",
+    title: "Disconnected banner persists on dashboard after visiting nonexistent task URL",
+    area: "navigation",
+    charter: "Garbage hashes",
+    relatedIssues: [835],
+    severity: "medium",
+    reproSteps: [
+      "Open https://127.0.0.1:18790/#/ (clean dashboard, no disconnected banner)",
+      "Navigate to https://127.0.0.1:18790/#/t/missing%2Ftask-id",
+      "Observe disconnected banner: disconnected: HTTP 404",
+      "Return to dashboard via Dashboard nav button or https://127.0.0.1:18790/#/",
+      "Banner remains visible on dashboard despite /api/health and /api/cockpit returning 200",
+    ],
+    expected: "Disconnected banner clears when returning to dashboard with healthy backend",
+    actual: "disconnected: HTTP 404 banner persists on dashboard; full page reload clears it",
+    evidence: [
+      "exploratory-results/screenshots/disconnected-404-persists-dashboard.png",
+      "exploratory-results/screenshots/disconnected-404-dashboard-button-click.png",
+    ],
+    observedAt: "2026-08-12T19:15:57.273Z",
+  };
+
+  const normalized = normalizeFinding(agentFinding);
+  assert.deepEqual(normalized.steps, agentFinding.reproSteps);
+  assert.equal(normalized.confidence, "high");
+  assert.ok(normalized.reproductionSuccesses >= 1);
+  assert.equal(normalized.evidence.screenshots.length, 2);
+  assert.deepEqual(normalized.relatedIssues, [835]);
+  assert.equal(normalized.charter, undefined);
+  assert.equal(normalized.reproSteps, undefined);
+
+  const doc = normalizeFindingsDocument({ version: 1, findings: [agentFinding] });
+  const problems = validateFindingsDocument(doc);
+  assert.equal(problems.length, 0, problems.join("; "));
+});
+
+test("confirmed without steps demotes to observation", async () => {
+  const { normalizeFinding } = await import("./exploratory/lib.mjs");
+  const normalized = normalizeFinding({
+    id: "x",
+    title: "Broken",
+    status: "confirmed",
+    area: "cockpit",
+    severity: "high",
+    expected: "works",
+    actual: "fails",
+    evidence: [],
+  });
+  assert.equal(normalized.status, "observation");
+  assert.equal(normalized.reproductionAttempts, 0);
+  assert.equal(normalized.reproductionSuccesses, 0);
+  assert.deepEqual(normalized.steps, []);
+  const { validateFindingsDocument, normalizeFindingsDocument } = await import(
+    "./exploratory/lib.mjs"
+  );
+  const problems = validateFindingsDocument(
+    normalizeFindingsDocument({ version: 1, findings: [normalized] }),
+  );
+  assert.equal(problems.length, 0, problems.join("; "));
+});
+
 test("update-memory merges delta without requiring prior corpus", () => {
   const memoryDir = join(root, "exploratory-memory");
   mkdirSync(memoryDir, { recursive: true });

@@ -106,9 +106,15 @@ export function isEligibleFinding(finding) {
 
 export function findDuplicate(openIssues, finding, fingerprint) {
   const issueTitle = buildIssueTitle(finding);
+  const relatedIssues = Array.isArray(finding.relatedIssues)
+    ? finding.relatedIssues
+    : [];
   for (const issue of openIssues) {
     const bodyFingerprint = extractFingerprintFromBody(issue.body);
     if (bodyFingerprint === fingerprint) {
+      return issue;
+    }
+    if (relatedIssues.includes(issue.number)) {
       return issue;
     }
     if (titleContainsFinding(issue.title, finding.title)) {
