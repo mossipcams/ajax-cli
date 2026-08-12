@@ -10,3 +10,7 @@ __pycache__/
 test-results/
 playwright-report/
 crates/ajax-web/web/e2e/artifacts/
+
+# Cloud exploratory testing (CI artifacts / local accidental output)
+exploratory-results/
+exploratory-memory/

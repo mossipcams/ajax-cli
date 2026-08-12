@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "approvalMode": "allowlist",
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(exploratory-results/**)",
+      "Write(target/exploratory-instance/**)",
+      "Mcp(playwright, **)",
+      "Shell(curl **)",
+      "Shell(ls **)",
+      "Shell(rg **)",
+      "Shell(find exploratory-results/**)",
+      "Shell(mkdir **)",
+      "Shell(cp **)",
+      "Shell(cat **)",
+      "Shell(head **)",
+      "Shell(tail **)",
+      "Shell(git status**)",
+      "Shell(git log**)",
+      "Shell(git diff**)",
+      "Shell(git show**)",
+      "Shell(git rev-parse**)",
+      "Shell(git blame**)"
+    ],
+    "deny": [
+      "Shell(git commit**)",
+      "Shell(git push**)",
+      "Shell(git checkout**)",
+      "Shell(git switch**)",
+      "Shell(git rebase**)",
+      "Shell(git merge**)",
+      "Shell(git reset**)",
+      "Shell(git clean**)",
+      "Shell(gh **)",
+      "Shell(npm **)",
+      "Shell(cargo **)",
+      "Write(crates/**)",
+      "Write(.github/**)",
+      "Write(scripts/**)",
+      "Write(docs/**)",
+      "Write(package.json)",
+      "Write(package-lock.json)",
+      "Write(Cargo.toml)",
+      "Write(Cargo.lock)",
+      "Write(**/*.rs)",
+      "Write(**/*.ts)",
+      "Write(**/*.tsx)",
+      "Write(**/*.jsx)",
+      "Write(**/*.css)",
+      "Write(**/*.toml)",
+      "Write(**/*.yml)",
+      "Write(**/*.yaml)"
+    ]
+  },
+  "sandbox": {
+    "mode": "disabled",
+    "networkAccess": "user_config_with_defaults"
+  },
+  "attribution": {
+    "attributeCommitsToAgent": false,
+    "attributePRsToAgent": false
+  }
+}
