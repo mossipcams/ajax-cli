@@ -235,22 +235,24 @@ export function mountTaskTerminalSession(
     scrollSync.refreshFollow();
   };
 
+  // Pin while still hidden, then unhide in place. Never move scrollTop after
+  // opacity returns — that is the visible "scrolls all the way down" open.
   const revealSeed = () => {
     clearSeedPendingRevealTimer();
     if (!isActive() || !isSeedPending()) return;
     snapSeedToBottom();
-    interactionEl.classList.remove("is-seed-pending");
-    // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
-    // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
-    // the first post-reveal erase (onOutput) or after grace if none is seen.
-    armPostRevealEraseGrace();
-    // Opacity/paint can settle the spacer one frame later; re-pin so open
-    // still starts on the CLI if the first snap saw a short scrollHeight.
     if (revealSnapFrame) cancelAnimationFrame(revealSnapFrame);
     revealSnapFrame = requestAnimationFrame(() => {
-      revealSnapFrame = 0;
-      if (!isActive()) return;
-      snapSeedToBottom();
+      revealSnapFrame = requestAnimationFrame(() => {
+        revealSnapFrame = 0;
+        if (!isActive() || !isSeedPending()) return;
+        snapSeedToBottom();
+        interactionEl.classList.remove("is-seed-pending");
+        // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
+        // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
+        // the first post-reveal erase (onOutput) or after grace if none is seen.
+        armPostRevealEraseGrace();
+      });
     });
   };
 

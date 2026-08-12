@@ -1415,6 +1415,9 @@ html.terminal-expanded .result-panel {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Seed open assigns scrollTop while hidden; never animate that jump. */
+  scroll-behavior: auto;
+  overflow-anchor: none;
   touch-action: pan-y;
   width: 100%;
   background: #161616;

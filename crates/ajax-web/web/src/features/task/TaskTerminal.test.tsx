@@ -716,12 +716,19 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(revealBody).toMatch(/snapSeedToBottom\(\)/);
     expect(revealBody).toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
     expect(revealBody).toMatch(/requestAnimationFrame/);
+    // Unhide only after the post-layout snap while still pending — never snap
+    // after opacity returns (that is the visible scroll-to-bottom open).
     const firstSnapIndex = revealBody.indexOf("snapSeedToBottom()");
-    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
     const rafIndex = revealBody.indexOf("requestAnimationFrame");
+    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
     expect(firstSnapIndex).toBeGreaterThan(-1);
-    expect(removeIndex).toBeGreaterThan(firstSnapIndex);
-    expect(rafIndex).toBeGreaterThan(removeIndex);
+    expect(rafIndex).toBeGreaterThan(firstSnapIndex);
+    expect(removeIndex).toBeGreaterThan(rafIndex);
+    expect(revealBody.indexOf("snapSeedToBottom()", removeIndex)).toBe(-1);
+
+    expect(stylesSource).toMatch(
+      /\.terminal-interaction-wrap\s*\{[^}]*scroll-behavior:\s*auto/,
+    );
 
     const snapBody =
       mountBody.match(/const snapSeedToBottom = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
