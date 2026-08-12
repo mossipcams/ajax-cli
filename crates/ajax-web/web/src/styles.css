@@ -175,9 +175,9 @@ select {
   top: 0;
   z-index: 10;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-  backdrop-filter: saturate(140%) blur(12px);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
   border-bottom: 1px solid var(--rule);
 }
 
@@ -900,9 +900,9 @@ html.terminal-expanded .result-panel {
   padding: 8px max(16px, env(safe-area-inset-left)) 8px
     max(16px, env(safe-area-inset-right));
   border-top: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper) 94%, transparent);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-  backdrop-filter: saturate(140%) blur(12px);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
   box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
 }
 

@@ -164,8 +164,51 @@ export function initViewport(): () => void {
     }
   };
 
+  // iOS dismisses the soft keyboard on app-switch; if keyboard-open stays
+  // latched, CSS hides .bottom-nav and pins the band short (#836).
+  const onForegroundResync = () => {
+    cancelCloseSettle();
+    keyboardOpen = false;
+    root.classList.remove(KEYBOARD_OPEN_CLASS);
+
+    const visualHeight = vv.height;
+    const layoutHeight = window.innerHeight;
+    if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
+      // visualViewport can stay stale-small after resume; rebase to layout height.
+      setAppHeight(layoutHeight);
+      setAppTop(0);
+      baselineHeight = layoutHeight;
+    } else {
+      syncViewportGeometry();
+      baselineHeight = visualHeight;
+    }
+    baselineWidth = window.innerWidth;
+    resetDocumentScroll();
+  };
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      // Keyboard is gone once backgrounded; do not wait for visualViewport.
+      cancelCloseSettle();
+      if (keyboardOpen) {
+        keyboardOpen = false;
+        root.classList.remove(KEYBOARD_OPEN_CLASS);
+      }
+      return;
+    }
+    if (document.visibilityState === "visible") {
+      onForegroundResync();
+    }
+  };
+
+  const onPageShow = () => {
+    onForegroundResync();
+  };
+
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("pageshow", onPageShow);
   document.addEventListener("gesturestart", onGesture);
   document.addEventListener("gesturechange", onGesture);
   document.addEventListener("gestureend", onGesture);
@@ -176,6 +219,8 @@ export function initViewport(): () => void {
     cancelCloseSettle();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("pageshow", onPageShow);
     document.removeEventListener("gesturestart", onGesture);
     document.removeEventListener("gesturechange", onGesture);
     document.removeEventListener("gestureend", onGesture);

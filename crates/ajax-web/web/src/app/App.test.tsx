@@ -397,6 +397,21 @@ describe("App shell", () => {
     await waitFor(() => expect(dashboardNav()).not.toHaveAttribute("aria-current"));
   });
 
+  it("uses opaque paper on cockpit-chrome and bottom-nav without backdrop-filter (#836 black box)", () => {
+    const stylesSource = loadStylesSource();
+    const cockpitChromeRule =
+      stylesSource.match(/(?:^|\n)\.cockpit-chrome\s*\{([^}]*)\}/)?.[1] ?? "";
+    const bottomNavRule =
+      stylesSource.match(/(?:^|\n)\.bottom-nav\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(cockpitChromeRule).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
+    expect(bottomNavRule).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
+    expect(cockpitChromeRule).toMatch(/background:\s*var\(--paper\)/);
+    expect(bottomNavRule).toMatch(/background:\s*var\(--paper\)/);
+    expect(cockpitChromeRule).not.toMatch(/color-mix/);
+    expect(bottomNavRule).not.toMatch(/color-mix/);
+  });
+
   it("styles the current bottom-nav page with an accent selected state", () => {
     const stylesSource = loadStylesSource();
     const currentPageRule =
