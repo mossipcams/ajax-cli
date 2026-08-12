@@ -268,7 +268,7 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
     let line = agent_send_keys_line(runner.commands());
     assert_eq!(
         line,
-        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent --model cursor-grok-4.5-high"
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent --model cursor-grok-4.6-high"
     );
     assert!(!line.contains("--cd"));
 }
