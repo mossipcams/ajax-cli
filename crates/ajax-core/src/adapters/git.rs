@@ -141,7 +141,8 @@ impl GitAdapter {
                     "case \"$push_err\" in ",
                     "*\"remote ref does not exist\"*|*\"does not exist\"*|*\"matches no refs\"*) ;; ",
                     "*) printf '%s\\n' \"$push_err\" >&2; exit 1;; ",
-                    "esac"
+                    "esac; ",
+                    "git -C \"$1\" update-ref -d \"refs/remotes/origin/$2\" >/dev/null 2>&1 || true"
                 ),
                 local_flag = local_flag
             )
@@ -453,6 +454,19 @@ origin/HEAD -> origin/main
         assert_eq!(command.args[4], "ajax/fix-login");
         assert!(command.args[1].contains("branch -d"));
         assert!(command.args[1].contains("push origin --delete"));
+        assert!(command.args[1].contains("update-ref -d"));
+        assert!(command.args[1].contains("refs/remotes/origin/"));
+    }
+
+    #[test]
+    fn delete_branch_substrate_prunes_stale_origin_tracking_ref_for_ajax_branches() {
+        // #840
+        let adapter = GitAdapter::new("git");
+        let command = adapter.delete_branch_substrate("/repos/web", "ajax/defect", true);
+
+        assert_eq!(command.args[2], "ajax-delete-branch");
+        assert!(command.args[1].contains("update-ref -d \"refs/remotes/origin/$2\""));
+        assert!(command.args[1].contains("|| true"));
     }
 
     #[test]
@@ -463,5 +477,7 @@ origin/HEAD -> origin/main
         assert_eq!(command.program, "sh");
         assert!(command.args[1].contains("branch -D"));
         assert!(!command.args[1].contains("push origin --delete"));
+        assert!(!command.args[1].contains("update-ref"));
+        assert!(!command.args[1].contains("refs/remotes/origin"));
     }
 }

@@ -646,3 +646,27 @@ fn drop_operation_force_deletes_unmerged_branch_on_confirmed_cleanup() {
             && command.args[4] == "ajax/fix-login"
     }));
 }
+
+#[test]
+fn drop_operation_delete_branch_prunes_stale_origin_tracking_ref() {
+    // #840
+    let mut context = context_with_cleanable_task();
+    let mut outputs = present_drop_observation_outputs();
+    outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+    outputs.extend(absent_drop_observation_outputs());
+    let mut runner = RecordingQueuedRunner::new(outputs);
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let (_outputs, completion) =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+    assert_eq!(completion, DropTaskCompletion::Removed);
+    assert!(runner.commands.iter().any(|command| {
+        command.program == "sh"
+            && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+            && command.args[1].contains("update-ref -d")
+            && command.args[1].contains("refs/remotes/origin/")
+            && command.args[4] == "ajax/fix-login"
+    }));
+}
