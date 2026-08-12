@@ -140,6 +140,14 @@ describe("sessionReducer", () => {
     expect(sessionReducer(state, { type: "decided" }).decision).toBeNull();
   });
 
+  it("clears a resurrected decision when permission_resolved replays", () => {
+    const state = run([
+      { type: "permission_request", requestId: "7", title: "Run tests?" },
+      { type: "permission_resolved", requestId: "7", approved: true },
+    ]);
+    expect(state.decision).toBeNull();
+  });
+
   it("tracks the turn: busy on prompt, settled on turn_end", () => {
     const busy = run([{ prompt: "Fix the test" }]);
     expect(busy.busy).toBe(true);

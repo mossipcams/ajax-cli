@@ -1,13 +1,14 @@
 //! Task-scoped ACP host sessions keyed by qualified handle.
 
 use super::client::{AcpClientEvent, AcpStdioClient};
+use super::store::{self, MAX_LOG_EVENTS};
 use crate::slices::web_session::{
     map_acp_client_request, map_acp_session_update, SessionServerEvent,
 };
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -28,8 +29,7 @@ impl HolderCount {
 }
 
 /// Per-task transcript bound. Long sessions trim from the front rather than
-/// growing without limit.
-const MAX_LOG_EVENTS: usize = 2000;
+/// growing without limit. Cap is owned by `store::MAX_LOG_EVENTS`.
 /// Slots with no sockets keep their ACP child alive so a reload can resume.
 /// This bounds how many such children may linger.
 const MAX_IDLE_SESSIONS: usize = 8;
@@ -45,6 +45,10 @@ struct TranscriptLog {
 }
 
 impl TranscriptLog {
+    fn from_events(events: Vec<SessionServerEvent>) -> Self {
+        Self { events, dropped: 0 }
+    }
+
     fn append(&mut self, events: Vec<SessionServerEvent>) {
         self.events.extend(events);
         if self.events.len() > MAX_LOG_EVENTS {
@@ -72,6 +76,8 @@ struct SessionSlot {
     holders: HolderCount,
     log: TranscriptLog,
     last_released: Option<Instant>,
+    /// Cleared when pump observes process exit. Acquire must respawn before reuse.
+    acp_alive: bool,
 }
 
 impl SessionSlot {
@@ -93,19 +99,15 @@ impl SessionSlot {
 
 pub struct WebSessionHub {
     sessions: Mutex<HashMap<String, SessionSlot>>,
-}
-
-impl Default for WebSessionHub {
-    fn default() -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
-        }
-    }
+    state_dir: PathBuf,
 }
 
 impl WebSessionHub {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(state_dir: PathBuf) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            state_dir,
+        }
     }
 
     pub fn acquire(
@@ -116,17 +118,46 @@ impl WebSessionHub {
     ) -> Result<Arc<Mutex<AcpStdioClient>>, String> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.get_mut(qualified_handle) {
-            if slot.model != model {
-                replace_slot_client(slot, worktree_path, model)?;
+            let host_exited = {
+                let mut client = slot.client.lock().unwrap();
+                client.host_exited()
+            };
+            if slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+                replace_slot_client(
+                    slot,
+                    worktree_path,
+                    model,
+                    &self.state_dir,
+                    qualified_handle,
+                )?;
             }
             slot.add_holder();
             return Ok(Arc::clone(&slot.client));
         }
         evict_idle_over_limit(&mut sessions);
-        let client = Arc::new(Mutex::new(AcpStdioClient::spawn(
+        let stored = store::load(&self.state_dir, qualified_handle);
+        let (client, report) = AcpStdioClient::spawn(
             worktree_path,
             spawn_model_arg(model),
-        )?));
+            stored.acp_session_id.as_deref(),
+        )?;
+        let mut log = TranscriptLog::from_events(stored.events);
+        if context_reset_needed(&report, &log) {
+            let note = context_reset_note();
+            log.append(vec![note.clone()]);
+            store::append_events(
+                &self.state_dir,
+                qualified_handle,
+                std::slice::from_ref(&note),
+            );
+        }
+        store::save_meta(
+            &self.state_dir,
+            qualified_handle,
+            Some(client.session_id()),
+            model,
+        );
+        let client = Arc::new(Mutex::new(client));
         sessions.insert(
             qualified_handle.to_string(),
             SessionSlot {
@@ -134,8 +165,9 @@ impl WebSessionHub {
                 model: model.to_string(),
                 generation: 0,
                 holders: HolderCount(1),
-                log: TranscriptLog::default(),
+                log,
                 last_released: None,
+                acp_alive: true,
             },
         );
         Ok(client)
@@ -153,8 +185,17 @@ impl WebSessionHub {
         let Some(slot) = sessions.get_mut(qualified_handle) else {
             return Err("session slot missing".to_string());
         };
-        if slot.model != model {
-            replace_slot_client(slot, worktree_path, model)?;
+        if slot_must_replace(slot.acp_alive, &slot.model, model, {
+            let mut client = slot.client.lock().unwrap();
+            client.host_exited()
+        }) {
+            replace_slot_client(
+                slot,
+                worktree_path,
+                model,
+                &self.state_dir,
+                qualified_handle,
+            )?;
         }
         Ok((Arc::clone(&slot.client), slot.generation))
     }
@@ -191,12 +232,16 @@ impl WebSessionHub {
         let Some(slot) = sessions.get_mut(handle) else {
             return;
         };
-        let events = {
+        let (events, host_exited) = {
             let client = slot.client.lock().unwrap();
             drain_acp_events(&client)
         };
+        if host_exited {
+            slot.acp_alive = false;
+        }
         if !events.is_empty() {
-            slot.log.append(events);
+            slot.log.append(events.clone());
+            store::append_events(&self.state_dir, handle, &events);
         }
     }
 
@@ -206,7 +251,8 @@ impl WebSessionHub {
     pub fn record(&self, handle: &str, event: SessionServerEvent) {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.get_mut(handle) {
-            slot.log.append(vec![event]);
+            slot.log.append(vec![event.clone()]);
+            store::append_events(&self.state_dir, handle, std::slice::from_ref(&event));
         }
     }
 
@@ -214,7 +260,14 @@ impl WebSessionHub {
         let sessions = self.sessions.lock().unwrap();
         match sessions.get(handle) {
             Some(slot) => slot.log.read_from(cursor),
-            None => (Vec::new(), cursor),
+            None => {
+                let stored = store::load(&self.state_dir, handle);
+                if stored.events.is_empty() {
+                    (Vec::new(), cursor)
+                } else {
+                    TranscriptLog::from_events(stored.events).read_from(cursor)
+                }
+            }
         }
     }
 }
@@ -248,30 +301,65 @@ fn spawn_model_arg(model: &str) -> Option<&str> {
     }
 }
 
+fn slot_must_replace(
+    acp_alive: bool,
+    slot_model: &str,
+    want_model: &str,
+    host_exited: bool,
+) -> bool {
+    !acp_alive || host_exited || slot_model != want_model
+}
+
+fn context_reset_needed(report: &super::client::SpawnReport, log: &TranscriptLog) -> bool {
+    !report.resumed && !log.events.is_empty()
+}
+
+fn context_reset_note() -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "agent".to_string(),
+        text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
+    }
+}
+
 /// Best-effort cancel, then drop and replace the ACP child. Transcript stays.
 fn replace_slot_client(
     slot: &mut SessionSlot,
     worktree_path: &Path,
     model: &str,
+    state_dir: &Path,
+    handle: &str,
 ) -> Result<(), String> {
     {
         let mut client = slot.client.lock().unwrap();
         let _ = client.begin_cancel();
     }
-    // Drop the old Arc so the child exits when this was the last strong ref.
-    // Holders still share the Arc — replace the mutex contents instead.
-    let new_client = AcpStdioClient::spawn(worktree_path, spawn_model_arg(model))?;
+    // Same model: try ACP session/load. Model change starts a new conversation.
+    let resume_id = if slot.model == model {
+        store::load(state_dir, handle).acp_session_id
+    } else {
+        None
+    };
+    let (new_client, report) =
+        AcpStdioClient::spawn(worktree_path, spawn_model_arg(model), resume_id.as_deref())?;
+    if context_reset_needed(&report, &slot.log) {
+        let note = context_reset_note();
+        slot.log.append(vec![note.clone()]);
+        store::append_events(state_dir, handle, std::slice::from_ref(&note));
+    }
+    store::save_meta(state_dir, handle, Some(new_client.session_id()), model);
     {
         let mut guard = slot.client.lock().unwrap();
         *guard = new_client;
     }
     slot.model = model.to_string();
     slot.generation = slot.generation.saturating_add(1);
+    slot.acp_alive = true;
     Ok(())
 }
 
-pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {
+pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bool) {
     let mut events = Vec::new();
+    let mut host_exited = false;
     while let Some(event) = client.poll_event() {
         match event {
             AcpClientEvent::SessionUpdate(params) => {
@@ -299,13 +387,14 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> Vec<SessionServerEvent> {
                 events.push(SessionServerEvent::Error { message });
             }
             AcpClientEvent::Exited => {
+                host_exited = true;
                 events.push(SessionServerEvent::Error {
                     message: "ACP process exited".to_string(),
                 });
             }
         }
     }
-    events
+    (events, host_exited)
 }
 
 /// A finished `session/prompt` is the only signal the browser gets that the
@@ -337,6 +426,20 @@ pub fn permission_response(approved: bool, reason: Option<&str>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn scratch_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ajax-web-session-hub-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     fn note(text: &str) -> SessionServerEvent {
         SessionServerEvent::Message {
@@ -346,8 +449,16 @@ mod tests {
     }
 
     #[test]
+    fn slot_must_replace_when_host_is_dead_or_model_changes() {
+        assert!(!slot_must_replace(true, "auto", "auto", false));
+        assert!(slot_must_replace(false, "auto", "auto", false));
+        assert!(slot_must_replace(true, "auto", "auto", true));
+        assert!(slot_must_replace(true, "auto", "composer-2.5", false));
+    }
+
+    #[test]
     fn hub_release_is_noop_when_handle_missing() {
-        let hub = WebSessionHub::new();
+        let hub = WebSessionHub::new(scratch_dir("release"));
         hub.release("web/fix-login");
         assert!(hub.sessions.lock().unwrap().is_empty());
     }
@@ -408,8 +519,21 @@ mod tests {
     }
 
     #[test]
-    fn reading_an_unknown_handle_leaves_the_cursor_untouched() {
-        let hub = WebSessionHub::new();
+    fn reading_an_unknown_handle_loads_from_disk_when_present() {
+        let dir = scratch_dir("disk-read");
+        let handle = "web/fix-login";
+        let events = vec![note("persisted")];
+        store::append_events(&dir, handle, &events);
+        let hub = WebSessionHub::new(dir.clone());
+        let (loaded, next) = hub.read_from(handle, 0);
+        assert_eq!(loaded, events);
+        assert_eq!(next, 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reading_an_unknown_handle_leaves_the_cursor_untouched_when_disk_empty() {
+        let hub = WebSessionHub::new(scratch_dir("unknown"));
         assert_eq!(hub.read_from("web/none", 7), (Vec::new(), 7));
     }
 

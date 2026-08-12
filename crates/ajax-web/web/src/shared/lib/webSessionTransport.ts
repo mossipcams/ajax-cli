@@ -40,6 +40,7 @@ export type WebSessionServerEvent =
       title?: string | null;
       detail?: string | null;
     }
+  | { type: "permission_resolved"; requestId: string; approved: boolean }
   | { type: "status"; state: string; detail?: string | null }
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
@@ -79,10 +80,10 @@ function wrapNativeSocket(socket: WebSocket): WebSessionSocket {
       socket.close();
     },
     addEventListener(type, listener) {
-      socket.addEventListener(type, listener as EventListener);
+      socket.addEventListener?.(type, listener as EventListener);
     },
     removeEventListener(type, listener) {
-      socket.removeEventListener(type, listener as EventListener);
+      socket.removeEventListener?.(type, listener as EventListener);
     },
   };
 }

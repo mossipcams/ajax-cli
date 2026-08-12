@@ -113,12 +113,15 @@ Browser session UI
   -> live head (current tool / decision) + settled transcript
 ```
 
-- Operators pick a Cursor model on the starter and in the chat header. The
+- Operators pick a Cursor model on the session starter (not mid-chat). The
   catalog comes from `GET /api/session/models` (`agent models`). The chosen id
-  is pinned at ACP spawn with `--model` (or omitted for `auto`). Mid-chat
-  changes respawn the ACP child under the same hub slot while keeping the host
-  transcript so the UI recovers; the new process does not inherit prior agent
-  memory.
+  is pinned at ACP spawn with `--model` (or omitted for `auto`) and stored in
+  localStorage for the next start. Mid-chat model switching is intentionally
+  disabled while the transport path stabilizes; the wire still accepts
+  `set_model` for future use.
+- Permission answers are recorded in the host transcript as
+  `permission_resolved` so reconnect/reload replay does not resurrect a
+  decided prompt.
 - Full chat thread + text composer remain available at all times; chat is the
   primary surface for questions, corrections, redirection, and follow-ups.
 - The live head shows the current tool and in-progress plan step. The
@@ -135,10 +138,28 @@ Browser session UI
   required. Attention requests appear as top-of-session banners that
   scroll/navigate to the relevant message or artifact.
 - Terminal access is optional (sheet/overlay escape hatch attaching to the
-  task tmux session), not the default surface. Switching between chat,
-  artifacts, and terminal must preserve conversation and task context.
+  task tmux session), not the default surface. The sheet must give the
+  terminal a real viewport height. Opening `#/t/<handle>` is a different
+  host (tmux agent / shell), not a continuation of the ACP chat process.
+  Diff Review opened from a session returns to `#/session/<handle>` so the
+  operator lands back on chat rather than the terminal-first task page.
 - Mobile-first for iOS Safari / optional Home Screen shell: composer reachable
   with one hand; avoid dashboard chrome on the session page.
+
+### Durability
+
+Orchestration chat survives `ajax-web` restart with two disk layers under the
+same `state_dir` owner as TLS identity, browser session tokens, and push keys:
+
+- **UI transcript:** `{state_dir}/web-session/<encoded-handle>.jsonl`, owned by
+  the `ajax-web` ACP host. Not registry, not tmux. Percent-encode `%` and `/`
+  in the qualified handle for a single flat filename.
+- **Model context:** on acquire after restart, the host calls ACP `session/load`
+  when Cursor advertises `loadSession` in `initialize` and a stored
+  `acp_session_id` exists. If load is unsupported or fails, the UI transcript
+  still reloads from disk and one agent note says the model context reset; the
+  composer keeps working.
+- tmux remains the terminal escape hatch only. The ACP child stays stdio.
 
 ### Ownership
 
@@ -146,6 +167,7 @@ Browser session UI
 | --- | --- |
 | Feature flag preference | Browser localStorage + Settings UI |
 | Chat thread presentation | Browser session UI |
+| Chat transcript durability | `ajax-web` ACP host JSONL under `state_dir` |
 | ACP conversation (prompt/update/permissions) | `ajax-web` ACP host + Cursor ACP process |
 | Task lifecycle, registry, operate actions, diffs | Core + ajax-web DTOs (unchanged) |
 | Worktree + tmux session creation | Existing start / operate path |

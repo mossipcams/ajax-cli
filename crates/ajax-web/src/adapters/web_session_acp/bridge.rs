@@ -244,6 +244,13 @@ async fn handle_client_message(
                     ClientHandleResult::Stop
                 };
             }
+            hub.record(
+                handle,
+                SessionServerEvent::PermissionResolved {
+                    request_id,
+                    approved,
+                },
+            );
             ClientHandleResult::Continue
         }
     }

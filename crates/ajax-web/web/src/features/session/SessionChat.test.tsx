@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, fireEvent, screen, waitFor, act, within } from "@testing-library/react";
 import SessionStarter from "./SessionStarter";
 import SessionChat from "./SessionChat";
@@ -327,7 +330,9 @@ describe("SessionChat", () => {
     fireEvent.submit(screen.getByRole("form", { name: "Session composer" }));
     expect(transport.sendPrompt).not.toHaveBeenCalled();
     expect(screen.queryByTestId("session-message-user")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    // Draft stays so the operator can hit Enter once the socket returns.
+    expect(screen.getByLabelText("Message")).toHaveValue("ship it");
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
   });
 
   it("never clears a pending decision while the socket is down", () => {
@@ -340,17 +345,18 @@ describe("SessionChat", () => {
     expect(screen.getByTestId("session-decision")).toBeInTheDocument();
   });
 
-  it("shows one status vocabulary: the header pill yields to a live head state", () => {
+  it("shows one status vocabulary: the live head state, not a second lifecycle pill", () => {
     mountChat({
       detail: { ...(taskDetail as BrowserTaskDetail), status: "running" } as BrowserTaskDetail,
     });
-    // Idle head: the lifecycle pill is the only status on screen.
+    // Idle ACP + running task: head says Ready (no duplicate lifecycle pill).
     expect(screen.getByTestId("session-head")).toHaveAttribute("data-state", "idle");
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
 
     send({ type: "message", role: "agent", text: "working" });
     expect(screen.getByTestId("session-head")).toHaveAttribute("data-state", "working");
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
   });
 
   it("offers the task's actions in the head when the task needs a human", () => {
@@ -458,17 +464,52 @@ describe("SessionChat", () => {
     expect(transport.dispose).not.toHaveBeenCalled();
   });
 
-  it("sends set_model when the operator picks a different model mid-chat", async () => {
+  it("does not offer mid-chat model switching", () => {
     mountChat();
-    const select = await screen.findByTestId("session-model-select");
-    await waitFor(() => expect(select).toContainHTML("composer-2.5"));
-    fireEvent.change(select, { target: { value: "composer-2.5" } });
-    expect(transport.setModel).toHaveBeenCalledWith("composer-2.5");
-    expect(screen.getByTestId("session-model-switching")).toHaveTextContent("Switching model…");
-    const lastCall = vi.mocked(webSessionTransport.connectWebSessionTransport).mock.calls.at(-1);
-    const callbacks = lastCall?.[1] as webSessionTransport.WebSessionTransportCallbacks;
-    act(() => callbacks.onReady("composer-2.5"));
-    expect(screen.queryByTestId("session-model-switching")).not.toBeInTheDocument();
-    expect(select).toHaveValue("composer-2.5");
+    expect(screen.queryByTestId("session-model-select")).not.toBeInTheDocument();
+    expect(transport.setModel).not.toHaveBeenCalled();
+  });
+
+  it("keeps the ACP socket when the terminal escape hatch opens", async () => {
+    mountChat();
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(screen.getByTestId("session-terminal-toggle"));
+    expect(await screen.findByTestId("session-terminal-sheet")).toBeInTheDocument();
+    expect(transport.dispose).not.toHaveBeenCalled();
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the composer inside the thread as a full-width strip, with no Send button", () => {
+    mountChat();
+    const thread = screen.getByTestId("session-thread");
+    const composer = screen.getByTestId("session-composer");
+    expect(thread).toContainElement(composer);
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.session-composer\s*\{[^}]*align-self:\s*stretch/);
+    expect(css).toMatch(/\.session-composer\s+textarea\s*\{[^}]*background:\s*transparent/);
+  });
+
+  it("lets the terminal sheet fill past the desktop 58vh task-panel cap", () => {
+    // Desktop task detail sets `.terminal-panel .terminal-interaction-wrap` to
+    // min(58vh, 560px). The session sheet must beat that with a more specific
+    // flex fill or operators only get a half-height escape hatch.
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    expect(css).toMatch(
+      /\.session-terminal-sheet\s+\.terminal-panel\s+\.terminal-interaction-wrap\s*\{[^}]*height:\s*auto/,
+    );
+    expect(css).toMatch(/\.session-composer\s+textarea\s*\{[^}]*min-height:\s*40px/);
+    expect(css).toMatch(
+      /html\.keyboard-open\s+\.session-composer\s*\{[^}]*padding-bottom:\s*0/,
+    );
+  });
+
+  it("gives the transcript an 80% flex basis so chrome stays a thin strip", () => {
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*flex:\s*1\s+1\s+80%/);
+    // Chat folds back/title into the live head — no second sticky header row.
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "./SessionChat.tsx"), "utf8");
+    expect(source).not.toMatch(/className="session-header"/);
+    expect(source).toMatch(/onBack=\{onBack/);
   });
 });

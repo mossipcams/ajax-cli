@@ -14,10 +14,10 @@
 // STORY: the operator opens a session on a phone, sees one panel saying what
 //   the agent is doing and whether it needs them, answers if asked, scrolls the
 //   transcript for history, types to steer.
-// FIRST VIEWPORT: header (back / title / status) -> live head (state label +
-//   running tool + decision when one exists) -> settled transcript -> composer.
-//   The primary action is whatever the head asks for; with nothing asked, the
-//   composer is primary.
+// FIRST VIEWPORT: live head (back / title / state + running tool / decision)
+//   -> settled transcript (~80% of the band) with a full-width in-thread
+//   composer (Enter sends; no Send chrome). The primary action is whatever the
+//   head asks for; with nothing asked, the composer is primary.
 // FORM: candidate 6 of 7 ("instrument stack: live head over settled
 //   transcript"), staging fused from the wound-medium challenger — live head
 //   distinct from settled tape, honest position readout, jump-to-live. Seed key
@@ -38,7 +38,6 @@ import {
   type UIEvent,
 } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
-import { statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 import TaskLoadError from "@/features/task/TaskLoadError";
@@ -63,11 +62,7 @@ import {
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
-import SessionModelSelect from "./SessionModelSelect";
-import {
-  readSessionModel,
-  useSessionModelPreference,
-} from "./sessionModel";
+import { readSessionModel, writeSessionModel } from "./sessionModel";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
@@ -137,7 +132,6 @@ export default function SessionChat({
   onRetry,
 }: Props) {
   const composerId = useId();
-  const modelSelectId = useId();
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
@@ -149,7 +143,6 @@ export default function SessionChat({
   // Read inside the transport effect without making it a dependency.
   const detailRef = useRef(detail);
   const seededRef = useRef(false);
-  const switchingModelRef = useRef(false);
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ entries: ThreadEntry[]; tools: number }>({
     entries: [],
@@ -165,9 +158,6 @@ export default function SessionChat({
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [model, setModelPreference] = useSessionModelPreference();
-  const [activeModel, setActiveModel] = useState(model);
-  const [switchingModel, setSwitchingModel] = useState(false);
 
   starterRef.current = starterContext;
   detailRef.current = detail;
@@ -194,17 +184,9 @@ export default function SessionChat({
         {
           onReady: (nextModel) => {
             attempt = 0;
-            setActiveModel(nextModel);
-            // Preference hook writes localStorage and refreshes React state.
-            setModelPreference(nextModel);
-            if (switchingModelRef.current) {
-              switchingModelRef.current = false;
-              setSwitchingModel(false);
-            } else {
-              // Fresh connect, reconnect, or peer model recovery: clear before
-              // the host transcript replays so entries are not duplicated.
-              dispatch({ type: "reset" });
-            }
+            writeSessionModel(nextModel);
+            // Clear before the host transcript replays so entries are not duplicated.
+            dispatch({ type: "reset" });
             setConnected(true);
           },
           onEvent: (event) => {
@@ -257,7 +239,7 @@ export default function SessionChat({
       transportRef.current = undefined;
       setConnected(false);
     };
-  }, [handle, setModelPreference]);
+  }, [handle]);
 
   useEffect(() => {
     if (!handle) return;
@@ -354,18 +336,6 @@ export default function SessionChat({
     dispatch({ type: "decided" });
   }
 
-  function changeModel(next: string) {
-    if (next === activeModel) return;
-    setModelPreference(next);
-    setActiveModel(next);
-    if (!transportRef.current || !connected) {
-      return;
-    }
-    switchingModelRef.current = true;
-    setSwitchingModel(true);
-    transportRef.current.setModel(next);
-  }
-
   if (!handle) return null;
 
   if (detailStatus === "loading") {
@@ -384,7 +354,6 @@ export default function SessionChat({
     );
   }
 
-  const meta = statusMeta(detail.status);
   const actions = visibleTaskActions(detail.actions);
   // The head is a fast-tap surface and its action row sits at the same screen
   // position Approve occupies one state over, so it carries the next *safe*
@@ -397,33 +366,8 @@ export default function SessionChat({
 
   return (
     <section className="session-page session-chat" data-testid="session-chat" data-handle={handle}>
-      <header className="session-header">
-        <button type="button" className="session-header-back" onClick={onBack}>
-          ← Back
-        </button>
-        <h1 className="session-title">{detail.title || detail.qualified_handle}</h1>
-        {/* One state at a time: while the head is reporting a live state, a
-            second lifecycle vocabulary beside it just contradicts it. */}
-        {state_ === "idle" ? (
-          <span className={`session-status-pill tone-${meta.tone}`}>{meta.label}</span>
-        ) : null}
-      </header>
-
-      <div className="session-model-bar">
-        <SessionModelSelect
-          id={modelSelectId}
-          value={activeModel}
-          disabled={switchingModel}
-          onChange={changeModel}
-        />
-        {switchingModel ? (
-          <span className="session-model-switching" data-testid="session-model-switching">
-            Switching model…
-          </span>
-        ) : null}
-      </div>
-
       <LiveHead
+        title={detail.title || detail.qualified_handle}
         state={state_}
         tone={tone}
         detail={detail}
@@ -446,6 +390,7 @@ export default function SessionChat({
             </div>
           ) : null
         }
+        onBack={onBack ?? (() => {})}
         onApprove={() => respondDecision(true)}
         onReject={() => respondDecision(false)}
         onStop={() => transportRef.current?.sendCancel()}
@@ -465,6 +410,36 @@ export default function SessionChat({
         ) : (
           <Transcript entries={state.entries} />
         )}
+
+        <form
+          className="session-composer"
+          data-testid="session-composer"
+          aria-label="Session composer"
+          onSubmit={submitComposer}
+        >
+          <textarea
+            id={composerId}
+            rows={1}
+            enterKeyHint="send"
+            placeholder={
+              !connected ? "Reconnecting…" : state.busy ? "Steer the agent…" : "Message…"
+            }
+            aria-label="Message"
+            ref={composerRef}
+            value={draft}
+            onChange={(e) => {
+              const next = e.target.value;
+              autoGrow(e.currentTarget, next.length < draft.length);
+              setDraft(next);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendDraft();
+              }
+            }}
+          />
+        </form>
       </div>
 
       {behind ? (
@@ -478,45 +453,6 @@ export default function SessionChat({
           {unseenTools ? ` · ${unseenTools} new ${unseenTools === 1 ? "step" : "steps"}` : ""}
         </button>
       ) : null}
-
-      <form
-        className="session-composer"
-        data-testid="session-composer"
-        aria-label="Session composer"
-        onSubmit={submitComposer}
-      >
-        <textarea
-          id={composerId}
-          rows={1}
-          enterKeyHint="send"
-          placeholder={
-            !connected ? "Reconnecting…" : state.busy ? "Steer the agent…" : "Message…"
-          }
-          aria-label="Message"
-          ref={composerRef}
-          value={draft}
-          onChange={(e) => {
-            const next = e.target.value;
-            autoGrow(e.currentTarget, next.length < draft.length);
-            setDraft(next);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendDraft();
-            }
-          }}
-        />
-        {/* While a decision is pending the head owns primacy, so Send drops its
-            accent fill rather than competing with Approve for the eye. */}
-        <Button
-          type="submit"
-          variant={state.decision ? "secondary" : "default"}
-          disabled={!draft.trim() || !connected}
-        >
-          Send
-        </Button>
-      </form>
 
       {detailsOpen ? (
         <FullscreenLayer zIndex={50}>
@@ -644,9 +580,11 @@ export default function SessionChat({
                       Close
                     </Button>
                   </div>
-                  <Suspense fallback={null}>
-                    <TaskTerminal handle={detail.qualified_handle} />
-                  </Suspense>
+                  <div className="session-terminal-body">
+                    <Suspense fallback={null}>
+                      <TaskTerminal handle={detail.qualified_handle} />
+                    </Suspense>
+                  </div>
                 </div>
               </div>
             </SheetContent>

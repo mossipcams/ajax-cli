@@ -2,6 +2,9 @@
 // and does it need me?". It escalates — a decision outranks work in progress,
 // which outranks a task that needs attention, which outranks idle — so the
 // operator reads one state, never four competing banners.
+//
+// Back + title live here too: a second sticky header stole a full 44px row and
+// left the transcript well under the ~80% band this surface needs.
 
 import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -67,6 +70,7 @@ function ToolRow({ call }: { call: ToolCall }) {
 }
 
 interface Props {
+  title: string;
   state: HeadState;
   tone: string;
   detail: BrowserTaskDetail | null;
@@ -79,6 +83,7 @@ interface Props {
   /** The task's own actions, rendered by the caller so the head stays free of
    * mutation wiring. Shown only in the `attention` state. */
   actions?: ReactNode;
+  onBack: () => void;
   onApprove: () => void;
   onReject: () => void;
   onStop: () => void;
@@ -86,6 +91,7 @@ interface Props {
 }
 
 export default function LiveHead({
+  title,
   state,
   tone,
   detail,
@@ -95,6 +101,7 @@ export default function LiveHead({
   status,
   connected,
   actions,
+  onBack,
   onApprove,
   onReject,
   onStop,
@@ -109,6 +116,10 @@ export default function LiveHead({
       {/* The live region is scoped to the state line and tool row: wrapping the
           whole head made every thought chunk re-announce Stop and Details too. */}
       <div className="session-head-line" aria-live="polite">
+        <button type="button" className="session-head-back" onClick={onBack}>
+          ←
+        </button>
+        <h1 className="session-title">{title}</h1>
         <span
           className={`status-dot${state === "working" ? " is-live" : ""}`}
           aria-hidden="true"
@@ -186,14 +197,6 @@ export default function LiveHead({
               `primary_action` is always Resume and must not drive ordering. */}
           {actions}
         </div>
-      ) : null}
-
-      {state === "idle" ? (
-        <p className="session-head-quiet" data-testid="session-idle">
-          {detail
-            ? `${detail.agent} · ${detail.branch}`
-            : "Send a message to steer the agent."}
-        </p>
       ) : null}
     </section>
   );

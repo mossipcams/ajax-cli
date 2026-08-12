@@ -44,20 +44,29 @@ pub enum AcpClientEvent {
     Exited,
 }
 
+pub struct SpawnReport {
+    pub load_session_advertised: bool,
+    pub resumed: bool,
+}
+
 pub struct AcpStdioClient {
     stdin: ChildStdin,
     events: Receiver<AcpClientEvent>,
     next_id: u64,
     pending: PendingResponses,
     session_id: String,
-    _child: Child,
+    child: Child,
     _reader: thread::JoinHandle<()>,
 }
 
 impl AcpStdioClient {
     /// Spawn Cursor ACP. `model` of `None`/`Some("auto")` omits `--model` so
     /// Cursor's default applies; any other id is pinned at process start.
-    pub fn spawn(worktree_path: &Path, model: Option<&str>) -> Result<Self, String> {
+    pub fn spawn(
+        worktree_path: &Path,
+        model: Option<&str>,
+        resume_session_id: Option<&str>,
+    ) -> Result<(Self, SpawnReport), String> {
         let mut child = spawn_cursor_acp_process(worktree_path, model)?;
         let stdin = child
             .stdin
@@ -78,16 +87,43 @@ impl AcpStdioClient {
             next_id: 1,
             pending,
             session_id: String::new(),
-            _child: child,
+            child,
             _reader: reader,
         };
-        client.initialize()?;
-        client.session_id = client.session_new(worktree_path)?;
-        Ok(client)
+        let init_result = client.initialize()?;
+        let load_session_advertised = load_session_advertised(&init_result);
+        let mut resumed = false;
+        if let Some(resume_id) = resume_session_id.filter(|_| load_session_advertised) {
+            if client.session_load(worktree_path, resume_id).is_ok() {
+                client.session_id = resume_id.to_string();
+                client.drain_pending_events();
+                resumed = true;
+            } else {
+                client.drain_pending_events();
+                client.session_id = client.session_new(worktree_path)?;
+            }
+        } else {
+            client.session_id = client.session_new(worktree_path)?;
+        }
+        let report = SpawnReport {
+            load_session_advertised,
+            resumed,
+        };
+        Ok((client, report))
     }
 
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// True when the ACP OS process has exited. Reconnect must respawn, not
+    /// reattach to a dead stdio pipe.
+    pub fn host_exited(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(_) => true,
+        }
     }
 
     pub fn poll_event(&self) -> Option<AcpClientEvent> {
@@ -116,8 +152,8 @@ impl AcpStdioClient {
         self.write_response(id, result)
     }
 
-    fn initialize(&mut self) -> Result<(), String> {
-        self.call(
+    fn initialize(&mut self) -> Result<Value, String> {
+        let response = self.call(
             "initialize",
             json!({
                 "protocolVersion": 1,
@@ -126,7 +162,20 @@ impl AcpStdioClient {
             }),
         )?;
         self.write_notification("notifications/initialized", json!({}))?;
+        Ok(response)
+    }
+
+    fn session_load(&mut self, worktree_path: &Path, session_id: &str) -> Result<(), String> {
+        let mut params = session_new_params(worktree_path);
+        if let Value::Object(ref mut map) = params {
+            map.insert("sessionId".to_string(), json!(session_id));
+        }
+        self.call("session/load", params)?;
         Ok(())
+    }
+
+    fn drain_pending_events(&self) {
+        while self.poll_event().is_some() {}
     }
 
     fn session_new(&mut self, worktree_path: &Path) -> Result<String, String> {
@@ -213,6 +262,14 @@ fn session_new_params(worktree_path: &Path) -> Value {
         "cwd": worktree_path.display().to_string(),
         "mcpServers": [],
     })
+}
+
+pub(crate) fn load_session_advertised(value: &Value) -> bool {
+    value
+        .get("agentCapabilities")
+        .and_then(|caps| caps.get("loadSession"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// True when `--model` should be omitted (Cursor default / Auto).
@@ -331,6 +388,16 @@ fn read_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_session_advertised_from_initialize_result() {
+        let value = json!({ "agentCapabilities": { "loadSession": true } });
+        assert!(load_session_advertised(&value));
+        assert!(!load_session_advertised(&json!({})));
+        assert!(!load_session_advertised(&json!({
+            "agentCapabilities": { "loadSession": false }
+        })));
+    }
 
     /// Cursor validates `session/new` params and rejects a missing
     /// `mcpServers` with an opaque JSON-RPC "Internal error", so the session

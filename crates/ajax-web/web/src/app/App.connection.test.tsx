@@ -11,6 +11,7 @@ class StubWebSocket {
   readyState = 1;
   close() {}
   addEventListener() {}
+  removeEventListener() {}
   send() {}
 }
 globalThis.WebSocket = StubWebSocket as unknown as typeof WebSocket;
@@ -44,6 +45,7 @@ describe("App connection recovery", () => {
       readyState = 1;
       close() {}
       addEventListener() {}
+      removeEventListener() {}
       send() {}
     });
     vi.stubGlobal(

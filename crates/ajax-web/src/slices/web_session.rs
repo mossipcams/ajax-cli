@@ -53,6 +53,14 @@ pub enum SessionServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
+    /// Operator answered a permission request. Recorded so reconnect/reload
+    /// replay does not resurrect an already-decided prompt.
+    #[serde(rename = "permission_resolved")]
+    PermissionResolved {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        approved: bool,
+    },
     #[serde(rename = "tool_call")]
     ToolCall {
         #[serde(rename = "callId")]

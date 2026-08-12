@@ -291,12 +291,15 @@ test("attention head screenshot", async ({ page }, testInfo) => {
 });
 
 test("decision with typed draft screenshot", async ({ page }, testInfo) => {
-  // The Send affordance must stay findable while a decision holds the accent —
-  // this is the enabled state, which the at-rest captures cannot show.
+  // Draft sits in the thread as the next user bubble — Enter sends, no Send
+  // chrome competing with Approve.
   await bootSession(page, DECISION_TURN);
   await expect(page.getByTestId("session-decision")).toBeVisible({ timeout: 10_000 });
   await page.getByLabel("Message").fill("Run only the web slice instead");
-  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+  await expect(
+    page.locator('[data-testid="session-thread"] [data-testid="session-composer"]'),
+  ).toBeVisible();
   await page.waitForTimeout(400);
   await page.screenshot({
     path: shotPath(testInfo, `session-decision-typed-${testInfo.project.name}.png`),

@@ -260,6 +260,13 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
         },
       };
 
+    case "permission_resolved":
+      // Replay after approve/reject must not resurrect the head prompt.
+      if (state.decision?.requestId === event.requestId) {
+        return { ...state, decision: null };
+      }
+      return state;
+
     case "status":
       // Run state replaces itself in the head. Appending it is what turned the
       // old thread into a column of "Status: running".

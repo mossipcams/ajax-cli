@@ -28,7 +28,7 @@ Authoritative references for agents, in order: explicit user instruction →
 | `ajax-core` | Domain model, registry facade, lifecycle, command planning, policy, live-status reduction, projections, typed output contracts, operator slices |
 | `ajax-cli` | Argument parsing, context load/save, command dispatch, human/JSON rendering, process execution wiring |
 | `ajax-tui` | Native Cockpit UI over `ajax-core` JSON-backed responses |
-| `ajax-web` | Browser Cockpit adapter: HTTP, shell assets, DTOs, local HTTPS identity, server wiring — presentation only, not a second task domain |
+| `ajax-web` | Browser Cockpit adapter: HTTP, shell assets, DTOs, local HTTPS identity, server wiring, orchestration-chat transcript JSONL — presentation only, not a second task domain |
 | `ajax-supervisor` | Supervised agent execution, process monitoring, repository observation, monitor events |
 
 ## External Substrates
@@ -171,6 +171,8 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   Task start still creates the Ajax worktree and **tmux session**; the
   interactive Cursor CLI is not the chat path. Terminal attach remains the
   escape hatch to that tmux session.
+- Orchestration chat transcript persists in `ajax-web` `state_dir` (JSONL under
+  `web-session/`), not SQLite registry and not tmux.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

@@ -513,7 +513,13 @@ export default function App() {
                 title={detail.data?.title}
                 selectedPr={route.pr}
                 onBack={() => {
-                  if (route.kind === "diff" && route.handle) go(taskHash(route.handle));
+                  if (route.kind === "diff" && route.handle) {
+                    go(
+                      orchestrationChat
+                        ? sessionHash(route.handle)
+                        : taskHash(route.handle),
+                    );
+                  }
                 }}
                 onSelectPr={(pr) => {
                   if (route.kind === "diff" && route.handle) {

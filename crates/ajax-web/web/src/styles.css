@@ -543,6 +543,8 @@ header .bar h1 {
   position: relative;
 }
 
+/* Starter keeps a dedicated header; the chat route folds back/title into the
+   live head so chrome stays one strip. */
 .session-header {
   position: sticky;
   top: 0;
@@ -641,28 +643,54 @@ header .bar h1 {
 }
 
 /* Live head --------------------------------------------------------------- */
-/* Full-bleed hairline strip, not a card: it is chrome bonded to the header,
-   and DESIGN.md keeps the interact surface flat. */
+/* One sticky strip: back + title + state + Details/Stop. Idle has no second
+   quiet line — agent/branch live in Details. Keeps chrome ~20% so the
+   transcript can own ~80% of the band. */
 .session-head {
   flex: none;
-  /* Above the transcript: WebKit lets an overflow scroller bleed a subpixel row
-     past its top edge at DPR 3, which smeared clipped text into the head. */
-  position: relative;
-  z-index: 1;
+  position: sticky;
+  top: 0;
+  z-index: 3;
   margin: 0 -12px;
-  padding: 10px 12px 12px;
-  background: var(--paper-tint);
+  padding: calc(4px + env(safe-area-inset-top, 0px)) 12px 6px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
   border-bottom: 1px solid var(--rule);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  backdrop-filter: saturate(140%) blur(10px);
 }
 
 .session-head-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 22px;
+  gap: 6px;
+  min-height: 36px;
+}
+
+.session-head-back {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--text-body);
+  font-weight: 600;
+  padding: 4px 2px;
+  min-height: 36px;
+  min-width: 36px;
+  line-height: 1;
+}
+
+.session-head-back:hover,
+.session-head-back:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.session-head .session-title {
+  font-size: var(--text-body-sm);
 }
 
 .session-head-label {
+  flex: none;
   font-size: var(--text-micro);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
@@ -671,6 +699,7 @@ header .bar h1 {
 }
 
 .session-head-offline {
+  flex: none;
   font-size: var(--text-micro);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
@@ -681,7 +710,7 @@ header .bar h1 {
 .session-head-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto;
 }
 
@@ -692,18 +721,17 @@ header .bar h1 {
   color: var(--ink-muted);
   font-size: var(--text-label);
   font-weight: 600;
-  padding: 6px 10px;
-  min-height: 44px;
+  padding: 4px 8px;
+  min-height: 36px;
   cursor: pointer;
 }
 
-/* Stop is reached urgently, mid-turn, one-handed — it gets the full 44px
-   primary target, not the 34px chip height. */
+/* Stop is reached urgently, mid-turn, one-handed — keep it edged even in the
+   dense strip. */
 .session-head-stop {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
-  min-height: 44px;
-  padding: 6px 16px;
+  padding: 4px 12px;
   color: var(--ink);
 }
 
@@ -784,7 +812,6 @@ header .bar h1 {
    height rather than changing `.pill` for every surface. */
 .session-decision-actions .pill,
 .session-starter-actions .pill,
-.session-composer .pill,
 .session-attention .pill,
 .session-sheet-actions .pill {
   min-height: 44px;
@@ -814,7 +841,7 @@ header .bar h1 {
 /* In the head there is room to be legible: the path gets its own line instead
    of competing with the title for a phone's worth of width. */
 .session-head .session-tool {
-  margin-top: 10px;
+  margin-top: 4px;
   flex-wrap: wrap;
   row-gap: 2px;
 }
@@ -860,21 +887,23 @@ header .bar h1 {
 }
 
 /* Transcript -------------------------------------------------------------- */
+/* Owns ~80% of the session band. The composer is the last child of this
+   column — full-width paper, not a draft bubble. */
 .session-thread {
-  flex: 1 1 auto;
+  flex: 1 1 80%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 14px;
-  padding: 14px 0;
+  gap: 10px;
+  padding: 8px 0 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   /* Softens the cut where scrolled rows meet the head's hairline, so a clipped
      line reads as "more above" instead of broken paint. The fade is shorter
      than the resting top padding, so nothing softens at rest. */
-  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
 }
 
 /* Anchor a short conversation to the composer instead of stranding it at the
@@ -986,7 +1015,8 @@ header .bar h1 {
 .session-jump {
   position: absolute;
   left: 50%;
-  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  /* Sits above the in-thread composer (no separate Send chrome). */
+  bottom: calc(52px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 3;
   padding: 8px 18px;
@@ -1008,58 +1038,51 @@ header .bar h1 {
   outline: none;
 }
 
-/* Composer ---------------------------------------------------------------- */
+/* Composer — full-bleed last strip of the thread. Same paper as the chat;
+   Enter sends. No bubble chrome. */
 .session-composer {
   position: sticky;
   bottom: 0;
   z-index: 2;
   flex: none;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-self: stretch;
+  width: auto;
   margin: 0 -12px;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  /* At rest, only the home-indicator inset — no extra pad under the field. */
+  padding: 6px 12px env(safe-area-inset-bottom, 0px);
+  background: var(--paper);
+  border: none;
   border-top: 1px solid var(--rule);
-  -webkit-backdrop-filter: saturate(140%) blur(10px);
-  backdrop-filter: saturate(140%) blur(10px);
 }
 
-/* The home indicator is behind the keyboard, so reserving its inset while
-   typing is pure gap between the composer and the keys. */
+/* Home indicator sits behind the keyboard; keeping its inset (or any bottom
+   pad) here is pure gap between the field and the keys. */
 html.keyboard-open .session-composer {
-  padding-bottom: 10px;
+  padding-bottom: 0;
 }
 
 .session-composer textarea {
-  flex: 1 1 auto;
+  display: block;
+  width: 100%;
   min-width: 0;
-  min-height: 44px;
-  /* Against the visible band, not `vh`: iOS never shrinks the layout viewport
-     for the keyboard, so a `30vh` cap lets a grown composer eat the band. */
-  max-height: calc(var(--app-height, 100dvh) * 0.3);
-  padding: 11px 15px;
-  border: 1px solid var(--rule);
-  /* Documented scale, not a half-height pill: the composer grows to several
-     rows, and a full pill radius turns a tall box into a lozenge. */
-  border-radius: var(--radius-lg);
-  background: var(--paper-raised);
+  min-height: 40px;
+  max-height: calc(var(--app-height, 100dvh) * 0.22);
+  padding: 6px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   font-size: 16px;
   resize: none;
-  line-height: 1.35;
+  line-height: 1.45;
+}
+
+html.keyboard-open .session-composer textarea {
+  padding-bottom: 2px;
 }
 
 .session-composer textarea:focus {
   outline: none;
-  border-color: var(--accent);
-}
-
-/* Send yields the accent to a pending decision but must stay findable — the
-   operator may want to counter-propose rather than approve. */
-.session-composer .pill[data-variant="secondary"] {
-  border-color: var(--rule-strong);
-  color: var(--ink);
 }
 
 .session-composer textarea::placeholder {
@@ -1171,6 +1194,41 @@ html.keyboard-open .session-composer {
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
   animation: sheet-rise 220ms var(--ease-spring);
+}
+
+/* Terminal escape hatch must fill the sheet. Without this, TaskTerminal only
+   gets its 120px min-height and operators leave for #/t/…, which unmounts chat.
+   Beat the desktop `.terminal-panel .terminal-interaction-wrap { 58vh }` cap
+   (same file, later) so the sheet is not a half-height pane. */
+.session-terminal-sheet {
+  height: min(96dvh, 100%);
+  max-height: 100%;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+.session-terminal-body {
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-terminal-sheet .terminal-panel {
+  flex: 1 1 0%;
+  min-height: 0;
+  margin-top: 0;
+}
+
+.session-terminal-sheet .terminal-panel .terminal-interaction-wrap {
+  height: auto;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.session-terminal-sheet .terminal-panel .terminal-host {
+  height: 100%;
+  min-height: 0;
 }
 
 .session-sheet-header {
