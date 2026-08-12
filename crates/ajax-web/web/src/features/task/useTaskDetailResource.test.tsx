@@ -6,6 +6,8 @@ import { ApiError } from "@/shared/lib/api";
 import { useTaskDetailResource } from "./useTaskDetailResource";
 
 const taskDetail = taskDetailFixture as BrowserTaskDetail;
+const staleDetail: BrowserTaskDetail = { ...taskDetail, title: "STALE TITLE" };
+const freshDetail: BrowserTaskDetail = { ...taskDetail, title: "FRESH TITLE" };
 const otherDetail: BrowserTaskDetail = {
   ...taskDetail,
   qualified_handle: "web/other",
@@ -99,6 +101,20 @@ describe("useTaskDetailResource", () => {
     expect(deps.applyConnectionError).toHaveBeenCalled();
   });
 
+  it("maps first-load network failure to error (not eternal loading)", async () => {
+    fetchDetail.mockRejectedValue(new ApiError("network", "Failed to fetch"));
+    postOperation.mockResolvedValue({ ok: false, response: {} });
+    const deps = stableDeps();
+    const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
+
+    await waitFor(() => expect(result.current.detail.status).toBe("error"));
+    expect(result.current.detail.data).toBeNull();
+    expect(result.current.detail.error).toMatchObject({
+      kind: "network",
+      message: "Failed to fetch",
+    });
+  });
+
   it("maps load failure with existing detail for this handle to stale", async () => {
     postOperation.mockResolvedValue({ ok: false, response: {} });
     fetchDetail.mockResolvedValueOnce(taskDetail).mockRejectedValueOnce(
@@ -116,6 +132,39 @@ describe("useTaskDetailResource", () => {
     await waitFor(() => expect(result.current.detail.status).toBe("stale"));
     expect(result.current.detail.data).toEqual(taskDetail);
     expect(result.current.detail.error).toMatchObject({ kind: "http", message: "HTTP 503" });
+  });
+
+  it("does not let a slower same-handle fetch overwrite a newer one", async () => {
+    postOperation.mockResolvedValue({ ok: false, response: {} });
+    let resolveSlow!: (value: BrowserTaskDetail) => void;
+    let resolveFast!: (value: BrowserTaskDetail) => void;
+    const slow = new Promise<BrowserTaskDetail>((res) => {
+      resolveSlow = res;
+    });
+    const fast = new Promise<BrowserTaskDetail>((res) => {
+      resolveFast = res;
+    });
+    fetchDetail.mockReturnValueOnce(slow).mockReturnValueOnce(fast);
+
+    const deps = stableDeps();
+    const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
+
+    await act(async () => {
+      result.current.reload();
+    });
+
+    await act(async () => {
+      resolveFast(freshDetail);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() => expect(result.current.detail.data?.title).toBe("FRESH TITLE"));
+
+    await act(async () => {
+      resolveSlow(staleDetail);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.detail.data?.title).toBe("FRESH TITLE");
   });
 
   it("discards a slow response for handle A after switching to handle B", async () => {

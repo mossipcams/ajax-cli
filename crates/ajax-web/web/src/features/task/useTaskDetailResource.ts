@@ -21,6 +21,8 @@ export function useTaskDetailResource(
   const handleRef = useRef(handle);
   handleRef.current = handle;
 
+  const loadGenRef = useRef(0);
+
   const [detail, setDetail] = useState<RemoteResource<BrowserTaskDetail>>({
     status: "loading",
     data: null,
@@ -28,23 +30,19 @@ export function useTaskDetailResource(
   });
 
   const loadDetail = useCallback(async (requestedHandle: string) => {
+    const gen = ++loadGenRef.current;
     try {
       const next = await fetchDetail(requestedHandle);
-      if (handleRef.current !== requestedHandle) return;
+      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
       setDetail({ status: "ready", data: next, error: null });
       depsRef.current.markConnected();
     } catch (error) {
-      if (handleRef.current !== requestedHandle) return;
+      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
       if (!(error instanceof ApiError)) return;
       depsRef.current.applyConnectionError(error);
       setDetail((prev) => {
         if (prev.status === "ready" || prev.status === "stale") {
           return { status: "stale", data: prev.data, error };
-        }
-        // ponytail: network failures leave the outlet on the skeleton, matching
-        // the pre-hook null-detail behavior the App shell tests still assert.
-        if (error.kind === "network" && prev.status === "loading") {
-          return prev;
         }
         return { status: "error", data: null, error };
       });

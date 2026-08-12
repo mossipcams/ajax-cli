@@ -425,6 +425,18 @@ describe("App shell", () => {
   });
 
   it("shows a task skeleton while a task detail is loading", async () => {
+    const pendingDetail = new Promise<unknown>(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return pendingDetail;
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
     render(<App />);
     setHash("#/t/web%2Ffix-login");
     await screen.findByTestId("outlet-task");

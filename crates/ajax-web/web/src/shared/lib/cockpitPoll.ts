@@ -42,9 +42,13 @@ export function stableCockpitHash(view: BrowserCockpitView): string {
 
 export function createCockpitApplyGate(): {
   applyIfChanged(next: BrowserCockpitView): boolean;
+  noteMutation(): void;
+  pollGeneration(): number;
+  applyPollIfChanged(next: BrowserCockpitView, startedAt: number): boolean;
   reset(): void;
 } {
   let lastHash: string | null = null;
+  let generation = 0;
 
   return {
     applyIfChanged(next: BrowserCockpitView): boolean {
@@ -53,8 +57,22 @@ export function createCockpitApplyGate(): {
       lastHash = hash;
       return true;
     },
+    noteMutation() {
+      generation += 1;
+    },
+    pollGeneration() {
+      return generation;
+    },
+    applyPollIfChanged(next: BrowserCockpitView, startedAt: number): boolean {
+      if (startedAt !== generation) return false;
+      const hash = stableCockpitHash(next);
+      if (hash === lastHash) return false;
+      lastHash = hash;
+      return true;
+    },
     reset() {
       lastHash = null;
+      generation = 0;
     },
   };
 }
