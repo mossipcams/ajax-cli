@@ -2,6 +2,32 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.57.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.56.0...ajax-cli-v0.57.0) (2026-08-12)
+
+
+### Features
+
+* **core:** delete origin/ajax/* branches during drop and tidy ([#834](https://github.com/mossipcams/ajax-cli/issues/834)) ([d046403](https://github.com/mossipcams/ajax-cli/commit/d0464035b271f40c572206a17ab6f2554da9ea63))
+
+
+### Bug Fixes
+
+* **core:** prefer durable substrate over stale live Missing ([#792](https://github.com/mossipcams/ajax-cli/issues/792)) ([395e1f1](https://github.com/mossipcams/ajax-cli/commit/395e1f12f23772b6dc367c36dad383c8c7ba0b32))
+* pin Cursor default model to Grok 4.6 high ([#833](https://github.com/mossipcams/ajax-cli/issues/833)) ([1c32bd4](https://github.com/mossipcams/ajax-cli/commit/1c32bd48109d1ce7b4616e10f62adf7ee87ba108))
+* **web:** add sync click latches across Cockpit double-tap surfaces ([#830](https://github.com/mossipcams/ajax-cli/issues/830)) ([811e95c](https://github.com/mossipcams/ajax-cli/commit/811e95c70757bd5f8c6d798b1e4f6c607349dddd))
+* **web:** Drop leave-latch and terminal link paste ([#786](https://github.com/mossipcams/ajax-cli/issues/786)) ([294a1e7](https://github.com/mossipcams/ajax-cli/commit/294a1e7f25bbe4ef72b9850b2c7bd4f9536aff93))
+* **web:** gate ActionBar during Drop confirm and dismiss New Task on Settings ([#826](https://github.com/mossipcams/ajax-cli/issues/826)) ([bf5060f](https://github.com/mossipcams/ajax-cli/commit/bf5060f65ef0a122143a8cee0e22e607f0e7a86c))
+* **web:** gate push presence on foreground cockpit polls ([#794](https://github.com/mossipcams/ajax-cli/issues/794)) ([5d820f9](https://github.com/mossipcams/ajax-cli/commit/5d820f9ef4e73f4400634844b4e1f1a341e70c86))
+* **web:** keep cockpit and detail truth from stale races ([#822](https://github.com/mossipcams/ajax-cli/issues/822)) ([6ec5d14](https://github.com/mossipcams/ajax-cli/commit/6ec5d146335f3e6c3e1ad437c00c1ea309389290))
+* **web:** keep Drop on switched task, bottom toast, restore link paste ([#783](https://github.com/mossipcams/ajax-cli/issues/783)) ([34ad9ae](https://github.com/mossipcams/ajax-cli/commit/34ad9aeb1e5b6ca1a1ccfbdce41faf402e6a4347))
+* **web:** land seeded task opens at the CLI bottom ([#825](https://github.com/mossipcams/ajax-cli/issues/825)) ([9a7aa7c](https://github.com/mossipcams/ajax-cli/commit/9a7aa7c94a0e7e7a60eab0f380c4ca51beb51d8a))
+* **web:** latch New Task, mic speech, and resumeOnOpen races ([#824](https://github.com/mossipcams/ajax-cli/issues/824)) ([fc1ea4e](https://github.com/mossipcams/ajax-cli/commit/fc1ea4e3986725fd8727266b052e7e643b33c1a1))
+* **web:** open seeded tasks already at the CLI without scrolling ([#827](https://github.com/mossipcams/ajax-cli/issues/827)) ([88db556](https://github.com/mossipcams/ajax-cli/commit/88db556bddeb7d3e3e0aeda79a40c108dd925001))
+* **web:** restore Test in Stable via worktree layout fallback ([#777](https://github.com/mossipcams/ajax-cli/issues/777)) ([781b925](https://github.com/mossipcams/ajax-cli/commit/781b9259023d870189b084ca43e87a37bc58899a))
+* **web:** show seeded task opens already at the CLI ([#832](https://github.com/mossipcams/ajax-cli/issues/832)) ([d24701b](https://github.com/mossipcams/ajax-cli/commit/d24701b4858f049cd1e9c83dc9cb92c5524b65fc))
+* **web:** stop xterm DA replies from entering PTY stdin ([#782](https://github.com/mossipcams/ajax-cli/issues/782)) ([cff9b81](https://github.com/mossipcams/ajax-cli/commit/cff9b81d6d72dd5616700816a28a38516401102b))
+* **web:** yield before open-task nav to cut dashboard INP ([#828](https://github.com/mossipcams/ajax-cli/issues/828)) ([8350a83](https://github.com/mossipcams/ajax-cli/commit/8350a837e21ac0f2deb9e50a224f38964b1ef7d9))
+
 ## [0.56.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.55.1...ajax-cli-v0.56.0) (2026-08-05)
 
 
