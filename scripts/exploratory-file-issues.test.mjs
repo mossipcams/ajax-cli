@@ -176,6 +176,37 @@ test("duplicate by title avoids create", async () => {
   assert.equal(issues[0].action, "duplicate");
 });
 
+test("duplicate by relatedIssues avoids create even when titles differ", async () => {
+  const { fileIssues } = await import("./exploratory/file-issues.mjs");
+  const finding = baseFinding({
+    title: "Totally different title from open issue",
+    fingerprint: "session|unrelated-fingerprint",
+    relatedIssues: [810],
+  });
+  const paths = writeResults({ findings: [finding] });
+  const gh = fakeGh({
+    listIssues: [
+      {
+        number: 810,
+        title: "[defect] Web Cockpit unrelated existing issue",
+        body: "No fingerprint comment",
+        url: "https://github.com/mossipcams/ajax-cli/issues/810",
+      },
+    ],
+  });
+  const exitCode = fileIssues(
+    fileOpts(paths, {
+      execGh: gh.exec,
+      env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
+    }),
+  );
+  assert.equal(exitCode, 0);
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
+  const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
+  assert.equal(issues[0].action, "duplicate");
+  assert.equal(issues[0].issueNumber, 810);
+});
+
 test("observation and rejected findings are not filed", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const paths = writeResults({
