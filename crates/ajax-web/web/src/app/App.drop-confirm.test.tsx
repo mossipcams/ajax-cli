@@ -61,7 +61,7 @@ describe("App drop shell confirm", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps shell confirm visible after navigating away from the task", async () => {
+  it("cancels shell confirm after navigating away from the task", async () => {
     const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
     vi.stubGlobal(
       "fetch",
@@ -82,18 +82,45 @@ describe("App drop shell confirm", () => {
 
     setHash("#/");
     expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
-    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
-    expect(completeSpy).not.toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ error_kind: "unmount" }),
-    );
-
-    fireEvent.click(screen.getByText("Cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
     expect(completeSpy).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ ok: false, op: "drop", error_kind: "undo" }),
     );
-    expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+  });
+
+  it("cancels Drop confirmation when navigating to Settings", async () => {
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    setHash("#/settings");
+    expect(await screen.findByTestId("outlet-settings")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    expect(operations.some((operation) => (operation as { action?: string }).action === "drop")).toBe(
+      false,
+    );
   });
 
   it("keeps the switched-to task after Drop finishes for the previous task", async () => {
@@ -139,8 +166,7 @@ describe("App drop shell confirm", () => {
     expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
   });
 
-  it("stays on the other task when Confirm happens after navigate-away", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  it("cancels shell confirm before it can target another task", async () => {
     const operations: unknown[] = [];
     vi.stubGlobal(
       "fetch",
@@ -171,21 +197,12 @@ describe("App drop shell confirm", () => {
     expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
     setHash("#/t/web%2Fother");
     expect(await screen.findByText("Other task")).toBeInTheDocument();
-    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("Confirm"));
-    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
-    });
-
     await waitFor(() => {
-      expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(true);
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
     });
+    expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(false);
     expect(window.location.hash).toBe("#/t/web%2Fother");
     expect(screen.getByText("Other task")).toBeInTheDocument();
-    expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
   });
 
   it("stays on the other task after Drop via dashboard intermediate", async () => {

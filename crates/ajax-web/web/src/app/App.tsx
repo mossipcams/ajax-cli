@@ -163,6 +163,21 @@ export default function App() {
     dismissPendingConfirm();
   }
 
+  const cancelPendingConfirmOnRouteChange = useEffectEvent(() => {
+    if (!pendingConfirm) return;
+    if (
+      (route.kind === "task" || route.kind === "diff") &&
+      route.handle === pendingConfirm.handle
+    ) {
+      return;
+    }
+    cancelPendingConfirm();
+  });
+
+  useEffect(() => {
+    cancelPendingConfirmOnRouteChange();
+  }, [route.kind, route.handle]);
+
   function expirePendingConfirm() {
     if (!pendingConfirm) return;
     endTapToOperationComplete(pendingConfirm.interactionId, {
