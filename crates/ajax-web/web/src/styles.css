@@ -1426,11 +1426,11 @@ html.terminal-expanded .result-panel {
 }
 
 /* Hide xterm content while seed parses; keep wrap background as the plate.
-   visibility:hidden so WebKit cannot paint mid-parse scroll into the surface. */
+   opacity only — visibility:hidden blocks WebKit focus/hit-testing on the
+   host and breaks PTY input before onOpen cancels seed-pending. */
 .terminal-interaction-wrap.is-seed-pending .terminal-host,
 .terminal-interaction-wrap.is-seed-pending .terminal-scroll-spacer {
   opacity: 0;
-  visibility: hidden;
 }
 
 .terminal-interaction-wrap::-webkit-scrollbar {

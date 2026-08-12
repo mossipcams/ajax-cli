@@ -13,8 +13,8 @@ import {
   DEFAULT_FONT_SIZE,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
-  FONT_STORAGE_KEY,
-  parsePersistedFontSize,
+  loadPersistedFontSize,
+  persistFontSize,
   computeTerminalGeometry,
   terminalScrollbackLines,
 } from "@/shared/lib/terminalGeometry";
@@ -50,22 +50,6 @@ const DIRECTIONAL_DRAG_THRESHOLD_PX = 24;
 const DIRECTIONAL_REPEAT_INTERVAL_MS = 75;
 const DOUBLE_TAP_WINDOW_MS = 350;
 const DOUBLE_TAP_SLOP_PX = 24;
-
-function loadPersistedFontSize(): number {
-  try {
-    return parsePersistedFontSize(localStorage.getItem(FONT_STORAGE_KEY));
-  } catch {
-    return DEFAULT_FONT_SIZE;
-  }
-}
-
-function persistFontSize(size: number) {
-  try {
-    localStorage.setItem(FONT_STORAGE_KEY, String(size));
-  } catch {
-    // Storage may be unavailable in private mode.
-  }
-}
 
 export type MountTaskTerminalSessionDeps = {
   handle: string;

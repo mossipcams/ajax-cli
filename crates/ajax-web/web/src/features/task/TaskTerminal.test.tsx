@@ -680,7 +680,7 @@ describe("TaskTerminal seeded history reveal", () => {
         /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     expect(seedPendingCss).toMatch(/opacity:\s*0/);
-    expect(seedPendingCss).toMatch(/visibility:\s*hidden/);
+    expect(seedPendingCss).not.toMatch(/visibility:\s*hidden/);
     expect(stylesSource).not.toMatch(
       /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
     );
