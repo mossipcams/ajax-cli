@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "@playwright/mcp@0.0.79",
+        "--browser",
+        "chromium",
+        "--headless",
+        "--ignore-https-errors",
+        "--isolated",
+        "--no-sandbox",
+        "--console-level",
+        "warning",
+        "--output-dir",
+        "exploratory-results/playwright-mcp",
+        "--save-session",
+        "--allowed-origins",
+        "https://127.0.0.1:18790;http://127.0.0.1:18790"
+      ]
+    }
+  }
+}
