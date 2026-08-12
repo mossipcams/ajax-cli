@@ -233,8 +233,12 @@ impl WebSessionHub {
             return;
         };
         let (events, host_exited) = {
-            let client = slot.client.lock().unwrap();
-            drain_acp_events(&client)
+            let mut client = slot.client.lock().unwrap();
+            let (events, host_exited, prompt_finished) = drain_acp_events(&client);
+            if prompt_finished {
+                let _ = client.flush_queued_prompt();
+            }
+            (events, host_exited)
         };
         if host_exited {
             slot.acp_alive = false;
@@ -331,7 +335,7 @@ fn replace_slot_client(
 ) -> Result<(), String> {
     {
         let mut client = slot.client.lock().unwrap();
-        let _ = client.begin_cancel();
+        let _ = client.begin_cancel(false);
     }
     // Same model: try ACP session/load. Model change starts a new conversation.
     let resume_id = if slot.model == model {
@@ -357,9 +361,10 @@ fn replace_slot_client(
     Ok(())
 }
 
-pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bool) {
+pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bool, bool) {
     let mut events = Vec::new();
     let mut host_exited = false;
+    let mut prompt_finished = false;
     while let Some(event) = client.poll_event() {
         match event {
             AcpClientEvent::SessionUpdate(params) => {
@@ -381,6 +386,9 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
                 }
             }
             AcpClientEvent::RequestFinished { result, method, .. } => {
+                if method == "session/prompt" {
+                    prompt_finished = true;
+                }
                 events.extend(map_request_finished(method, result));
             }
             AcpClientEvent::Error(message) => {
@@ -394,7 +402,7 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
             }
         }
     }
-    (events, host_exited)
+    (events, host_exited, prompt_finished)
 }
 
 /// A finished `session/prompt` is the only signal the browser gets that the

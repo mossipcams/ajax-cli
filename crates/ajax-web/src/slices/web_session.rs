@@ -13,7 +13,10 @@ pub enum SessionClientMessage {
     #[serde(rename = "prompt")]
     Prompt { text: String },
     #[serde(rename = "cancel")]
-    Cancel,
+    Cancel {
+        #[serde(default, rename = "keepQueue")]
+        keep_queue: bool,
+    },
     #[serde(rename = "set_model")]
     SetModel { model: String },
     #[serde(rename = "permission")]
@@ -562,5 +565,19 @@ mod tests {
                 text: "Working on it".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn cancel_message_defaults_keep_queue_false() {
+        let msg: SessionClientMessage =
+            serde_json::from_str(r#"{"type":"cancel"}"#).expect("cancel");
+        assert_eq!(msg, SessionClientMessage::Cancel { keep_queue: false });
+    }
+
+    #[test]
+    fn cancel_message_keep_queue_true() {
+        let msg: SessionClientMessage =
+            serde_json::from_str(r#"{"type":"cancel","keepQueue":true}"#).expect("cancel");
+        assert_eq!(msg, SessionClientMessage::Cancel { keep_queue: true });
     }
 }

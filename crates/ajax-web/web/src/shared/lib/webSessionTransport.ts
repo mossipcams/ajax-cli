@@ -53,7 +53,7 @@ export interface WebSessionTransportCallbacks {
 
 export interface WebSessionTransport {
   sendPrompt(text: string): void;
-  sendCancel(): void;
+  sendCancel(keepQueue?: boolean): void;
   setModel(model: string): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
   dispose(): void;
@@ -181,8 +181,9 @@ export function connectWebSessionTransport(
 
   socket = platform.openSocket(sessionSocketUrl(handle, model));
   socket.addEventListener("message", messageListener);
+  // An error is followed by close; let the close handler own onClosed so we
+  // never schedule reconnect twice.
   socket.addEventListener("close", closeListener);
-  socket.addEventListener("error", closeListener);
   void waitForSocketOpen(socket).catch(() => {
     callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });
@@ -197,8 +198,8 @@ export function connectWebSessionTransport(
       }
       pendingPrompts.push(trimmed);
     },
-    sendCancel() {
-      sendJson({ type: "cancel" });
+    sendCancel(keepQueue = false) {
+      sendJson(keepQueue ? { type: "cancel", keepQueue: true } : { type: "cancel" });
     },
     setModel(nextModel) {
       const trimmed = nextModel.trim() || "auto";
@@ -216,7 +217,6 @@ export function connectWebSessionTransport(
       disposed = true;
       socket?.removeEventListener("message", messageListener);
       socket?.removeEventListener("close", closeListener);
-      socket?.removeEventListener("error", closeListener);
       try {
         socket?.close();
       } catch {

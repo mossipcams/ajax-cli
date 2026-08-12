@@ -64,7 +64,9 @@ function ToolRow({ call }: { call: ToolCall }) {
     <div className={`session-tool tone-${tone}`} data-testid="session-head-tool">
       <span className="session-tool-kind">{call.kind || "tool"}</span>
       <span className="session-tool-title">{call.title || call.callId}</span>
-      {location ? <span className="session-tool-path">{shortPath(location)}</span> : null}
+      <span className="session-tool-path" title={location || undefined}>
+        {location ? shortPath(location) : "\u00a0"}
+      </span>
     </div>
   );
 }

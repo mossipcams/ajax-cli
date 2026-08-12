@@ -3,6 +3,7 @@ import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 import {
   activePlanStep,
   activeTool,
+  explainAcpError,
   explainOpenFailure,
   initialSessionState,
   sessionReducer,
@@ -43,6 +44,24 @@ describe("sessionReducer", () => {
     ]);
     expect(state.entries).toHaveLength(1);
     expect(state.entries[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello world" });
+  });
+
+  it("replaces a cumulative snapshot instead of concatenating it", () => {
+    const state = run([
+      { type: "message", role: "agent", text: "Hel" },
+      { type: "message", role: "agent", text: "Hello" },
+    ]);
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello" });
+  });
+
+  it("skips an exact duplicate user echo", () => {
+    const state = run([
+      { type: "message", role: "user", text: "Fix it" },
+      { type: "message", role: "user", text: "Fix it" },
+    ]);
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix it" });
   });
 
   it("starts a new paragraph when a tool run interrupts agent prose", () => {
@@ -187,7 +206,11 @@ describe("sessionReducer", () => {
   it("ends the turn on error and records it as a transcript note", () => {
     const state = run([{ prompt: "go" }, { type: "error", message: "ACP process exited" }]);
     expect(state.busy).toBe(false);
-    expect(state.entries[0]).toMatchObject({ kind: "note", tone: "error", text: "ACP process exited" });
+    expect(state.entries[0]).toMatchObject({
+      kind: "note",
+      tone: "error",
+      text: "The agent stopped. It will restart when you reconnect.",
+    });
   });
 
   it("drops unknown artifacts instead of pretty-printing them", () => {
@@ -195,6 +218,19 @@ describe("sessionReducer", () => {
     expect(empty.entries).toHaveLength(0);
     const dumped = run([{ type: "artifact", kind: "x", title: "Modes", body: "{}" }]);
     expect(dumped.entries).toHaveLength(0);
+  });
+});
+
+describe("explainAcpError", () => {
+  it("maps opaque ACP failures to operator-facing copy", () => {
+    expect(explainAcpError("internal error")).toMatch(/rejected that request/i);
+    expect(explainAcpError("ACP process exited")).toMatch(/restart when you reconnect/i);
+    expect(explainAcpError("acp request timed out")).toMatch(/did not answer in time/i);
+  });
+
+  it("passes through already-human messages", () => {
+    const message = "Lost the session connection. Reopen the task to try again.";
+    expect(explainAcpError(message)).toBe(message);
   });
 });
 

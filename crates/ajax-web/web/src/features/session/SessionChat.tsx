@@ -41,7 +41,6 @@ import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/
 import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 import TaskLoadError from "@/features/task/TaskLoadError";
-import Skeleton from "@/shared/ui/Skeleton";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
@@ -62,7 +61,8 @@ import {
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
-import { readSessionModel, writeSessionModel } from "./sessionModel";
+import SessionModelSelect from "./SessionModelSelect";
+import { readSessionModel, useSessionModelPreference, writeSessionModel } from "./sessionModel";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
@@ -70,8 +70,8 @@ const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 const PIN_THRESHOLD_PX = 48;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 8000;
-/** Each attempt spawns an agent process host-side; never retry unbounded. */
-const MAX_RECONNECT_ATTEMPTS = 5;
+/** Handshake failures before the first ready are capped; post-ready drops retry forever. */
+const MAX_HANDSHAKE_ATTEMPTS = 5;
 
 interface Props {
   handle: string | null;
@@ -117,6 +117,10 @@ export function formatSessionBrief(context: SessionStarterContext): string {
   return lines.join("\n");
 }
 
+export function sessionSeededStorageKey(handle: string): string {
+  return `ajax.web.session.seeded:${handle}`;
+}
+
 export default function SessionChat({
   handle,
   detail,
@@ -135,6 +139,11 @@ export default function SessionChat({
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
+  const connectedRef = useRef(false);
+  const everOpenedRef = useRef(false);
+  const draftRef = useRef("");
+  const followUpQueuedRef = useRef(false);
+  const lastQueuedTextRef = useRef<string | null>(null);
   // The starter brief seeds the ACP session exactly once. Holding it in a ref
   // keeps it out of the transport effect's deps — when it was a dependency, a
   // new object identity tore down the socket and killed the ACP child process
@@ -142,7 +151,6 @@ export default function SessionChat({
   const starterRef = useRef(starterContext);
   // Read inside the transport effect without making it a dependency.
   const detailRef = useRef(detail);
-  const seededRef = useRef(false);
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ entries: ThreadEntry[]; tools: number }>({
     entries: [],
@@ -154,14 +162,18 @@ export default function SessionChat({
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [draft, setDraft] = useState("");
   const [connected, setConnected] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
+  const [sessionModel, setSessionModel] = useSessionModelPreference();
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [followUpQueued, setFollowUpQueued] = useState(false);
 
   starterRef.current = starterContext;
   detailRef.current = detail;
   pinnedRef.current = pinned;
+  connectedRef.current = connected;
 
   const scrollToLive = useCallback(() => {
     const node = threadRef.current;
@@ -174,19 +186,48 @@ export default function SessionChat({
   useEffect(() => {
     if (!handle) return;
     let disposed = false;
-    let attempt = 0;
+    let handshakeAttempts = 0;
+    let reconnectAttempts = 0;
+    let reconnecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const connectModel = readSessionModel();
+    everOpenedRef.current = false;
+    setEverOpened(false);
+
+    const scheduleReconnect = () => {
+      if (disposed || !reconnecting) return;
+      const immediateAfterOpen =
+        everOpenedRef.current && document.visibilityState === "visible" && reconnectAttempts === 0;
+      const delay = immediateAfterOpen
+        ? 0
+        : Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+      reconnectAttempts += 1;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        if (disposed || !reconnecting) return;
+        if (document.visibilityState !== "visible") return;
+        open();
+      }, delay);
+    };
 
     const open = () => {
+      transportRef.current?.dispose();
+      transportRef.current = undefined;
       const transport = connectWebSessionTransport(
         handle,
         {
           onReady: (nextModel) => {
-            attempt = 0;
+            handshakeAttempts = 0;
+            reconnectAttempts = 0;
+            everOpenedRef.current = true;
+            setEverOpened(true);
+            reconnecting = false;
             writeSessionModel(nextModel);
-            // Clear before the host transcript replays so entries are not duplicated.
-            dispatch({ type: "reset" });
+            if (!connectedRef.current) {
+              // Reconnect only: clear before the host transcript replays.
+              dispatch({ type: "reset" });
+            }
+            connectedRef.current = true;
             setConnected(true);
           },
           onEvent: (event) => {
@@ -202,27 +243,25 @@ export default function SessionChat({
             dispatch({ type: "event", event });
           },
           onClosed: () => {
+            connectedRef.current = false;
             setConnected(false);
             if (disposed) return;
-            // The socket owns a holder count on the ACP process; a dropped
-            // connection must come back on its own or the session is stranded.
-            // Bounded, though: every attempt spawns a fresh agent process on the
-            // host, so a server-side failure must not retry forever.
-            attempt += 1;
-            if (attempt > MAX_RECONNECT_ATTEMPTS) {
-              dispatch({
-                type: "event",
-                event: {
-                  type: "error",
-                  message: "Lost the session connection. Reopen the task to try again.",
-                },
-              });
-              return;
+            reconnecting = true;
+            if (!everOpenedRef.current) {
+              handshakeAttempts += 1;
+              if (handshakeAttempts > MAX_HANDSHAKE_ATTEMPTS) {
+                reconnecting = false;
+                dispatch({
+                  type: "event",
+                  event: {
+                    type: "error",
+                    message: "Lost the session connection. Reopen the task to try again.",
+                  },
+                });
+                return;
+              }
             }
-            retryTimer = setTimeout(
-              open,
-              Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS),
-            );
+            scheduleReconnect();
           },
         },
         undefined,
@@ -231,34 +270,50 @@ export default function SessionChat({
       transportRef.current = transport;
     };
 
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && reconnecting) {
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = undefined;
+        }
+        reconnectAttempts = 0;
+        open();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
     open();
     return () => {
       disposed = true;
+      reconnecting = false;
+      document.removeEventListener("visibilitychange", onVisibility);
       if (retryTimer) clearTimeout(retryTimer);
       transportRef.current?.dispose();
       transportRef.current = undefined;
+      connectedRef.current = false;
       setConnected(false);
     };
   }, [handle]);
 
   useEffect(() => {
     if (!handle) return;
-    seededRef.current = false;
     dispatch({ type: "reset" });
   }, [handle]);
 
   // Seeded from an effect rather than from onReady: a transport that reports
   // ready synchronously does so before transportRef is assigned, which silently
-  // dropped the brief.
+  // dropped the brief. sessionStorage survives remounts so reconnect does not
+  // send a second in-flight session/prompt.
   useEffect(() => {
-    if (!connected || seededRef.current) return;
+    if (!connected || !handle) return;
+    if (sessionStorage.getItem(sessionSeededStorageKey(handle))) return;
     const starter = starterRef.current;
     if (!starter) return;
-    seededRef.current = true;
+    sessionStorage.setItem(sessionSeededStorageKey(handle), "1");
     const brief = formatSessionBrief(starter);
     transportRef.current?.sendPrompt(brief);
     dispatch({ type: "prompt", text: brief });
-  }, [connected]);
+  }, [connected, handle]);
 
   // Follow the live edge only while the operator is already at it. Yanking the
   // viewport back mid-read is what made a streaming turn impossible to follow.
@@ -309,14 +364,44 @@ export default function SessionChat({
     if (atLive) setBehind(false);
   }
 
+  useEffect(() => {
+    if (!state.busy) {
+      followUpQueuedRef.current = false;
+      setFollowUpQueued(false);
+      lastQueuedTextRef.current = null;
+    }
+  }, [state.busy]);
+
   function sendDraft() {
-    const text = draft.trim();
-    if (!text) return;
-    // A closed socket drops the payload silently, so recording the turn as sent
-    // would put a message in the transcript the agent never received.
     if (!connected) return;
+    const text = draftRef.current.trim();
+
+    if (state.busy && followUpQueuedRef.current) {
+      if (text && text !== lastQueuedTextRef.current) {
+        transportRef.current?.sendPrompt(text);
+        dispatch({ type: "prompt", text });
+        lastQueuedTextRef.current = text;
+      }
+      transportRef.current?.sendCancel(true);
+      followUpQueuedRef.current = false;
+      setFollowUpQueued(false);
+      draftRef.current = "";
+      setDraft("");
+      if (composerRef.current) composerRef.current.style.height = "";
+      return;
+    }
+
+    if (!text) return;
+
+    if (state.busy) {
+      followUpQueuedRef.current = true;
+      setFollowUpQueued(true);
+      lastQueuedTextRef.current = text;
+    }
+
     transportRef.current?.sendPrompt(text);
     dispatch({ type: "prompt", text });
+    draftRef.current = "";
     setDraft("");
     if (composerRef.current) {
       composerRef.current.style.height = "";
@@ -338,15 +423,7 @@ export default function SessionChat({
 
   if (!handle) return null;
 
-  if (detailStatus === "loading") {
-    return (
-      <section className="session-page" data-testid="session-chat">
-        <Skeleton testid="session-skeleton" rows={5} />
-      </section>
-    );
-  }
-
-  if (!detail) {
+  if (detailStatus === "error" || (detailStatus !== "loading" && !detail)) {
     return (
       <section className="session-page" data-testid="session-chat">
         <TaskLoadError message={detailError ?? "Task not found"} onRetry={() => onRetry?.()} />
@@ -354,20 +431,18 @@ export default function SessionChat({
     );
   }
 
-  const actions = visibleTaskActions(detail.actions);
-  // The head is a fast-tap surface and its action row sits at the same screen
-  // position Approve occupies one state over, so it carries the next *safe*
-  // action only. Destructive intents stay in Task details, deliberately slower.
+  const actions = detail ? visibleTaskActions(detail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
   const state_ = headState(state.decision, state.busy, detail);
   const tone = headTone(state_, detail);
   const unseenTools = Math.max(0, toolCallCount(state) - seenRef.current.tools);
-  const activity = detail.agent_activity ?? detail.live_status_summary ?? null;
+  const activity = detail?.agent_activity ?? detail?.live_status_summary ?? null;
+  const title = detail?.title || detail?.qualified_handle || handle;
 
   return (
     <section className="session-page session-chat" data-testid="session-chat" data-handle={handle}>
       <LiveHead
-        title={detail.title || detail.qualified_handle}
+        title={title}
         state={state_}
         tone={tone}
         detail={detail}
@@ -381,7 +456,7 @@ export default function SessionChat({
             <div data-testid="session-head-actions">
               <ActionBar
                 actions={safeActions}
-                handle={detail.qualified_handle}
+                handle={detail?.qualified_handle ?? handle}
                 onCockpit={onCockpit}
                 onResult={onResult}
                 onMutated={onMutated}
@@ -393,7 +468,12 @@ export default function SessionChat({
         onBack={onBack ?? (() => {})}
         onApprove={() => respondDecision(true)}
         onReject={() => respondDecision(false)}
-        onStop={() => transportRef.current?.sendCancel()}
+        onStop={() => {
+          transportRef.current?.sendCancel();
+          followUpQueuedRef.current = false;
+          setFollowUpQueued(false);
+          lastQueuedTextRef.current = null;
+        }}
         onOpenDetails={() => setDetailsOpen(true)}
       />
 
@@ -405,10 +485,10 @@ export default function SessionChat({
       >
         {state.entries.length === 0 ? (
           <p className="session-thread-empty" data-testid="session-thread-empty">
-            Nothing yet. Send a message to steer the agent.
+            Message the agent to steer this task.
           </p>
         ) : (
-          <Transcript entries={state.entries} />
+          <Transcript entries={state.entries} busy={state.busy} />
         )}
 
         <form
@@ -422,13 +502,22 @@ export default function SessionChat({
             rows={1}
             enterKeyHint="send"
             placeholder={
-              !connected ? "Reconnecting…" : state.busy ? "Steer the agent…" : "Message…"
+              !connected
+                ? everOpened
+                  ? "Reconnecting…"
+                  : "Starting…"
+                : state.busy && followUpQueued
+                  ? "Enter again to stop and send"
+                  : state.busy
+                    ? "Sends after this turn…"
+                    : "Message…"
             }
             aria-label="Message"
             ref={composerRef}
             value={draft}
             onChange={(e) => {
               const next = e.target.value;
+              draftRef.current = next;
               autoGrow(e.currentTarget, next.length < draft.length);
               setDraft(next);
             }}
@@ -485,7 +574,7 @@ export default function SessionChat({
 
                   <div className="session-details-body">
                     <dl className="session-meta" data-testid="session-artifact-status">
-                      {detail.status_explanation ? (
+                      {detail?.status_explanation ? (
                         <>
                           <dt>Status</dt>
                           <dd>{detail.status_explanation}</dd>
@@ -497,19 +586,33 @@ export default function SessionChat({
                           <dd data-testid="session-artifact-activity">{activity}</dd>
                         </>
                       ) : null}
-                      <dt>Lifecycle</dt>
-                      <dd>{detail.lifecycle}</dd>
-                      <dt>Agent</dt>
-                      <dd>{detail.agent}</dd>
-                      <dt>Branch</dt>
-                      <dd className="session-meta-mono">{detail.branch}</dd>
+                      {detail ? (
+                        <>
+                          <dt>Lifecycle</dt>
+                          <dd>{detail.lifecycle}</dd>
+                          <dt>Agent</dt>
+                          <dd>{detail.agent}</dd>
+                          <dt>Branch</dt>
+                          <dd className="session-meta-mono">{detail.branch}</dd>
+                        </>
+                      ) : null}
                     </dl>
 
-                    {detail.runtime_observation_error ? (
+                    <SessionModelSelect
+                      id={`${composerId}-model`}
+                      value={sessionModel}
+                      disabled={state.busy || !connected}
+                      onChange={(id) => {
+                        setSessionModel(id);
+                        transportRef.current?.setModel(id);
+                      }}
+                    />
+
+                    {detail?.runtime_observation_error ? (
                       <p className="session-sheet-warning">{detail.runtime_observation_error}</p>
                     ) : null}
 
-                    {detail.annotations.length ? (
+                    {detail?.annotations.length ? (
                       <ul className="session-annotations" data-testid="session-artifact-annotations">
                         {detail.annotations.map((line) => (
                           <li key={line}>{line}</li>
@@ -521,7 +624,7 @@ export default function SessionChat({
                       {actions.length ? (
                         <ActionBar
                           actions={actions}
-                          handle={detail.qualified_handle}
+                          handle={detail?.qualified_handle ?? handle}
                           onCockpit={onCockpit}
                           onResult={onResult}
                           onMutated={onMutated}
@@ -582,7 +685,7 @@ export default function SessionChat({
                   </div>
                   <div className="session-terminal-body">
                     <Suspense fallback={null}>
-                      <TaskTerminal handle={detail.qualified_handle} />
+                      <TaskTerminal handle={detail?.qualified_handle ?? handle} />
                     </Suspense>
                   </div>
                 </div>

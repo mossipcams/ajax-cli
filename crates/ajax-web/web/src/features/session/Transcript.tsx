@@ -7,7 +7,13 @@ import { memo } from "react";
 import Markdown from "./Markdown";
 import type { ThreadEntry } from "./sessionThread";
 
-const Row = memo(function Row({ entry }: { entry: ThreadEntry }) {
+const Row = memo(function Row({
+  entry,
+  live,
+}: {
+  entry: ThreadEntry;
+  live: boolean;
+}) {
   if (entry.kind === "prose" && entry.role === "user") {
     return (
       <article className="session-said" data-testid="session-message-user">
@@ -17,6 +23,17 @@ const Row = memo(function Row({ entry }: { entry: ThreadEntry }) {
   }
 
   if (entry.kind === "prose") {
+    if (live) {
+      return (
+        <article
+          className="session-reply is-live"
+          data-testid="session-message-agent"
+          data-live="true"
+        >
+          {entry.text}
+        </article>
+      );
+    }
     return (
       <article className="session-reply" data-testid="session-message-agent">
         <Markdown source={entry.text} />
@@ -36,11 +53,29 @@ const Row = memo(function Row({ entry }: { entry: ThreadEntry }) {
 
 /** Only the tail entry changes while a turn streams; every settled row above it
  * is referentially stable, so `memo` keeps a long transcript off the hot path. */
-export default function Transcript({ entries }: { entries: ThreadEntry[] }) {
+export default function Transcript({
+  entries,
+  busy,
+}: {
+  entries: ThreadEntry[];
+  busy: boolean;
+}) {
+  const lastAgentProseId = (() => {
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry.kind === "prose" && entry.role === "agent") return entry.id;
+    }
+    return null;
+  })();
+
   return (
     <>
       {entries.map((entry) => (
-        <Row key={entry.id} entry={entry} />
+        <Row
+          key={entry.id}
+          entry={entry}
+          live={busy && entry.id === lastAgentProseId}
+        />
       ))}
     </>
   );

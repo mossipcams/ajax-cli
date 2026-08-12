@@ -8,7 +8,7 @@
 
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{BufRead, BufReader, Write},
     path::Path,
     process::{Child, ChildStdin, Command, Stdio},
@@ -20,12 +20,81 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use std::{cell::RefCell, path::PathBuf};
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ACP_PROGRAM: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static TEST_ACP_EXTRA_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Run `f` with ACP spawn redirected to a test program (typically a Node fake agent).
+#[cfg(test)]
+pub(crate) fn with_test_acp_program<F, R>(path: &Path, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    TEST_ACP_PROGRAM.with(|slot| {
+        *slot.borrow_mut() = Some(path.to_path_buf());
+        let result = f();
+        *slot.borrow_mut() = None;
+        result
+    })
+}
+
+/// Add argv tokens for the next test ACP spawns inside `f` (e.g. `--load-fail`).
+#[cfg(test)]
+pub(crate) fn with_test_acp_extra_args<F, R>(args: &[&str], f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    TEST_ACP_EXTRA_ARGS.with(|slot| {
+        let saved = slot.borrow().clone();
+        *slot.borrow_mut() = args.iter().map(|s| (*s).to_string()).collect();
+        let result = f();
+        *slot.borrow_mut() = saved;
+        result
+    })
+}
+
 enum PendingResponse {
     Blocking(Sender<Result<Value, String>>),
     Streaming { method: &'static str },
 }
 
 type PendingResponses = Arc<Mutex<HashMap<u64, PendingResponse>>>;
+
+/// Cursor ACP allows one in-flight `session/prompt`; additional prompts queue here.
+const MAX_QUEUED_PROMPTS: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptDispatch {
+    StartNow,
+    Queued,
+}
+
+/// Decide whether to start a prompt now or enqueue it behind the in-flight turn.
+pub(crate) fn dispatch_prompt(
+    prompt_in_flight: bool,
+    queued: &mut VecDeque<String>,
+    text: String,
+) -> PromptDispatch {
+    if prompt_in_flight {
+        // ponytail: cap at 8 queued prompts; upgrade path is block + error event to the operator.
+        if queued.len() >= MAX_QUEUED_PROMPTS {
+            queued.pop_front();
+        }
+        queued.push_back(text);
+        PromptDispatch::Queued
+    } else {
+        PromptDispatch::StartNow
+    }
+}
+
+pub(crate) fn clear_prompt_queue(queued: &mut VecDeque<String>) {
+    queued.clear();
+}
 
 #[derive(Debug, Clone)]
 pub enum AcpClientEvent {
@@ -54,6 +123,7 @@ pub struct AcpStdioClient {
     events: Receiver<AcpClientEvent>,
     next_id: u64,
     pending: PendingResponses,
+    queued_prompts: VecDeque<String>,
     session_id: String,
     child: Child,
     _reader: thread::JoinHandle<()>,
@@ -86,6 +156,7 @@ impl AcpStdioClient {
             events: event_rx,
             next_id: 1,
             pending,
+            queued_prompts: VecDeque::new(),
             session_id: String::new(),
             child,
             _reader: reader,
@@ -126,6 +197,17 @@ impl AcpStdioClient {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn kill_host_for_test(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn child_id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn poll_event(&self) -> Option<AcpClientEvent> {
         self.events.try_recv().ok()
     }
@@ -135,17 +217,57 @@ impl AcpStdioClient {
     }
 
     pub fn begin_prompt(&mut self, text: &str) -> Result<u64, String> {
+        let text = text.to_string();
+        match dispatch_prompt(
+            self.prompt_in_flight(),
+            &mut self.queued_prompts,
+            text.clone(),
+        ) {
+            PromptDispatch::StartNow => self.begin_request(
+                "session/prompt",
+                json!({
+                    "sessionId": self.session_id,
+                    "prompt": [{ "type": "text", "text": text }],
+                }),
+            ),
+            PromptDispatch::Queued => Ok(0),
+        }
+    }
+
+    pub fn begin_cancel(&mut self, keep_queue: bool) -> Result<u64, String> {
+        if !keep_queue {
+            clear_prompt_queue(&mut self.queued_prompts);
+        }
+        self.begin_request("session/cancel", json!({ "sessionId": self.session_id }))
+    }
+
+    /// Start the next queued prompt when no `session/prompt` is in flight.
+    pub fn flush_queued_prompt(&mut self) -> Result<(), String> {
+        if self.prompt_in_flight() {
+            return Ok(());
+        }
+        let Some(text) = self.queued_prompts.pop_front() else {
+            return Ok(());
+        };
         self.begin_request(
             "session/prompt",
             json!({
                 "sessionId": self.session_id,
                 "prompt": [{ "type": "text", "text": text }],
             }),
-        )
+        )?;
+        Ok(())
     }
 
-    pub fn begin_cancel(&mut self) -> Result<u64, String> {
-        self.begin_request("session/cancel", json!({ "sessionId": self.session_id }))
+    fn prompt_in_flight(&self) -> bool {
+        self.pending.lock().unwrap().values().any(|entry| {
+            matches!(
+                entry,
+                PendingResponse::Streaming {
+                    method: "session/prompt"
+                }
+            )
+        })
     }
 
     pub fn respond_client_request(&mut self, id: &Value, result: Value) -> Result<(), String> {
@@ -246,6 +368,13 @@ impl AcpStdioClient {
     }
 }
 
+impl Drop for AcpStdioClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn write_line(stdin: &mut ChildStdin, payload: &Value) -> Result<(), String> {
     let mut line = serde_json::to_string(payload).map_err(|error| error.to_string())?;
     line.push('\n');
@@ -307,6 +436,22 @@ pub(crate) fn cursor_acp_args_for_program(base_args: &[&str], model: Option<&str
 }
 
 fn spawn_cursor_acp_process(worktree_path: &Path, model: Option<&str>) -> Result<Child, String> {
+    #[cfg(test)]
+    if let Some(program) = TEST_ACP_PROGRAM.with(|slot| slot.borrow().clone()) {
+        let extra_args = TEST_ACP_EXTRA_ARGS.with(|slot| slot.borrow().clone());
+        let mut command = Command::new("node");
+        command.arg(program);
+        command.args(extra_args);
+        command
+            .current_dir(worktree_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        return command
+            .spawn()
+            .map_err(|error| format!("failed to spawn test acp program: {error}"));
+    }
+
     let mut last_error = String::from("failed to spawn cursor acp process");
     for (program, base_args) in cursor_acp_program_candidates() {
         let args = cursor_acp_args_for_program(base_args, model);
@@ -422,6 +567,57 @@ mod tests {
         assert_eq!(candidates[0].1, &["acp"][..]);
         assert_eq!(candidates[1].0, "cursor");
         assert_eq!(candidates[1].1, &["agent", "acp"][..]);
+    }
+
+    #[test]
+    fn dispatch_prompt_starts_when_idle() {
+        let mut queued = VecDeque::new();
+        assert_eq!(
+            dispatch_prompt(false, &mut queued, "hello".to_string()),
+            PromptDispatch::StartNow
+        );
+        assert!(queued.is_empty());
+    }
+
+    #[test]
+    fn dispatch_prompt_queues_when_in_flight() {
+        let mut queued = VecDeque::new();
+        assert_eq!(
+            dispatch_prompt(true, &mut queued, "next".to_string()),
+            PromptDispatch::Queued
+        );
+        assert_eq!(queued, VecDeque::from(["next".to_string()]));
+    }
+
+    #[test]
+    fn dispatch_prompt_cap_drops_oldest() {
+        let mut queued: VecDeque<String> = (0..MAX_QUEUED_PROMPTS)
+            .map(|i| format!("old-{i}"))
+            .collect();
+        assert_eq!(
+            dispatch_prompt(true, &mut queued, "new".to_string()),
+            PromptDispatch::Queued
+        );
+        assert_eq!(queued.len(), MAX_QUEUED_PROMPTS);
+        assert_eq!(queued.front().map(String::as_str), Some("old-1"));
+        assert_eq!(queued.back().map(String::as_str), Some("new"));
+    }
+
+    #[test]
+    fn clear_prompt_queue_empties_queued() {
+        let mut queued = VecDeque::from(["a".to_string(), "b".to_string()]);
+        clear_prompt_queue(&mut queued);
+        assert!(queued.is_empty());
+    }
+
+    #[test]
+    fn begin_cancel_keep_queue_leaves_queue_intact() {
+        let mut queued = VecDeque::from(["next".to_string()]);
+        let keep_queue = true;
+        if !keep_queue {
+            clear_prompt_queue(&mut queued);
+        }
+        assert_eq!(queued, VecDeque::from(["next".to_string()]));
     }
 
     #[test]

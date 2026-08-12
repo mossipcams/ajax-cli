@@ -113,17 +113,22 @@ Browser session UI
   -> live head (current tool / decision) + settled transcript
 ```
 
-- Operators pick a Cursor model on the session starter (not mid-chat). The
-  catalog comes from `GET /api/session/models` (`agent models`). The chosen id
-  is pinned at ACP spawn with `--model` (or omitted for `auto`) and stored in
-  localStorage for the next start. Mid-chat model switching is intentionally
-  disabled while the transport path stabilizes; the wire still accepts
-  `set_model` for future use.
+- Operators pick a Cursor model on the session starter and can change it from
+  Task details when the turn is idle. The catalog comes from
+  `GET /api/session/models` (`agent models`). The chosen id is pinned at ACP
+  spawn with `--model` (or omitted for `auto`), stored in localStorage for the
+  next start, and updated mid-session via `set_model` (respawns ACP with the new
+  `--model` while keeping the UI transcript). A `ready` on a live socket must not
+  reset the reducer — only reconnect after a drop clears and replays.
 - Permission answers are recorded in the host transcript as
   `permission_resolved` so reconnect/reload replay does not resurrect a
   decided prompt.
 - Full chat thread + text composer remain available at all times; chat is the
   primary surface for questions, corrections, redirection, and follow-ups.
+  Overlapping composer prompts queue on the ACP host until the in-flight
+  `session/prompt` finishes. Enter again (empty composer) cancels the in-flight
+  turn and keeps the queue so the follow-up can start; Stop cancels and drops
+  the queue.
 - The live head shows the current tool and in-progress plan step. The
   transcript is conversation plus one turn-level work summary, not a per-call
   tool trace. Unknown ACP update kinds are dropped. Cockpit/task/diff
@@ -156,7 +161,9 @@ same `state_dir` owner as TLS identity, browser session tokens, and push keys:
   in the qualified handle for a single flat filename.
 - **Model context:** on acquire after restart, the host calls ACP `session/load`
   when Cursor advertises `loadSession` in `initialize` and a stored
-  `acp_session_id` exists. If load is unsupported or fails, the UI transcript
+  `acp_session_id` exists. Cursor may replay prior turns as `session/update`
+  notifications before the load result; the host drains those so the JSONL
+  transcript is not duplicated. If load is unsupported or fails, the UI transcript
   still reloads from disk and one agent note says the model context reset; the
   composer keeps working.
 - tmux remains the terminal escape hatch only. The ACP child stays stdio.

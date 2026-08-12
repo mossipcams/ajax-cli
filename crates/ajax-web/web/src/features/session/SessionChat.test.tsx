@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, fireEvent, screen, waitFor, act, within } from "@testing-library/react";
 import SessionStarter from "./SessionStarter";
-import SessionChat from "./SessionChat";
+import SessionChat, { sessionSeededStorageKey } from "./SessionChat";
 import * as api from "@/shared/lib/api";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -21,7 +21,22 @@ const transport = {
 };
 
 let emit: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
+let signalReady: ((model?: string) => void) | undefined;
 let closeSocket: (() => void) | undefined;
+
+function stubSessionTransport(options: { autoReady?: boolean } = { autoReady: true }) {
+  vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+    (_handle, callbacks) => {
+      emit = callbacks.onEvent;
+      signalReady = (model = "auto") => callbacks.onReady(model);
+      closeSocket = callbacks.onClosed;
+      if (options.autoReady !== false) {
+        callbacks.onReady("auto");
+      }
+      return transport;
+    },
+  );
+}
 
 function mountChat(overrides: Partial<React.ComponentProps<typeof SessionChat>> = {}) {
   return render(
@@ -39,9 +54,15 @@ function send(event: webSessionTransport.WebSessionServerEvent) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Object.defineProperty(document, "visibilityState", {
+    value: "visible",
+    configurable: true,
+  });
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe("SessionStarter", () => {
@@ -98,6 +119,7 @@ describe("SessionStarter", () => {
 describe("SessionChat", () => {
   beforeEach(() => {
     emit = undefined;
+    signalReady = undefined;
     closeSocket = undefined;
     transport.sendPrompt.mockClear();
     transport.sendCancel.mockClear();
@@ -105,6 +127,7 @@ describe("SessionChat", () => {
     transport.respondPermission.mockClear();
     transport.dispose.mockClear();
     localStorage.clear();
+    sessionStorage.clear();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -117,21 +140,16 @@ describe("SessionChat", () => {
         }),
       }),
     );
-    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
-      (_handle, callbacks) => {
-        emit = callbacks.onEvent;
-        closeSocket = callbacks.onClosed;
-        callbacks.onReady("auto");
-        return transport;
-      },
-    );
+    stubSessionTransport();
   });
 
   it("leads with the live head and keeps task detail one tap away", () => {
     mountChat();
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
     expect(screen.getByTestId("session-head")).toBeInTheDocument();
-    expect(screen.getByTestId("session-thread-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("session-thread-empty")).toHaveTextContent(
+      "Message the agent to steer this task.",
+    );
     expect(screen.getByTestId("session-composer")).toBeInTheDocument();
     expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
 
@@ -192,8 +210,93 @@ describe("SessionChat", () => {
     expect(transport.sendPrompt).toHaveBeenCalledWith(
       "Fix login\n\nConstraints: No API changes\n\nDone when: Green tests",
     );
+    expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBe("1");
     send({ type: "message", role: "user", text: "Fix login" });
     expect(screen.getByTestId("session-message-user")).toHaveTextContent("Fix login");
+  });
+
+  it("does not re-send the starter brief after remount with the same handle", async () => {
+    const starterContext = {
+      title: "Fix login",
+      constraints: "No API changes",
+      expectedOutcome: "Green tests",
+    };
+    const { unmount } = mountChat({ starterContext });
+    await waitFor(() => expect(transport.sendPrompt).toHaveBeenCalledOnce());
+    unmount();
+    mountChat({ starterContext });
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    expect(transport.sendPrompt).toHaveBeenCalledOnce();
+  });
+
+  it("shows queued-send placeholder while a turn is in flight", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    expect(screen.getByLabelText("Message")).toHaveAttribute(
+      "placeholder",
+      "Sends after this turn…",
+    );
+  });
+
+  it("shows stop-and-send placeholder after queuing a follow-up during a turn", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Ship the fix next" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).toHaveBeenCalledWith("Ship the fix next");
+    expect(screen.getByLabelText("Message")).toHaveAttribute(
+      "placeholder",
+      "Enter again to stop and send",
+    );
+  });
+
+  it("empty Enter after a queued follow-up cancels in flight but keeps the queue", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Ship the fix next" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    transport.sendCancel.mockClear();
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
+    expect(transport.sendPrompt).toHaveBeenCalledWith("Ship the fix next");
+  });
+
+  it("double Enter while busy queues once then stops on the second press", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    const message = screen.getByLabelText("Message");
+    fireEvent.change(message, { target: { value: "Ship the fix next" } });
+    fireEvent.keyDown(message, { key: "Enter", shiftKey: false });
+    transport.sendPrompt.mockClear();
+    transport.sendCancel.mockClear();
+    fireEvent.keyDown(message, { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
+  });
+
+  it("idle send then empty Enter does not cancel", () => {
+    mountChat();
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Ship it" } });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    transport.sendCancel.mockClear();
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+  });
+
+  it("Stop clears the queue with a plain cancel", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Ship the fix next" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    transport.sendCancel.mockClear();
+    fireEvent.click(screen.getByTestId("session-cancel"));
+    expect(transport.sendCancel).toHaveBeenCalledWith();
   });
 
   it("renders a tool call as a labelled row in the head, not a JSON dump", () => {
@@ -261,6 +364,7 @@ describe("SessionChat", () => {
       role: "agent",
       text: "Fixed it:\n\n- ran `cargo test`\n\n```\nok\n```",
     });
+    send({ type: "turn_end", stopReason: "end_turn" });
     expect(screen.getByRole("listitem")).toHaveTextContent("ran cargo test");
     expect(screen.getByText("cargo test").tagName).toBe("CODE");
     expect(screen.getByText("ok").tagName).toBe("CODE");
@@ -321,6 +425,48 @@ describe("SessionChat", () => {
     expect(screen.queryByTestId("session-head-offline")).not.toBeInTheDocument();
     act(() => closeSocket?.());
     expect(screen.getByTestId("session-head-offline")).toBeInTheDocument();
+  });
+
+  it("does not redial while hidden after a post-ready drop; visibilitychange redials", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    mountChat();
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledOnce();
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => closeSocket?.());
+
+    const dialsBefore = vi.mocked(webSessionTransport.connectWebSessionTransport).mock.calls.length;
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledTimes(dialsBefore);
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledTimes(dialsBefore + 1);
+    vi.useRealTimers();
+  });
+
+  it("keeps redialing after more than five post-ready visible closes", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    mountChat();
+    expect(webSessionTransport.connectWebSessionTransport).toHaveBeenCalledOnce();
+
+    for (let i = 0; i < 6; i += 1) {
+      act(() => closeSocket?.());
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+    }
+
+    expect(webSessionTransport.connectWebSessionTransport.mock.calls.length).toBeGreaterThan(6);
+    expect(screen.queryByText("Lost the session connection. Reopen the task to try again.")).not
+      .toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("never records a message as sent while the socket is down", () => {
@@ -392,7 +538,9 @@ describe("SessionChat", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "working" });
     send({ type: "error", message: "ACP process exited" });
-    expect(screen.getByTestId("session-note-error")).toHaveTextContent("ACP process exited");
+    expect(screen.getByTestId("session-note-error")).toHaveTextContent(
+      "The agent stopped. It will restart when you reconnect.",
+    );
     expect(screen.queryByTestId("session-cancel")).not.toBeInTheDocument();
   });
 
@@ -464,10 +612,31 @@ describe("SessionChat", () => {
     expect(transport.dispose).not.toHaveBeenCalled();
   });
 
-  it("does not offer mid-chat model switching", () => {
+  it("offers model switching in Task details when idle", async () => {
     mountChat();
     expect(screen.queryByTestId("session-model-select")).not.toBeInTheDocument();
-    expect(transport.setModel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("session-details"));
+    const select = await screen.findByTestId("session-model-select");
+    fireEvent.change(select, {
+      target: { value: "composer-2.5" },
+    });
+    expect(transport.setModel).toHaveBeenCalledWith("composer-2.5");
+  });
+
+  it("disables model switching while a turn is in flight", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "working" });
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(screen.getByTestId("session-model-select")).toBeDisabled();
+  });
+
+  it("keeps the transcript when ready arrives on a live socket", () => {
+    mountChat();
+    send({ type: "message", role: "user", text: "hello" });
+    send({ type: "message", role: "agent", text: "hi there" });
+    act(() => signalReady?.("composer-2.5"));
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("hello");
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("hi there");
   });
 
   it("keeps the ACP socket when the terminal escape hatch opens", async () => {
@@ -487,7 +656,22 @@ describe("SessionChat", () => {
     expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
     const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
     expect(css).toMatch(/\.session-composer\s*\{[^}]*align-self:\s*stretch/);
+    expect(css).toMatch(/\.session-composer\s*\{[^}]*margin:\s*0\s+-12px/);
     expect(css).toMatch(/\.session-composer\s+textarea\s*\{[^}]*background:\s*transparent/);
+  });
+
+  it("locks the chat thread to vertical scroll only", () => {
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.session-page\.session-chat\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(css).toMatch(/\.session-page\.session-chat\s*\{[^}]*padding:\s*0/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*overflow-y:\s*auto/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*scrollbar-width:\s*none/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*-ms-overflow-style:\s*none/);
+    expect(css).toMatch(/\.session-thread::-webkit-scrollbar\s*\{[^}]*display:\s*none/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*gap:\s*16px/);
+    expect(css).toMatch(/\.session-thread\s*\{[^}]*padding:\s*8px\s+12px\s+0/);
+    expect(css).not.toMatch(/\.session-head\s*\{[^}]*margin:\s*0\s+-12px/);
   });
 
   it("lets the terminal sheet fill past the desktop 58vh task-panel cap", () => {
@@ -498,9 +682,12 @@ describe("SessionChat", () => {
     expect(css).toMatch(
       /\.session-terminal-sheet\s+\.terminal-panel\s+\.terminal-interaction-wrap\s*\{[^}]*height:\s*auto/,
     );
-    expect(css).toMatch(/\.session-composer\s+textarea\s*\{[^}]*min-height:\s*40px/);
+    expect(css).toMatch(/\.session-composer\s+textarea\s*\{[^}]*min-height:\s*28px/);
     expect(css).toMatch(
-      /html\.keyboard-open\s+\.session-composer\s*\{[^}]*padding-bottom:\s*0/,
+      /html\.keyboard-open\s+\.session-composer\s*\{[^}]*padding:\s*2px\s+12px\s+0/,
+    );
+    expect(css).toMatch(
+      /\.session-composer\s+textarea\s*\{[^}]*font-size:\s*var\(--text-body-sm\)/,
     );
   });
 
@@ -511,5 +698,19 @@ describe("SessionChat", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "./SessionChat.tsx"), "utf8");
     expect(source).not.toMatch(/className="session-header"/);
     expect(source).toMatch(/onBack=\{onBack/);
+  });
+
+  it("locks session polish CSS contracts", () => {
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    expect(css).toMatch(/\.session-head-back\s*\{[^}]*min-height:\s*44px/);
+    expect(css).toMatch(/\.session-head-details,\s*\n\.session-head-stop\s*\{[^}]*min-height:\s*44px/);
+    expect(css).toMatch(/\.session-head \.session-title\s*\{[^}]*font-size:\s*var\(--text-body\)/);
+    expect(css).toMatch(/\.session-note\s*\{[^}]*font-size:\s*var\(--text-micro\)/);
+    expect(css).toMatch(/\.session-note\s*\{[^}]*letter-spacing:\s*var\(--tracking-label\)/);
+    expect(css).toMatch(/\.session-reply\.is-live\s*\{[^}]*color:\s*var\(--ink-soft\)/);
+    expect(css).toMatch(/\.session-decision\s*\{[^}]*background:\s*var\(--paper-tint\)/);
+    expect(css).toMatch(/\.session-decision\s*\{[^}]*border-radius:\s*var\(--radius\)/);
+    expect(css).toMatch(/\.session-composer:focus-within\s*\{[^}]*border-top-color:\s*var\(--accent\)/);
+    expect(css).toMatch(/\.session-thread-empty\s*\{[^}]*font-size:\s*var\(--text-body\)/);
   });
 });

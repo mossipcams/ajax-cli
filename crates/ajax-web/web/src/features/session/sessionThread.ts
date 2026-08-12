@@ -11,6 +11,20 @@
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 export { OPEN_FAILURE } from "@/shared/lib/webSessionTransport";
 
+/** Map opaque ACP error strings to operator-facing copy. Human messages pass through. */
+export function explainAcpError(message: string): string {
+  if (/internal error/i.test(message)) {
+    return "The agent rejected that request. Try sending again, or reopen the session.";
+  }
+  if (/ACP process exited/i.test(message)) {
+    return "The agent stopped. It will restart when you reconnect.";
+  }
+  if (/acp request timed out/i.test(message)) {
+    return "The agent did not answer in time. Try sending again.";
+  }
+  return message;
+}
+
 /** `prepare_task_session` refuses the upgrade when the task is not a Cursor
  * orchestration task or its worktree is gone. Both facts are already in the
  * detail payload, so no extra request is needed to say which one it was. */
@@ -162,6 +176,10 @@ function appendProse(
 ): SessionState {
   const tail = state.entries[state.entries.length - 1];
   if (tail?.kind === "prose" && tail.role === role && state.proseOpen) {
+    if (text === tail.text) return state;
+    if (text.startsWith(tail.text) && text.length > tail.text.length) {
+      return replaceTail(state, { ...tail, text });
+    }
     return replaceTail(state, { ...tail, text: tail.text + text });
   }
   return { ...push(state, { kind: "prose", role, text }), proseOpen: true };
@@ -284,7 +302,7 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
       return {
         ...push(
           { ...state, busy: false, status: null, tools: [], plan: [], proseOpen: false },
-          { kind: "note", tone: "error", text: event.message },
+          { kind: "note", tone: "error", text: explainAcpError(event.message) },
         ),
       };
 

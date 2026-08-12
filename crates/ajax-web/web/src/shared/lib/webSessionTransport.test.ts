@@ -107,4 +107,25 @@ describe("connectWebSessionTransport", () => {
     expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "First" }));
     transport.dispose();
   });
+
+  it("sendCancel(true) sends keepQueue on the wire", () => {
+    const socket = fakeSocket();
+    socket.readyState = OPEN_READY_STATE;
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    transport.sendCancel(true);
+    expect(socket.sent).toContainEqual(JSON.stringify({ type: "cancel", keepQueue: true }));
+    transport.sendCancel();
+    expect(socket.sent).toContainEqual(JSON.stringify({ type: "cancel" }));
+    transport.dispose();
+  });
+
+  it("calls onClosed once when error is followed by close", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.emit("error");
+    socket.emit("close");
+    expect(cbs.onClosed).toHaveBeenCalledOnce();
+  });
 });

@@ -168,10 +168,10 @@ async fn handle_client_message(
             );
             ClientHandleResult::Continue
         }
-        SessionClientMessage::Cancel => {
+        SessionClientMessage::Cancel { keep_queue } => {
             let result = {
                 let mut guard = client.lock().unwrap();
-                guard.begin_cancel()
+                guard.begin_cancel(keep_queue)
             };
             if let Err(error) = result {
                 let ok = send_event(socket, &SessionServerEvent::Error { message: error }).await;
