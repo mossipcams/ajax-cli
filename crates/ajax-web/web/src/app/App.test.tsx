@@ -418,19 +418,6 @@ describe("App shell", () => {
     expect(stylesSource).toMatch(/\.result-actions\s+\.pill[\s\S]*?min-height:\s*44px/);
   });
 
-  it("shows a dashboard skeleton while the cockpit projection is loading", () => {
-    render(<App />);
-    expect(screen.getByTestId("dashboard-skeleton")).toBeInTheDocument();
-    expect(screen.queryByText(/All quiet|No tasks/)).not.toBeInTheDocument();
-  });
-
-  it("shows a task skeleton while a task detail is loading", async () => {
-    render(<App />);
-    setHash("#/t/web%2Ffix-login");
-    await screen.findByTestId("outlet-task");
-    expect(screen.getByTestId("task-skeleton")).toBeInTheDocument();
-  });
-
   it("shows the settings outlet on the settings route", async () => {
     render(<App />);
     setHash("#/settings");

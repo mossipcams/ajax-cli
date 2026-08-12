@@ -7,11 +7,6 @@ import {
 } from "@/shared/lib/cockpitPoll";
 import type { BrowserCockpitView, ConnectionState, RemoteResource } from "@/shared/lib/types";
 
-export type ApplyCockpitOptions = {
-  /** Background interval poll: defer while a gesture is active (INP). */
-  deferDuringGesture?: boolean;
-};
-
 export type LoadCockpitOptions = {
   /** Schedule a follow-up poll if one is already in flight (Retry). */
   trailing?: boolean;
@@ -24,7 +19,7 @@ export type CockpitResource = {
   connection: ConnectionState;
   connectionDetail: string | null;
   loadCockpit: (options?: LoadCockpitOptions) => Promise<void>;
-  applyCockpit: (next: BrowserCockpitView, options?: ApplyCockpitOptions) => void;
+  applyCockpit: (next: BrowserCockpitView) => void;
   applyConnectionError: (error: unknown) => void;
   /**
    * Mark the connection healthy without touching the cockpit projection.
@@ -51,10 +46,32 @@ export function useCockpitResource(): CockpitResource {
 
   const cockpitApplyGateRef = useRef(createCockpitApplyGate());
   const cockpitPollGuardRef = useRef(createInFlightGuard());
-  const deferredCockpitRef = useRef<BrowserCockpitView | null>(null);
+  const deferredPollRef = useRef<{ view: BrowserCockpitView; startedAt: number } | null>(null);
 
-  const commitCockpitProjection = useCallback((next: BrowserCockpitView) => {
-    const projectionChanged = cockpitApplyGateRef.current.applyIfChanged(next);
+  const commitMutationProjection = useCallback((next: BrowserCockpitView) => {
+    const gate = cockpitApplyGateRef.current;
+    gate.noteMutation();
+    const projectionChanged = gate.applyIfChanged(next);
+    startTransition(() => {
+      if (projectionChanged) {
+        setCockpit({ status: "ready", data: next, error: null });
+      } else {
+        setCockpit((prev) => {
+          if (prev.status === "stale") {
+            return { status: "ready", data: prev.data, error: null };
+          }
+          return prev;
+        });
+      }
+      setConnection("connected");
+      setConnectionDetail(null);
+    });
+  }, []);
+
+  const commitPollProjection = useCallback((next: BrowserCockpitView, startedAt: number) => {
+    const gate = cockpitApplyGateRef.current;
+    if (startedAt !== gate.pollGeneration()) return;
+    const projectionChanged = gate.applyPollIfChanged(next, startedAt);
     startTransition(() => {
       if (projectionChanged) {
         setCockpit({ status: "ready", data: next, error: null });
@@ -73,12 +90,12 @@ export function useCockpitResource(): CockpitResource {
 
   useEffect(() => {
     return gestureBusyGate.onIdle(() => {
-      const deferred = deferredCockpitRef.current;
+      const deferred = deferredPollRef.current;
       if (!deferred) return;
-      deferredCockpitRef.current = null;
-      commitCockpitProjection(deferred);
+      deferredPollRef.current = null;
+      commitPollProjection(deferred.view, deferred.startedAt);
     });
-  }, [commitCockpitProjection]);
+  }, [commitPollProjection]);
 
   const applyConnectionError = useCallback((error: unknown) => {
     if (error instanceof ApiError) {
@@ -102,16 +119,11 @@ export function useCockpitResource(): CockpitResource {
   }, []);
 
   const applyCockpit = useCallback(
-    (next: BrowserCockpitView, options?: ApplyCockpitOptions) => {
-      if (options?.deferDuringGesture && gestureBusyGate.isBusy()) {
-        // INP: avoid poll re-renders during tap/swipe; resume/recovery must not pass this flag.
-        deferredCockpitRef.current = next;
-        return;
-      }
-      deferredCockpitRef.current = null;
-      commitCockpitProjection(next);
+    (next: BrowserCockpitView) => {
+      deferredPollRef.current = null;
+      commitMutationProjection(next);
     },
-    [commitCockpitProjection],
+    [commitMutationProjection],
   );
 
   // No document.hidden guard here: an iOS home-screen PWA mounts while the
@@ -122,9 +134,13 @@ export function useCockpitResource(): CockpitResource {
     await cockpitPollGuardRef.current.run(
       async () => {
         try {
-          applyCockpit(await fetchCockpit(), {
-            deferDuringGesture: options?.deferDuringGesture,
-          });
+          const startedAt = cockpitApplyGateRef.current.pollGeneration();
+          const next = await fetchCockpit();
+          if (options?.deferDuringGesture && gestureBusyGate.isBusy()) {
+            deferredPollRef.current = { view: next, startedAt };
+            return;
+          }
+          commitPollProjection(next, startedAt);
         } catch (error) {
           applyConnectionError(error);
           const apiError = toApiError(error);
@@ -138,7 +154,7 @@ export function useCockpitResource(): CockpitResource {
       },
       options?.trailing ? { trailing: true } : undefined,
     );
-  }, [applyCockpit, applyConnectionError]);
+  }, [commitPollProjection, applyConnectionError]);
 
   return {
     cockpit,
