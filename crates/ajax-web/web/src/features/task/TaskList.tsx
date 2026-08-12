@@ -67,7 +67,7 @@ const TaskRow = memo(function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : ""]
+  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : "", "ph-no-autocapture"]
     .filter(Boolean)
     .join(" ");
 
@@ -90,6 +90,7 @@ const TaskRow = memo(function TaskRow({
         ref={rowRef}
         type="button"
         className={className}
+        data-ph-no-autocapture=""
         data-handle={card.qualified_handle}
         style={{ transform: `translateX(-${offset}px)` }}
         onClick={handleTap}

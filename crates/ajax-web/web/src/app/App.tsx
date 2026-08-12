@@ -231,10 +231,15 @@ export default function App() {
 
   function openTask(handle: string) {
     const interactionId = beginInteraction("open_task");
-    markNavigationStart(undefined, "open_task");
-    navigateHashWithEnter(taskHash(handle), "left");
     endTapToFeedback(interactionId, "nav_start");
-    endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });
+    // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
+    // A single rAF still runs before paint and would keep INP ~400–500ms.
+    const hash = taskHash(handle);
+    window.setTimeout(() => {
+      markNavigationStart(undefined, "open_task");
+      navigateHashWithEnter(hash, "left");
+      endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });
+    }, 0);
   }
 
   const pullToRefreshRef = usePullToRefresh({
