@@ -713,24 +713,30 @@ describe("TaskTerminal seeded history reveal", () => {
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(revealBody).not.toMatch(/isFollowingLive\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.syncSpacer\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
-    const syncSpacerIndex = revealBody.indexOf("scrollSync.syncSpacer()");
-    const revealFollowIndex = revealBody.indexOf("scrollSync.setFollowLive(true)");
+    expect(revealBody).toMatch(/snapSeedToBottom\(\)/);
+    expect(revealBody).toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
+    expect(revealBody).toMatch(/requestAnimationFrame/);
+    const firstSnapIndex = revealBody.indexOf("snapSeedToBottom()");
+    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
+    const rafIndex = revealBody.indexOf("requestAnimationFrame");
+    expect(firstSnapIndex).toBeGreaterThan(-1);
+    expect(removeIndex).toBeGreaterThan(firstSnapIndex);
+    expect(rafIndex).toBeGreaterThan(removeIndex);
+
+    const snapBody =
+      mountBody.match(/const snapSeedToBottom = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
+    expect(snapBody).toMatch(/scrollSync\.syncSpacer\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
+    expect(snapBody).toMatch(/setHasUnseenOutput\(false\)/);
+    expect(snapBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
+    expect(snapBody).toMatch(/scrollToBottom\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
+    expect(snapBody).toMatch(/scrollSync\.refreshFollow\(\)/);
+    const syncSpacerIndex = snapBody.indexOf("scrollSync.syncSpacer()");
+    const revealFollowIndex = snapBody.indexOf("scrollSync.setFollowLive(true)");
     expect(syncSpacerIndex).toBeGreaterThan(-1);
     expect(revealFollowIndex).toBeGreaterThan(syncSpacerIndex);
-    const revealSnapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
-    expect(revealFollowIndex).toBeGreaterThan(-1);
-    expect(revealSnapIndex).toBeGreaterThan(revealFollowIndex);
-    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
-    expect(revealBody).toMatch(/scrollToBottom\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
-    expect(revealBody).toMatch(/scrollSync\.refreshFollow\(\)/);
-    const snapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
-    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
-    expect(snapIndex).toBeGreaterThan(-1);
-    expect(removeIndex).toBeGreaterThan(snapIndex);
 
     const deferBody =
       mountBody.match(/const deferSeedReveal = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
