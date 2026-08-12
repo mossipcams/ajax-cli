@@ -367,7 +367,8 @@ fn git_live_outputs() -> Vec<CommandOutput> {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
-    ]
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        ]
 }
 fn checkout_mismatch_refresh_outputs() -> Vec<CommandOutput> {
     vec![
@@ -376,7 +377,8 @@ fn checkout_mismatch_refresh_outputs() -> Vec<CommandOutput> {
             "worktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/fix/pane-stuck\n\n",
         ),
         output(0, "main\najax/fix-login\nfix/pane-stuck\n"),
-    ]
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        ]
 }
 fn expected_git_observation_commands() -> Vec<CommandSpec> {
     vec![

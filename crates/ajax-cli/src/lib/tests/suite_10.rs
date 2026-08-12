@@ -581,7 +581,8 @@ fn drop_plan_refreshes_stale_git_evidence_before_rendering_commands() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     let rendered = render_drop_command(subcommand, &mut context, &mut runner).unwrap();
     assert!(rendered.state_changed);
     assert_eq!(

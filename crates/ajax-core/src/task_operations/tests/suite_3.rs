@@ -64,16 +64,16 @@ fn execute_drop_always_force_deletes_branch_with_d() {
             .unwrap();
 
     assert!(runner.commands.iter().any(|command| {
-        command.program == "git"
-            && command.args.iter().any(|arg| arg == "branch")
-            && command.args.iter().any(|arg| arg == "-D")
-            && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        command.program == "sh"
+            && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+            && command.args[1].contains("branch -D")
+            && command.args[4] == "ajax/fix-login"
     }));
     assert!(!runner.commands.iter().any(|command| {
-        command.program == "git"
-            && command.args.iter().any(|arg| arg == "branch")
-            && command.args.iter().any(|arg| arg == "-d")
-            && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        command.program == "sh"
+            && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+            && command.args[1].contains("branch -d")
+            && command.args[4] == "ajax/fix-login"
     }));
     let uses_force_worktree_remove = runner.commands.iter().any(|command| {
         command.program == "sh"
@@ -318,9 +318,9 @@ fn drop_retry_repeats_receipted_step_when_fresh_observation_finds_resource_prese
 
     assert_eq!(completion, DropTaskCompletion::Removed);
     assert!(runner.commands.iter().any(|command| {
-        command.program == "git"
-            && command.args.contains(&"branch".to_string())
-            && command.args.contains(&"ajax/fix-login".to_string())
+        command.program == "sh"
+            && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
+            && command.args[4] == "ajax/fix-login"
     }));
     assert!(context
         .registry
@@ -449,7 +449,7 @@ fn drop_operation_executes_teardown_and_completes_from_final_observation() {
         command.program == "git" && command.args.iter().any(|arg| arg == "worktree")
     }));
     assert!(runner.commands.iter().any(|command| {
-        command.program == "git" && command.args.iter().any(|arg| arg == "branch")
+        command.program == "sh" && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
     }));
 
     assert!(context
@@ -497,6 +497,34 @@ fn drop_operation_treats_invalid_branch_delete_error_as_already_absent() {
             .unwrap();
 
     assert_eq!(outputs.len(), 3);
+    assert_eq!(completion, DropTaskCompletion::Removed);
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_none());
+}
+
+#[test]
+fn drop_operation_treats_remote_branch_not_found_as_already_absent() {
+    let mut context = context_with_cleanable_task();
+    let mut outputs = present_drop_observation_outputs();
+    outputs.extend([
+        output(0, "", ""),
+        output(
+            1,
+            "",
+            "error: unable to delete 'ajax/fix-login': remote ref does not exist",
+        ),
+        output(0, "", ""),
+    ]);
+    outputs.extend(absent_drop_observation_outputs());
+    let mut runner = RecordingQueuedRunner::new(outputs);
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let (_outputs, completion) =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
     assert_eq!(completion, DropTaskCompletion::Removed);
     assert!(context
         .registry

@@ -397,12 +397,29 @@ case "$*" in
   *" fetch origin "*)
     exit 0
     ;;
+  *" show-ref --verify --quiet refs/heads/"*)
+    ref="${@: -1}"
+    branch="${ref#refs/heads/}"
+    created="$AJAX_SMOKE_SUBSTRATE_DIR/created-branches"
+    deleted="$AJAX_SMOKE_SUBSTRATE_DIR/deleted-branches"
+    if [[ -f "$created" ]] && grep -qx "$branch" "$created"; then
+      if [[ -f "$deleted" ]] && grep -qx "$branch" "$deleted"; then
+        exit 1
+      fi
+      exit 0
+    fi
+    exit 1
+    ;;
   *" show-ref --verify --quiet "*)
     # Start planning probes whether ajax/<handle> already exists; absent ⇒ exit 1.
     exit 1
     ;;
   *" worktree add "*)
     worktree="${7:-}"
+    branch="${6:-}"
+    if [[ "$branch" == ajax/* ]]; then
+      printf '%s\n' "$branch" >> "$AJAX_SMOKE_SUBSTRATE_DIR/created-branches"
+    fi
     mkdir -p "$worktree"
     printf 'worktree\n' > "$worktree/.ajax-smoke-worktree"
     ;;
@@ -411,6 +428,13 @@ case "$*" in
     rm -rf "$target"
     ;;
   *" branch -d ajax/"*|*" branch -D ajax/"*)
+    branch="${@: -1}"
+    printf '%s\n' "$branch" >> "$AJAX_SMOKE_SUBSTRATE_DIR/deleted-branches"
+    exit 0
+    ;;
+  *" push origin --delete ajax/"*)
+    branch="${@: -1}"
+    printf '%s\n' "$branch" >> "$AJAX_SMOKE_SUBSTRATE_DIR/deleted-branches"
     exit 0
     ;;
   *" switch main")
@@ -442,16 +466,34 @@ case "$*" in
       done
     fi
     ;;
-  *" branch --format=%(refname:short)"*)
+  *" branch --format=%(refname:short)"*|*" branch -r --format=%(refname:short)"*)
+    remote=0
+    if [[ "$*" == *" branch -r "* ]]; then
+      remote=1
+    fi
     repo="${2:-}"
     repo_slug="$(basename "$repo")"
-    printf 'main\n'
+    deleted="$AJAX_SMOKE_SUBSTRATE_DIR/deleted-branches"
+    branch_is_deleted() {
+      local name="$1"
+      [[ -f "$deleted" ]] && grep -qx "$name" "$deleted"
+    }
+    emit_branch() {
+      local name="$1"
+      branch_is_deleted "$name" && return 0
+      if (( remote == 1 )); then
+        printf 'origin/%s\n' "$name"
+      else
+        printf '%s\n' "$name"
+      fi
+    }
+    emit_branch "main"
     worktrees_root="$(dirname "$repo")/$(basename "$repo")__worktrees"
     if [[ -d "$worktrees_root" ]]; then
       for dir in "$worktrees_root"/ajax-*; do
         [[ -d "$dir" ]] || continue
         branch_suffix="${dir##*/ajax-}"
-        printf 'ajax/%s\n' "$branch_suffix"
+        emit_branch "ajax/$branch_suffix"
       done
     fi
     if [[ -d "$HOME/worktrees" ]]; then
@@ -459,7 +501,7 @@ case "$*" in
         [[ -d "$repo_dir" ]] || continue
         for dir in "$repo_dir"/*; do
           [[ -d "$dir" ]] || continue
-          printf 'ajax/%s\n' "$(basename "$dir")"
+          emit_branch "ajax/$(basename "$dir")"
         done
       done
     fi

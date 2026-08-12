@@ -120,11 +120,17 @@ pub(super) fn present_drop_observation_outputs() -> Vec<CommandOutput> {
             "",
         ),
         output(0, "ajax/fix-login\n", ""),
+        output(0, "origin/ajax/fix-login\n", ""),
     ]
 }
 
 pub(super) fn absent_drop_observation_outputs() -> Vec<CommandOutput> {
-    vec![output(0, "", ""), output(0, "", ""), output(0, "", "")]
+    vec![
+        output(0, "", ""),
+        output(0, "", ""),
+        output(0, "", ""),
+        output(0, "", ""),
+    ]
 }
 
 pub(super) fn context() -> CommandContext<InMemoryRegistry> {

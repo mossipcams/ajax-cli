@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ddffefd3549fb4379338b4914ecb15a5961726278b0bd810f0a12d0a19615843 # shrinks to tmux_exists = false, dirty = false, conflicted = false, side_dirty = false, side_conflicted = false, untracked_files = 0, merged = false

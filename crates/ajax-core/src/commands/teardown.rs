@@ -103,6 +103,48 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
         return Ok(true);
     }
 
+    if is_delete_branch_substrate_command(command)
+        && command.args.get(4).is_some_and(|arg| arg == &task.branch)
+    {
+        if let Some(mut git_status) = task.git_status.clone() {
+            git_status.branch_exists = false;
+            git_status.current_branch = None;
+            git_status.ahead = 0;
+            git_status.behind = 0;
+            git_status.unpushed_commits = 0;
+            context
+                .registry
+                .update_git_status(&task.id, git_status)
+                .map_err(CommandError::Registry)?;
+        } else if let Some(task) = context.registry.get_task_mut(&task.id) {
+            task.add_side_flag(SideFlag::BranchMissing);
+            task.remove_side_flag(SideFlag::Unpushed);
+        }
+        return Ok(true);
+    }
+
+    if command.program == "git"
+        && command.args.iter().any(|arg| arg == "push")
+        && command.args.iter().any(|arg| arg == "--delete")
+        && command.args.iter().any(|arg| arg == &task.branch)
+    {
+        if let Some(mut git_status) = task.git_status.clone() {
+            git_status.branch_exists = false;
+            git_status.current_branch = None;
+            git_status.ahead = 0;
+            git_status.behind = 0;
+            git_status.unpushed_commits = 0;
+            context
+                .registry
+                .update_git_status(&task.id, git_status)
+                .map_err(CommandError::Registry)?;
+        } else if let Some(task) = context.registry.get_task_mut(&task.id) {
+            task.add_side_flag(SideFlag::BranchMissing);
+            task.remove_side_flag(SideFlag::Unpushed);
+        }
+        return Ok(true);
+    }
+
     if command.program == "git"
         && command.args.iter().any(|arg| arg == "branch")
         && (command.args.iter().any(|arg| arg == "-d")
@@ -136,6 +178,15 @@ pub fn is_fast_worktree_remove_command(command: &CommandSpec) -> bool {
             .args
             .get(2)
             .is_some_and(|arg| arg == "ajax-fast-worktree-remove")
+}
+
+pub fn is_delete_branch_substrate_command(command: &CommandSpec) -> bool {
+    command.program == "sh"
+        && command.args.first().is_some_and(|arg| arg == "-c")
+        && command
+            .args
+            .get(2)
+            .is_some_and(|arg| arg == "ajax-delete-branch")
 }
 
 pub fn clean_task_plan<R: Registry>(
@@ -546,6 +597,7 @@ pub fn plan_drop_from_observation_for_task(
 pub struct RepoDropObservationCache {
     pub worktrees_output: Option<String>,
     pub branches_output: Option<String>,
+    pub remote_branches_output: Option<String>,
 }
 
 pub fn observe_drop_resources<R: Registry>(
@@ -591,6 +643,13 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
                 ObservationOutput::Unsupported | ObservationOutput::Unknown => None,
             };
     }
+    if repo_cache.remote_branches_output.is_none() {
+        repo_cache.remote_branches_output =
+            match run_observation_command(runner, &git.list_remote_branches(&repo_path))? {
+                ObservationOutput::Output(output) => Some(output),
+                ObservationOutput::Unsupported | ObservationOutput::Unknown => None,
+            };
+    }
     let worktrees_output = repo_cache
         .worktrees_output
         .as_ref()
@@ -598,6 +657,11 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
         .unwrap_or(ObservationOutput::Unknown);
     let branches_output = repo_cache
         .branches_output
+        .as_ref()
+        .map(|output| ObservationOutput::Output(output.clone()))
+        .unwrap_or(ObservationOutput::Unknown);
+    let remote_branches_output = repo_cache
+        .remote_branches_output
         .as_ref()
         .map(|output| ObservationOutput::Output(output.clone()))
         .unwrap_or(ObservationOutput::Unknown);
@@ -636,20 +700,37 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
     }
     .into_iter()
     .collect::<BTreeSet<_>>();
+    let parsed_remote_branches = match &remote_branches_output {
+        ObservationOutput::Output(output) => GitAdapter::parse_remote_branches(output),
+        ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
+    }
+    .into_iter()
+    .collect::<BTreeSet<_>>();
     let branch_seen_in_worktree = path_matched_worktree
         .and_then(|worktree| worktree.branch.as_ref())
         .is_some_and(|branch| branch == &task.branch);
-    let branch = match branches_output {
-        ObservationOutput::Output(_) => {
-            state_from_bool(parsed_branches.contains(&task.branch) || branch_seen_in_worktree)
+    let branch_present = parsed_branches.contains(&task.branch)
+        || parsed_remote_branches.contains(&task.branch)
+        || branch_seen_in_worktree;
+    let branch = match (branches_output, remote_branches_output) {
+        (ObservationOutput::Output(_), _) | (_, ObservationOutput::Output(_)) => {
+            state_from_bool(branch_present)
         }
-        ObservationOutput::Unsupported => task
+        (ObservationOutput::Unsupported, ObservationOutput::Unsupported) => task
             .git_status
             .as_ref()
             .map(|status| state_from_bool(status.branch_exists))
             .unwrap_or(ResourceState::Unknown),
-        ObservationOutput::Unknown if branch_seen_in_worktree => ResourceState::Present,
-        ObservationOutput::Unknown => ResourceState::Unknown,
+        (ObservationOutput::Unknown, ObservationOutput::Unknown) if branch_seen_in_worktree => {
+            ResourceState::Present
+        }
+        (ObservationOutput::Unknown, ObservationOutput::Unknown) => ResourceState::Unknown,
+        (ObservationOutput::Unsupported, ObservationOutput::Unknown)
+        | (ObservationOutput::Unknown, ObservationOutput::Unsupported) => task
+            .git_status
+            .as_ref()
+            .map(|status| state_from_bool(status.branch_exists))
+            .unwrap_or(ResourceState::Unknown),
     };
 
     apply_drop_observation_evidence(context, task, tmux_session, worktree, branch)?;
@@ -704,11 +785,7 @@ fn native_teardown_commands<R: Registry>(
                 .git_status
                 .as_ref()
                 .is_some_and(|status| !status.merged);
-        let command = if needs_force {
-            git.force_delete_branch(&repo_path, &task.branch)
-        } else {
-            git.delete_branch(&repo_path, &task.branch)
-        };
+        let command = git.delete_branch_substrate(&repo_path, &task.branch, needs_force);
         commands.push(command);
     }
     if task

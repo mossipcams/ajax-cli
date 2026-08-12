@@ -17,6 +17,7 @@ fn drop_execute_keeps_task_when_worktree_remove_fails_before_tmux_session_kill()
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         CommandOutput {
             status_code: 2,
             stdout: String::new(),
@@ -28,7 +29,8 @@ fn drop_execute_keeps_task_when_worktree_remove_fails_before_tmux_session_kill()
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
-    ]);
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        ]);
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute"],
         &mut context,
@@ -72,7 +74,8 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
-            output(0, ""),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        output(0, ""),
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
@@ -84,6 +87,7 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         ]);
     let error = run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute"],
@@ -94,7 +98,7 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
     assert_eq!(
         error,
         CliError::CommandFailedAfterStateChange(
-            "drop incomplete for web/fix-login at delete branch: git exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`".to_string()
+            "drop incomplete for web/fix-login at delete branch: sh exited with status 2: branch delete failed; retry with `ajax drop web/fix-login --execute`".to_string()
         )
     );
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
@@ -128,7 +132,8 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
-            output(0, ""),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        output(0, ""),
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
@@ -140,6 +145,7 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         ]);
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute"],
@@ -154,6 +160,7 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         output(0, ""),
         output(0, ""),
         output(
@@ -161,7 +168,8 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute"],
         &mut context,
@@ -447,10 +455,7 @@ fn diff_execute_uses_injected_runner() {
 #[test]
 fn sweep_execute_uses_injected_runner_and_marks_safe_tasks_removed() {
     let mut context = cleanable_context();
-    let mut runner_outputs = vec![output(0, "")];
-    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
-    runner_outputs.extend(vec![output(0, ""), output(0, ""), output(0, "")]);
-    let mut runner = QueuedRunner::new(runner_outputs);
+    let mut runner = QueuedRunner::new(present_cleanable_drop_outputs());
     run_with_context_and_runner(["ajax", "tidy", "--execute"], &mut context, &mut runner).unwrap();
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
