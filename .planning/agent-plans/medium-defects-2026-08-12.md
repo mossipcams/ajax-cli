@@ -21,7 +21,7 @@ and update the current PR branch.
 - [x] #835 — revalidate cockpit connection after returning to dashboard. Focused polling suite: 8 passed.
 - [x] #805 — add ErrorBoundary recovery action. Focused boundary tests: 5 passed.
 - [x] #804 — clear update banner when the server rolls back to boot version. Focused version-monitor tests: 6 passed.
-- [ ] Run focused and full verification; update PR description and issue links.
+- [x] Run focused and full verification; update PR description and issue links.
 
 ## Verification
 
@@ -33,4 +33,4 @@ Results so far:
 - Focused web tests: 42 passed; focused CLI regression: 1 passed.
 - `npm run web:check`: passed.
 - `npm run verify`: passed — 1,850 Rust tests; 755 web tests passed and 9 skipped.
-- Release build/install checks: pending commit hook.
+- Release build/install checks: passed in the commit hook for commit `6704be5`.
