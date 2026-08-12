@@ -419,6 +419,22 @@ pub(super) async fn get(app: &axum::Router, cookie: &str, path: &str) -> axum::r
         .unwrap()
 }
 
+pub(super) async fn get_foreground(
+    app: &axum::Router,
+    cookie: &str,
+    path: &str,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            authenticated_request(cookie, path)
+                .header(super::task_routes::AJAX_FOREGROUND_HEADER, "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
 pub(super) async fn get_with_access(
     app: &axum::Router,
     cookie: &str,
