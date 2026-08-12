@@ -2,7 +2,7 @@ use super::command::CommandSpec;
 use crate::models::AgentClient;
 
 /// Default Cursor Agent model for Ajax-started tasks (not Fast).
-pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.5-high";
+pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentLaunch {
