@@ -45,6 +45,7 @@ export default function SettingsView({
     useState<PushSubscriptionStatus>("disabled");
   const [testingPush, setTestingPush] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const diagnosticsLatchRef = useRef(false);
 
   async function refreshPushSubscriptionStatus() {
     setPushSubscriptionStatus(await getPushSubscriptionStatus());
@@ -110,17 +111,29 @@ export default function SettingsView({
   }
 
   async function runDiagnostics() {
-    setDiagnosticsOutput("Running diagnostics...");
-    const report = await buildDiagnosticsReport(detailHandle);
-    setDiagnosticsOutput(JSON.stringify(report, null, 2));
+    if (diagnosticsLatchRef.current) return;
+    diagnosticsLatchRef.current = true;
+    try {
+      setDiagnosticsOutput("Running diagnostics...");
+      const report = await buildDiagnosticsReport(detailHandle);
+      setDiagnosticsOutput(JSON.stringify(report, null, 2));
+    } finally {
+      diagnosticsLatchRef.current = false;
+    }
   }
 
   async function copyDiagnostics() {
-    const report = await buildDiagnosticsReport(detailHandle);
-    const text = JSON.stringify(report, null, 2);
-    setDiagnosticsOutput(text);
-    const copied = await copyText(text);
-    onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
+    if (diagnosticsLatchRef.current) return;
+    diagnosticsLatchRef.current = true;
+    try {
+      const report = await buildDiagnosticsReport(detailHandle);
+      const text = JSON.stringify(report, null, 2);
+      setDiagnosticsOutput(text);
+      const copied = await copyText(text);
+      onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
+    } finally {
+      diagnosticsLatchRef.current = false;
+    }
   }
 
   async function enablePush() {

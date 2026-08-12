@@ -127,6 +127,21 @@ describe("ResultPanel", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("fires onConfirm only once under same-turn double click", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={onConfirm}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const confirm = screen.getByText("Confirm");
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
   it("calls onCancelConfirm when Cancel is clicked in confirm mode", () => {
     const onCancelConfirm = vi.fn();
     const onDismiss = vi.fn();
