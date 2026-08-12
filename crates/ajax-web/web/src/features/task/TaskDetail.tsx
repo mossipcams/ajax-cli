@@ -16,6 +16,8 @@ interface Props {
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
   onDismiss?: () => void;
+  pendingConfirmAction?: string | null;
+  onCancelPendingConfirm?: () => void;
 }
 
 export default function TaskDetail({
@@ -26,6 +28,8 @@ export default function TaskDetail({
   onResult,
   onMutated,
   onDismiss,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: Props) {
   const meta = statusMeta(detail.status);
   const actions = visibleTaskActions(detail.actions);
@@ -89,6 +93,8 @@ export default function TaskDetail({
             onResult={onResult}
             onMutated={onMutated}
             onDismiss={onDismiss}
+            pendingConfirmAction={pendingConfirmAction}
+            onCancelPendingConfirm={onCancelPendingConfirm}
           />
         ) : null}
       </section>
