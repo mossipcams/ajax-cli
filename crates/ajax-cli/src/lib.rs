@@ -473,6 +473,11 @@ pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTask
     let title = matches.get_one::<String>("title").cloned().ok_or_else(|| {
         CliError::CommandFailed("task title is required; pass --title".to_string())
     })?;
+    if title.trim().is_empty() {
+        return Err(CliError::CommandFailed(
+            "task title is required; pass --title".to_string(),
+        ));
+    }
     let agent = matches
         .get_one::<String>("agent")
         .cloned()

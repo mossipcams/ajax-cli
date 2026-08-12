@@ -354,6 +354,13 @@ export default function App() {
     };
   }, []);
 
+  const wasListRouteRef = useRef(route.kind === "dashboard" || route.kind === "project");
+  useEffect(() => {
+    const isListRoute = route.kind === "dashboard" || route.kind === "project";
+    if (isListRoute && !wasListRouteRef.current) void loadCockpit();
+    wasListRouteRef.current = isListRoute;
+  }, [loadCockpit, route.kind]);
+
   // Adaptive cockpit / version intervals. Derive the scalar cadences first: an
   // inline object literal is a new value every render and could never be a
   // dependency, which is what forced the old suppression here.

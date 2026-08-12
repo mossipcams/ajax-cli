@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { IncompatibleResponseError } from "@/shared/lib/contracts";
 
@@ -46,6 +46,24 @@ describe("ErrorBoundary", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Incompatible server response");
     expect(alert).toHaveTextContent("detail.status is invalid: nope");
+  });
+
+  it("recovers after retrying a render crash", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let shouldThrow = true;
+    function ThrowUntilRetry() {
+      if (shouldThrow) throw new Error("temporary render failure");
+      return <p>recovered</p>;
+    }
+
+    render(
+      <ErrorBoundary>
+        <ThrowUntilRetry />
+      </ErrorBoundary>,
+    );
+    shouldThrow = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByText("recovered")).toBeInTheDocument();
   });
 
   it("logs the error and component stack for diagnosis", () => {

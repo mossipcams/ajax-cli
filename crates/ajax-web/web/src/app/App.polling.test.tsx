@@ -155,6 +155,42 @@ describe("App polling cadence", () => {
     await vi.waitFor(() => expect(cockpitCalls()).toBe(afterRouteChange + 1));
   });
 
+  it("refreshes the cockpit when returning from a failed task route", async () => {
+    vi.useFakeTimers();
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          return Promise.resolve(jsonResponse(cockpit));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse({}, 404));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    await act(async () => {
+      setHash(taskHash("web/missing"));
+    });
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "disconnected"),
+    );
+
+    const beforeReturn = cockpitCalls;
+    await act(async () => {
+      setHash("");
+    });
+    await vi.waitFor(() => expect(cockpitCalls).toBeGreaterThan(beforeReturn));
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
+  });
+
   it("keeps one focus listener across re-renders", async () => {
     vi.useFakeTimers();
     const { fetchMock, cockpitCalls } = cockpitCountingFetch();

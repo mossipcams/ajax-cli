@@ -39,13 +39,16 @@ export function useTaskDetailResource(
       depsRef.current.markConnected();
     } catch (error) {
       if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
-      if (!(error instanceof ApiError)) return;
-      depsRef.current.applyConnectionError(error);
+      const detailError =
+        error instanceof ApiError
+          ? error
+          : new ApiError("incompatible", error instanceof Error ? error.message : String(error));
+      if (error instanceof ApiError) depsRef.current.applyConnectionError(error);
       setDetail((prev) => {
         if (prev.status === "ready" || prev.status === "stale") {
-          return { status: "stale", data: prev.data, error };
+          return { status: "stale", data: prev.data, error: detailError };
         }
-        return { status: "error", data: null, error };
+        return { status: "error", data: null, error: detailError };
       });
     }
   }, []);

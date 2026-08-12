@@ -46,6 +46,25 @@ describe("parseRoute", () => {
     });
   });
 
+  it("accepts one trailing slash on a task diff route", () => {
+    expect(parseRoute("#/t/web%2Ffix-login/diff/?pr=12")).toEqual({
+      kind: "diff",
+      handle: "web/fix-login",
+      pr: 12,
+    });
+  });
+
+  it("rejects partial and unsafe PR query values", () => {
+    expect(parseRoute("#/t/web%2Ffix-login/diff?pr=12abc")).toEqual({
+      kind: "diff",
+      handle: "web/fix-login",
+    });
+    expect(parseRoute("#/t/web%2Ffix-login/diff?pr=999999999999999999999")).toEqual({
+      kind: "diff",
+      handle: "web/fix-login",
+    });
+  });
+
   it("falls back to dashboard for unknown hashes", () => {
     expect(parseRoute("#/garbage")).toEqual({ kind: "dashboard" });
   });

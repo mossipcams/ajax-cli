@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import taskDetailFixture from "@/fixtures/task-detail.json";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { ApiError } from "@/shared/lib/api";
+import { IncompatibleResponseError } from "@/shared/lib/contracts";
 import { useTaskDetailResource } from "./useTaskDetailResource";
 
 const taskDetail = taskDetailFixture as BrowserTaskDetail;
@@ -99,6 +100,19 @@ describe("useTaskDetailResource", () => {
     expect(result.current.detail.data).toBeNull();
     expect(result.current.detail.error).toMatchObject({ kind: "http", message: "HTTP 503" });
     expect(deps.applyConnectionError).toHaveBeenCalled();
+  });
+
+  it("maps incompatible detail responses to a recoverable error", async () => {
+    fetchDetail.mockRejectedValue(new IncompatibleResponseError("detail.actions is invalid"));
+    const deps = stableDeps();
+    const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
+
+    await waitFor(() => expect(result.current.detail.status).toBe("error"));
+    expect(result.current.detail.error).toMatchObject({
+      kind: "incompatible",
+      message: "Incompatible server response: detail.actions is invalid",
+    });
+    expect(deps.applyConnectionError).not.toHaveBeenCalled();
   });
 
   it("maps first-load network failure to error (not eternal loading)", async () => {
