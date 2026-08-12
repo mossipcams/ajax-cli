@@ -116,6 +116,11 @@ describe("App polling cadence", () => {
 
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+    // Flush the quiet-fleet re-render so the 10s idle interval replaces the
+    // 3s active one started while cockpit.data was still null.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     // Quiet fleet cadence is 10s: 3s active would add a poll here.
     await vi.advanceTimersByTimeAsync(3000);

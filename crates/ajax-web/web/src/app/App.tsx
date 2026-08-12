@@ -96,6 +96,11 @@ export default function App() {
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropResolvedRef = useRef(false);
   const dropHandles: DropUndoHandles = { dropTimerRef, dropResolvedRef };
+  // Sticky leave latch: once the operator leaves the dropped task (including
+  // during shell confirm, before Confirm), late Drop success must not go(#/).
+  // Snapshotting location.hash only at API-completion races swipe/Back settle,
+  // which delays the hash change by SWIPE_PAGE_COMMIT_MS.
+  const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
@@ -132,7 +137,11 @@ export default function App() {
     },
   ) {
     if (options?.pendingConfirm) {
-      setPendingConfirm(options.pendingConfirm);
+      const pending = options.pendingConfirm;
+      if (pending.action.action === "drop") {
+        dropLeaveLatchRef.current = { handle: pending.handle, left: false };
+      }
+      setPendingConfirm(pending);
       return;
     }
     setResult({ message, output, isError, onUndo: options?.onUndo, onCommit: options?.onCommit });
@@ -149,6 +158,7 @@ export default function App() {
       op: pendingConfirm.action.action,
       error_kind: "undo",
     });
+    dropLeaveLatchRef.current = null;
     dismissPendingConfirm();
   }
 
@@ -158,6 +168,7 @@ export default function App() {
       ok: false,
       error_kind: "confirm_timeout",
     });
+    dropLeaveLatchRef.current = null;
     dismissPendingConfirm();
   }
 
@@ -165,10 +176,11 @@ export default function App() {
     if (!pendingConfirm) return;
     const { action, handle, interactionId } = pendingConfirm;
     dismissPendingConfirm();
-    // Drop's undo timer outlives ActionBar. Treat "still on this task" as mounted
-    // so a late commit does not yank the operator off a task they switched to.
-    const viewingDroppedHandle = () => {
-      const current = parseRoute(location.hash);
+    // Drop's undo timer outlives ActionBar. Dismiss to dashboard only while the
+    // operator is still on the dropped task — leave latch + live hash check.
+    const stillOnDroppedTask = () => {
+      if (dropLeaveLatchRef.current?.left) return false;
+      const current = parseRoute(window.location.hash);
       return (
         (current.kind === "task" || current.kind === "diff") && current.handle === handle
       );
@@ -184,8 +196,17 @@ export default function App() {
           if (route.kind === "task" && route.handle) reload();
           else void loadCockpit();
         },
-        isMounted: viewingDroppedHandle,
-        onDismiss: () => go(dashboardHash()),
+        isMounted: stillOnDroppedTask,
+        onDismiss: () => {
+          // Re-check at navigate time: API may have resolved before swipe settle
+          // updated the hash, or after the leave latch flipped.
+          if (!stillOnDroppedTask()) {
+            dropLeaveLatchRef.current = null;
+            return;
+          }
+          dropLeaveLatchRef.current = null;
+          go(dashboardHash());
+        },
       },
       dropHandles,
     );
@@ -348,6 +369,16 @@ export default function App() {
       setSheetOpen(false);
     }
   }, [route.kind, sheetOpen]);
+
+  // Flip Drop leave latch as soon as React observes a non-dropped route so a
+  // late Drop success cannot go(#/) after the operator has moved on.
+  useEffect(() => {
+    const latch = dropLeaveLatchRef.current;
+    if (!latch) return;
+    const stillOnDropped =
+      (route.kind === "task" || route.kind === "diff") && route.handle === latch.handle;
+    if (!stillOnDropped) latch.left = true;
+  }, [route]);
 
   useEffect(() => {
     const kind = route.kind;

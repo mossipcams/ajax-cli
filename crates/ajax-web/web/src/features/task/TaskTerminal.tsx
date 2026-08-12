@@ -15,6 +15,12 @@ import {
   seedBackspaceSentinel,
   seedSentinelFromFocus,
 } from "./terminalBackspaceSentinel";
+import {
+  deleteInputPayload,
+  pasteRawFromExpectValue,
+  pasteTextFromBeforeInput,
+  readToolbarPasteText,
+} from "./terminalPaste";
 
 interface Props {
   handle: string;
@@ -274,14 +280,8 @@ export default function TaskTerminal({ handle }: Props) {
 
   // Measured on an iOS 26 Simulator: a held Delete repeats deleteContentBackward
   // at ~100ms, then escalates to deleteWordBackward after ~800ms. Ignoring the
-  // escalation strands the rest of the hold.
-  const deleteInputPayload = (inputType: string): string | null => {
-    if (inputType === "deleteWordBackward") return "\x17";
-    if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
-      return "\x7f";
-    }
-    return null;
-  };
+  // escalation strands the rest of the hold. deleteInputPayload is in
+  // terminalPaste.ts.
 
   // Backspace is the one key we leave uncancelled (cancelling it kills the iOS
   // hold-to-delete repeat), so WebKit really edits the helper textarea and then
@@ -330,17 +330,7 @@ export default function TaskTerminal({ handle }: Props) {
   };
 
   const onTextareaPasteBeforeInput = (event: InputEvent) => {
-    // iOS keyboard "Paste" / QuickType link often uses beforeinput with the
-    // URL in event.data and an empty ClipboardEvent.clipboardData.
-    if (
-      event.inputType !== "insertFromPaste" &&
-      event.inputType !== "insertFromPasteAsQuotation"
-    ) {
-      return;
-    }
-    const text =
-      (event.dataTransfer ? readPasteText(event.dataTransfer) : "") ||
-      (event.data ?? "").trim();
+    const text = pasteTextFromBeforeInput(event);
     if (!text) return;
     event.preventDefault();
     sendPastedText(text);
@@ -381,7 +371,7 @@ export default function TaskTerminal({ handle }: Props) {
     ) {
       const textarea = event.currentTarget;
       if (textarea instanceof HTMLTextAreaElement) {
-        const raw = textarea.value.replaceAll(BACKSPACE_SENTINEL, "");
+        const raw = pasteRawFromExpectValue(textarea.value);
         pasteExpectRef.current = false;
         // Force-clear: seedBackspaceSentinel no-ops when ZWS is still present
         // beside the pasted text.
@@ -541,12 +531,11 @@ export default function TaskTerminal({ handle }: Props) {
 
   const requestPaste = async (ownedFocus: boolean) => {
     try {
-      const readText = navigator.clipboard?.readText;
-      if (!readText) {
+      const text = await readToolbarPasteText();
+      if (text === null) {
         openPasteFallback(ownedFocus, "Clipboard unavailable — paste below.");
         return;
       }
-      const text = await readText.call(navigator.clipboard);
       if (!text) {
         refocusTermIfOwned(ownedFocus);
         return;

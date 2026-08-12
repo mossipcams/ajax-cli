@@ -6,10 +6,11 @@ import taskTerminalSource from "./TaskTerminal.tsx?raw";
 import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
 import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
 import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw";
+import terminalPasteSource from "./terminalPaste.ts?raw";
 
-/** Shell + peeled mount/speech modules for source-contract asserts. */
+/** Shell + peeled mount/speech/paste modules for source-contract asserts. */
 const taskTerminalFeatureSource =
-  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}`;
+  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -456,8 +457,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     // like in the app.
     const payloads = extractBlock(
       taskTerminalFeatureSource,
-      /const deleteInputPayload\s*=\s*\(inputType:\s*string\)/,
-      /\n {2}\};/,
+      /export function deleteInputPayload\s*\(inputType:\s*string\)/,
+      /\n\}/,
     );
     expect(payloads).toMatch(/deleteContentBackward[\s\S]*?"\\x7f"/);
     expect(payloads).toMatch(/deleteWordBackward[\s\S]*?"\\x17"/);
@@ -488,7 +489,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(onInput).toMatch(/insertFromPaste/);
     expect(onInput).toMatch(/insertReplacementText/);
     expect(onInput).toMatch(/pasteExpectRef\.current/);
-    expect(onInput).toMatch(/replaceAll\(BACKSPACE_SENTINEL/);
+    expect(onInput).toMatch(/pasteRawFromExpectValue\(textarea\.value\)/);
     expect(onInput).toMatch(/textarea\.value\s*=\s*BACKSPACE_SENTINEL/);
     expect(onInput).toMatch(/sendPastedText\(raw\)/);
     // insertText must not clear pasteExpect before recovery — Safari often
@@ -497,6 +498,45 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(onInput).toMatch(
       /insertFromPaste[\s\S]*pasteExpectRef\.current[\s\S]*insertText/,
     );
+  });
+
+  it("treats insertText beforeinput with a full http(s) URL as paste", () => {
+    const beforePaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const onTextareaPasteBeforeInput\s*=\s*\(event:\s*InputEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(beforePaste).toMatch(/pasteTextFromBeforeInput\(event\)/);
+    expect(beforePaste).toMatch(/sendPastedText\(text\)/);
+    expect(beforePaste).toMatch(/preventDefault/);
+
+    const helper = extractBlock(
+      taskTerminalFeatureSource,
+      /export function pasteTextFromBeforeInput\s*\(event:\s*InputEvent\)/,
+      /\n\}/,
+    );
+    expect(helper).toMatch(/insertFromPaste/);
+    expect(helper).toMatch(/insertText/);
+    expect(helper).toMatch(/insertReplacementText/);
+    expect(helper).toMatch(/looksLikeHttpUrl/);
+  });
+
+  it("toolbar Paste prefers clipboard.read rich types before readText", () => {
+    const requestPaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const requestPaste\s*=\s*async\s*\(ownedFocus:\s*boolean\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(requestPaste).toMatch(/readToolbarPasteText\(\)/);
+
+    const helper = extractBlock(
+      taskTerminalFeatureSource,
+      /export async function readToolbarPasteText/,
+      /\n\}/,
+    );
+    expect(helper).toMatch(/clipboard\.read/);
+    expect(helper).toMatch(/readPasteText\(dt\)/);
+    expect(helper).toMatch(/readText/);
   });
 
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {
