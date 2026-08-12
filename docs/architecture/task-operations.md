@@ -77,7 +77,9 @@ The task operation boundary now owns the main mutable task actions:
   worktree root. `--orphans=all` also removes unregistered foreign sibling
   worktrees (still never force-deletes non-`ajax/*` branches; skips a `main`
   worktree basename). Drop, clean, and orphan GC also delete matching
-  `origin/ajax/*` remote refs when tearing down `ajax/*` branches.
+  `origin/ajax/*` remote refs when tearing down `ajax/*` branches and prune
+  the matching local `refs/remotes/origin/ajax/*` tracking ref so re-observe
+  does not treat GitHub-already-deleted heads as still present.
 
 Command modules still expose substrate-oriented planning helpers. Task
 operations compose those helpers into vertical operator transactions.
