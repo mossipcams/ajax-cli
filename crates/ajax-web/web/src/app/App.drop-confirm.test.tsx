@@ -262,4 +262,54 @@ describe("App drop shell confirm", () => {
     });
     expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
   });
+
+  it("does not POST Review while Drop confirm is open, and cancels the confirm", async () => {
+    const operations: unknown[] = [];
+    const detailWithReview = {
+      ...taskDetail,
+      actions: [
+        {
+          action: "review",
+          label: "Review",
+          destructive: false,
+          confirmation_required: false,
+        },
+        ...taskDetail.actions,
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(detailWithReview));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true, cockpit }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 80));
+    });
+
+    expect(
+      operations.filter((op) => (op as { action?: string }).action === "review"),
+    ).toHaveLength(0);
+    expect(
+      operations.filter((op) => (op as { action?: string }).action === "drop"),
+    ).toHaveLength(0);
+  });
 });

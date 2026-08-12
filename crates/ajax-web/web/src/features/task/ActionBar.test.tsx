@@ -130,6 +130,40 @@ describe("ActionBar", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("cancels pending confirm on alternate action without posting", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onCancelPendingConfirm = vi.fn();
+    render(
+      <ActionBar
+        actions={[review, drop]}
+        handle="web/x"
+        pendingConfirmAction="drop"
+        onCancelPendingConfirm={onCancelPendingConfirm}
+      />,
+    );
+    fireEvent.click(screen.getByText("Review"));
+    expect(onCancelPendingConfirm).toHaveBeenCalledOnce();
+    await vi.runAllTimersAsync();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("keeps pending confirm when the same armed action is tapped again", () => {
+    const onCancelPendingConfirm = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <ActionBar
+        actions={[drop]}
+        handle="web/x"
+        onResult={onResult}
+        pendingConfirmAction="drop"
+        onCancelPendingConfirm={onCancelPendingConfirm}
+      />,
+    );
+    fireEvent.click(screen.getByText("Drop"));
+    expect(onCancelPendingConfirm).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
   it("does not emit unmount telemetry when unmounting during shell confirm", () => {
     const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
     const onResult = vi.fn();
