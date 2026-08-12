@@ -223,7 +223,7 @@ test("connection Copy Diagnostics jumps to the settings route", async ({ page })
   await expect(settings(page)).toBeVisible();
 });
 
-test("connection Reload calls location.reload", async ({ page }) => {
+test("connection Reload stays on the SPA when health is down #850", async ({ page }) => {
   await failCockpit(page);
   await page.goto("/app.html");
   await expect(page.locator(".connection-status")).toContainText("unreachable", { timeout: 10_000 });
@@ -231,7 +231,10 @@ test("connection Reload calls location.reload", async ({ page }) => {
   const reload = page.locator(".connection-actions").getByRole("button", { name: "Reload" });
   await expect(reload).toBeVisible();
   await expect(reload).toBeEnabled();
-  await Promise.all([page.waitForEvent("load"), reload.click()]);
+  const url = page.url();
+  await reload.click();
+  await expect(page.locator(".connection-status")).toContainText("unreachable");
+  expect(page.url()).toBe(url);
 });
 
 test("connection Retry recovers when cockpit becomes reachable", async ({ page }) => {
