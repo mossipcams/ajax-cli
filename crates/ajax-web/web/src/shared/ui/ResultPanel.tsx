@@ -46,12 +46,17 @@ export default function ResultPanel({
   const onConfirmRef = useRef(onConfirm);
   const onCancelConfirmRef = useRef(onCancelConfirm);
   const onConfirmTimeoutRef = useRef(onConfirmTimeout);
+  const confirmLatchRef = useRef(false);
   onDismissRef.current = onDismiss;
   onUndoRef.current = onUndo;
   onCommitRef.current = onCommit;
   onConfirmRef.current = onConfirm;
   onCancelConfirmRef.current = onCancelConfirm;
   onConfirmTimeoutRef.current = onConfirmTimeout;
+
+  useEffect(() => {
+    confirmLatchRef.current = false;
+  }, [message, confirmMode]);
 
   useEffect(() => {
     const dismissMs = confirmMode
@@ -79,11 +84,15 @@ export default function ResultPanel({
   }
 
   function cancelConfirm() {
+    if (confirmLatchRef.current) return;
+    confirmLatchRef.current = true;
     onCancelConfirmRef.current?.();
     onDismissRef.current?.();
   }
 
   function confirm() {
+    if (confirmLatchRef.current) return;
+    confirmLatchRef.current = true;
     onConfirmRef.current?.();
     onDismissRef.current?.();
   }

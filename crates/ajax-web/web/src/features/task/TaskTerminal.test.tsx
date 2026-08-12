@@ -528,6 +528,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\n {2}\};/,
     );
     expect(requestPaste).toMatch(/readToolbarPasteText\(\)/);
+    expect(requestPaste).toMatch(/toolbarPasteLatchRef/);
 
     const helper = extractBlock(
       taskTerminalFeatureSource,

@@ -120,6 +120,29 @@ describe("SettingsView", () => {
     );
   });
 
+  it("runs diagnostics only once under same-turn double click", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    let release!: () => void;
+    const pending = new Promise((resolve) => {
+      release = () => resolve({ browser_mode: "Safari/browser" });
+    });
+    const spy = vi.spyOn(diagnostics, "buildDiagnosticsReport").mockReturnValue(pending as never);
+    render(<SettingsView />);
+    const button = screen.getByRole("button", { name: "Run diagnostics" });
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(spy).toHaveBeenCalledOnce();
+    release();
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText((content) => content.includes("Safari/browser")),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("copies diagnostics with a clipboard fallback message", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",

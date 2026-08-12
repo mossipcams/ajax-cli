@@ -44,6 +44,7 @@ export default function TaskTerminal({ handle }: Props) {
   const expandSettleFrame2Ref = useRef(0);
   const expandSettleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pasteFallbackOwnedFocusRef = useRef(false);
+  const toolbarPasteLatchRef = useRef(false);
   const toolbarPointerOwnedFocusRef = useRef(false);
   const heldKeyRepeaterRef = useRef<ReturnType<typeof createHeldKeyRepeater> | null>(null);
   const toolbarRepeatHandledRef = useRef(false);
@@ -530,6 +531,8 @@ export default function TaskTerminal({ handle }: Props) {
   };
 
   const requestPaste = async (ownedFocus: boolean) => {
+    if (toolbarPasteLatchRef.current) return;
+    toolbarPasteLatchRef.current = true;
     try {
       const text = await readToolbarPasteText();
       if (text === null) {
@@ -543,6 +546,8 @@ export default function TaskTerminal({ handle }: Props) {
       pasteThroughTerm(text, ownedFocus);
     } catch {
       openPasteFallback(ownedFocus, "Clipboard denied — paste below.");
+    } finally {
+      toolbarPasteLatchRef.current = false;
     }
   };
 
