@@ -91,7 +91,10 @@ describe("GET transport options", () => {
     await fetchDetail("web/x");
 
     const getInit = { cache: "no-store", credentials: "same-origin", signal: expect.any(AbortSignal) };
-    expect(fetch).toHaveBeenCalledWith("/api/cockpit", getInit);
+    expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
+      ...getInit,
+      headers: { "X-Ajax-Foreground": "1" },
+    });
     expect(fetch).toHaveBeenCalledWith("/api/version", getInit);
     expect(fetch).toHaveBeenCalledWith("/api/health", getInit);
     expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx", getInit);
@@ -182,6 +185,7 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
@@ -193,8 +197,32 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it("omits the foreground header when the document is hidden", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    try {
+      mockFetch(() => json(validCockpit));
+      await fetchCockpit();
+      expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: expect.any(AbortSignal),
+      });
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(Document.prototype, "visibilityState", descriptor);
+      }
+      // Drop the instance override so later tests see a visible document again.
+      delete (document as { visibilityState?: string }).visibilityState;
+    }
   });
 
   it("renews the browser session once after a mutation 401 and retries the same POST", async () => {

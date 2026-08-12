@@ -12,18 +12,39 @@ use crate::{
 use ajax_core::{adapters::CommandRunner, runtime_refresh::RefreshTier};
 use axum::{
     extract::{Path as AxumPath, Request as AxumRequest, State},
+    http::HeaderMap,
     response::Response as AxumResponse,
 };
 use std::time::Instant;
 
 use super::live::{axum_task_stt, axum_task_terminal};
 
-pub(crate) async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+/// Cockpit polls send this only while the document is foreground-visible.
+/// Background/Simulator polls still refresh data but must not suppress push.
+pub(crate) const AJAX_FOREGROUND_HEADER: &str = "x-ajax-foreground";
+
+pub(crate) fn request_marks_foreground_presence(headers: &HeaderMap) -> bool {
+    headers
+        .get(AJAX_FOREGROUND_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        })
+}
+
+pub(crate) async fn axum_cockpit<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    headers: HeaderMap,
+) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    state.mark_browser_cockpit_seen();
+    // Same poll path either way — presence is header-gated, not a second request.
+    if request_marks_foreground_presence(&headers) {
+        state.mark_browser_cockpit_seen();
+    }
     if let Some(response) = state.cached_cockpit_response() {
         return response.into_axum_response();
     }

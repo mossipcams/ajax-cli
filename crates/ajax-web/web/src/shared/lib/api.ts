@@ -76,6 +76,24 @@ function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestInit {
   };
 }
 
+/** Sent on cockpit polls only while the document is visible — same request, no extra RTT. */
+export const AJAX_FOREGROUND_HEADER = "X-Ajax-Foreground";
+
+function documentIsForeground(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "visible";
+}
+
+function cockpitGetOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestInit {
+  const options = getOptions(timeoutMs);
+  if (!documentIsForeground()) return options;
+  return {
+    ...options,
+    headers: {
+      [AJAX_FOREGROUND_HEADER]: "1",
+    },
+  };
+}
+
 function sessionRenewOptions(): RequestInit {
   return {
     method: "POST",
@@ -180,8 +198,11 @@ async function getJsonPreferringErrorBody(
 }
 
 export async function fetchCockpit(): Promise<BrowserCockpitView> {
-  const value = await getJson("/api/cockpit");
-  return assertCockpit(value);
+  const response = await fetchProtectedWithSessionRenewal("/api/cockpit", cockpitGetOptions());
+  if (!response.ok) {
+    throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
+  }
+  return assertCockpit(await readJson(response));
 }
 
 export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {

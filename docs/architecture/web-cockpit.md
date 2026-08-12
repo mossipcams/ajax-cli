@@ -608,17 +608,19 @@ the crate:
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
-  When at least one push subscription is stored and no browser is connected it
-  also runs a background tick that reuses the `/api/cockpit` refresh path (same
-  single-flight lock, cache TTL, and revision-checked commit) so attention push
-  fires without a browser polling; the interval is 30 seconds. The tick skips
-  entirely while a browser has polled `/api/cockpit` within the last 90 seconds.
-  Presence is refreshed not only by `/api/cockpit` polls but also by recent
-  terminal-WebSocket attaches and operate/action requests that pass their
-  origin/JSON-parse gates, so the tick stays suppressed while the operator is
-  actively using the PWA terminal or submitting actions. When the tick runs it
-  refreshes at `RefreshTier::Full` (CI probes and Full-only rediscovery) and
-  delivers attention push.
+  When at least one push subscription is stored and the operator is not in the
+  foreground Cockpit, it also runs a background tick that reuses the
+  `/api/cockpit` refresh path (same single-flight lock, cache TTL, and
+  revision-checked commit) so attention push fires without a browser poll; the
+  interval is 30 seconds. The tick skips while foreground presence is warm
+  (90s TTL). Cockpit data polls always run at the same speed; only a poll that
+  carries `X-Ajax-Foreground: 1` (SPA sets this when
+  `document.visibilityState === "visible"`) refreshes that TTL. Background /
+  Simulator / hidden-tab polls refresh projection only and do not suppress
+  push. Terminal WebSocket attach, operate/action, and terminal keystrokes
+  still count as active use. Browser `/api/cockpit` refreshes pass
+  `deliver_notifications=false` (UI update only). When the tick runs it
+  refreshes at `RefreshTier::Full` and delivers attention push.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
