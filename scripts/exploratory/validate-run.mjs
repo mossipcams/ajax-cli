@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   emptyFindings,
   emptyObservations,
+  normalizeFindingsDocument,
   readJson,
   repoRoot,
   resultsDir,
@@ -86,7 +87,10 @@ function main() {
     problems.push("missing exploratory-results/run.json");
   }
 
-  const findings = readJson(join(resultsDir, "findings.json"), emptyFindings());
+  const findingsPath = join(resultsDir, "findings.json");
+  const rawFindings = readJson(findingsPath, emptyFindings());
+  const findings = normalizeFindingsDocument(rawFindings);
+  writeJson(findingsPath, findings);
   const findingProblems = validateFindingsDocument(findings);
   problems.push(...findingProblems);
 
