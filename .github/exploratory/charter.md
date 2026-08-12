@@ -20,10 +20,10 @@ browser.
 
 - **Do not** run a smoke tour whose goal is “visit cockpit, settings, terminal, diff once.”
   That is not exploratory testing and is forbidden as the whole session.
-- Work in **charters**. Pick **one** charter, run it for several minutes, record
-  observations and findings as you go, then pick the next charter from oracles +
-  current suspicion — not from a coverage checklist.
-- Keep exploring until the runner stops you. The finish checklist is not permission to stop.
+- Work in **charters**. Pick **one** charter, probe with purpose, and record
+  observations and findings as you go. Stop when stopping criteria apply, or pick
+  the next charter from oracles + current suspicion only if high-value work remains
+  — not from a coverage checklist.
 
 ### Charters (use these names)
 
@@ -74,8 +74,52 @@ failures, unrecoverable workflows, runaway requests.
     `settings`, `diff-review`, `new-task`, `navigation`, `network`, `other`)
   - dull actions, confirmed finding fingerprints, recommended focus for next run
 
-## Time budget
+## Stopping criteria
 
-The exploration budget is a **minimum**, not a target. Finalize artifacts incrementally so a
-budget stop still leaves useful output. Do not replace `run.headSha` or wipe `run.json`;
-only update agent/summary fields you own.
+End the session early when **any** of these apply:
+
+- The current charter has produced no materially new observations after several
+  meaningful probes.
+- The highest-priority suspicion has been adequately exercised.
+- A confirmed finding has been reproduced and documented and there are no obvious
+  sibling cases worth checking.
+- Remaining actions are predominantly known low-yield or previously explored actions.
+- Further exploration would mostly repeat existing coverage.
+
+When stopping for these reasons, write `exploratory-results/stop-reason.json`:
+
+```json
+{ "reason": "<short slug>", "detail": "<one sentence>" }
+```
+
+Then finalize artifacts. That **is** permission to stop.
+
+## Information density
+
+Optimize for information gained per action and per model turn:
+
+- Prefer purposeful probes over broad clicking.
+- Reuse existing observations instead of rereading or rediscovering the same state.
+- Do not inspect source code unless it helps test or explain a concrete behavioral
+  suspicion.
+- Avoid repeatedly reading large files, DOM/state dumps, logs, or artifacts when a
+  smaller targeted read is sufficient.
+- Use persisted exploratory memory and prepared oracles to avoid retesting low-value
+  areas.
+
+## Campaign framing
+
+This workflow runs regularly and persists memory across runs. One run does not need to
+be exhaustive. Multiple daily runs over time are the exploration campaign.
+
+## Budget
+
+The configured time is a **maximum**, not a minimum. Do not try to exhaust it. Finalize
+artifacts incrementally so a budget stop still leaves useful output. Do not replace
+`run.headSha` or wipe `run.json`; only update agent/summary fields you own.
+
+## Browser
+
+Explore only in the Playwright MCP **WebKit** browser already launched for this run.
+Do not ask for Chromium or Firefox. If WebKit is unavailable, that is an infrastructure
+failure — do not continue in another browser.

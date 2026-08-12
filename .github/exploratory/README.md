@@ -18,7 +18,7 @@ The workflow fails clearly when the secret is missing. Do not commit API keys.
 `.github/workflows/exploratory-testing.yml`
 
 - `schedule`: daily UTC
-- `workflow_dispatch`: manual runs from GitHub Actions UI
+- `workflow_dispatch`: manual runs from GitHub Actions UI (default budget 12 minutes; overridable)
 - Job timeout: 45 minutes
 - Artifacts uploaded with `if: always()`
 
@@ -28,14 +28,17 @@ The workflow fails clearly when the secret is missing. Do not commit API keys.
 GitHub-hosted Actions VM
   ├── checkout Ajax
   ├── restore exploration memory (cache; optional)
-  ├── install Node / Rust / Playwright Chromium / tmux / Cursor CLI
+  ├── install Node / Rust / Playwright WebKit / tmux / Cursor CLI
   ├── build Ajax Web + ajax-cli
   ├── start isolated ajax-cli web (target/exploratory-instance; agent stubs on PATH)
   ├── prepare oracles (open bugs, recent commits, routes, boundary hashes, memory)
-  ├── Cursor Agent + Playwright MCP explores under charter (budget relaunch loop)
+  ├── Cursor Agent + Playwright MCP (WebKit) explores under charter (at most one continuation)
   ├── update memory + upload exploratory-results/
   └── fail only on infrastructure/explorer failure (not every product bug)
 ```
+
+The exploration budget is a **maximum**, not a target. The agent may stop early when
+stopping criteria apply (`stop-reason.json`). WebKit only — no Chromium/Firefox fallback.
 
 ## Intelligence model
 
@@ -54,15 +57,15 @@ Before each agent run, `scripts/exploratory/prepare-oracles.mjs` writes
 
 The charter (`.github/exploratory/charter.md`) requires **session-based**
 exploratory testing: pick one charter (**Happy path**, **Garbage hashes**,
-**Interruption**, **Contradiction**, **Recovery**), run it for several minutes,
-then pick the next from oracles + observation. A one-click nav tour is explicitly
-forbidden as the whole session.
+**Interruption**, **Contradiction**, **Recovery**), probe until stopping criteria
+apply, and only continue if high-value work remains. A one-click nav tour is
+explicitly forbidden as the whole session. One run need not be exhaustive.
 
 ## Agent constraints
 
 - Model: **Composer 2.5** (`composer-2.5`) — fixed in the workflow and runner
 - Charter: `.github/exploratory/charter.md`
-- MCP: `.github/exploratory/mcp.json` (Playwright MCP, Chromium headless, iOS-ish viewport)
+- MCP: `.github/exploratory/mcp.json` (Playwright MCP, WebKit headless, iOS-ish viewport 390×844)
 - CLI permissions: `.github/exploratory/cli.json` (deny source edits / git mutation)
 - Post-run `git` dirty check fails the job if product source changed
 
@@ -76,6 +79,7 @@ forbidden as the whole session.
 - `issues.json` — GitHub issue filing results for confirmed findings
 - `observations.json` — lower-confidence notes
 - `memory-delta.json` — adaptive hints for the next run
+- `stop-reason.json` — optional early-stop reason when marginal value is low
 - `traces/`, `screenshots/`, `logs/`
 
 ## Issue automation

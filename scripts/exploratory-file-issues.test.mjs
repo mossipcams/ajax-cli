@@ -46,7 +46,7 @@ function baseFinding(overrides = {}) {
     expected: "Message sends",
     actual: "Composer stays pending",
     evidence: {
-      notes: "Reproduced twice in headless Chromium.",
+      notes: "Reproduced twice in headless WebKit.",
       consoleErrors: ["TypeError: socket closed"],
       networkFailures: ["POST /api/messages 500"],
     },
@@ -99,7 +99,7 @@ test("confirmed finding creates issue body with fingerprint and mapped severity"
   assert.match(body, /### Version \/ commit\nabc123def/);
   assert.match(body, /### Severity\nblocker/);
   assert.match(body, /<!-- exploratory-fingerprint: session\|composer-pending-after-reconnect -->/);
-  assert.match(body, /Reproduced twice in headless Chromium/);
+  assert.match(body, /Reproduced twice in headless WebKit/);
   assert.match(body, /Console errors:/);
   assert.match(body, /Network failures:/);
 
