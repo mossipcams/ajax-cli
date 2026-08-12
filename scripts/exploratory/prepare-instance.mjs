@@ -29,9 +29,12 @@ function git(args, cwd) {
   execFileSync("git", args, { cwd, env, stdio: "pipe" });
 }
 
-function prepareRepo(repoPath) {
+function prepareRepo(repoPath, bareRemotePath) {
   if (existsSync(repoPath)) {
     rmSync(repoPath, { recursive: true, force: true });
+  }
+  if (existsSync(bareRemotePath)) {
+    rmSync(bareRemotePath, { recursive: true, force: true });
   }
   mkdirSync(repoPath, { recursive: true });
   git(["init", "-b", "main"], repoPath);
@@ -44,6 +47,11 @@ function prepareRepo(repoPath) {
   writeFileSync(join(repoPath, "README.md"), "# Exploratory demo repo\n");
   git(["add", "README.md"], repoPath);
   git(["commit", "-m", "chore: seed exploratory demo repo"], repoPath);
+
+  // Ajax start plans fetch origin/<default_branch> before worktree add.
+  git(["init", "--bare", bareRemotePath], repoPath);
+  git(["remote", "add", "origin", bareRemotePath], repoPath);
+  git(["push", "-u", "origin", "main"], repoPath);
 }
 
 function main() {
@@ -52,7 +60,8 @@ function main() {
   ensureDir(join(instanceDir, "state"));
 
   const repoPath = join(instanceDir, "repos", "demo");
-  prepareRepo(repoPath);
+  const bareRemotePath = join(instanceDir, "repos", "demo.git");
+  prepareRepo(repoPath, bareRemotePath);
 
   const configPath = join(instanceDir, "config.toml");
   const statePath = join(instanceDir, "state", "ajax.db");

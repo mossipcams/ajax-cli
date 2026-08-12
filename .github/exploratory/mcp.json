@@ -8,6 +8,8 @@
         "--browser",
         "chromium",
         "--headless",
+        "--viewport-size",
+        "390x844",
         "--ignore-https-errors",
         "--isolated",
         "--no-sandbox",

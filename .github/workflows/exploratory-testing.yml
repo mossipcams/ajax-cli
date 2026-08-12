@@ -22,6 +22,7 @@ concurrency:
 permissions:
   contents: read
   actions: write
+  issues: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -87,6 +88,9 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
       - name: Install Cursor CLI
         run: |
           curl https://cursor.com/install -fsS | bash
@@ -108,6 +112,12 @@ jobs:
       - name: Wait for Ajax Web readiness
         run: node scripts/exploratory/wait-ready.mjs
 
+      - name: Prepare exploration oracles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/exploratory/prepare-oracles.mjs
+
       - name: Prepare agent prompt
         run: node scripts/exploratory/prepare-prompt.mjs
 
@@ -125,6 +135,15 @@ jobs:
         id: validate
         if: always()
         run: node scripts/exploratory/validate-run.mjs
+
+      - name: File confirmed findings as GitHub issues
+        id: file-issues
+        if: always() && steps.validate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AJAX_EXPLORATORY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/exploratory/file-issues.mjs
 
       - name: Stop Ajax Web
         if: always()
@@ -154,6 +173,10 @@ jobs:
             echo "Exploratory validation failed (schema or read-only violation)."
             exit 1
           fi
+          if [ "${{ steps.file-issues.outcome }}" = "failure" ]; then
+            echo "Exploratory issue filing failed."
+            exit 1
+          fi
           node --input-type=module <<'EOF'
           import { readFileSync, existsSync } from "node:fs";
           const path = "exploratory-results/run.json";
@@ -167,5 +190,11 @@ jobs:
             process.exit(1);
           }
           const confirmed = run.findingsSummary?.confirmed ?? 0;
-          console.log(`exploratory run ok; confirmed findings=${confirmed}`);
+          const issues = run.issues ?? {};
+          console.log(
+            `exploratory run ok; confirmed findings=${confirmed}` +
+              ` created=${issues.created ?? 0}` +
+              ` duplicate=${issues.duplicate ?? 0}` +
+              ` failed=${issues.failed ?? 0}`,
+          );
           EOF

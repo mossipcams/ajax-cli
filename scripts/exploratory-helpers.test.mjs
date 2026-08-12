@@ -114,6 +114,32 @@ test("prepare-instance creates isolated config and result skeleton", () => {
   );
   assert.equal(env.AJAX_EXPLORATORY_PORT, 18790);
   assert.match(env.config, /config\.toml$/);
+
+  const demo = join(root, "target/exploratory-instance/repos/demo");
+  const originUrl = spawnSync("git", ["-C", demo, "remote", "get-url", "origin"], {
+    encoding: "utf8",
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+  });
+  assert.equal(originUrl.status, 0, originUrl.stderr);
+  assert.ok(originUrl.stdout.trim().length > 0);
+
+  const originMain = spawnSync("git", ["-C", demo, "rev-parse", "origin/main"], {
+    encoding: "utf8",
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+  });
+  assert.equal(originMain.status, 0, originMain.stderr);
+
+  const fetch = spawnSync("git", ["-C", demo, "fetch", "origin", "main"], {
+    encoding: "utf8",
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+  });
+  assert.equal(fetch.status, 0, fetch.stderr);
 });
 
 test("prepare-instance stays isolated when GIT_DIR points at the parent repo", () => {
