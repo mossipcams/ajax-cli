@@ -259,4 +259,25 @@ describe("useTaskDetailResource", () => {
     rerender({ handle: "web/fix-login" });
     expect(result.current.reload).toBe(firstReload);
   });
+
+  it("posts resume at most once while the same handle stays open", async () => {
+    fetchDetail.mockResolvedValue(taskDetail);
+    postOperation.mockResolvedValue({ ok: true, response: {} });
+    const deps = stableDeps();
+    const { rerender } = renderHook(
+      ({ handle }) => useTaskDetailResource(handle, deps),
+      { initialProps: { handle: "web/fix-login" as string | null } },
+    );
+
+    await waitFor(() => expect(postOperation).toHaveBeenCalled());
+    rerender({ handle: "web/fix-login" });
+    rerender({ handle: "web/fix-login" });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const resumes = postOperation.mock.calls.filter(
+      (call) => (call[0] as { action?: string }).action === "resume",
+    );
+    expect(resumes).toHaveLength(1);
+  });
 });

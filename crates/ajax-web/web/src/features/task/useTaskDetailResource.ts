@@ -22,6 +22,7 @@ export function useTaskDetailResource(
   handleRef.current = handle;
 
   const loadGenRef = useRef(0);
+  const resumedHandleRef = useRef<string | null>(null);
 
   const [detail, setDetail] = useState<RemoteResource<BrowserTaskDetail>>({
     status: "loading",
@@ -74,11 +75,14 @@ export function useTaskDetailResource(
 
   useEffect(() => {
     if (!handle) {
+      resumedHandleRef.current = null;
       setDetail({ status: "loading", data: null, error: null });
       return;
     }
     setDetail({ status: "loading", data: null, error: null });
     void loadDetail(handle);
+    if (resumedHandleRef.current === handle) return;
+    resumedHandleRef.current = handle;
     void resumeOnOpen(handle).then((mutated) => {
       if (mutated && handleRef.current === handle) {
         void loadDetail(handle);
