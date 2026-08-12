@@ -101,6 +101,7 @@ export default function App() {
   // Snapshotting location.hash only at API-completion races swipe/Back settle,
   // which delays the hash change by SWIPE_PAGE_COMMIT_MS.
   const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
+  const reloadLatchRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
@@ -436,6 +437,12 @@ export default function App() {
 
   const swipeOutletClass = swipeEnterClassName(swipeEnter);
 
+  function reloadOnce() {
+    if (reloadLatchRef.current) return;
+    reloadLatchRef.current = true;
+    location.reload();
+  }
+
   const chrome = (
     <div className="cockpit-chrome">
       <header>
@@ -456,7 +463,7 @@ export default function App() {
           state={connection}
           detail={connectionDetail}
           onRetry={() => void loadCockpit({ trailing: true })}
-          onReload={() => location.reload()}
+          onReload={reloadOnce}
           onCopyDiagnostics={() => go(settingsHash())}
         />
       </header>
@@ -467,7 +474,7 @@ export default function App() {
           data-testid="update-banner"
           type="button"
           hidden={!updateAvailable}
-          onClick={() => location.reload()}
+          onClick={reloadOnce}
         >
           Update ready — tap to reload
         </button>

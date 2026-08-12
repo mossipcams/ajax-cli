@@ -147,6 +147,25 @@ describe("ActionBar", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("arms Drop confirm only once under same-turn double click", () => {
+    const onResult = vi.fn();
+    render(<ActionBar actions={[drop]} handle="web/x" onResult={onResult} />);
+    const button = screen.getByText("Drop");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onResult).toHaveBeenCalledOnce();
+  });
+
+  it("posts immediate actions only once under same-turn double click", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    render(<ActionBar actions={[review]} handle="web/x" />);
+    const button = screen.getByText("Review");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.runAllTimersAsync();
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
   it("keeps pending confirm when the same armed action is tapped again", () => {
     const onCancelPendingConfirm = vi.fn();
     const onResult = vi.fn();

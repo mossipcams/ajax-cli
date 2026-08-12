@@ -57,6 +57,22 @@ describe("ConnectionStatus", () => {
     expect(onCopyDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("latches Retry and Reload under same-turn multi-click", () => {
+    const onRetry = vi.fn();
+    const onReload = vi.fn();
+    render(
+      <ConnectionStatus state="disconnected" onRetry={onRetry} onReload={onReload} />,
+    );
+    const retry = screen.getByText("Retry");
+    const reload = screen.getByText("Reload");
+    retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    reload.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    reload.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(onReload).toHaveBeenCalledOnce();
+  });
+
   it("links to the health URL", () => {
     render(<ConnectionStatus state="checking" />);
     expect(screen.getByRole("link", { name: "Open Health URL" })).toHaveAttribute(

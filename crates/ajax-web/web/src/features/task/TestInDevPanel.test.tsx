@@ -162,4 +162,42 @@ describe("TestInDevPanel", () => {
     fireEvent.click(screen.getByTestId("test-in-dev-button"));
     await waitFor(() => expect(onResult).toHaveBeenCalledWith("Test in Dev failed to start", null, true));
   });
+
+  it("starts deploy only once under same-turn double click", async () => {
+    fetchDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "ready_to_deploy",
+        phase_label: "Ready to deploy",
+        shared_slot: true,
+        active: false,
+        error: null,
+        occupant: null,
+      },
+    });
+    let release!: () => void;
+    startDevDeploy.mockReturnValue(
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            ok: true,
+            deploy: {
+              phase: "deploying",
+              phase_label: "Deploying",
+              shared_slot: true,
+              active: true,
+              error: null,
+              occupant: null,
+            },
+          });
+      }),
+    );
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" />);
+    await waitFor(() => expect(screen.getByTestId("test-in-dev-button")).toBeEnabled());
+    const button = screen.getByTestId("test-in-dev-button");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(startDevDeploy).toHaveBeenCalledOnce();
+    release();
+  });
 });

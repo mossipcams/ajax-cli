@@ -63,4 +63,28 @@ describe("usePullToRefresh", () => {
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
+
+  it("does not re-fire onRefresh while a prior refresh is still in flight", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onRefresh = vi.fn(() => pending);
+    const { result } = renderHook(() =>
+      usePullToRefresh({ onRefresh, scrollTop: () => 0 }),
+    );
+    const node = document.createElement("div");
+    result.current(node);
+
+    const armedPull = () => {
+      node.dispatchEvent(touch("touchstart", 0));
+      node.dispatchEvent(touch("touchmove", PULL_THRESHOLD * 4));
+      node.dispatchEvent(new Event("touchend"));
+    };
+    armedPull();
+    armedPull();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    release();
+    await pending;
+  });
 });
