@@ -50,10 +50,15 @@ export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): Terminal
     const term = getTerminal();
     if (!term || !spacerEl || !interactionEl) return;
     spacerEl.style.height = `${scrollbackLines() * cellHeightPx()}px`;
+    // Style height is not in scrollHeight until layout. Force that read so a
+    // same-turn scrollInteractionToBottom does not pin to a stale maxTop
+    // (seeded open would land above the CLI and drop followLive).
+    void interactionEl.offsetHeight;
   };
 
   const scrollInteractionToBottom = () => {
     if (!interactionEl) return;
+    void interactionEl.offsetHeight;
     interactionEl.scrollTop = Math.max(0, interactionEl.scrollHeight - interactionEl.clientHeight);
   };
 

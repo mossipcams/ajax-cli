@@ -102,6 +102,35 @@ describe("createTerminalScrollSync", () => {
     expect(spacerEl.style.height).toBe(`${scrollback * cellHeight}px`);
   });
 
+  it("applyOutput pins to scrollHeight that only appears after syncSpacer forces layout", () => {
+    // Regression for #823: spacer style.height is invisible to scrollHeight until
+    // layout. Without a forced reflow, scrollInteractionToBottom pins to the old
+    // maxTop and seeded open lands above the CLI.
+    const { term, scrollToBottom } = createFakeTerminal({ rows: 24, bufferLength: 80 });
+    const interactionEl = createInteractionEl(200, 200);
+    const spacerEl = document.createElement("div");
+    let scrollHeight = 200;
+    Object.defineProperty(interactionEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(interactionEl, "offsetHeight", {
+      configurable: true,
+      get() {
+        const match = /^(\d+(?:\.\d+)?)px$/.exec(spacerEl.style.height);
+        if (match) scrollHeight = 200 + Number(match[1]);
+        return 200;
+      },
+    });
+    const { scrollSync } = createScrollSync({ term, interactionEl, spacerEl });
+
+    scrollSync.applyOutput();
+
+    expect(scrollToBottom).toHaveBeenCalled();
+    expect(scrollHeight).toBeGreaterThan(200);
+    expect(interactionEl.scrollTop).toBe(scrollHeight - 200);
+  });
+
   it("syncSpacer measures a real row instead of dividing clientHeight by ceil'd rows", () => {
     // Geometry mode ceil()s rows, so clientHeight/rows understates the cell
     // height and the scroll mapping drifts. A rendered row is authoritative.

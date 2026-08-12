@@ -222,21 +222,36 @@ export function mountTaskTerminalSession(
     interactionEl.classList.remove("is-seed-pending");
   };
 
-  const revealSeed = () => {
-    clearSeedPendingRevealTimer();
-    if (!isActive() || !isSeedPending()) return;
+  let revealSnapFrame = 0;
+
+  const snapSeedToBottom = () => {
     scrollSync.syncSpacer();
     scrollSync.setFollowLive(true);
+    setHasUnseenOutput(false);
     scrollSync.setSyncingScroll(true);
     termRef.current?.scrollToBottom();
     scrollSync.scrollInteractionToBottom();
     scrollSync.setSyncingScroll(false);
     scrollSync.refreshFollow();
+  };
+
+  const revealSeed = () => {
+    clearSeedPendingRevealTimer();
+    if (!isActive() || !isSeedPending()) return;
+    snapSeedToBottom();
     interactionEl.classList.remove("is-seed-pending");
     // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
     // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
     // the first post-reveal erase (onOutput) or after grace if none is seen.
     armPostRevealEraseGrace();
+    // Opacity/paint can settle the spacer one frame later; re-pin so open
+    // still starts on the CLI if the first snap saw a short scrollHeight.
+    if (revealSnapFrame) cancelAnimationFrame(revealSnapFrame);
+    revealSnapFrame = requestAnimationFrame(() => {
+      revealSnapFrame = 0;
+      if (!isActive()) return;
+      snapSeedToBottom();
+    });
   };
 
   // The seed is scrollback only; the tmux attach repaint of the visible pane
@@ -928,6 +943,8 @@ export function mountTaskTerminalSession(
     setTerminalDoubleTapPending(false);
     clearSeedPendingRevealTimer();
     clearPostRevealEraseGraceTimer();
+    if (revealSnapFrame) cancelAnimationFrame(revealSnapFrame);
+    revealSnapFrame = 0;
     keyboardClassObserver.disconnect();
     cancelExpandSettle();
     cancelLongPress();
