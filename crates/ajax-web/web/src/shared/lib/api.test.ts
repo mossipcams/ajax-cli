@@ -11,6 +11,7 @@ import {
   openTaskTerminalSocket,
   taskTerminalWebSocketUrl,
   createTerminalClientId,
+  waitForServerRestart,
 } from "./api";
 
 type FetchMock = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response;
@@ -579,6 +580,93 @@ describe("startTestInStable", () => {
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
+  });
+});
+
+describe("waitForServerRestart #850", () => {
+  it("does not succeed on a single immediate health 200 (old process still up)", async () => {
+    vi.useFakeTimers();
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/health") return Promise.resolve(json({ ok: true }));
+      if (path === "/api/version") return Promise.resolve(json({ version: "1.0.0" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const promise = waitForServerRestart({
+      timeoutMs: 1500,
+      pollMs: 500,
+      previousVersion: "1.0.0",
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("succeeds after health fails then succeeds twice", async () => {
+    vi.useFakeTimers();
+    const healthSequence = [true, false, true, true];
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/health") {
+        const healthy = healthSequence.shift() ?? true;
+        return Promise.resolve(json({ ok: healthy }, healthy ? 200 : 503));
+      }
+      if (path === "/api/version") return Promise.resolve(json({ version: "1.0.0" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const promise = waitForServerRestart({
+      timeoutMs: 5000,
+      pollMs: 500,
+      previousVersion: "1.0.0",
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+    await expect(promise).resolves.toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("succeeds if version changes even when a down edge was missed", async () => {
+    vi.useFakeTimers();
+    let versionCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/health") return Promise.resolve(json({ ok: true }));
+      if (path === "/api/version") {
+        versionCalls += 1;
+        const version = versionCalls < 2 ? "1.0.0" : "2.0.0";
+        return Promise.resolve(json({ version }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const promise = waitForServerRestart({
+      timeoutMs: 5000,
+      pollMs: 500,
+      previousVersion: "1.0.0",
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+    await expect(promise).resolves.toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("times out when health never drops and version never changes", async () => {
+    vi.useFakeTimers();
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/health") return Promise.resolve(json({ ok: true }));
+      if (path === "/api/version") return Promise.resolve(json({ version: "1.0.0" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const promise = waitForServerRestart({
+      timeoutMs: 1000,
+      pollMs: 200,
+      previousVersion: "1.0.0",
+    });
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(promise).resolves.toBe(false);
+    vi.useRealTimers();
   });
 });
 

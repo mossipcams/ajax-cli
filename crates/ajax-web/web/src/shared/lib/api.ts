@@ -395,6 +395,63 @@ export async function waitForServerOnline(
   return false;
 }
 
+async function peekVersion(): Promise<string | null> {
+  try {
+    const response = await fetch("/api/version", getOptions());
+    if (!response.ok) return null;
+    const value = await readJson(response);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "version" in value &&
+      typeof (value as VersionResponse).version === "string"
+    ) {
+      return (value as VersionResponse).version;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Poll until the server has restarted: require a down edge or version change,
+ * then two consecutive healthy checks so we do not reload into a dying process. */
+export async function waitForServerRestart(options?: {
+  timeoutMs?: number;
+  pollMs?: number;
+  previousVersion?: string | null;
+}): Promise<boolean> {
+  const timeoutMs = options?.timeoutMs ?? RESTART_TIMEOUT_MS;
+  const pollMs = options?.pollMs ?? RESTART_POLL_MS;
+  const previousVersion = options?.previousVersion ?? null;
+  const deadline = Date.now() + timeoutMs;
+  let restartObserved = false;
+  let consecutiveHealthy = 0;
+
+  while (Date.now() < deadline) {
+    const healthy = await checkHealth();
+
+    if (!healthy) {
+      restartObserved = true;
+      consecutiveHealthy = 0;
+    } else if (!restartObserved) {
+      if (previousVersion != null) {
+        const current = await peekVersion();
+        if (current !== null && current !== previousVersion) {
+          restartObserved = true;
+          consecutiveHealthy = 1;
+        }
+      }
+    } else {
+      consecutiveHealthy += 1;
+      if (consecutiveHealthy >= 2) return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return false;
+}
+
 export async function restartServer(): Promise<OperationResponse> {
   const { response, payload: rawPayload } = await postJson("/api/server/restart", {});
   const payload = assertOperationResponse(rawPayload);
