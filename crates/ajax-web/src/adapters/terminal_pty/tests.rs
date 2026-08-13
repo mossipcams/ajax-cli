@@ -426,7 +426,23 @@ fn reaper_detached_skips_attached_ephemeral_sessions() {
         ("ajax-web-z-mdeadbeefcafe".to_string(), 0),
     ];
     assert_eq!(
-        ephemeral_sessions_to_reap_detached(&rows),
+        ephemeral_sessions_to_reap_detached(&rows, None),
+        vec![
+            "ajax-web-x-m0123456789ab".to_string(),
+            "ajax-web-z-mdeadbeefcafe".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn reaper_detached_skips_lingered_reconnect_target() {
+    let rows = vec![
+        ("ajax-web-x-m0123456789ab".to_string(), 0),
+        ("ajax-web-y-mabcdef012345".to_string(), 0),
+        ("ajax-web-z-mdeadbeefcafe".to_string(), 0),
+    ];
+    assert_eq!(
+        ephemeral_sessions_to_reap_detached(&rows, Some("ajax-web-y-mabcdef012345")),
         vec![
             "ajax-web-x-m0123456789ab".to_string(),
             "ajax-web-z-mdeadbeefcafe".to_string(),
