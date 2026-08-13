@@ -47,6 +47,9 @@ pub struct Task {
     side_flags: BTreeSet<SideFlag>,
 }
 
+/// Registry metadata: Cursor launched without interactive agent send-keys.
+pub const SKIP_INTERACTIVE_AGENT_KEY: &str = "skip_interactive_agent";
+
 impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -136,6 +139,21 @@ impl Task {
 
     pub fn side_flags(&self) -> impl Iterator<Item = SideFlag> + '_ {
         self.side_flags.iter().copied()
+    }
+
+    pub fn skip_interactive_agent(&self) -> bool {
+        self.metadata
+            .get(SKIP_INTERACTIVE_AGENT_KEY)
+            .is_some_and(|value| value == "1")
+    }
+
+    pub fn set_skip_interactive_agent(&mut self, skip: bool) {
+        if skip {
+            self.metadata
+                .insert(SKIP_INTERACTIVE_AGENT_KEY.to_string(), "1".to_string());
+        } else {
+            self.metadata.remove(SKIP_INTERACTIVE_AGENT_KEY);
+        }
     }
 
     pub fn mark_resource_missing(&mut self, flag: SideFlag) {

@@ -177,10 +177,16 @@ export default function SessionChat({
     if (sessionStorage.getItem(sessionSeededStorageKey(handle))) return;
     const starter = starterRef.current;
     if (!starter) return;
-    sessionStorage.setItem(sessionSeededStorageKey(handle), "1");
+    const transport = transportRef.current;
+    if (!transport) return;
     const brief = formatSessionBrief(starter);
-    transportRef.current?.sendPrompt(brief);
+    try {
+      transport.sendPrompt(brief);
+    } catch {
+      return;
+    }
     dispatch({ type: "prompt", text: brief });
+    sessionStorage.setItem(sessionSeededStorageKey(handle), "1");
   }, [connected, handle]);
 
   // Follow the live edge only while the operator is already at it. Yanking the

@@ -78,6 +78,30 @@ describe("App session routing", () => {
     vi.unstubAllGlobals();
   });
 
+  it("redirects #/session/<handle> to the dashboard when orchestration chat is off", async () => {
+    let wsConstructCount = 0;
+    vi.stubGlobal(
+      "WebSocket",
+      class CountingWebSocket {
+        readyState = 1;
+        constructor() {
+          wsConstructCount += 1;
+        }
+        close() {}
+        addEventListener() {}
+        send() {}
+      },
+    );
+    stubFetch(true);
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    setHash("#/session/web/fix-login");
+    await waitFor(() => expect(window.location.hash).toBe("#/"));
+    expect(screen.queryByTestId("session-chat")).not.toBeInTheDocument();
+    expect(wsConstructCount).toBe(0);
+  });
+
   it("redirects #/session to the dashboard when orchestration chat is off", async () => {
     stubFetch();
     render(<App />);

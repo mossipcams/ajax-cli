@@ -216,6 +216,10 @@ pub fn task_from_new_request<R: Registry>(
         CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
     })?;
 
+    if request.skip_interactive_agent && task.selected_agent == AgentClient::Cursor {
+        task.set_skip_interactive_agent(true);
+    }
+
     Ok(task)
 }
 

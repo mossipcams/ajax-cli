@@ -1,5 +1,6 @@
 use super::hub::{
     map_request_finished, permission_response, slot_must_replace, TranscriptLog, WebSessionHub,
+    MAX_IDLE_SESSIONS,
 };
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -388,4 +389,87 @@ fn permission_response_matches_779_shape() {
         permission_response(true, Some("because")),
         json!({ "approved": true, "reason": "because" })
     );
+}
+
+#[test]
+fn read_from_omits_resolved_permission_requests() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        SessionServerEvent::PermissionRequest {
+            request_id: "7".to_string(),
+            title: Some("Run tests?".to_string()),
+            detail: None,
+        },
+        SessionServerEvent::PermissionResolved {
+            request_id: "7".to_string(),
+            approved: true,
+        },
+    ]);
+    let (events, _) = log.read_from(0);
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "7"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::PermissionResolved { request_id, .. } if request_id == "7"
+    )));
+}
+
+#[test]
+fn read_from_keeps_unresolved_permission_requests() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![SessionServerEvent::PermissionRequest {
+        request_id: "9".to_string(),
+        title: Some("Deploy?".to_string()),
+        detail: None,
+    }]);
+    let (events, _) = log.read_from(0);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "9"
+    )));
+}
+
+#[test]
+fn idle_eviction_preserves_slots_with_queued_prompts() {
+    let dir = scratch_dir("evict-queue");
+    let handle_a = "web/evict-a";
+    let handle_c = "web/evict-c";
+    let hub = WebSessionHub::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            hub.acquire(handle_a, &dir, "auto").expect("acquire a");
+            hub.submit_prompt(handle_a, "first".to_string())
+                .expect("first");
+            hub.submit_prompt(handle_a, "kept".to_string())
+                .expect("kept");
+            hub.release(handle_a);
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/evict-idle-{i}");
+                hub.acquire(&handle, &dir, "auto").expect("acquire idle");
+                hub.release(&handle);
+            }
+
+            hub.acquire(handle_c, &dir, "auto").expect("acquire c");
+            hub.release(handle_c);
+
+            hub.acquire(handle_a, &dir, "auto").expect("re-acquire a");
+            hub.cancel(handle_a, true).expect("cancel keep queue");
+
+            pump_until(&hub, handle_a, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { text, .. } if text == "pong"
+                    )
+                }) && events.contains(&user_msg("kept"))
+            });
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
 }

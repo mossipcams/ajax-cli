@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 fn prepare_task_session_returns_worktree_for_cursor_task() {
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Cursor;
+    task.set_skip_interactive_agent(true);
     let worktree = std::env::temp_dir().join("ajax-web-session-test-fix-login");
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
@@ -17,6 +18,19 @@ fn prepare_task_session_returns_worktree_for_cursor_task() {
     assert!(plan
         .worktree_path
         .ends_with("ajax-web-session-test-fix-login"));
+}
+
+#[test]
+fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Cursor;
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-interactive-cursor");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
+    assert_eq!(error, SessionRouteError::NotOrchestrationChat);
 }
 
 #[test]
