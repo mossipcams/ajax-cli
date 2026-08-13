@@ -5,7 +5,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const WARN_AT = 600;
+export const PR_LOC_WARN_AT = 800;
+export const PR_LOC_FAIL_AT = 1500;
+export const CHANGED_FILE_LOC_WARN_AT = 400;
+export const CHANGED_FILE_LOC_FAIL_AT = 600;
+export const WARN_AT = 800;
 export const FAIL_AT = 1000;
 
 export const SOURCE_EXTENSIONS = new Set([
@@ -58,39 +62,67 @@ export function isScannedSourcePath(path) {
   return SOURCE_EXTENSIONS.has(normalized.slice(dot));
 }
 
+function evaluateMetric(path, lines, { warnAt, failAt, label }) {
+  if (lines >= failAt) {
+    return {
+      level: "error",
+      path,
+      lines,
+      message:
+        `${path} is ${lines} ${label} (limit ${failAt}). ` +
+        "Split the file before merging.",
+    };
+  }
+
+  if (lines >= warnAt) {
+    return {
+      level: "warning",
+      path,
+      lines,
+      message:
+        `${path} is ${lines} ${label} (warning at ${warnAt}, ` +
+        `hard limit ${failAt}). Consider splitting it.`,
+    };
+  }
+
+  return null;
+}
+
 /** Classifies one changed file by its total line count at HEAD. */
 export function evaluateFileLoc(
   path,
   lines,
   { warnAt = WARN_AT, failAt = FAIL_AT } = {},
 ) {
-  if (lines >= failAt) {
-    return [
-      {
-        level: "error",
-        path,
-        lines,
-        message:
-          `${path} is ${lines} lines (limit ${failAt}). ` +
-          "Split the file before merging.",
-      },
-    ];
-  }
+  const finding = evaluateMetric(path, lines, {
+    warnAt,
+    failAt,
+    label: "lines",
+  });
+  return finding ? [finding] : [];
+}
 
-  if (lines >= warnAt) {
-    return [
-      {
-        level: "warning",
-        path,
-        lines,
-        message:
-          `${path} is ${lines} lines (warning at ${warnAt}, ` +
-          `hard limit ${failAt}). Consider splitting it.`,
-      },
-    ];
-  }
+export function evaluateChangedLoc(
+  path,
+  lines,
+  { warnAt = CHANGED_FILE_LOC_WARN_AT, failAt = CHANGED_FILE_LOC_FAIL_AT } = {},
+) {
+  return evaluateMetric(path, lines, {
+    warnAt,
+    failAt,
+    label: "changed lines",
+  });
+}
 
-  return [];
+export function evaluatePrLoc(
+  lines,
+  { warnAt = PR_LOC_WARN_AT, failAt = PR_LOC_FAIL_AT } = {},
+) {
+  return evaluateMetric("PR", lines, {
+    warnAt,
+    failAt,
+    label: "changed lines",
+  });
 }
 
 export function evaluateChangedFiles(files, lineCountAtHead, options = {}) {
@@ -127,6 +159,46 @@ export function parseNameOnlyList(text) {
     .filter(Boolean);
 }
 
+export function parseNumstat(text) {
+  return text
+    .split("\n")
+    .map((line) => line.split("\t"))
+    .filter(([additions, deletions]) => /^\d+$/.test(additions) && /^\d+$/.test(deletions))
+    .map(([additions, deletions, ...pathParts]) => ({
+      path: pathParts.join("\t"),
+      additions: Number(additions),
+      deletions: Number(deletions),
+    }));
+}
+
+export function evaluateStagedFiles(entries, lineCountAtIndex) {
+  const findings = [];
+  let changedLines = 0;
+
+  for (const { path, additions, deletions } of entries) {
+    if (!isScannedSourcePath(path)) {
+      continue;
+    }
+
+    const fileChangedLines = additions + deletions;
+    changedLines += fileChangedLines;
+
+    const changedFinding = evaluateChangedLoc(path, fileChangedLines);
+    if (changedFinding) {
+      findings.push(changedFinding);
+    }
+
+    findings.push(...evaluateFileLoc(path, lineCountAtIndex(path)));
+  }
+
+  const prFinding = evaluatePrLoc(changedLines);
+  if (prFinding) {
+    findings.push(prFinding);
+  }
+
+  return findings;
+}
+
 export async function listChangedFiles(base, head, runGit) {
   const output = await runGit([
     "diff",
@@ -148,6 +220,37 @@ export async function inspectChangedFileLoc(
   const findings = evaluateChangedFiles(files, lineCountAtHead);
 
   return { files, ...summarizeFindings(findings) };
+}
+
+export async function inspectStagedFileLoc({
+  runGit,
+  readIndex = (path) => runGit(["show", `:${path}`]),
+} = {}) {
+  const entries = parseNumstat(
+    await runGit([
+      "diff",
+      "--cached",
+      "--no-renames",
+      "--numstat",
+      "--diff-filter=ACMR",
+    ]),
+  );
+  const lineCounts = new Map(
+    await Promise.all(
+      entries
+        .filter(({ path }) => isScannedSourcePath(path))
+        .map(async ({ path }) => [path, countLines(await readIndex(path))]),
+    ),
+  );
+  const findings = evaluateStagedFiles(
+    entries,
+    (path) => lineCounts.get(path) ?? 0,
+  );
+
+  return {
+    files: entries.filter(({ path }) => isScannedSourcePath(path)).map(({ path }) => path),
+    ...summarizeFindings(findings),
+  };
 }
 
 function resolveRefs() {
@@ -190,21 +293,28 @@ async function runGit(args) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const refs = resolveRefs();
 
-  if (!refs) {
+  const root = join(fileURLToPath(import.meta.url), "..", "..");
+  const result = refs
+    ? await inspectChangedFileLoc(refs.base, refs.head, { root, runGit })
+    : process.argv.includes("--staged")
+      ? await inspectStagedFileLoc({
+          runGit,
+          readIndex: (path) => runGit(["show", `:${path}`]),
+        })
+      : null;
+
+  if (!result) {
     console.log("File LOC check skipped: no base/head refs for this event.");
     process.exit(0);
   }
 
-  const root = join(fileURLToPath(import.meta.url), "..", "..");
-  const { files, warnings, errors } = await inspectChangedFileLoc(
-    refs.base,
-    refs.head,
-    { root, runGit },
-  );
+  const { files, warnings, errors } = result;
 
   const scanned = files.filter(isScannedSourcePath);
   console.log(
-    `Checked ${scanned.length} changed source file(s) between ${refs.base.slice(0, 7)} and ${refs.head.slice(0, 7)}.`,
+    refs
+      ? `Checked ${scanned.length} changed source file(s) between ${refs.base.slice(0, 7)} and ${refs.head.slice(0, 7)}.`
+      : `Checked ${scanned.length} staged source file(s).`,
   );
 
   for (const finding of [...warnings, ...errors]) {
@@ -214,7 +324,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   if (warnings.length === 0 && errors.length === 0) {
     console.log(
-      `No changed file is at or above ${WARN_AT} (warn) or ${FAIL_AT} (fail) lines.`,
+      `No LOC threshold was reached (PR ${PR_LOC_WARN_AT}/${PR_LOC_FAIL_AT}, ` +
+        `changed file ${CHANGED_FILE_LOC_WARN_AT}/${CHANGED_FILE_LOC_FAIL_AT}, ` +
+        `total file ${WARN_AT}/${FAIL_AT}).`,
     );
   } else {
     console.log(`${warnings.length} warning(s), ${errors.length} error(s).`);
