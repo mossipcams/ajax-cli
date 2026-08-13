@@ -40,6 +40,11 @@ Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 `WebSessionHub` owns prompt queueing, cancellation, model switching, permission
 answers, and transcript replay cursors; transport layers call hub methods only.
 
+When that mode is enabled, agent conversation uses Cursor ACP over stdio
+(`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
+Model catalog parsing lives in the `session_models` slice. Session policy and
+HTTP transport are not this adapter.
+
 From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
