@@ -7,6 +7,7 @@ pub mod diff_review;
 pub mod install;
 pub mod operate;
 pub mod push;
+pub mod session_models;
 pub mod stt;
 pub mod terminal;
 pub mod web_session;
