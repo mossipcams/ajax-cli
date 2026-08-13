@@ -21,8 +21,11 @@ desktop.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
-preference defaults **off**; when off, dashboard and embedded terminal behavior
-is unchanged.
+preference defaults **off** (`ajax.web.session.orchestrationChat` in
+localStorage); when off, dashboard and embedded terminal behavior is unchanged.
+The browser `webSessionTransport` client and `sessionReducer` fold host WebSocket
+events into view state; they do not own the transcript, prompt queue, or ACP
+process.
 
 When that mode is enabled, agent conversation uses Cursor ACP over stdio
 (`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
