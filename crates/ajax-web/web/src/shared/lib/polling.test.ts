@@ -31,6 +31,12 @@ describe("cockpitRefreshIntervalMs", () => {
     expect(REFRESH_INTERVAL_TERMINAL_MS).toBe(10000);
   });
 
+  it("cockpitRefreshIntervalMs returns terminal interval on session route when visible", () => {
+    expect(
+      cockpitRefreshIntervalMs({ visibilityState: "visible", routeKind: "session" }),
+    ).toBe(REFRESH_INTERVAL_TERMINAL_MS);
+  });
+
   it("cockpitRefreshIntervalMs returns idle interval on settings route when visible", () => {
     expect(
       cockpitRefreshIntervalMs({ visibilityState: "visible", routeKind: "settings" }),
