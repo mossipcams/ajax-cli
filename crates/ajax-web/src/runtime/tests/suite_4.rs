@@ -66,6 +66,21 @@ async fn get_task_detail_allows_encoded_handle_named_terminal() {
 }
 
 #[tokio::test]
+async fn axum_task_session_requires_browser_session_cookie() {
+    let state = super::WebAppState::new(
+        context_with_task(),
+        OkRunner,
+        TestBridge::default(),
+        scratch_dir("session-auth"),
+    );
+    let app = super::axum_app(state);
+
+    let response = get_public(&app, "/api/tasks/web%2Ffix-login/session").await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn axum_task_terminal_requires_browser_session_cookie() {
     let state = super::WebAppState::new(
         context_with_task(),

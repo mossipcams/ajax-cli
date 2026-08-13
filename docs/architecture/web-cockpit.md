@@ -26,8 +26,11 @@ is unchanged.
 
 When that mode is enabled, agent conversation uses Cursor ACP over stdio
 (`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
-Model catalog parsing lives in the `session_models` slice. Session policy and
-HTTP transport are not this adapter.
+Model catalog parsing lives in the `session_models` slice. Authenticated
+`GET /api/session/models` lists Cursor models; authenticated
+`GET /api/tasks/{handle}/session` WebSocket upgrade is transport-only over
+`WebSessionHub` (snapshot via cursor replay). Session admission policy lives in
+the `web_session` slice; routes and the bridge call hub methods only.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One
