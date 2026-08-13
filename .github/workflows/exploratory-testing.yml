@@ -13,7 +13,7 @@ on:
       budget_minutes:
         description: "Exploration budget in minutes"
         required: false
-        default: "25"
+        default: "12"
 
 concurrency:
   group: exploratory-testing
@@ -28,7 +28,7 @@ env:
   CARGO_TERM_COLOR: always
   AJAX_EXPLORATORY_PORT: "18790"
   AJAX_EXPLORATORY_BASE_URL: "https://127.0.0.1:18790"
-  AJAX_EXPLORATORY_BUDGET_MINUTES: ${{ github.event.inputs.budget_minutes || '25' }}
+  AJAX_EXPLORATORY_BUDGET_MINUTES: ${{ github.event.inputs.budget_minutes || '12' }}
   # Locked: exploratory runs always use Composer 2.5.
   AJAX_EXPLORATORY_MODEL: composer-2.5
 
@@ -83,10 +83,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-playwright-webkit-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright WebKit
+        run: npx playwright install --with-deps webkit
 
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux

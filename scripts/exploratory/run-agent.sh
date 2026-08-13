@@ -8,7 +8,7 @@ SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS="$ROOT/exploratory-results"
 PROMPT_FILE="$RESULTS/prompt.txt"
 AGENT_LOG="$RESULTS/logs/agent.log"
-BUDGET_MINUTES="${AJAX_EXPLORATORY_BUDGET_MINUTES:-25}"
+BUDGET_MINUTES="${AJAX_EXPLORATORY_BUDGET_MINUTES:-12}"
 MODEL="composer-2.5"
 
 mkdir -p "$RESULTS/logs" "$HOME/.cursor"
@@ -107,10 +107,16 @@ if [[ -z "$AGENT_BIN" ]]; then
   exit 1
 fi
 
+if ! node "$SCRIPTS/assert-webkit.mjs" >>"$AGENT_LOG" 2>&1; then
+  echo "::error title=webkit unavailable::exploratory MCP is not WebKit-only or WebKit is unavailable" >&2
+  write_agent_status 1 "webkit unavailable"
+  exit 1
+fi
+
 BUDGET_SECONDS=$((BUDGET_MINUTES * 60))
 DEADLINE=$((SECONDS + BUDGET_SECONDS))
 ATTEMPTS=0
-MAX_ATTEMPTS=8
+MAX_ATTEMPTS=2
 MIN_ATTEMPT_SECONDS=60
 EXIT_CODE=0
 CONTINUATION_SUFFIX=""
@@ -161,11 +167,15 @@ while true; do
     echo "agent returned in ${ATTEMPT_DURATION}s; not relaunching" >>"$AGENT_LOG"
     break
   fi
+  if [[ -f "$RESULTS/stop-reason.json" ]]; then
+    echo "agent recorded stop-reason.json; not relaunching" >>"$AGENT_LOG"
+    break
+  fi
   if (( ATTEMPTS >= MAX_ATTEMPTS )); then
     break
   fi
 
-  CONTINUATION_SUFFIX=$'\n\n---\n\nContinuation: ~'"$((REMAINING / 60))"$' minutes remain in the exploration budget. Read existing exploratory-results/ (findings, observations, memory-delta) and exploratory-results/oracles.json first. Continue the current charter or pick the next from oracles + suspicion — do not restart a first-pass area tour or dashboard click-tour. Skip dullActions from oracles/memory. The finish checklist is not permission to stop early.'
+  CONTINUATION_SUFFIX=$'\n\n---\n\nContinuation: ~'"$((REMAINING / 60))"$' minutes remain in the exploration budget (a maximum, not a target). Read existing exploratory-results/ (findings, observations, memory-delta) and exploratory-results/oracles.json first. Continue only if high-value unfinished work remains — an untested high-priority suspicion or a sibling of a confirmed finding. If stopping criteria in the charter already apply, write stop-reason.json and exit. Do not restart a coverage tour or consume remaining time for its own sake. Skip dullActions from oracles/memory.'
 done
 set -e
 

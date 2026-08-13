@@ -27,20 +27,20 @@ function startingCharter(oracles) {
   if (routingOrBannerBugs(oracles.openBugs)) {
     return "**Garbage hashes** or **Contradiction** (open bugs mention routing/banners).";
   }
-  return "**Happy path**, then rotate through the other charters.";
+  return "**Happy path**. Do not rotate through every charter in one run.";
 }
 
 function main() {
   const charter = readFileSync(join(exploratoryDir, "charter.md"), "utf8");
   const memory = readJson(memoryPath, emptyMemory());
   const oracles = loadOracles();
-  const budgetMinutes = Number(process.env.AJAX_EXPLORATORY_BUDGET_MINUTES ?? 25);
+  const budgetMinutes = Number(process.env.AJAX_EXPLORATORY_BUDGET_MINUTES ?? 12);
   const promptPath = join(resultsDir, "prompt.txt");
 
   const recentCommits = oracles.recentWebCommits ?? [];
   const commitsSummary =
     recentCommits.length === 0
-      ? "No recent web commits in oracle pack; still run full charters."
+      ? "No recent web commits in oracle pack; still pick a charter from oracles and suspicion."
       : "Recent web-related commits (bias charter focus, do not limit exploration):";
 
   const prompt = `${charter}
@@ -50,8 +50,10 @@ function main() {
 ## Run context
 
 - Base URL: ${BASE_URL}
-- Time budget: **${budgetMinutes} minutes minimum**. Work one charter at a time for several minutes each; keep going until the runner stops you. Never spend the whole budget on a dashboard click-tour.
-- Use the Playwright MCP browser tools. Start at ${BASE_URL}/ (HTTPS; ignore certificate warnings).
+- Time budget: **${budgetMinutes} minutes maximum**, not a target. Stop when stopping criteria in the charter apply. Do not consume remaining time for its own sake. Never spend the budget on a dashboard click-tour.
+- Use the Playwright MCP **WebKit** browser tools only (already launched for this run). Start at ${BASE_URL}/ (HTTPS; ignore certificate warnings). Do not request Chromium or Firefox.
+- Optimize for information gained per action and per model turn; reuse observations, memory, and oracles instead of rediscovering the same state.
+- This workflow runs regularly with persisted memory — one run is not the whole exploration campaign.
 - Application under test is an isolated Ajax instance for this CI run only.
 - Repository checkout is read-only for product source. Write only under exploratory-results/.
 - Finalize artifacts incrementally (findings, observations, memory-delta) as you go so a budget stop still leaves useful output.
@@ -65,9 +67,9 @@ ${JSON.stringify(oracles, null, 2)}
 
 ## Charter start
 
-Start with ${startingCharter(oracles)} Then pick the next charter from oracles + what you just observed — not from a coverage checklist.
+Start with ${startingCharter(oracles)} Pick another charter from oracles + what you just observed only if high-value work remains — not from a coverage checklist.
 
-If this is a relaunch, read existing \`exploratory-results/\` (findings, observations, memory-delta) and **continue the current charter** or start the **next** one. Do not restart a coverage tour.
+If this is a relaunch, read existing \`exploratory-results/\` (findings, observations, memory-delta) and **continue the current charter** or start the **next** one only when high-value work remains. Honor stopping criteria; do not restart a coverage tour.
 
 ## Exploration memory (adaptive hints)
 
@@ -91,7 +93,7 @@ ${recentCommits.map((line) => `- ${line}`).join("\n")}
 
 ## Required finish checklist
 
-Keep these current as you go. They are not permission to stop early; the runner decides when time is up.
+Complete these when stopping — including an early stop when stopping criteria apply:
 
 1. Ensure exploratory-results/findings.json and observations.json are valid.
 2. Write exploratory-results/memory-delta.json with areas visited and next-run focus.
