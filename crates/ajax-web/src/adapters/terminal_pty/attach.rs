@@ -336,9 +336,7 @@ pub fn ephemeral_sessions_to_reap_detached(
 ) -> Vec<String> {
     rows.iter()
         .filter(|(name, attached)| {
-            is_ephemeral_session_name(name)
-                && *attached == 0
-                && exclude != Some(name.as_str())
+            is_ephemeral_session_name(name) && *attached == 0 && exclude != Some(name.as_str())
         })
         .map(|(name, _)| name.clone())
         .collect()
