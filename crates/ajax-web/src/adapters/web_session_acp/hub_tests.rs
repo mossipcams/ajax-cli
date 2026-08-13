@@ -251,6 +251,47 @@ fn submit_prompt_queues_while_in_flight() {
 }
 
 #[test]
+fn submit_prompt_queue_survives_release_and_acquire() {
+    let dir = scratch_dir("reconnect-queue");
+    let handle = "web/reconnect-queue";
+    let hub = WebSessionHub::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            hub.acquire(handle, &dir, "auto").expect("acquire");
+            let child1 = hub.child_id(handle).expect("child1");
+            hub.submit_prompt(handle, "first".to_string())
+                .expect("first");
+            hub.submit_prompt(handle, "second".to_string())
+                .expect("second");
+
+            hub.release(handle);
+            hub.acquire(handle, &dir, "auto").expect("re-acquire");
+            let child2 = hub.child_id(handle).expect("child2");
+            assert_eq!(child1, child2);
+
+            hub.cancel(handle, true).expect("cancel releases hold");
+            pump_until(&hub, handle, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event,
+                            SessionServerEvent::Message { role, text, .. }
+                                if role == "user" && (text == "first" || text == "second")
+                        )
+                    })
+                    .count()
+                    >= 2
+            });
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn submit_prompt_cap_drops_oldest_while_in_flight() {
     let dir = scratch_dir("submit-cap");
     let handle = "web/submit-cap";

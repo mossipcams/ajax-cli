@@ -58,7 +58,6 @@ import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
 import SessionModelSelect from "./SessionModelSelect";
 import { useSessionModelPreference } from "./sessionModel";
-import { autoGrow } from "./sessionChatChrome";
 import { formatSessionBrief, PIN_THRESHOLD_PX, sessionSeededStorageKey } from "./sessionChatSeed";
 import { useSessionTransport } from "./useSessionTransport";
 
@@ -386,7 +385,14 @@ export default function SessionChat({
             onChange={(e) => {
               const next = e.target.value;
               draftRef.current = next;
-              autoGrow(e.currentTarget, next.length < draft.length);
+              const node = e.currentTarget;
+              const shrank = next.length < draft.length;
+              if (shrank) node.style.height = "auto";
+              else if (node.scrollHeight <= node.clientHeight) {
+                setDraft(next);
+                return;
+              }
+              node.style.height = `${node.scrollHeight}px`;
               setDraft(next);
             }}
             onKeyDown={(e) => {

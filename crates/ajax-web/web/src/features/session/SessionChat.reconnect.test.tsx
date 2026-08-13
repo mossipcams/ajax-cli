@@ -235,6 +235,30 @@ describe("SessionChat reconnect", () => {
     expect(screen.getByTestId("session-model-select")).toBeDisabled();
   });
 
+  it("clears the reducer on reconnect then replays host transcript", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    mountChat();
+    send({ type: "message", role: "user", text: "hello" });
+    send({ type: "message", role: "agent", text: "hi there" });
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("hello");
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("hi there");
+
+    act(() => closeSocket?.());
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(screen.queryByTestId("session-message-user")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
+
+    send({ type: "message", role: "user", text: "hello" });
+    send({ type: "message", role: "agent", text: "hi there" });
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("hello");
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("hi there");
+    vi.useRealTimers();
+  });
+
   it("keeps the transcript when ready arrives on a live socket", () => {
     mountChat();
     send({ type: "message", role: "user", text: "hello" });

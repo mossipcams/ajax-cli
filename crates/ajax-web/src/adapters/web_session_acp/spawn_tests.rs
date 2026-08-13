@@ -93,6 +93,24 @@ fn g1_respawns_after_child_death_and_prompt_works() {
 }
 
 #[test]
+fn live_double_acquire_reuses_same_child() {
+    let dir = scratch_dir("double-acquire");
+    let script = fake_acp_fixture();
+    let handle = "web/double-acquire";
+    let hub = WebSessionHub::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        hub.acquire(handle, &dir, "auto").expect("first acquire");
+        let pid1 = hub.child_id(handle).expect("pid1");
+        hub.acquire(handle, &dir, "auto").expect("second acquire");
+        let pid2 = hub.child_id(handle).expect("pid2");
+        assert_eq!(pid1, pid2);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn g1_load_fail_appends_context_reset_note() {
     let dir = scratch_dir("load-fail");
     let script = fake_acp_fixture();

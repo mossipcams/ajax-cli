@@ -1,7 +1,8 @@
 use super::{
-    is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
-    new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
-    StartPlanObservation, StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
+    is_git_worktree_add_command, is_task_window_new_session_command,
+    mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
+    record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
+    StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
 };
 use crate::{
     adapters::GitAdapter,
@@ -33,7 +34,7 @@ fn agent_send_keys_line(plan: &crate::commands::CommandPlan) -> &str {
 }
 
 #[test]
-fn skip_interactive_agent_cursor_plan_skips_agent_send_keys() {
+fn skip_interactive_agent_cursor_plan_skips_send_keys_but_keeps_worktree_and_tmux() {
     let context = context();
     let request = NewTaskRequest {
         repo: "web".to_string(),
@@ -45,6 +46,8 @@ fn skip_interactive_agent_cursor_plan_skips_agent_send_keys() {
     assert!(plan.commands.iter().all(|command| {
         !(command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string()))
     }));
+    assert!(plan.commands.iter().any(is_git_worktree_add_command));
+    assert!(plan.commands.iter().any(is_task_window_new_session_command));
 }
 
 #[test]
