@@ -338,7 +338,7 @@ pub fn ephemeral_sessions_to_reap_detached(
         .filter(|(name, attached)| {
             is_ephemeral_session_name(name)
                 && *attached == 0
-                && exclude.map_or(true, |keep| name.as_str() != keep)
+                && exclude != Some(name.as_str())
         })
         .map(|(name, _)| name.clone())
         .collect()
