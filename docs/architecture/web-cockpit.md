@@ -22,13 +22,17 @@ desktop.
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **off**; when off, dashboard and embedded terminal behavior
-is unchanged. Session routes, transport, and UI remain absent until those
-layers exist; the behavior ledger is the contract they implement.
+is unchanged.
 
 When that mode is enabled, agent conversation uses Cursor ACP over stdio
 (`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
 Model catalog parsing lives in the `session_models` slice. Session policy and
 HTTP transport are not this adapter.
+
+Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
+(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One
+`WebSessionHub` owns prompt queueing, cancellation, model switching, permission
+answers, and transcript replay cursors; transport layers call hub methods only.
 
 From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
