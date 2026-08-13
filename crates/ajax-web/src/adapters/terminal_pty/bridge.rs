@@ -273,12 +273,17 @@ pub async fn bridge_task_terminal_socket(
     client_id: Option<String>,
     on_operator_input: Arc<dyn Fn() + Send + Sync>,
 ) {
-    // ponytail: reap only detached ephemerals (attached==0). Ceiling: one
-    // list-sessions per connect. Upgrade: periodic background reaper if connect
-    // rate is too low to keep up.
-    let _ = tokio::task::spawn_blocking(reap_detached_ephemeral_terminal_sessions).await;
-
     let isolated = isolated_plan_for_bridge(&plan, client_id.as_deref());
+
+    // ponytail: reap only detached ephemerals (attached==0), but keep this
+    // connection's lingered target so reconnect can attach before setup runs.
+    // Ceiling: one list-sessions per connect. Upgrade: periodic background
+    // reaper if connect rate is too low to keep up.
+    let keep = isolated.ephemeral_session.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        reap_detached_ephemeral_terminal_sessions_except(Some(&keep))
+    })
+    .await;
 
     // Stand up the isolated grouped session before attaching so the phone's
     // dimensions never shrink the shared window for other clients. If this

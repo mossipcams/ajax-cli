@@ -328,9 +328,16 @@ pub fn ephemeral_sessions_to_reap(names: &[String]) -> Vec<String> {
 
 /// Ephemeral sessions with zero attached clients. Safe to kill while the web
 /// server is live: active browser bridges keep `session_attached >= 1`.
-pub fn ephemeral_sessions_to_reap_detached(rows: &[(String, u32)]) -> Vec<String> {
+/// When `exclude` is set, that session name is kept even if detached so a
+/// reconnecting client can reattach to its lingered viewport.
+pub fn ephemeral_sessions_to_reap_detached(
+    rows: &[(String, u32)],
+    exclude: Option<&str>,
+) -> Vec<String> {
     rows.iter()
-        .filter(|(name, attached)| is_ephemeral_session_name(name) && *attached == 0)
+        .filter(|(name, attached)| {
+            is_ephemeral_session_name(name) && *attached == 0 && exclude != Some(name.as_str())
+        })
         .map(|(name, _)| name.clone())
         .collect()
 }
@@ -361,6 +368,12 @@ pub fn reap_orphan_terminal_sessions() {
 /// terminal connect so remount/reconnect storms cannot accumulate hundreds of
 /// `-m*` sessions (linger-by-design without a live reaper).
 pub fn reap_detached_ephemeral_terminal_sessions() {
+    reap_detached_ephemeral_terminal_sessions_except(None);
+}
+
+/// Like [`reap_detached_ephemeral_terminal_sessions`], but keeps one detached
+/// ephemeral session (the reconnect target for this bridge connection).
+pub fn reap_detached_ephemeral_terminal_sessions_except(keep: Option<&str>) {
     let listing = match run_tmux_command_blocking(&TmuxCommand::new([
         "list-sessions",
         "-F",
@@ -378,7 +391,7 @@ pub fn reap_detached_ephemeral_terminal_sessions() {
             Some((name, attached))
         })
         .collect();
-    for session in ephemeral_sessions_to_reap_detached(&rows) {
+    for session in ephemeral_sessions_to_reap_detached(&rows, keep) {
         let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
     }
 }
