@@ -1,5 +1,32 @@
 use super::*;
+use ajax_core::models::AgentClient;
 use std::collections::VecDeque;
+
+#[test]
+fn prepare_task_session_returns_worktree_for_cursor_task() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Cursor;
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-fix-login");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    assert_eq!(plan.qualified_handle, "web/fix-login");
+    assert_eq!(plan.model, "auto");
+    assert!(plan
+        .worktree_path
+        .ends_with("ajax-web-session-test-fix-login"));
+}
+
+#[test]
+fn prepare_task_session_rejects_non_cursor_agent() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
+    assert_eq!(error, SessionRouteError::NotOrchestrationChat);
+}
 
 #[test]
 fn normalize_session_model_defaults_and_rejects_junk() {

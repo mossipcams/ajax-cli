@@ -1,8 +1,9 @@
 //! Browser orchestration-chat wire protocol and ACP update mapping.
 
+use ajax_core::{commands::CommandContext, models::AgentClient, registry::Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, path::PathBuf};
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
 
@@ -363,6 +364,49 @@ fn extract_content_text(content: &Value) -> String {
             .to_string(),
         _ => String::new(),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionAttachPlan {
+    pub qualified_handle: String,
+    pub worktree_path: PathBuf,
+    /// Normalized Cursor model id (`auto` for CLI default).
+    pub model: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionRouteError {
+    TaskNotFound,
+    WorktreeMissing,
+    NotOrchestrationChat,
+}
+
+pub fn prepare_task_session<R: Registry>(
+    context: &CommandContext<R>,
+    qualified_handle: &str,
+    model: &str,
+) -> Result<SessionAttachPlan, SessionRouteError> {
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == qualified_handle)
+        .ok_or(SessionRouteError::TaskNotFound)?;
+
+    if task.selected_agent != AgentClient::Cursor {
+        return Err(SessionRouteError::NotOrchestrationChat);
+    }
+    if !task.worktree_path.exists() {
+        return Err(SessionRouteError::WorktreeMissing);
+    }
+
+    let model = normalize_session_model(model).unwrap_or_else(|_| default_session_model());
+
+    Ok(SessionAttachPlan {
+        qualified_handle: qualified_handle.to_string(),
+        worktree_path: task.worktree_path.clone(),
+        model,
+    })
 }
 
 #[cfg(test)]
