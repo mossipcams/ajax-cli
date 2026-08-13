@@ -23,19 +23,12 @@ const Row = memo(function Row({
   }
 
   if (entry.kind === "prose") {
-    if (live) {
-      return (
-        <article
-          className="session-reply is-live"
-          data-testid="session-message-agent"
-          data-live="true"
-        >
-          {entry.text}
-        </article>
-      );
-    }
     return (
-      <article className="session-reply" data-testid="session-message-agent">
+      <article
+        className={live ? "session-reply is-live" : "session-reply"}
+        data-testid="session-message-agent"
+        {...(live ? { "data-live": "true" } : {})}
+      >
         <Markdown source={entry.text} />
       </article>
     );
