@@ -154,8 +154,10 @@ where
     })
 }
 
-/// Background Full refresh when push subscriptions exist and no browser is
-/// connected; otherwise skip the tick body.
+/// Background Full refresh when push subscriptions exist and the operator is
+/// not in the foreground Cockpit. Presence is only refreshed by visible-tab
+/// cockpit polls (`X-Ajax-Foreground`) plus real operate/terminal use — not by
+/// background/Simulator data polls — so connection speed stays unchanged.
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,

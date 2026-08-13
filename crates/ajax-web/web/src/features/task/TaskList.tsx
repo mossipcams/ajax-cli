@@ -14,12 +14,16 @@ interface Props {
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
+  pendingConfirmAction?: string | null;
+  onCancelPendingConfirm?: () => void;
 }
 
 interface ActionProps {
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
+  pendingConfirmAction?: string | null;
+  onCancelPendingConfirm?: () => void;
 }
 
 interface TaskRowProps extends ActionProps {
@@ -39,6 +43,8 @@ const TaskRow = memo(function TaskRow({
   onCockpit,
   onResult,
   onMutated,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
   const rowRef = useRef<HTMLButtonElement>(null);
@@ -61,7 +67,7 @@ const TaskRow = memo(function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : ""]
+  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : "", "ph-no-autocapture"]
     .filter(Boolean)
     .join(" ");
 
@@ -75,6 +81,8 @@ const TaskRow = memo(function TaskRow({
             onCockpit={onCockpit}
             onResult={onResult}
             onMutated={onMutated}
+            pendingConfirmAction={pendingConfirmAction}
+            onCancelPendingConfirm={onCancelPendingConfirm}
           />
         </div>
       ) : null}
@@ -82,6 +90,7 @@ const TaskRow = memo(function TaskRow({
         ref={rowRef}
         type="button"
         className={className}
+        data-ph-no-autocapture=""
         data-handle={card.qualified_handle}
         style={{ transform: `translateX(-${offset}px)` }}
         onClick={handleTap}
@@ -117,6 +126,8 @@ export default function TaskList({
   onCockpit,
   onResult,
   onMutated,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: Props) {
   const [offsets, setOffsets] = useState<Record<string, number>>({});
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
@@ -202,6 +213,8 @@ export default function TaskList({
     onCockpit,
     onResult,
     onMutated,
+    pendingConfirmAction,
+    onCancelPendingConfirm,
   };
 
   const band = (cards: BrowserTaskCard[]) => (

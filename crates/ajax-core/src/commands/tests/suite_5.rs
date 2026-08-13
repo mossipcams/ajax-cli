@@ -52,15 +52,10 @@ fn teardown_step_result_records_matching_branch_cleanup() {
     git_status.behind = 1;
     git_status.unpushed_commits = 2;
     task.add_side_flag(SideFlag::Unpushed);
-    let command = CommandSpec::new(
-        "git",
-        [
-            "-C",
-            "/Users/matt/projects/web",
-            "branch",
-            "-d",
-            "ajax/fix-login",
-        ],
+    let command = GitAdapter::new("git").delete_branch_substrate(
+        "/Users/matt/projects/web",
+        "ajax/fix-login",
+        false,
     );
 
     let changed =
@@ -329,15 +324,10 @@ fn confirmed_cleanup_deletes_existing_unmerged_branch() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
+            GitAdapter::new("git").delete_branch_substrate(
+                "/Users/matt/projects/web",
+                "ajax/fix-login",
+                true,
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
         ]
@@ -365,15 +355,10 @@ fn sweep_cleanup_plans_only_safe_candidates() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
+            GitAdapter::new("git").delete_branch_substrate(
+                "/Users/matt/projects/web",
+                "ajax/fix-login",
+                false,
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             CommandSpec::new(

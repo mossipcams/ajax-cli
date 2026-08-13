@@ -43,6 +43,19 @@ fn sample_context() -> CommandContext<InMemoryRegistry> {
     CommandContext::new(config, registry)
 }
 
+fn git_list_remote_branches_command() -> CommandSpec {
+    CommandSpec::new(
+        "git",
+        [
+            "-C",
+            "/Users/matt/projects/web",
+            "branch",
+            "-r",
+            "--format=%(refname:short)",
+        ],
+    )
+}
+
 // from suite_12.rs
 fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
     vec![
@@ -52,12 +65,14 @@ fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
         output(0, "ajax-other\n"),
         output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
+        output(0, "origin/main\n"),
     ]
 }
 
@@ -85,6 +100,7 @@ fn missing_drop_observation_commands() -> Vec<CommandSpec> {
                 "--format=%(refname:short)",
             ],
         ),
+        git_list_remote_branches_command(),
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
             .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
@@ -106,32 +122,35 @@ fn missing_drop_observation_commands() -> Vec<CommandSpec> {
                 "--format=%(refname:short)",
             ],
         ),
+        git_list_remote_branches_command(),
     ]
 }
 
 // from suite_12.rs
 fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
     vec![
-            output(0, ""),
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
-            ),
-            output(0, "main\najax/fix-login\n"),
-            output(0, ""),
-            output(0, ""),
-            output(0, ""),
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
-            ),
-            output(0, "main\n"),
-        ]
+        output(0, ""),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ),
+        output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        output(0, ""),
+        output(0, ""),
+        output(0, ""),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+        ),
+        output(0, "main\n"),
+        output(0, "origin/main\n"),
+    ]
 }
 
 // from suite_12.rs
 fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
-    assert_eq!(commands.len(), 8);
+    assert_eq!(commands.len(), 10);
     assert_eq!(
         commands[0],
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
@@ -162,36 +181,28 @@ fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
             ],
         )
     );
-    assert_eq!(commands[3].program, "sh");
-    assert_eq!(commands[3].args[0], "-c");
+    assert_eq!(commands[3], git_list_remote_branches_command());
+    assert_eq!(commands[4].program, "sh");
+    assert_eq!(commands[4].args[0], "-c");
     assert_eq!(
-        commands[3].args[1],
+        commands[4].args[1],
         "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
     );
-    assert_eq!(commands[3].args[2], "ajax-fast-worktree-remove");
-    assert_eq!(commands[3].args[3], "/Users/matt/projects/web");
-    assert_eq!(commands[3].args[4], "/tmp/worktrees/web-fix-login");
-    assert!(commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(commands[4].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(commands[4].args[3], "/Users/matt/projects/web");
+    assert_eq!(commands[4].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(commands[4].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(commands[5].program, "sh");
+    assert_eq!(commands[5].args[2], "ajax-delete-branch");
+    assert_eq!(commands[5].args[3], "/Users/matt/projects/web");
+    assert_eq!(commands[5].args[4], "ajax/fix-login");
     assert_eq!(
-        commands[4],
-        CommandSpec::new(
-            "git",
-            [
-                "-C",
-                "/Users/matt/projects/web",
-                "branch",
-                "-D",
-                "ajax/fix-login",
-            ],
-        )
-    );
-    assert_eq!(
-        commands[5],
+        commands[6],
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
             .with_timeout(std::time::Duration::from_secs(8))
     );
     assert_eq!(
-        commands[6],
+        commands[7],
         CommandSpec::new(
             "git",
             [
@@ -204,7 +215,7 @@ fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
         )
     );
     assert_eq!(
-        commands[7],
+        commands[8],
         CommandSpec::new(
             "git",
             [
@@ -215,6 +226,7 @@ fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
             ],
         )
     );
+    assert_eq!(commands[9], git_list_remote_branches_command());
 }
 
 // from suite_13.rs

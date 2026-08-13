@@ -314,7 +314,8 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
             ),
             output(0, "main\najax/fix-login\n"),
-            output(0, ""),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
+        output(0, ""),
             output(0, ""),
             output(0, ""),
             output(
@@ -322,6 +323,7 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
             ),
             output(0, "main\n"),
+        output(0, "origin/main\n"),
         ]);
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
@@ -359,36 +361,27 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
             ]
         )
     );
-    assert_eq!(runner.commands[3].program, "sh");
-    assert_eq!(runner.commands[3].args[0], "-c");
+    assert_eq!(runner.commands[3], git_list_remote_branches_command());
+    assert_eq!(runner.commands[4].program, "sh");
+    assert_eq!(runner.commands[4].args[0], "-c");
     assert_eq!(
-        runner.commands[3].args[1],
+        runner.commands[4].args[1],
         "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
     );
-    assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
-    assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
-    assert_eq!(runner.commands[3].args[4], "/tmp/worktrees/web-fix-login");
-    assert!(runner.commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(runner.commands[4].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(runner.commands[4].args[3], "/Users/matt/projects/web");
+    assert_eq!(runner.commands[4].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(runner.commands[4].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(runner.commands[5].program, "sh");
+    assert_eq!(runner.commands[5].args[2], "ajax-delete-branch");
+    assert_eq!(runner.commands[5].args[4], "ajax/fix-login");
     assert_eq!(
-        runner.commands[4],
-        CommandSpec::new(
-            "git",
-            [
-                "-C",
-                "/Users/matt/projects/web",
-                "branch",
-                "-D",
-                "ajax/fix-login"
-            ]
-        )
-    );
-    assert_eq!(
-        runner.commands[5],
+        runner.commands[6],
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
             .with_timeout(std::time::Duration::from_secs(8))
     );
     assert_eq!(
-        runner.commands[6],
+        runner.commands[7],
         CommandSpec::new(
             "git",
             [
@@ -401,7 +394,7 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
         )
     );
     assert_eq!(
-        runner.commands[7],
+        runner.commands[8],
         CommandSpec::new(
             "git",
             [
@@ -412,6 +405,7 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
             ]
         )
     );
+    assert_eq!(runner.commands[9], git_list_remote_branches_command());
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 #[test]
@@ -424,6 +418,7 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\najax/fix-login\n"),
+        output(0, "origin/main\norigin/ajax/fix-login\n"),
         output(0, ""),
         output(0, ""),
         output(
@@ -431,70 +426,25 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
         ),
         output(0, "main\n"),
-    ]);
+        output(0, "origin/main\n"),
+        ]);
     run_with_context_and_runner(
         ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
         &mut context,
         &mut runner,
     )
     .unwrap();
+    assert_eq!(runner.commands.len(), 9);
     assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
+        runner.commands[4].program,
+        "sh"
     );
+    assert_eq!(runner.commands[4].args[2], "ajax-delete-branch");
+    assert_eq!(runner.commands[4].args[4], "ajax/fix-login");
+    assert_eq!(runner.commands[3], git_list_remote_branches_command());
+    assert_eq!(runner.commands[4].program, "sh");
+    assert_eq!(runner.commands[4].args[2], "ajax-delete-branch");
+    assert_eq!(runner.commands[8], git_list_remote_branches_command());
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 #[test]

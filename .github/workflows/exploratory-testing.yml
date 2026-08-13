@@ -1,0 +1,200 @@
+name: Exploratory Testing
+
+# Cloud-only Ajax Web exploratory testing. Never runs on local clones via
+# npm/husky/verify. Product defects are reported as artifacts; infrastructure
+# failures fail the job.
+
+on:
+  schedule:
+    # Daily ~06:17 UTC — offset from usual top-of-hour CI noise.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      budget_minutes:
+        description: "Exploration budget in minutes"
+        required: false
+        default: "12"
+
+concurrency:
+  group: exploratory-testing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  AJAX_EXPLORATORY_PORT: "18790"
+  AJAX_EXPLORATORY_BASE_URL: "https://127.0.0.1:18790"
+  AJAX_EXPLORATORY_BUDGET_MINUTES: ${{ github.event.inputs.budget_minutes || '12' }}
+  # Locked: exploratory runs always use Composer 2.5.
+  AJAX_EXPLORATORY_MODEL: composer-2.5
+
+jobs:
+  explore:
+    name: Explore Ajax Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Require CURSOR_API_KEY
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          if [ -z "${CURSOR_API_KEY}" ]; then
+            echo "::error title=missing secret::Set repository secret CURSOR_API_KEY before running exploratory testing."
+            exit 2
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: exploratory
+
+      - name: Restore exploration memory
+        id: memory-cache
+        uses: actions/cache@v4
+        with:
+          path: exploratory-memory
+          key: exploratory-memory-${{ github.run_id }}
+          restore-keys: |
+            exploratory-memory-
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-webkit-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright WebKit
+        run: npx playwright install --with-deps webkit
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install Cursor CLI
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Build Ajax Web shell
+        run: npm run web:build
+
+      - name: Build ajax-cli (release)
+        run: cargo build --release -p ajax-cli
+
+      - name: Prepare isolated Ajax instance
+        run: node scripts/exploratory/prepare-instance.mjs
+
+      - name: Start isolated Ajax Web
+        run: bash scripts/exploratory/start-server.sh
+
+      - name: Wait for Ajax Web readiness
+        run: node scripts/exploratory/wait-ready.mjs
+
+      - name: Prepare exploration oracles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/exploratory/prepare-oracles.mjs
+
+      - name: Prepare agent prompt
+        run: node scripts/exploratory/prepare-prompt.mjs
+
+      - name: Run exploratory agent
+        id: explore
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: bash scripts/exploratory/run-agent.sh
+
+      - name: Update exploration memory
+        if: always()
+        run: node scripts/exploratory/update-memory.mjs
+
+      - name: Validate findings and read-only checkout
+        id: validate
+        if: always()
+        run: node scripts/exploratory/validate-run.mjs
+
+      - name: File confirmed findings as GitHub issues
+        id: file-issues
+        if: always() && steps.validate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AJAX_EXPLORATORY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/exploratory/file-issues.mjs
+
+      - name: Stop Ajax Web
+        if: always()
+        run: bash scripts/exploratory/stop-server.sh
+
+      - name: Upload exploratory artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exploratory-results-${{ github.run_id }}
+          path: |
+            exploratory-results/
+            exploratory-memory/
+            target/exploratory-instance/server.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on infrastructure / explorer errors
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.explore.outcome }}" = "failure" ]; then
+            echo "Exploratory agent infrastructure failed."
+            exit 1
+          fi
+          if [ "${{ steps.validate.outcome }}" = "failure" ]; then
+            echo "Exploratory validation failed (schema or read-only violation)."
+            exit 1
+          fi
+          if [ "${{ steps.file-issues.outcome }}" = "failure" ]; then
+            echo "Exploratory issue filing failed."
+            exit 1
+          fi
+          node --input-type=module <<'EOF'
+          import { readFileSync, existsSync } from "node:fs";
+          const path = "exploratory-results/run.json";
+          if (!existsSync(path)) {
+            console.error("missing exploratory-results/run.json");
+            process.exit(1);
+          }
+          const run = JSON.parse(readFileSync(path, "utf8"));
+          if (run.infrastructure?.status === "failed") {
+            console.error(run.infrastructure.error ?? "infrastructure failed");
+            process.exit(1);
+          }
+          const confirmed = run.findingsSummary?.confirmed ?? 0;
+          const issues = run.issues ?? {};
+          console.log(
+            `exploratory run ok; confirmed findings=${confirmed}` +
+              ` created=${issues.created ?? 0}` +
+              ` duplicate=${issues.duplicate ?? 0}` +
+              ` failed=${issues.failed ?? 0}`,
+          );
+          EOF

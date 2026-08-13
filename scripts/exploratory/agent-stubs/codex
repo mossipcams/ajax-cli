@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stub for exploratory CI: keep task tmux windows alive without nesting agents.
+echo "exploratory agent stub: codex (sleeping)"
+exec sleep infinity

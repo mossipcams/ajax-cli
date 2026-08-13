@@ -177,9 +177,9 @@ select {
   top: 0;
   z-index: 10;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-  backdrop-filter: saturate(140%) blur(12px);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
   border-bottom: 1px solid var(--rule);
 }
 
@@ -332,20 +332,27 @@ header .bar h1 {
 
 /* RESULT PANEL ------------------------------------------------------------ */
 .result-panel {
-  /* Overlay toast — pinned near the top, out of flow so it never shifts the
-     cockpit layout. Above chrome (10) / bottom-nav (20), below the sheet (45). */
+  /* Overlay toast — thumb-reachable above bottom nav (body clears 72px). Out of
+     flow so it never shifts the cockpit. Above chrome (10) / bottom-nav (20),
+     below the sheet (45). */
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 12px);
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
+  left: 50%;
+  bottom: calc(72px + 12px);
+  transform: translateX(-50%);
   width: min(var(--shell), calc(100% - 24px));
-  margin: 0 auto;
+  margin: 0;
   z-index: 40;
-  padding: 12px 20px;
+  padding: 12px 16px;
   background: var(--paper-raised);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* Nav hidden: sit just above the home indicator instead of a dead 72px band. */
+html.keyboard-open .result-panel,
+html.terminal-expanded .result-panel {
+  bottom: calc(12px + env(safe-area-inset-bottom));
 }
 
 .result-panel.is-error {
@@ -379,9 +386,18 @@ header .bar h1 {
   display: none;
 }
 
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: stretch;
+}
+
+.result-actions .pill,
 .result-panel .pill {
-  min-height: 28px;
-  padding: 5px 12px;
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 10px 14px;
 }
 
 /* SETTINGS VIEW — rendered only on the settings route (legacy used a
@@ -1766,9 +1782,9 @@ html.keyboard-open .session-composer textarea {
   padding: 8px max(16px, env(safe-area-inset-left)) 8px
     max(16px, env(safe-area-inset-right));
   border-top: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper) 94%, transparent);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-  backdrop-filter: saturate(140%) blur(12px);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
   box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
 }
 
@@ -2281,6 +2297,9 @@ html.keyboard-open .session-composer textarea {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Seed open assigns scrollTop while hidden; never animate that jump. */
+  scroll-behavior: auto;
+  overflow-anchor: none;
   touch-action: pan-y;
   width: 100%;
   background: #161616;
@@ -2288,7 +2307,9 @@ html.keyboard-open .session-composer textarea {
   scrollbar-width: none;
 }
 
-/* Hide xterm content while seed parses; keep wrap background as the plate. */
+/* Hide xterm content while seed parses; keep wrap background as the plate.
+   opacity only — visibility:hidden blocks WebKit focus/hit-testing on the
+   host and breaks PTY input before onOpen cancels seed-pending. */
 .terminal-interaction-wrap.is-seed-pending .terminal-host,
 .terminal-interaction-wrap.is-seed-pending .terminal-scroll-spacer {
   opacity: 0;

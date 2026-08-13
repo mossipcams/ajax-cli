@@ -289,6 +289,20 @@ fn new_command_requires_task_title() {
     );
 }
 #[test]
+fn new_command_rejects_empty_task_titles() {
+    for title in ["", "   "] {
+        let error = run_with_context(
+            ["ajax", "start", "--repo", "web", "--title", title],
+            &sample_context(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            CliError::CommandFailed("task title is required; pass --title".to_string())
+        );
+    }
+}
+#[test]
 fn repos_command_renders_human_output() {
     let context = sample_context();
     let output = run_with_context(["ajax", "repos"], &context).unwrap();

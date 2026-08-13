@@ -28,9 +28,9 @@ function parsePrQuery(query: string): number | undefined {
   if (!query) return undefined;
   for (const part of query.split("&")) {
     const [key, value] = part.split("=");
-    if (key === "pr" && value) {
-      const n = Number.parseInt(value, 10);
-      if (Number.isFinite(n) && n > 0) return n;
+    if (key === "pr" && value && /^\d+$/.test(value)) {
+      const n = Number(value);
+      if (Number.isSafeInteger(n) && n > 0) return n;
     }
   }
   return undefined;
@@ -50,7 +50,7 @@ export function parseRoute(hash: string): Route {
     return { kind: "session", handle };
   }
   if (value.startsWith(TASK_PREFIX)) {
-    const rest = value.slice(TASK_PREFIX.length);
+    const rest = value.slice(TASK_PREFIX.length).replace(/\/diff\/$/, DIFF_SUFFIX);
     if (!rest) return { kind: "dashboard" };
     if (rest.endsWith(DIFF_SUFFIX)) {
       const encodedHandle = rest.slice(0, -DIFF_SUFFIX.length);

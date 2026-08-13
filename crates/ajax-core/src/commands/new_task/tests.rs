@@ -163,7 +163,10 @@ fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
 
     let launch = agent_send_keys_line(&plan);
     assert!(launch.contains("ajax-cli __agent-runtime --task-id web/fix-login"));
-    assert!(launch.ends_with("-- cursor agent"));
+    assert!(
+        launch.ends_with("-- cursor agent --model cursor-grok-4.6-high"),
+        "cursor launch must pin Grok 4.6 high, got: {launch}"
+    );
     assert_eq!(
         task_from_new_request(&context, &request)
             .unwrap()

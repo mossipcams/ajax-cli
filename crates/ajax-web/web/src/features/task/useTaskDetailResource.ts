@@ -21,6 +21,9 @@ export function useTaskDetailResource(
   const handleRef = useRef(handle);
   handleRef.current = handle;
 
+  const loadGenRef = useRef(0);
+  const resumedHandleRef = useRef<string | null>(null);
+
   const [detail, setDetail] = useState<RemoteResource<BrowserTaskDetail>>({
     status: "loading",
     data: null,
@@ -28,25 +31,24 @@ export function useTaskDetailResource(
   });
 
   const loadDetail = useCallback(async (requestedHandle: string) => {
+    const gen = ++loadGenRef.current;
     try {
       const next = await fetchDetail(requestedHandle);
-      if (handleRef.current !== requestedHandle) return;
+      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
       setDetail({ status: "ready", data: next, error: null });
       depsRef.current.markConnected();
     } catch (error) {
-      if (handleRef.current !== requestedHandle) return;
-      if (!(error instanceof ApiError)) return;
-      depsRef.current.applyConnectionError(error);
+      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
+      const detailError =
+        error instanceof ApiError
+          ? error
+          : new ApiError("incompatible", error instanceof Error ? error.message : String(error));
+      if (error instanceof ApiError) depsRef.current.applyConnectionError(error);
       setDetail((prev) => {
         if (prev.status === "ready" || prev.status === "stale") {
-          return { status: "stale", data: prev.data, error };
+          return { status: "stale", data: prev.data, error: detailError };
         }
-        // ponytail: network failures leave the outlet on the skeleton, matching
-        // the pre-hook null-detail behavior the App shell tests still assert.
-        if (error.kind === "network" && prev.status === "loading") {
-          return prev;
-        }
-        return { status: "error", data: null, error };
+        return { status: "error", data: null, error: detailError };
       });
     }
   }, []);
@@ -76,11 +78,14 @@ export function useTaskDetailResource(
 
   useEffect(() => {
     if (!handle) {
+      resumedHandleRef.current = null;
       setDetail({ status: "loading", data: null, error: null });
       return;
     }
     setDetail({ status: "loading", data: null, error: null });
     void loadDetail(handle);
+    if (resumedHandleRef.current === handle) return;
+    resumedHandleRef.current = handle;
     void resumeOnOpen(handle).then((mutated) => {
       if (mutated && handleRef.current === handle) {
         void loadDetail(handle);

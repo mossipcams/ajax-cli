@@ -12,6 +12,20 @@ function dispatchVV(type: string) {
   for (const handler of vvListeners[type] ?? []) handler();
 }
 
+let visibilityState: DocumentVisibilityState = "visible";
+
+function setVisibilityState(state: DocumentVisibilityState) {
+  visibilityState = state;
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => visibilityState,
+  });
+}
+
+function dispatchVisibilityChange() {
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 // jsdom's window persists across tests, so window/document listeners must be
 // torn down or stale closures from a prior test fire on the next one.
 let disposers: Array<() => void> = [];
@@ -26,9 +40,11 @@ beforeEach(() => {
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vvHeight = 800;
   vvOffsetTop = 0;
+  visibilityState = "visible";
   disposers = [];
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
+  setVisibilityState("visible");
   vi.stubGlobal("visualViewport", {
     get height() {
       return vvHeight;
@@ -245,6 +261,75 @@ describe("initViewport", () => {
     vi.stubGlobal("visualViewport", undefined);
     expect(() => initViewport()()).not.toThrow();
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+  });
+
+  it("clears keyboard-open on visible visibilitychange when visualViewport already restored (#836)", () => {
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    vvHeight = 800;
+    setVisibilityState("visible");
+    dispatchVisibilityChange();
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+  });
+
+  it("rebases to layout height on visible visibilitychange when visualViewport stays stale-small (#836)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    setVisibilityState("visible");
+    dispatchVisibilityChange();
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("0px");
+  });
+
+  it("performs the same foreground resync on pageshow (#836)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    window.dispatchEvent(new Event("pageshow"));
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+  });
+
+  it("clears keyboard-open on hidden visibilitychange without waiting for visualViewport", () => {
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    setVisibilityState("hidden");
+    dispatchVisibilityChange();
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
+  });
+
+  it("stops handling visibilitychange after cleanup", () => {
+    const dispose = start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    dispose();
+
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty("--app-height", "480px");
+    setVisibilityState("visible");
+    expect(() => dispatchVisibilityChange()).not.toThrow();
+    expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
   });
 });
 

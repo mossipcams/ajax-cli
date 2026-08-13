@@ -247,8 +247,7 @@ fn drop_op_command<R: Registry>(
         DropOp::EnsureWorktreeAbsent => {
             git.remove_worktree(&repo_path, &task.worktree_path.display().to_string())
         }
-        DropOp::EnsureBranchAbsent if force => git.force_delete_branch(&repo_path, &task.branch),
-        DropOp::EnsureBranchAbsent => git.delete_branch(&repo_path, &task.branch),
+        DropOp::EnsureBranchAbsent => git.delete_branch_substrate(&repo_path, &task.branch, force),
         DropOp::EnsureAgentStopped => {
             return Err(CommandError::PlanBlocked(vec![format!(
                 "drop op {op:?} does not have an external command"
@@ -449,6 +448,18 @@ fn drop_cleanup_resource_is_already_missing(command: &CommandSpec, output: &Comm
             || stderr.contains("session not found");
     }
 
+    if commands::is_delete_branch_substrate_command(command) {
+        return git_error_says_branch_missing(&stderr)
+            || git_error_says_remote_branch_missing(&stderr);
+    }
+
+    if command.program == "git"
+        && command.args.iter().any(|arg| arg == "push")
+        && command.args.iter().any(|arg| arg == "--delete")
+    {
+        return git_error_says_remote_branch_missing(&stderr);
+    }
+
     if commands::is_fast_worktree_remove_command(command) {
         // Fast-remove wraps mkdir/mv/git; broad "no such file" matches mv failures
         // that must remain hard failures. Only git's worktree-identity errors count.
@@ -481,4 +492,10 @@ fn git_error_says_branch_missing(stderr: &str) -> bool {
         || stderr.contains("not a branch")
         || stderr.contains("no such branch")
         || stderr.contains("not a valid branch name")
+}
+
+fn git_error_says_remote_branch_missing(stderr: &str) -> bool {
+    stderr.contains("remote ref does not exist")
+        || stderr.contains("does not exist")
+        || stderr.contains("matches no refs")
 }

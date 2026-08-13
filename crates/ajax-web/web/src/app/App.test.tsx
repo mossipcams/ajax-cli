@@ -397,6 +397,21 @@ describe("App shell", () => {
     await waitFor(() => expect(dashboardNav()).not.toHaveAttribute("aria-current"));
   });
 
+  it("uses opaque paper on cockpit-chrome and bottom-nav without backdrop-filter (#836 black box)", () => {
+    const stylesSource = loadStylesSource();
+    const cockpitChromeRule =
+      stylesSource.match(/(?:^|\n)\.cockpit-chrome\s*\{([^}]*)\}/)?.[1] ?? "";
+    const bottomNavRule =
+      stylesSource.match(/(?:^|\n)\.bottom-nav\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(cockpitChromeRule).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
+    expect(bottomNavRule).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
+    expect(cockpitChromeRule).toMatch(/background:\s*var\(--paper\)/);
+    expect(bottomNavRule).toMatch(/background:\s*var\(--paper\)/);
+    expect(cockpitChromeRule).not.toMatch(/color-mix/);
+    expect(bottomNavRule).not.toMatch(/color-mix/);
+  });
+
   it("styles the current bottom-nav page with an accent selected state", () => {
     const stylesSource = loadStylesSource();
     const currentPageRule =
@@ -407,17 +422,15 @@ describe("App shell", () => {
     expect(currentPageRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
   });
 
-  it("shows a dashboard skeleton while the cockpit projection is loading", () => {
-    render(<App />);
-    expect(screen.getByTestId("dashboard-skeleton")).toBeInTheDocument();
-    expect(screen.queryByText(/All quiet|No tasks/)).not.toBeInTheDocument();
-  });
-
-  it("shows a task skeleton while a task detail is loading", async () => {
-    render(<App />);
-    setHash("#/t/web%2Ffix-login");
-    await screen.findByTestId("outlet-task");
-    expect(screen.getByTestId("task-skeleton")).toBeInTheDocument();
+  it("anchors the result toast above the bottom nav with full-width actions", () => {
+    const stylesSource = loadStylesSource();
+    const panelRule = stylesSource.match(/\.result-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(panelRule).toMatch(/bottom:\s*calc\(72px\s*\+\s*12px\)/);
+    expect(panelRule).toMatch(/left:\s*50%/);
+    expect(panelRule).toMatch(/transform:\s*translateX\(-50%\)/);
+    expect(panelRule).not.toMatch(/top:\s*calc\(env\(safe-area-inset-top\)/);
+    expect(stylesSource).toMatch(/\.result-actions\s*\{/);
+    expect(stylesSource).toMatch(/\.result-actions\s+\.pill[\s\S]*?min-height:\s*44px/);
   });
 
   it("shows the settings outlet on the settings route", async () => {
@@ -584,34 +597,6 @@ describe("App shell", () => {
     expect(typeof idleCb).toBe("function");
     idleCb!();
     await vi.waitFor(() => expect(hitVersion()).toBe(true));
-  });
-
-  it("surfaces an update banner when the API version changes", async () => {
-    vi.useFakeTimers();
-    let versionCalls = 0;
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
-      if (path === "/api/version") {
-        versionCalls += 1;
-        return Promise.resolve(jsonResponse({ version: versionCalls === 1 ? "v1" : "v2" }));
-      }
-      return Promise.reject(new Error(`unexpected fetch: ${path}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<App />);
-    const banner = screen.getByTestId("update-banner");
-
-    expect(banner).not.toBeVisible();
-    await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(versionCalls).toBe(1));
-    expect(banner).not.toBeVisible();
-
-    await vi.advanceTimersByTimeAsync(30000);
-
-    await vi.waitFor(() => expect(banner).toBeVisible());
-    expect(banner).toHaveTextContent("Update ready — tap to reload");
   });
 
   // iOS launches a home-screen PWA with the document still hidden behind the

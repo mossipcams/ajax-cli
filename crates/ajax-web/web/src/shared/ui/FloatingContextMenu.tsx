@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   autoUpdate,
   flip,
@@ -99,6 +99,7 @@ export function FloatingContextMenu({
   onClose,
   ariaLabel = "Context menu",
 }: FloatingContextMenuProps) {
+  const selectLatchRef = useRef(false);
   const virtualReference = useMemo(
     () => (anchor ? toVirtualElement(anchor) : null),
     [anchor],
@@ -108,6 +109,10 @@ export function FloatingContextMenu({
     () => (open ? readFloatingMenuShiftPadding() : floatingMenuShiftPadding),
     [open],
   );
+
+  useEffect(() => {
+    if (open) selectLatchRef.current = false;
+  }, [open]);
 
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -165,7 +170,12 @@ export function FloatingContextMenu({
             variant="secondary"
             className="floating-context-menu__item"
             role="menuitem"
-            onClick={() => item.onSelect()}>
+            onClick={() => {
+              if (selectLatchRef.current) return;
+              selectLatchRef.current = true;
+              item.onSelect();
+              onClose();
+            }}>
             {item.label}
           </Button>
         ))}

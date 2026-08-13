@@ -46,12 +46,17 @@ export default function ResultPanel({
   const onConfirmRef = useRef(onConfirm);
   const onCancelConfirmRef = useRef(onCancelConfirm);
   const onConfirmTimeoutRef = useRef(onConfirmTimeout);
+  const confirmLatchRef = useRef(false);
   onDismissRef.current = onDismiss;
   onUndoRef.current = onUndo;
   onCommitRef.current = onCommit;
   onConfirmRef.current = onConfirm;
   onCancelConfirmRef.current = onCancelConfirm;
   onConfirmTimeoutRef.current = onConfirmTimeout;
+
+  useEffect(() => {
+    confirmLatchRef.current = false;
+  }, [message, confirmMode]);
 
   useEffect(() => {
     const dismissMs = confirmMode
@@ -79,11 +84,15 @@ export default function ResultPanel({
   }
 
   function cancelConfirm() {
+    if (confirmLatchRef.current) return;
+    confirmLatchRef.current = true;
     onCancelConfirmRef.current?.();
     onDismissRef.current?.();
   }
 
   function confirm() {
+    if (confirmLatchRef.current) return;
+    confirmLatchRef.current = true;
     onConfirmRef.current?.();
     onDismissRef.current?.();
   }
@@ -97,25 +106,27 @@ export default function ResultPanel({
     >
       <p className="result-message">{message}</p>
       {trimmedOutput ? <pre className="result-output">{trimmedOutput}</pre> : null}
-      {confirmMode ? (
-        <>
-          <Button type="button" variant="default" onClick={confirm}>
-            Confirm
+      <div className="result-actions" data-testid="result-actions">
+        {confirmMode ? (
+          <>
+            <Button type="button" variant="default" onClick={confirm}>
+              Confirm
+            </Button>
+            <Button type="button" variant="secondary" onClick={cancelConfirm}>
+              Cancel
+            </Button>
+          </>
+        ) : undoArmed ? (
+          <Button type="button" variant="default" onClick={dismiss}>
+            Undo
           </Button>
-          <Button type="button" variant="secondary" onClick={cancelConfirm}>
-            Cancel
+        ) : null}
+        {!confirmMode ? (
+          <Button type="button" variant="secondary" onClick={dismiss}>
+            Dismiss
           </Button>
-        </>
-      ) : undoArmed ? (
-        <Button type="button" variant="default" onClick={dismiss}>
-          Undo
-        </Button>
-      ) : null}
-      {!confirmMode ? (
-        <Button type="button" variant="secondary" onClick={dismiss}>
-          Dismiss
-        </Button>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

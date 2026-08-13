@@ -223,11 +223,11 @@ pub fn orphan_gc_commands(repo_path: &str, targets: &[OrphanGcTarget]) -> Vec<Co
                     .as_deref()
                     .filter(|branch| branch.starts_with("ajax/"))
                 {
-                    commands.push(git.force_delete_branch(repo_path, branch));
+                    commands.push(git.delete_branch_substrate(repo_path, branch, true));
                 }
             }
             OrphanGcTarget::Branch { branch, .. } => {
-                commands.push(git.force_delete_branch(repo_path, branch));
+                commands.push(git.delete_branch_substrate(repo_path, branch, true));
             }
         }
     }
@@ -270,8 +270,15 @@ pub fn collect_orphan_gc_commands<R: Registry>(
         let repo_path_str = repo_path.display().to_string();
         let worktrees_output = run_successful_command(runner, &git.list_worktrees(&repo_path_str))?;
         let branches_output = run_successful_command(runner, &git.list_branches(&repo_path_str))?;
+        let remote_branches_output =
+            run_successful_command(runner, &git.list_remote_branches(&repo_path_str))?;
         let worktrees = GitAdapter::parse_worktrees(&worktrees_output);
-        let branches = GitAdapter::parse_branches(&branches_output);
+        let mut branches = GitAdapter::parse_branches(&branches_output);
+        for branch in GitAdapter::parse_remote_branches(&remote_branches_output) {
+            if !branches.contains(&branch) {
+                branches.push(branch);
+            }
+        }
         let targets = plan_orphan_gc_for_repo(
             &claimed_paths,
             &claimed_branches,
@@ -496,9 +503,39 @@ mod tests {
                 "/repo/web__worktrees/ajax-xterm-implementation"
             ]
         );
+        assert_eq!(commands[1].program, "sh");
+        assert_eq!(commands[1].args[2], "ajax-delete-branch");
+        assert_eq!(commands[1].args[4], "ajax/xterm-implementation");
+        assert!(commands[1].args[1].contains("push origin --delete"));
+    }
+
+    #[test]
+    fn classify_orphans_lists_remote_only_ajax_branch() {
+        let branches = vec!["main".to_string()];
+        let remote_branches = vec!["main".to_string(), "ajax/remote-only".to_string()];
+        let mut all_branches = branches;
+        for branch in remote_branches {
+            if !all_branches.contains(&branch) {
+                all_branches.push(branch);
+            }
+        }
+
+        let targets = classify_orphans(
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &[],
+            &all_branches,
+            OrphanGcMode::AjaxShaped,
+            Path::new(REPO_PATH),
+            &legacy_placement(),
+        );
+
         assert_eq!(
-            commands[1].args,
-            ["-C", REPO_PATH, "branch", "-D", "ajax/xterm-implementation"]
+            targets,
+            vec![OrphanGcTarget::Branch {
+                repo_path: REPO_PATH.to_string(),
+                branch: "ajax/remote-only".to_string(),
+            }]
         );
     }
 }

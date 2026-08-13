@@ -37,7 +37,7 @@ describe("FloatingContextMenu", () => {
 
   it("renders items when open with an anchor point", () => {
     const onOpen = vi.fn();
-    const onCopy = vi.fn();
+    const onClose = vi.fn();
 
     render(
       <FloatingContextMenu
@@ -45,18 +45,34 @@ describe("FloatingContextMenu", () => {
         anchor={{ x: 40, y: 60 }}
         items={[
           { id: "open", label: "Open", onSelect: onOpen },
-          { id: "copy", label: "Copy", onSelect: onCopy },
+          { id: "copy", label: "Copy", onSelect: vi.fn() },
         ]}
-        onClose={vi.fn()}
+        onClose={onClose}
         ariaLabel="Link actions"
       />,
     );
 
+    expect(screen.getByRole("menuitem", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Open" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
-
     expect(onOpen).toHaveBeenCalledOnce();
-    expect(onCopy).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("fires onSelect only once under same-turn double click", () => {
+    const onOpen = vi.fn();
+    render(
+      <FloatingContextMenu
+        open
+        anchor={{ x: 40, y: 60 }}
+        items={[{ id: "open", label: "Open", onSelect: onOpen }]}
+        onClose={vi.fn()}
+      />,
+    );
+    const open = screen.getByRole("menuitem", { name: "Open" });
+    open.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    open.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 
   it("calls onClose on Escape", () => {

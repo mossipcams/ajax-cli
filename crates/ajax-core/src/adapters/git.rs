@@ -43,6 +43,13 @@ impl GitAdapter {
         )
     }
 
+    pub fn list_remote_branches(&self, repo_path: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "branch", "-r", "--format=%(refname:short)"],
+        )
+    }
+
     pub fn fetch_origin_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["-C", repo_path, "fetch", "origin", branch])
             .with_timeout(GIT_FETCH_TIMEOUT)
@@ -109,6 +116,45 @@ impl GitAdapter {
 
     pub fn force_delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["-C", repo_path, "branch", "-D", branch])
+    }
+
+    pub fn delete_remote_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "push", "origin", "--delete", branch],
+        )
+    }
+
+    pub fn delete_branch_substrate(
+        &self,
+        repo_path: &str,
+        branch: &str,
+        force: bool,
+    ) -> CommandSpec {
+        let local_flag = if force { "-D" } else { "-d" };
+        let script = if branch.starts_with("ajax/") {
+            format!(
+                concat!(
+                    "ref=\"refs/heads/$2\"; ",
+                    "git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\"; ",
+                    "push_err=$(git -C \"$1\" push origin --delete \"$2\" 2>&1) || ",
+                    "case \"$push_err\" in ",
+                    "*\"remote ref does not exist\"*|*\"does not exist\"*|*\"matches no refs\"*) ;; ",
+                    "*) printf '%s\\n' \"$push_err\" >&2; exit 1;; ",
+                    "esac; ",
+                    "git -C \"$1\" update-ref -d \"refs/remotes/origin/$2\" >/dev/null 2>&1 || true"
+                ),
+                local_flag = local_flag
+            )
+        } else {
+            format!(
+                "ref=\"refs/heads/$2\"; git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\""
+            )
+        };
+        CommandSpec::new(
+            "sh",
+            ["-c", &script, "ajax-delete-branch", repo_path, branch],
+        )
     }
 
     pub fn switch_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
@@ -197,6 +243,16 @@ impl GitAdapter {
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .map(str::to_string)
+            .collect()
+    }
+
+    pub fn parse_remote_branches(remote_branch_output: &str) -> Vec<String> {
+        remote_branch_output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| !line.contains("HEAD ->"))
+            .filter_map(|line| line.strip_prefix("origin/").map(str::to_string))
             .collect()
     }
 }
@@ -332,5 +388,96 @@ detached
         assert_eq!(worktrees[1].branch.as_deref(), Some("ajax/code"));
         assert_eq!(worktrees[2].path, "/repos/ajax-cli__worktrees/manual");
         assert_eq!(worktrees[2].branch, None);
+    }
+
+    #[test]
+    fn list_remote_branches_uses_short_ref_format() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.list_remote_branches("/repos/web"),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/repos/web",
+                    "branch",
+                    "-r",
+                    "--format=%(refname:short)"
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn delete_remote_branch_pushes_delete_to_origin() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.delete_remote_branch("/repos/web", "ajax/fix-login"),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/repos/web",
+                    "push",
+                    "origin",
+                    "--delete",
+                    "ajax/fix-login"
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn parse_remote_branches_strips_origin_prefix() {
+        let output = "\
+origin/main
+origin/ajax/fix-login
+origin/HEAD -> origin/main
+";
+
+        assert_eq!(
+            GitAdapter::parse_remote_branches(output),
+            vec!["main".to_string(), "ajax/fix-login".to_string()]
+        );
+    }
+
+    #[test]
+    fn delete_branch_substrate_chains_local_and_remote_delete_for_ajax_branches() {
+        let adapter = GitAdapter::new("git");
+        let command = adapter.delete_branch_substrate("/repos/web", "ajax/fix-login", false);
+
+        assert_eq!(command.program, "sh");
+        assert_eq!(command.args[2], "ajax-delete-branch");
+        assert_eq!(command.args[3], "/repos/web");
+        assert_eq!(command.args[4], "ajax/fix-login");
+        assert!(command.args[1].contains("branch -d"));
+        assert!(command.args[1].contains("push origin --delete"));
+        assert!(command.args[1].contains("update-ref -d"));
+        assert!(command.args[1].contains("refs/remotes/origin/"));
+    }
+
+    #[test]
+    fn delete_branch_substrate_prunes_stale_origin_tracking_ref_for_ajax_branches() {
+        // #840
+        let adapter = GitAdapter::new("git");
+        let command = adapter.delete_branch_substrate("/repos/web", "ajax/defect", true);
+
+        assert_eq!(command.args[2], "ajax-delete-branch");
+        assert!(command.args[1].contains("update-ref -d \"refs/remotes/origin/$2\""));
+        assert!(command.args[1].contains("|| true"));
+    }
+
+    #[test]
+    fn delete_branch_substrate_skips_remote_delete_for_non_ajax_branches() {
+        let adapter = GitAdapter::new("git");
+        let command = adapter.delete_branch_substrate("/repos/web", "fix/login", true);
+
+        assert_eq!(command.program, "sh");
+        assert!(command.args[1].contains("branch -D"));
+        assert!(!command.args[1].contains("push origin --delete"));
+        assert!(!command.args[1].contains("update-ref"));
+        assert!(!command.args[1].contains("refs/remotes/origin"));
     }
 }

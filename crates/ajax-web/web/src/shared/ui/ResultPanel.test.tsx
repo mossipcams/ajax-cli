@@ -99,6 +99,19 @@ describe("ResultPanel", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("groups Confirm and Cancel in a result-actions row", () => {
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const actions = screen.getByTestId("result-actions");
+    expect(actions).toContainElement(screen.getByRole("button", { name: "Confirm" }));
+    expect(actions).toContainElement(screen.getByRole("button", { name: "Cancel" }));
+  });
+
   it("calls onConfirm when Confirm is clicked in confirm mode", () => {
     const onConfirm = vi.fn();
     const onDismiss = vi.fn();
@@ -112,6 +125,21 @@ describe("ResultPanel", () => {
     fireEvent.click(screen.getByText("Confirm"));
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("fires onConfirm only once under same-turn double click", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={onConfirm}
+        onDismiss={vi.fn()}
+      />,
+    );
+    const confirm = screen.getByText("Confirm");
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onConfirm).toHaveBeenCalledOnce();
   });
 
   it("calls onCancelConfirm when Cancel is clicked in confirm mode", () => {

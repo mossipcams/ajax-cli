@@ -425,8 +425,11 @@ fn smoke_merge_and_clean_completed_task() {
         )) || log_after_clean.contains(&format!(
             "git -C {} branch -D ajax/fix-login",
             repo.display()
+        )) || log_after_clean.contains(&format!(
+            "git -C {} push origin --delete ajax/fix-login",
+            repo.display()
         )),
-        "clean should delete the merged task branch:\n{log_after_clean}"
+        "clean should delete the merged task branch locally and on origin:\n{log_after_clean}"
     );
 
     let tasks_after_clean = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");

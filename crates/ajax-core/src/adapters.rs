@@ -6,7 +6,7 @@ pub mod github;
 pub mod process;
 pub mod tmux;
 
-pub use agent::{agent_launch_spec, AgentLaunch};
+pub use agent::{agent_launch_spec, AgentLaunch, CURSOR_DEFAULT_MODEL};
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
@@ -533,7 +533,15 @@ mod tests {
 
         assert_eq!(
             agent_launch_spec("cursor", AgentClient::Cursor, &launch),
-            CommandSpec::new("cursor", ["agent", "fix login"])
+            CommandSpec::new(
+                "cursor",
+                [
+                    "agent",
+                    "--model",
+                    crate::adapters::agent::CURSOR_DEFAULT_MODEL,
+                    "fix login"
+                ]
+            )
         );
     }
 

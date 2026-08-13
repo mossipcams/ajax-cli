@@ -13,8 +13,8 @@ import {
   DEFAULT_FONT_SIZE,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
-  FONT_STORAGE_KEY,
-  parsePersistedFontSize,
+  loadPersistedFontSize,
+  persistFontSize,
   computeTerminalGeometry,
   terminalScrollbackLines,
 } from "@/shared/lib/terminalGeometry";
@@ -50,22 +50,6 @@ const DIRECTIONAL_DRAG_THRESHOLD_PX = 24;
 const DIRECTIONAL_REPEAT_INTERVAL_MS = 75;
 const DOUBLE_TAP_WINDOW_MS = 350;
 const DOUBLE_TAP_SLOP_PX = 24;
-
-function loadPersistedFontSize(): number {
-  try {
-    return parsePersistedFontSize(localStorage.getItem(FONT_STORAGE_KEY));
-  } catch {
-    return DEFAULT_FONT_SIZE;
-  }
-}
-
-function persistFontSize(size: number) {
-  try {
-    localStorage.setItem(FONT_STORAGE_KEY, String(size));
-  } catch {
-    // Storage may be unavailable in private mode.
-  }
-}
 
 export type MountTaskTerminalSessionDeps = {
   handle: string;
@@ -222,21 +206,38 @@ export function mountTaskTerminalSession(
     interactionEl.classList.remove("is-seed-pending");
   };
 
-  const revealSeed = () => {
-    clearSeedPendingRevealTimer();
-    if (!isActive() || !isSeedPending()) return;
+  let revealSnapFrame = 0;
+
+  const snapSeedToBottom = () => {
     scrollSync.syncSpacer();
     scrollSync.setFollowLive(true);
+    setHasUnseenOutput(false);
     scrollSync.setSyncingScroll(true);
     termRef.current?.scrollToBottom();
     scrollSync.scrollInteractionToBottom();
     scrollSync.setSyncingScroll(false);
     scrollSync.refreshFollow();
-    interactionEl.classList.remove("is-seed-pending");
-    // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
-    // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
-    // the first post-reveal erase (onOutput) or after grace if none is seen.
-    armPostRevealEraseGrace();
+  };
+
+  // Pin while still hidden, then unhide in place. Never move scrollTop after
+  // opacity returns — that is the visible "scrolls all the way down" open.
+  const revealSeed = () => {
+    clearSeedPendingRevealTimer();
+    if (!isActive() || !isSeedPending()) return;
+    snapSeedToBottom();
+    if (revealSnapFrame) cancelAnimationFrame(revealSnapFrame);
+    revealSnapFrame = requestAnimationFrame(() => {
+      revealSnapFrame = requestAnimationFrame(() => {
+        revealSnapFrame = 0;
+        if (!isActive() || !isSeedPending()) return;
+        snapSeedToBottom();
+        interactionEl.classList.remove("is-seed-pending");
+        // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
+        // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
+        // the first post-reveal erase (onOutput) or after grace if none is seen.
+        armPostRevealEraseGrace();
+      });
+    });
   };
 
   // The seed is scrollback only; the tmux attach repaint of the visible pane
@@ -835,6 +836,10 @@ export function mountTaskTerminalSession(
 
   let connection: TerminalConnection | undefined;
 
+  // Hide before the first paint/dial so open never shows an empty grid or a
+  // mid-seed wrap scroll. onOpen cancels this when the dial is unseeded.
+  beginSeedPending();
+
   // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
   // never constructs a socket on the aborted first mount; cleanup sets `disposed`.
   queueMicrotask(() => {
@@ -855,7 +860,15 @@ export function mountTaskTerminalSession(
           if (sawErase && !isSeedPending() && termRef.current?.options.scrollOnEraseInDisplay) {
             latchScrollOnEraseOff();
           }
-          scrollSync.applyOutput();
+          if (isSeedPending()) {
+            // Grow spacer + pin xterm only. Do not touch wrap.scrollTop here —
+            // incremental wrap pins during seed are what the operator sees as
+            // "scrolls all the way down" if any frame becomes visible.
+            scrollSync.syncSpacer();
+            termRef.current?.scrollToBottom();
+          } else {
+            scrollSync.applyOutput();
+          }
           deferSeedReveal();
         });
       },
@@ -928,6 +941,8 @@ export function mountTaskTerminalSession(
     setTerminalDoubleTapPending(false);
     clearSeedPendingRevealTimer();
     clearPostRevealEraseGraceTimer();
+    if (revealSnapFrame) cancelAnimationFrame(revealSnapFrame);
+    revealSnapFrame = 0;
     keyboardClassObserver.disconnect();
     cancelExpandSettle();
     cancelLongPress();

@@ -43,6 +43,7 @@ export function verifyWorkflows(root) {
 
   const ci = load("ci.yml");
   const releasePlease = load("release-please.yml");
+  const exploratory = load("exploratory-testing.yml");
 
   if (ci) {
     verifyCi(ci, fail);
@@ -52,7 +53,95 @@ export function verifyWorkflows(root) {
     verifyReleasePlease(releasePlease, fail);
   }
 
+  if (exploratory) {
+    verifyExploratory(exploratory, fail);
+  } else {
+    fail("exploratory-testing.yml must exist.");
+  }
+
   return problems;
+}
+
+function verifyExploratory(workflow, fail) {
+  const on = workflow.on ?? workflow.true;
+  const triggers = Object.keys(on ?? {});
+
+  if (!triggers.includes("schedule")) {
+    fail("exploratory-testing.yml must run on a schedule.");
+  }
+  if (!triggers.includes("workflow_dispatch")) {
+    fail("exploratory-testing.yml must allow workflow_dispatch.");
+  }
+  if (triggers.includes("push") || triggers.includes("pull_request")) {
+    fail(
+      "exploratory-testing.yml must not run on push/pull_request; it is CI-only " +
+        "exploratory coverage, not a PR gate.",
+    );
+  }
+
+  const dispatchInputs = on?.workflow_dispatch?.inputs ?? {};
+  if (dispatchInputs.budget_minutes?.default !== "12") {
+    fail("exploratory workflow_dispatch budget_minutes default must be \"12\".");
+  }
+
+  const budgetEnv = workflow.env?.AJAX_EXPLORATORY_BUDGET_MINUTES ?? "";
+  if (!String(budgetEnv).includes("github.event.inputs.budget_minutes")) {
+    fail("exploratory-testing.yml must preserve budget_minutes workflow_dispatch override.");
+  }
+  if (!String(budgetEnv).includes("'12'")) {
+    fail("exploratory-testing.yml AJAX_EXPLORATORY_BUDGET_MINUTES fallback must be '12'.");
+  }
+
+  const jobs = workflow.jobs ?? {};
+  const explore = jobs.explore;
+  if (!explore) {
+    fail("exploratory-testing.yml must define the explore job.");
+    return;
+  }
+
+  if (explore["runs-on"] !== "ubuntu-latest") {
+    fail("exploratory explore job must use runs-on: ubuntu-latest only.");
+  }
+
+  const timeout = explore["timeout-minutes"];
+  if (typeof timeout !== "number" || timeout > 45) {
+    fail("exploratory explore job must set timeout-minutes ≤ 45.");
+  }
+
+  const text = JSON.stringify(explore);
+  for (const needle of [
+    "CURSOR_API_KEY",
+    "actions/upload-artifact@v4",
+    "always()",
+    "scripts/exploratory/run-agent.sh",
+    "scripts/exploratory/prepare-oracles.mjs",
+    "scripts/exploratory/file-issues.mjs",
+    "npx playwright install --with-deps webkit",
+    "apt-get install -y tmux",
+  ]) {
+    if (!text.includes(needle)) {
+      fail(`exploratory explore job must include ${needle}.`);
+    }
+  }
+
+  if (
+    /playwright install[^\n]*chromium/i.test(text) ||
+    /playwright install[^\n]*firefox/i.test(text)
+  ) {
+    fail("exploratory explore job must not install chromium or firefox.");
+  }
+
+  if (text.includes("self-hosted") || text.includes("macos-") || text.includes("windows-")) {
+    fail("exploratory explore job must stay on GitHub-hosted ubuntu-latest.");
+  }
+
+  const permissions = workflow.permissions ?? {};
+  if (permissions.contents && permissions.contents !== "read") {
+    fail("exploratory-testing.yml contents permission must stay read.");
+  }
+  if (permissions.issues !== "write") {
+    fail("exploratory-testing.yml must grant issues: write for defect filing.");
+  }
 }
 
 function verifyCi(ci, fail) {

@@ -39,11 +39,28 @@ describe("createCockpitApplyGate", () => {
     expect(gate.applyIfChanged(structuredClone(changed))).toBe(false);
   });
 
-  it("reset clears the remembered hash", () => {
+  it("reset clears the remembered hash and generation", () => {
     const gate = createCockpitApplyGate();
     gate.applyIfChanged(fixture);
+    gate.noteMutation();
     gate.reset();
     expect(gate.applyIfChanged(structuredClone(fixture))).toBe(true);
+    expect(gate.pollGeneration()).toBe(0);
+  });
+
+  it("rejects poll apply when a mutation happened after the poll started", () => {
+    const gate = createCockpitApplyGate();
+    const startedAt = gate.pollGeneration();
+    gate.noteMutation();
+    expect(gate.applyIfChanged(fixture)).toBe(true);
+    expect(gate.applyPollIfChanged(structuredClone(fixture), startedAt)).toBe(false);
+  });
+
+  it("accepts poll apply when generation still matches", () => {
+    const gate = createCockpitApplyGate();
+    const startedAt = gate.pollGeneration();
+    expect(gate.applyPollIfChanged(fixture, startedAt)).toBe(true);
+    expect(gate.applyPollIfChanged(structuredClone(fixture), startedAt)).toBe(false);
   });
 });
 

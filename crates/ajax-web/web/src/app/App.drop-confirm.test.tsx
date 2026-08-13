@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
+import { DROP_UNDO_MS } from "@/shared/lib/polling";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
@@ -59,7 +61,7 @@ describe("App drop shell confirm", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps shell confirm visible after navigating away from the task", async () => {
+  it("cancels shell confirm after navigating away from the task", async () => {
     const completeSpy = vi.spyOn(telemetry, "endTapToOperationComplete");
     vi.stubGlobal(
       "fetch",
@@ -80,17 +82,251 @@ describe("App drop shell confirm", () => {
 
     setHash("#/");
     expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
-    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
-    expect(completeSpy).not.toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ error_kind: "unmount" }),
-    );
-
-    fireEvent.click(screen.getByText("Cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
     expect(completeSpy).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ ok: false, op: "drop", error_kind: "undo" }),
     );
-    expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+  });
+
+  it("cancels Drop confirmation when navigating to Settings", async () => {
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    setHash("#/settings");
+    expect(await screen.findByTestId("outlet-settings")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    expect(operations.some((operation) => (operation as { action?: string }).action === "drop")).toBe(
+      false,
+    );
+  });
+
+  it("keeps the switched-to task after Drop finishes for the previous task", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/tasks/web%2Fother")
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: "web/other", title: "Other task" }),
+          );
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    setHash("#/t/web%2Fother");
+    expect(await screen.findByText("Other task")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(true);
+    });
+    expect(window.location.hash).toBe("#/t/web%2Fother");
+    expect(screen.getByText("Other task")).toBeInTheDocument();
+    expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
+  });
+
+  it("cancels shell confirm before it can target another task", async () => {
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/tasks/web%2Fother")
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: "web/other", title: "Other task" }),
+          );
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    // Leave during shell confirm (before Confirm) — real phone path to another task.
+    setHash("#/");
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+    setHash("#/t/web%2Fother");
+    expect(await screen.findByText("Other task")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(false);
+    expect(window.location.hash).toBe("#/t/web%2Fother");
+    expect(screen.getByText("Other task")).toBeInTheDocument();
+  });
+
+  it("stays on the other task after Drop via dashboard intermediate", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/tasks/web%2Fother")
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: "web/other", title: "Other task" }),
+          );
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    setHash("#/");
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+    setHash("#/t/web%2Fother");
+    expect(await screen.findByText("Other task")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(true);
+    });
+    expect(window.location.hash).toBe("#/t/web%2Fother");
+    expect(screen.getByText("Other task")).toBeInTheDocument();
+    expect(screen.queryByTestId("outlet-dashboard")).not.toBeInTheDocument();
+  });
+
+  it("leaves the dropped task detail for the dashboard when Drop finishes in place", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#/");
+    });
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+  });
+
+  it("does not POST Review while Drop confirm is open, and cancels the confirm", async () => {
+    const operations: unknown[] = [];
+    const detailWithReview = {
+      ...taskDetail,
+      actions: [
+        {
+          action: "review",
+          label: "Review",
+          destructive: false,
+          confirmation_required: false,
+        },
+        ...taskDetail.actions,
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(detailWithReview));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true, cockpit }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 80));
+    });
+
+    expect(
+      operations.filter((op) => (op as { action?: string }).action === "review"),
+    ).toHaveLength(0);
+    expect(
+      operations.filter((op) => (op as { action?: string }).action === "drop"),
+    ).toHaveLength(0);
   });
 });

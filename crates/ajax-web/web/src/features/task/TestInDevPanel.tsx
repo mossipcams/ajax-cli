@@ -12,6 +12,7 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
   const [status, setStatus] = useState<DevDeployStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const busyRef = useRef(false);
 
   async function refresh() {
     try {
@@ -34,7 +35,8 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
   }
 
   async function deploy() {
-    if (busy || status?.active) return;
+    if (busyRef.current || busy || status?.active) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const response = await startDevDeploy(taskHandle);
@@ -46,6 +48,7 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
       onResult?.(message, null, true);
       await refresh();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }

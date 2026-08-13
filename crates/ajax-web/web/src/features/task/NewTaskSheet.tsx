@@ -71,6 +71,7 @@ export default function NewTaskSheet({
   const [agent, setAgent] = useState(initialAgent);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [dragOffset, setDragOffset] = useState(0);
   const sheetRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<HTMLDivElement>(null);
@@ -104,6 +105,7 @@ export default function NewTaskSheet({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     if (!repo) {
       setError("Pick a repository first");
       return;
@@ -113,6 +115,7 @@ export default function NewTaskSheet({
       return;
     }
     setError(null);
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const result = await startTask({
@@ -133,6 +136,7 @@ export default function NewTaskSheet({
     } catch {
       setError("Action failed — network error");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

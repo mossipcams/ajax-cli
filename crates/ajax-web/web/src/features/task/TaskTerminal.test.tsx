@@ -5,10 +5,12 @@ import { dirname, join } from "node:path";
 import taskTerminalSource from "./TaskTerminal.tsx?raw";
 import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
 import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
+import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw";
+import terminalPasteSource from "./terminalPaste.ts?raw";
 
-/** Shell + peeled mount/speech modules for source-contract asserts. */
+/** Shell + peeled mount/speech/paste modules for source-contract asserts. */
 const taskTerminalFeatureSource =
-  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}`;
+  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
 
 const stylesSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
@@ -425,7 +427,9 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("seeds a zero-width space so iOS has deletable content", () => {
-    expect(taskTerminalFeatureSource).toMatch(/const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/);
+    expect(terminalBackspaceSentinelSource).toMatch(
+      /export const BACKSPACE_SENTINEL\s*=\s*"\\u200B"/,
+    );
 
     const hardenTextarea = extractBlock(
       taskTerminalFeatureSource,
@@ -453,8 +457,8 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     // like in the app.
     const payloads = extractBlock(
       taskTerminalFeatureSource,
-      /const deleteInputPayload\s*=\s*\(inputType:\s*string\)/,
-      /\n {2}\};/,
+      /export function deleteInputPayload\s*\(inputType:\s*string\)/,
+      /\n\}/,
     );
     expect(payloads).toMatch(/deleteContentBackward[\s\S]*?"\\x7f"/);
     expect(payloads).toMatch(/deleteWordBackward[\s\S]*?"\\x17"/);
@@ -483,11 +487,57 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\n {2}\};/,
     );
     expect(onInput).toMatch(/insertFromPaste/);
+    expect(onInput).toMatch(/insertReplacementText/);
     expect(onInput).toMatch(/pasteExpectRef\.current/);
-    expect(onInput).toMatch(/replaceAll\(BACKSPACE_SENTINEL/);
+    expect(onInput).toMatch(/pasteRawFromExpectValue\(textarea\.value\)/);
     expect(onInput).toMatch(/textarea\.value\s*=\s*BACKSPACE_SENTINEL/);
     expect(onInput).toMatch(/sendPastedText\(raw\)/);
-    expect(onInput).toMatch(/inputType === "insertText"/);
+    // insertText must not clear pasteExpect before recovery — Safari often
+    // delivers empty-clipboardData paste recovery as insertText.
+    expect(onInput).toMatch(/pasteExpectRef\.current/);
+    expect(onInput).toMatch(
+      /insertFromPaste[\s\S]*pasteExpectRef\.current[\s\S]*insertText/,
+    );
+  });
+
+  it("treats insertText beforeinput with a full http(s) URL as paste", () => {
+    const beforePaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const onTextareaPasteBeforeInput\s*=\s*\(event:\s*InputEvent\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(beforePaste).toMatch(/pasteTextFromBeforeInput\(event\)/);
+    expect(beforePaste).toMatch(/sendPastedText\(text\)/);
+    expect(beforePaste).toMatch(/preventDefault/);
+
+    const helper = extractBlock(
+      taskTerminalFeatureSource,
+      /export function pasteTextFromBeforeInput\s*\(event:\s*InputEvent\)/,
+      /\n\}/,
+    );
+    expect(helper).toMatch(/insertFromPaste/);
+    expect(helper).toMatch(/insertText/);
+    expect(helper).toMatch(/insertReplacementText/);
+    expect(helper).toMatch(/looksLikeHttpUrl/);
+  });
+
+  it("toolbar Paste prefers clipboard.read rich types before readText", () => {
+    const requestPaste = extractBlock(
+      taskTerminalFeatureSource,
+      /const requestPaste\s*=\s*async\s*\(ownedFocus:\s*boolean\)\s*=>\s*\{/,
+      /\n {2}\};/,
+    );
+    expect(requestPaste).toMatch(/readToolbarPasteText\(\)/);
+    expect(requestPaste).toMatch(/toolbarPasteLatchRef/);
+
+    const helper = extractBlock(
+      taskTerminalFeatureSource,
+      /export async function readToolbarPasteText/,
+      /\n\}/,
+    );
+    expect(helper).toMatch(/clipboard\.read/);
+    expect(helper).toMatch(/readPasteText\(dt\)/);
+    expect(helper).toMatch(/readText/);
   });
 
   it("reseeds the sentinel from input, never a beforeinput microtask", () => {
@@ -538,7 +588,7 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
 
     for (const handler of [registeredFocus, registeredBeforeInput, registeredInput]) {
-      const moduleScope = new RegExp(`^const ${handler}\\s*=`, "m");
+      const moduleScope = new RegExp(`^(?:export )?const ${handler}\\s*=`, "m");
       const effectEvent = new RegExp(`const ${handler}\\s*=\\s*useEffectEvent\\(`);
       expect(
         moduleScope.test(taskTerminalFeatureSource) || effectEvent.test(taskTerminalFeatureSource),
@@ -631,6 +681,7 @@ describe("TaskTerminal seeded history reveal", () => {
         /\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-host,\s*\n\s*\.terminal-interaction-wrap\.is-seed-pending\s+\.terminal-scroll-spacer\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     expect(seedPendingCss).toMatch(/opacity:\s*0/);
+    expect(seedPendingCss).not.toMatch(/visibility:\s*hidden/);
     expect(stylesSource).not.toMatch(
       /\.terminal-interaction-wrap\.is-seed-pending\s*\{[^}]*opacity:\s*0/,
     );
@@ -645,7 +696,8 @@ describe("TaskTerminal seeded history reveal", () => {
         /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
-    // Hiding starts at the seeded open, not on a byte-size guess about the frame.
+    // Hiding starts at mount (before dial), not on a byte-size guess about the frame.
+    expect(mountBody).toMatch(/beginSeedPending\(\);\s*\n\s*\/\/ ponytail: defer dial/);
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)\s*\{\s*\n\s*beginSeedPending\(\)/);
@@ -656,32 +708,55 @@ describe("TaskTerminal seeded history reveal", () => {
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
+    expect(onOutputBody).toMatch(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{/);
+    expect(onOutputBody).toMatch(/scrollSync\.syncSpacer\(\)/);
+    expect(onOutputBody).toMatch(/scrollToBottom\(\)/);
     expect(onOutputBody).toMatch(/scrollSync\.applyOutput\(\)/);
     expect(onOutputBody).not.toMatch(/setFollowLive\(true\)/);
     expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
+    // Pending path must not drive wrap.scrollTop (no applyOutput while pending).
+    const pendingBranch =
+      onOutputBody.match(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{([\s\S]*?)\}\s*else\s*\{/)?.[1] ?? "";
+    expect(pendingBranch).toMatch(/syncSpacer/);
+    expect(pendingBranch).toMatch(/scrollToBottom/);
+    expect(pendingBranch).not.toMatch(/applyOutput/);
+    expect(pendingBranch).not.toMatch(/scrollInteractionToBottom/);
 
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(revealBody).not.toMatch(/isFollowingLive\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.syncSpacer\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
-    const syncSpacerIndex = revealBody.indexOf("scrollSync.syncSpacer()");
-    const revealFollowIndex = revealBody.indexOf("scrollSync.setFollowLive(true)");
+    expect(revealBody).toMatch(/snapSeedToBottom\(\)/);
+    expect(revealBody).toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
+    expect(revealBody).toMatch(/requestAnimationFrame/);
+    // Unhide only after the post-layout snap while still pending — never snap
+    // after opacity returns (that is the visible scroll-to-bottom open).
+    const firstSnapIndex = revealBody.indexOf("snapSeedToBottom()");
+    const rafIndex = revealBody.indexOf("requestAnimationFrame");
+    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
+    expect(firstSnapIndex).toBeGreaterThan(-1);
+    expect(rafIndex).toBeGreaterThan(firstSnapIndex);
+    expect(removeIndex).toBeGreaterThan(rafIndex);
+    expect(revealBody.indexOf("snapSeedToBottom()", removeIndex)).toBe(-1);
+
+    expect(stylesSource).toMatch(
+      /\.terminal-interaction-wrap\s*\{[^}]*scroll-behavior:\s*auto/,
+    );
+
+    const snapBody =
+      mountBody.match(/const snapSeedToBottom = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
+    expect(snapBody).toMatch(/scrollSync\.syncSpacer\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.setFollowLive\(true\)/);
+    expect(snapBody).toMatch(/setHasUnseenOutput\(false\)/);
+    expect(snapBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
+    expect(snapBody).toMatch(/scrollToBottom\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
+    expect(snapBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
+    expect(snapBody).toMatch(/scrollSync\.refreshFollow\(\)/);
+    const syncSpacerIndex = snapBody.indexOf("scrollSync.syncSpacer()");
+    const revealFollowIndex = snapBody.indexOf("scrollSync.setFollowLive(true)");
     expect(syncSpacerIndex).toBeGreaterThan(-1);
     expect(revealFollowIndex).toBeGreaterThan(syncSpacerIndex);
-    const revealSnapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
-    expect(revealFollowIndex).toBeGreaterThan(-1);
-    expect(revealSnapIndex).toBeGreaterThan(revealFollowIndex);
-    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(true\)/);
-    expect(revealBody).toMatch(/scrollToBottom\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.scrollInteractionToBottom\(\)/);
-    expect(revealBody).toMatch(/scrollSync\.setSyncingScroll\(false\)/);
-    expect(revealBody).toMatch(/scrollSync\.refreshFollow\(\)/);
-    const snapIndex = revealBody.indexOf("scrollSync.setSyncingScroll(true)");
-    const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
-    expect(snapIndex).toBeGreaterThan(-1);
-    expect(removeIndex).toBeGreaterThan(snapIndex);
 
     const deferBody =
       mountBody.match(/const deferSeedReveal = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";

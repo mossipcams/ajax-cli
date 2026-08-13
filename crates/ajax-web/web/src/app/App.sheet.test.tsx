@@ -123,4 +123,29 @@ describe("App new-task sheet route coupling", () => {
     await screen.findByTestId("outlet-dashboard");
     expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
   });
+
+  it("closes the new-task sheet when navigating to Settings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path === "/api/health") return Promise.resolve(jsonResponse({ status: "ok" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    expect(screen.getByTestId("new-task-sheet")).toBeInTheDocument();
+
+    setHash("#/settings");
+    await screen.findByTestId("outlet-settings");
+    expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
+  });
 });

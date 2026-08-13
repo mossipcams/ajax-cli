@@ -116,11 +116,10 @@ describe("App polling cadence", () => {
 
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
-    // cockpitCalls ticks when the GET starts, before React applies the idle
-    // projection and reschedules the interval from 3s → 10s. Flush that commit
-    // or the next 3s advance still hits the active-cadence timer.
+    // Flush the quiet-fleet re-render so the 10s idle interval replaces the
+    // 3s active one started while cockpit.data was still null.
     await act(async () => {
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     // Quiet fleet cadence is 10s: 3s active would add a poll here.
@@ -157,6 +156,42 @@ describe("App polling cadence", () => {
 
     await vi.advanceTimersByTimeAsync(1000);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(afterRouteChange + 1));
+  });
+
+  it("refreshes the cockpit when returning from a failed task route", async () => {
+    vi.useFakeTimers();
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          return Promise.resolve(jsonResponse(cockpit));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse({}, 404));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    await act(async () => {
+      setHash(taskHash("web/missing"));
+    });
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "disconnected"),
+    );
+
+    const beforeReturn = cockpitCalls;
+    await act(async () => {
+      setHash("");
+    });
+    await vi.waitFor(() => expect(cockpitCalls).toBeGreaterThan(beforeReturn));
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
   });
 
   it("keeps one focus listener across re-renders", async () => {

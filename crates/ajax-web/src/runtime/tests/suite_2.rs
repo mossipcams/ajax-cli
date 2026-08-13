@@ -37,7 +37,7 @@ fn browser_connected_is_false_until_marked_and_expires_after_ttl() {
 }
 
 #[tokio::test]
-async fn axum_cockpit_marks_browser_connected_even_on_cache_hit() {
+async fn axum_cockpit_marks_browser_connected_only_with_foreground_header() {
     let (state, cookie, app) = app_with(
         context_with_task(),
         TestBridge::default(),
@@ -50,7 +50,39 @@ async fn axum_cockpit_marks_browser_connected_even_on_cache_hit() {
             StatusCode::OK
         );
     }
+    assert!(
+        !state.browser_connected(),
+        "background/data polls must not suppress push"
+    );
 
+    assert_eq!(
+        get_foreground(&app, &cookie, "/api/cockpit").await.status(),
+        StatusCode::OK
+    );
+    assert!(state.browser_connected());
+}
+
+#[tokio::test]
+async fn axum_cockpit_foreground_header_marks_even_on_cache_hit() {
+    let (state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "axum-cockpit-foreground-cache-hit",
+    );
+
+    assert_eq!(
+        get_foreground(&app, &cookie, "/api/cockpit").await.status(),
+        StatusCode::OK
+    );
+    state.set_browser_cockpit_seen_at_for_test(
+        Instant::now() - super::BROWSER_CONNECTED_TTL - Duration::from_secs(1),
+    );
+    assert!(!state.browser_connected());
+
+    assert_eq!(
+        get_foreground(&app, &cookie, "/api/cockpit").await.status(),
+        StatusCode::OK
+    );
     assert!(state.browser_connected());
 }
 

@@ -33,6 +33,10 @@ interface Props {
   onMutated?: () => void;
   /** The task no longer exists (e.g. after Drop) — leave the detail page. */
   onDismiss?: () => void;
+  /** Shell confirm currently armed (`drop`, etc.). Sibling taps must not POST. */
+  pendingConfirmAction?: string | null;
+  /** Cancel that confirm when a different action is chosen. */
+  onCancelPendingConfirm?: () => void;
 }
 
 const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
@@ -63,10 +67,15 @@ export default function ActionBar({
   onResult,
   onMutated,
   onDismiss,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: Props) {
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const interactionRef = useRef<string | null>(null);
+  // Sync latch: React `runningAction` / parent `pendingConfirmAction` commit too
+  // late for same-turn double clicks (#799, #815).
+  const clickLatchRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -81,6 +90,10 @@ export default function ActionBar({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (pendingConfirmAction === null) clickLatchRef.current = false;
+  }, [pendingConfirmAction]);
 
   const mutationCallbacks = useCallback(
     (): TaskMutationCallbacks => ({
@@ -105,14 +118,25 @@ export default function ActionBar({
       await runTaskAction(action, handle, confirmed, interactionId, mutationCallbacks());
       if (interactionId) interactionRef.current = null;
     } finally {
+      clickLatchRef.current = false;
       if (mountedRef.current) setRunningAction(null);
     }
   };
 
   const handleClick = (action: WebAction) => {
     if (runningAction) return;
+    // Confirm toast is non-modal; block sibling ActionBar posts while it is open.
+    // Re-tapping the same armed action keeps the first confirm (no re-arm).
+    // Must run before clickLatchRef: arming Drop leaves the latch set until
+    // pendingConfirm clears, and alternate taps still need to cancel (#796).
+    if (pendingConfirmAction !== null) {
+      if (action.action !== pendingConfirmAction) onCancelPendingConfirm?.();
+      return;
+    }
+    if (clickLatchRef.current) return;
     const needsConfirm = action.destructive || action.confirmation_required;
     if (needsConfirm) {
+      clickLatchRef.current = true;
       const interactionId = beginInteraction(action.action);
       endTapToFeedback(interactionId, "confirm");
       onResult?.(`Confirm ${action.label} for ${handle}?`, null, false, {
@@ -120,6 +144,7 @@ export default function ActionBar({
       });
       return;
     }
+    clickLatchRef.current = true;
     const interactionId = beginInteraction(action.action);
     interactionRef.current = interactionId;
     void run(action, false);
