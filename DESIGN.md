@@ -292,6 +292,17 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - Raw xterm pane is the default work surface on task detail.
 - Interact panel is a flat hairline strip (`border-top` / `border-bottom` Rule) for structured Approve/Deny — never a composer that replaces the terminal.
 
+### Scoped exception: the orchestration session route
+
+The flag-gated Ajax web session route (Settings → Ajax web session) is the one
+surface where a composer is the work surface and the terminal is an escape
+hatch behind Task details. It is a separate presentation mode, not a change to
+the default: with the flag off, task detail is still raw xterm/tmux-first, and
+the agent conversation runs over ACP rather than PTY paste. That route uses the
+same instrument grammar — a live head carrying state, running tool and any
+pending decision, over a settled transcript. Everything else in this document
+binds it unchanged.
+
 ## 6. Do's and Don'ts
 
 ### Do:
@@ -308,6 +319,6 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 - **Don't** build overbuilt IDE shells: too many panels and tabs fighting the terminal.
 - **Don't** use side-stripe borders (`border-left` / `border-right` > 1px) as status accents — use the tone system.
 - **Don't** use gradient text, glass cards as decoration, or hero-metric templates.
-- **Don't** put a browser composer or snapshot viewer where the raw terminal belongs.
+- **Don't** put a browser composer or snapshot viewer where the raw terminal belongs — except on the flag-gated orchestration session route (see §5 Scoped exception).
 - **Don't** invent a second status color vocabulary outside `--tone`.
 - **Don't** duplicate the New-task CTA (bottom-nav New only).
