@@ -2,7 +2,10 @@
 'use strict';
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
+const holdPromptMode = process.argv.includes('--hold-prompt');
 const sessionId = 'fake-sess-1';
+let heldPromptId = null;
+let holdRemaining = holdPromptMode ? 1 : 0;
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -50,11 +53,24 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/prompt') {
+    if (holdRemaining > 0) {
+      holdRemaining -= 1;
+      heldPromptId = id;
+      return;
+    }
     replayUpdate('pong');
     send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
     return;
   }
   if (method === 'session/cancel') {
+    if (heldPromptId !== null) {
+      send({
+        jsonrpc: '2.0',
+        id: heldPromptId,
+        result: { stopReason: 'cancelled' },
+      });
+      heldPromptId = null;
+    }
     send({ jsonrpc: '2.0', id, result: {} });
     return;
   }

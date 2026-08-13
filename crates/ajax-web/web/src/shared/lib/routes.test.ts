@@ -6,6 +6,7 @@ import {
   taskHash,
   taskDiffHash,
   settingsHash,
+  sessionHash,
 } from "./routes";
 
 describe("parseRoute", () => {
@@ -16,6 +17,15 @@ describe("parseRoute", () => {
 
   it("parses the settings route", () => {
     expect(parseRoute("#/settings")).toEqual({ kind: "settings" });
+  });
+
+  it("parses session starter and orchestration routes", () => {
+    expect(parseRoute("#/session")).toEqual({ kind: "session" });
+    expect(parseRoute("#/session/web%2Ffix-login")).toEqual({
+      kind: "session",
+      handle: "web/fix-login",
+    });
+    expect(parseRoute("#/session/")).toEqual({ kind: "session" });
   });
 
   it("parses a project route and decodes the name", () => {
@@ -78,5 +88,7 @@ describe("route formatters", () => {
     expect(taskHash("web/fix-login")).toBe("#/t/web%2Ffix-login");
     expect(taskDiffHash("web/fix-login")).toBe("#/t/web%2Ffix-login/diff");
     expect(taskDiffHash("web/fix-login", 12)).toBe("#/t/web%2Ffix-login/diff?pr=12");
+    expect(sessionHash()).toBe("#/session");
+    expect(sessionHash("web/fix-login")).toBe("#/session/web%2Ffix-login");
   });
 });

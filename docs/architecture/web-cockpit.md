@@ -21,14 +21,24 @@ desktop.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
-preference defaults **off**; when off, dashboard and embedded terminal behavior
-is unchanged. Session routes, transport, and UI remain absent until those
-layers exist; the behavior ledger is the contract they implement.
+preference defaults **off** (`ajax.web.session.orchestrationChat` in
+localStorage); when off, dashboard and embedded terminal behavior is unchanged.
+The browser `webSessionTransport` client and `sessionReducer` fold host WebSocket
+events into view state; they do not own the transcript, prompt queue, or ACP
+process.
 
 When that mode is enabled, agent conversation uses Cursor ACP over stdio
 (`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
-Model catalog parsing lives in the `session_models` slice. Session policy and
-HTTP transport are not this adapter.
+Model catalog parsing lives in the `session_models` slice. Authenticated
+`GET /api/session/models` lists Cursor models; authenticated
+`GET /api/tasks/{handle}/session` WebSocket upgrade is transport-only over
+`WebSessionHub` (snapshot via cursor replay). Session admission policy lives in
+the `web_session` slice; routes and the bridge call hub methods only.
+
+Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
+(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One
+`WebSessionHub` owns prompt queueing, cancellation, model switching, permission
+answers, and transcript replay cursors; transport layers call hub methods only.
 
 From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected

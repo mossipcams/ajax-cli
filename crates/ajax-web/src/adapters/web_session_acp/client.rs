@@ -200,7 +200,7 @@ impl AcpStdioClient {
         self.begin_request("session/cancel", json!({ "sessionId": self.session_id }))
     }
 
-    fn prompt_in_flight(&self) -> bool {
+    pub(crate) fn prompt_in_flight(&self) -> bool {
         self.pending.lock().unwrap().values().any(|entry| {
             matches!(
                 entry,
