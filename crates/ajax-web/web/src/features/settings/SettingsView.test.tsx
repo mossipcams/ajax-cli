@@ -181,6 +181,19 @@ describe("SettingsView", () => {
     expect(screen.getByText("Diagnostics")).toBeInTheDocument();
   });
 
+  it("toggles orchestration chat preference", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    render(<SettingsView />);
+    const toggle = screen.getByTestId("orchestration-chat-toggle");
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("true");
+  });
+
   it("shows live debug info with origin and app version", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
