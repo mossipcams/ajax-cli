@@ -16,6 +16,10 @@ import {
 } from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
 import {
+  readOrchestrationChatFlag,
+  writeOrchestrationChatFlag,
+} from "@/shared/lib/sessionMode";
+import {
   runPushNotificationTest,
   enablePushNotifications,
   disablePushNotifications,
@@ -35,6 +39,7 @@ export default function SettingsView({
   onResult,
   onBack,
 }: Props) {
+  const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatFlag);
   const [testInStableAvailable, setTestInStableAvailable] = useState(false);
   const [confirmingTestInStable, setConfirmingTestInStable] = useState(false);
   const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
@@ -204,6 +209,27 @@ export default function SettingsView({
           Back
         </Button>
         <h2 id="settings-heading">Settings</h2>
+      </div>
+
+      <div className="settings-section" data-testid="session-settings">
+        <h3>Session</h3>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            data-testid="orchestration-chat-toggle"
+            checked={orchestrationChat}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              writeOrchestrationChatFlag(enabled);
+              setOrchestrationChat(enabled);
+            }}
+          />
+          Orchestration chat
+        </label>
+        <p className="settings-note">
+          When enabled, New opens the session starter and task cards route to orchestration chat
+          instead of the embedded terminal.
+        </p>
       </div>
 
       <div className="settings-section" data-testid="dev-settings">

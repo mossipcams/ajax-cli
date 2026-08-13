@@ -3,6 +3,7 @@ import {
   dashboardHash,
   parseRoute,
   projectHash,
+  sessionHash,
   settingsHash,
   taskDiffHash,
   taskHash,
@@ -21,6 +22,8 @@ import TaskLoadError from "@/features/task/TaskLoadError";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
+import SessionStarter from "@/features/session/SessionStarter";
+import SessionChat from "@/features/session/SessionChat";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
@@ -53,6 +56,10 @@ import {
   type DropUndoHandles,
 } from "@/features/task/taskMutations";
 import { checkHealth } from "@/shared/lib/api";
+import {
+  orchestrationChatChangedEvent,
+  readOrchestrationChatFlag,
+} from "@/shared/lib/sessionMode";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -91,6 +98,7 @@ export default function App() {
     markConnected,
   });
   const { updateAvailable, checkVersion } = useVersionMonitor();
+  const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatFlag);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
@@ -246,12 +254,28 @@ export default function App() {
     location.hash = hash;
   }
 
+  useEffect(() => {
+    const syncFlag = () => setOrchestrationChat(readOrchestrationChatFlag());
+    window.addEventListener(orchestrationChatChangedEvent, syncFlag);
+    window.addEventListener("storage", syncFlag);
+    return () => {
+      window.removeEventListener(orchestrationChatChangedEvent, syncFlag);
+      window.removeEventListener("storage", syncFlag);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!orchestrationChat && route.kind === "session") {
+      go(dashboardHash());
+    }
+  }, [orchestrationChat, route.kind]);
+
   function openTask(handle: string) {
     const interactionId = beginInteraction("open_task");
     endTapToFeedback(interactionId, "nav_start");
+    const hash = orchestrationChat ? sessionHash(handle) : taskHash(handle);
     // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
     // A single rAF still runs before paint and would keep INP ~400–500ms.
-    const hash = taskHash(handle);
     window.setTimeout(() => {
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
@@ -483,8 +507,10 @@ export default function App() {
     })();
   }
 
-  const chrome = (
-    <div className="cockpit-chrome">
+  const hideSessionChrome = orchestrationChat && route.kind === "session";
+
+  const chrome = hideSessionChrome ? null : (
+    <div className="cockpit-chrome" data-testid="cockpit-chrome">
       <header>
         <div className="bar">
           <h1>Ajax</h1>
@@ -522,7 +548,7 @@ export default function App() {
     </div>
   );
 
-  const nav = (
+  const nav = hideSessionChrome ? null : (
     <nav className="bottom-nav" aria-label="Mobile navigation">
       <button
         type="button"
@@ -532,7 +558,11 @@ export default function App() {
       >
         Dashboard
       </button>
-      <button type="button" data-bottom-action="new-task" onClick={() => setSheetOpen(true)}>
+      <button
+        type="button"
+        data-bottom-action="new-task"
+        onClick={() => (orchestrationChat ? go(sessionHash()) : setSheetOpen(true))}
+      >
         New
       </button>
     </nav>
@@ -568,7 +598,9 @@ export default function App() {
                 title={detail.data?.title}
                 selectedPr={route.pr}
                 onBack={() => {
-                  if (route.kind === "diff" && route.handle) go(taskHash(route.handle));
+                  if (route.kind === "diff" && route.handle) {
+                    go(orchestrationChat ? sessionHash(route.handle) : taskHash(route.handle));
+                  }
                 }}
                 onSelectPr={(pr) => {
                   if (route.kind === "diff" && route.handle) {
@@ -576,6 +608,23 @@ export default function App() {
                   }
                 }}
               />
+            </section>
+          ) : route.kind === "session" && orchestrationChat ? (
+            <section
+              data-outlet="session"
+              data-testid={route.handle ? "outlet-session-chat" : "outlet-session-starter"}
+              data-handle={route.handle}
+              aria-live="polite"
+            >
+              {route.handle ? (
+                <SessionChat handle={route.handle} />
+              ) : (
+                <SessionStarter
+                  repos={cockpit.data?.repos?.repos ?? []}
+                  selectedProject={selectedProject}
+                  onStarted={(handle) => go(sessionHash(handle))}
+                />
+              )}
             </section>
           ) : route.kind === "task" ? (
             <section

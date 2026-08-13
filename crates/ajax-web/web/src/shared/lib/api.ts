@@ -535,3 +535,15 @@ export function openTaskTerminalSocket(
 ): WebSocket {
   return new WebSocket(taskTerminalWebSocketUrl(handle, seedHistory, clientId));
 }
+
+export function taskSessionWebSocketUrl(handle: string, model?: string): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const base = `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/session`;
+  if (!model) return base;
+  const params = new URLSearchParams({ model });
+  return `${base}?${params.toString()}`;
+}
+
+export function openTaskSessionSocket(handle: string, model?: string): WebSocket {
+  return new WebSocket(taskSessionWebSocketUrl(handle, model));
+}

@@ -7,7 +7,7 @@ use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
-        stt_provider::MoonshineProvider,
+        cursor_session::SessionHost, stt_provider::MoonshineProvider,
     },
     slices::{dev_deploy, push::PushHub},
     WebError,
@@ -50,6 +50,7 @@ pub struct WebAppState<C, B> {
     pub(crate) stt_phrase_end_silence_ms: u64,
     pub(crate) stt_pause_grace_period_ms: u64,
     pub(crate) stt_language: String,
+    pub(crate) session_host: Arc<SessionHost>,
 }
 
 pub(crate) struct WebSharedState<C, B> {
@@ -84,6 +85,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             stt_phrase_end_silence_ms: self.stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms: self.stt_pause_grace_period_ms,
             stt_language: self.stt_language.clone(),
+            session_host: Arc::clone(&self.session_host),
         }
     }
 }
@@ -232,6 +234,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
+            session_host: Arc::new(SessionHost::new()),
         }
     }
 
@@ -292,6 +295,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
+            session_host: Arc::new(SessionHost::new()),
         })
     }
 

@@ -17,7 +17,9 @@ sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
-desktop. From a selected task, swipe-left navigation opens Diff Review
+desktop. Flag-gated Cursor orchestration chat (`#/session`) is the documented
+composer exception to that terminal-first default; `#/t/<handle>` stays the
+raw-terminal host even when the flag is on. From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
@@ -355,7 +357,8 @@ supported external exposure model; it does not make direct origin bypass safe,
 so operators must still protect the origin with Cloudflare Tunnel, firewalling,
 or equivalent origin access controls. Live-control API routes such as
 `/api/cockpit`, `/api/version`, `/api/server/restart`, `/api/operations`,
-`/api/tasks`, and the task terminal WebSocket route require the server-issued,
+`/api/tasks`, `/api/session/models`, the task terminal WebSocket, and the task
+session WebSocket require the server-issued,
 HttpOnly, Secure, same-origin browser-session cookie. The HTML shell sets the
 cookie on normal loads, and `POST /api/session` exists only to renew or
 bootstrap that same cookie when a live browser shell receives a `401` from a
@@ -604,6 +607,9 @@ when any service worker is present.
 the crate:
 
 - `ajax-web::slices::*` owns browser/operator capabilities.
+- `ajax-web::ports::*` holds attach plans passed from slices to adapters
+  (`SessionAttachPlan` for orchestration chat). Adapters must not import slices
+  or runtime.
 - `ajax-web::adapters::*` owns mechanisms such as HTTP routing, TLS, static
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
@@ -677,6 +683,11 @@ actions must echo the exact `branch_adoption` plan core attached to the action;
 the slice forwards that payload to core without recomputing branch policy or
 comparing branches in the browser.
 
+`POST /api/tasks` may include `orchestration_chat`. ajax-web maps Cursor plus
+that flag to `AgentStartMode::PreparedSession` and rejects non-Cursor plus the
+flag with HTTP 400 `"orchestration chat requires the cursor agent"`. Core never
+sees an `orchestration_chat` field.
+
 #### Operation failure envelopes
 
 Mutation endpoints such as `POST /api/operations` and `POST /api/tasks` return a
@@ -712,7 +723,8 @@ The slice resolves a qualified Ajax task handle to the registered
 tmux session names from the browser and does not own task lifecycle or registry
 truth. The browser task terminal is raw xterm.js/tmux-first on mobile and
 desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
-without explicit approval. Legacy snapshot, keys, and answer routes are not
+without explicit approval. `#/t/<handle>` keeps this terminal host even when
+the orchestration-chat Settings flag is on. Legacy snapshot, keys, and answer routes are not
 supported browser task-control APIs.
 
 `TaskDetail.tsx` mounts one `TaskTerminal.tsx` surface per task route.
@@ -735,6 +747,86 @@ Frontend ownership:
 Both modules exist and are wired into `TaskTerminal.tsx`, and the
 mobile-WebKit terminal behavior suite, including the repeated same-dimension
 viewport-burst case, passes as of 2026-07-16.
+
+### `ajax-web::slices::web_session`
+
+Owns task-handle-to-orchestration-chat attach planning for the browser Cursor
+ACP session WebSocket. The slice resolves a qualified Ajax task handle to the
+registered worktree path and requires `AgentClient::Cursor` plus an on-disk
+worktree directory. It does not accept raw paths from the browser and does not
+own task lifecycle or registry truth. Server attach is gated on Cursor agent plus
+worktree presence, not the browser Settings orchestration-chat flag. Public
+planning errors: 404 `"task not found"`, 409 `"session chat requires cursor orchestration"`,
+409 `"worktree missing"`.
+
+### `ajax-web::ports::web_session`
+
+`SessionAttachPlan` is the stable handoff from `web_session` to
+`cursor_session`: qualified handle plus worktree path. Runtime plans under the
+shared lock, then the adapter runs ACP and JSONL outside it.
+
+### `ajax-web::adapters::cursor_session`
+
+Owns the Cursor `agent … acp` stdio mechanism behind
+`GET /api/tasks/{handle}/session` and the `/api/session/models` catalog. Session
+WebSocket upgrades use the same cookie plus same-origin `Origin` checks as the
+task terminal. Dependency direction is runtime route → `web_session` slice →
+ports → this adapter. The adapter must not import slices or runtime.
+
+A per-handle backend session owner (one tokio task per qualified handle on
+`SessionHost`) serializes ACP prompts, keeps a FIFO queue capped at eight with
+silent oldest-drop, handles cancel (`keepQueue` true/false), permission
+request/response relay, and model pin-at-spawn plus in-flight model switch
+(respawn ACP child, keep in-memory transcript). The owner records user messages
+when a prompt starts executing. WebSocket attach loops only parse client
+commands (`prompt`, `cancel`, `set_model`, `permission`) and forward the slot
+broadcast (`ready`, `message`, `artifact`, `permission_request`,
+`permission_resolved`, `tool_call`, `plan`, `status`, `turn_end`, `error`).
+They do not own queue, model, transcript, or permissions.
+
+JSONL under `{state_dir}/web-session/<percent-encoded-handle>.jsonl` stores
+`meta` (`kind`, `acp_session_id`, `model`) plus `{event: <ws json>}` lines.
+First attach for a handle loads that file (skip empty lines and a torn trailing
+line), restores transcript events and the last `meta` line, then spawns ACP with
+optional `session/load` when the agent advertises `loadSession`. Handshake
+drains `session/load` replay updates so they never reach the owner or JSONL.
+When persisted transcript is non-empty but load did not resume (`session/new`
+fallback or unsupported load), the owner appends one agent message: "Model
+context reset after restart. Prior turns are still visible here." On ACP child
+exit the owner broadcasts `{type:"error", message:"ACP process exited"}`,
+clears busy, and keeps the idle slot; the next prompt respawns ACP.
+
+Observed owner behavior (keep; do not silently "fix"):
+
+- Unknown ACP `sessionUpdate` kinds broadcast as `{type:"artifact", kind}`.
+- `set_model` respawns ACP even while a turn is busy; peers get `ready` plus
+  transcript replay.
+- The idle slot remains when socket holders reach 0; teardown-on-zero-holders
+  is not the contract.
+- WS admit is Cursor plus worktree, independent of the browser Settings flag.
+
+### Browser orchestration chat
+
+Feature flag `localStorage["ajax.web.session.orchestrationChat"] === "true"`
+(unset or `"false"` keeps dashboard + `#/t/<handle>` terminal-first). The
+server does not store this flag. Settings exposes a checkbox that writes it.
+
+When the flag is on, New navigates to `#/session` (`SessionStarter`) instead of
+`NewTaskSheet`. Task cards open `#/session/<encoded-handle>` (`SessionChat`)
+instead of `#/t/<handle>`. When the flag is off, landing on `#/session` or
+`#/session/<handle>` redirects to `#/`. Session routes hide cockpit chrome and
+mobile bottom navigation. `#/t/<handle>` and `#/t/<handle>/diff` keep chrome
+and remain terminal-first even when the flag is on. Diff Review Back with the
+flag on returns to `#/session/<handle>`.
+
+`SessionChat` connects to the task session WebSocket and renders server events.
+React must not independently own queue, model, transcript, or permissions. The
+composer may keep a local `queuedFollowUp` bit for Enter-again UX: empty Enter
+sends `cancel` with `keepQueue: true` only after a follow-up was queued during
+a working turn. Terminal escape opens `TaskTerminal` in a sheet from session
+details.
+
+This owner is Cursor ACP only.
 
 ### `ajax-web::adapters::terminal_pty`
 
@@ -771,7 +863,8 @@ under the lock. `/api/cockpit` refresh follows this pattern so lightweight
 routes such as `/api/health` and task detail reads stay responsive during
 slow substrate work. Task-terminal WebSocket upgrades read the registered
 task evidence needed to build an attach plan, then the PTY/tmux bridge runs
-outside the shared-state lock.
+outside the shared-state lock. Task-session WebSocket upgrades plan under that
+same lock via `web_session`, then ACP stdio and JSONL run outside it.
 
 Runtime coordination contract (implemented):
 

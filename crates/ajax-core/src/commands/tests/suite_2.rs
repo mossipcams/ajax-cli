@@ -274,6 +274,7 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
             repo: "web".to_string(),
             title: "fix logout".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap();
@@ -346,6 +347,7 @@ fn new_task_plan_preserves_paths_with_spaces_as_command_arguments() {
             repo: "web".to_string(),
             title: "fix login".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap();
@@ -383,6 +385,7 @@ fn new_task_plan_rejects_unknown_repo() {
             repo: "missing".to_string(),
             title: "fix login".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap_err();
@@ -400,6 +403,7 @@ fn new_task_plan_slugifies_title_into_branch_session_and_handle() {
             repo: "api".to_string(),
             title: "Ship oauth v2!".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap();
@@ -447,6 +451,7 @@ fn new_task_plan_allows_reusing_removed_task_handle() {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap();
@@ -472,6 +477,7 @@ fn new_task_request_creates_provisional_task_record() {
         repo: "web".to_string(),
         title: "Fix login!".to_string(),
         agent: "codex".to_string(),
+        agent_start: Default::default(),
     };
 
     let task = task_from_new_request(&context, &request).unwrap();
@@ -495,6 +501,7 @@ fn new_task_request_slugifies_blank_titles_to_task() {
         repo: "web".to_string(),
         title: "!!!".to_string(),
         agent: "claude".to_string(),
+        agent_start: Default::default(),
     };
 
     let task = task_from_new_request(&context, &request).unwrap();
@@ -510,6 +517,7 @@ fn record_new_task_adds_provisional_task_to_registry() {
         repo: "api".to_string(),
         title: "Add cache".to_string(),
         agent: "codex".to_string(),
+        agent_start: Default::default(),
     };
 
     let task = record_new_task(&mut context, &request).unwrap();
@@ -537,6 +545,7 @@ fn record_new_task_reuses_removed_task_handle() {
             repo: "web".to_string(),
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
+            agent_start: Default::default(),
         },
     )
     .unwrap();
@@ -546,6 +555,7 @@ fn record_new_task_reuses_removed_task_handle() {
         repo: "web".to_string(),
         title: "Fix login!".to_string(),
         agent: "codex".to_string(),
+        agent_start: Default::default(),
     };
 
     let task = record_new_task(&mut context, &request).unwrap();
@@ -571,6 +581,7 @@ fn new_task_provisioning_state_updates_live_in_core() {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
+        agent_start: Default::default(),
     };
     let task = record_new_task(&mut context, &request).unwrap();
     let task_id = task.id.clone();

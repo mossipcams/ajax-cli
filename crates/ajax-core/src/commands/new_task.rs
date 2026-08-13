@@ -19,11 +19,38 @@ const HUSKY_GUARD: &str =
 pub const DEFAULT_TASK_WINDOW_NAME: &str = "task";
 pub const ORIGIN_FETCH_FRESH_FOR: Duration = Duration::from_secs(60);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// How start provisions the agent after worktree + detached tmux exist.
+///
+/// Interactive CLI injects the agent via tmux send-keys. Prepared session
+/// leaves the pane idle so a different conversation host can attach.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AgentStartMode {
+    #[default]
+    InteractiveCli,
+    PreparedSession,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    pub agent_start: AgentStartMode,
+}
+
+impl NewTaskRequest {
+    pub fn new(
+        repo: impl Into<String>,
+        title: impl Into<String>,
+        agent: impl Into<String>,
+    ) -> Self {
+        Self {
+            repo: repo.into(),
+            title: title.into(),
+            agent: agent.into(),
+            agent_start: AgentStartMode::InteractiveCli,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -124,20 +151,6 @@ pub fn new_task_plan_with_observation<R: Registry>(
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
-    let selected_agent = agent_from_name(&request.agent);
-    let agent_launch = agent_launch_spec(
-        &request.agent,
-        selected_agent,
-        &AgentLaunch {
-            worktree_path: worktree_path_string.clone(),
-            prompt: String::new(),
-        },
-    );
-    let launch = agent_runtime_command(
-        &qualified_handle,
-        &context.runtime_paths.cache_dir.join("agent-runtime"),
-        agent_launch,
-    );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     if observation
@@ -158,13 +171,29 @@ pub fn new_task_plan_with_observation<R: Registry>(
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
-    let agent_launch_line =
-        fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
-    plan.commands.push(tmux.send_agent_command(
-        &tmux_session,
-        DEFAULT_TASK_WINDOW_NAME,
-        &agent_launch_line,
-    ));
+    if request.agent_start == AgentStartMode::InteractiveCli {
+        let selected_agent = agent_from_name(&request.agent);
+        let agent_launch = agent_launch_spec(
+            &request.agent,
+            selected_agent,
+            &AgentLaunch {
+                worktree_path: worktree_path_string.clone(),
+                prompt: String::new(),
+            },
+        );
+        let launch = agent_runtime_command(
+            &qualified_handle,
+            &context.runtime_paths.cache_dir.join("agent-runtime"),
+            agent_launch,
+        );
+        let agent_launch_line =
+            fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
+        plan.commands.push(tmux.send_agent_command(
+            &tmux_session,
+            DEFAULT_TASK_WINDOW_NAME,
+            &agent_launch_line,
+        ));
+    }
 
     Ok(plan)
 }

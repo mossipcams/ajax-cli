@@ -483,7 +483,7 @@ pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTask
         .cloned()
         .unwrap_or_else(|| "codex".to_string());
 
-    Ok(commands::NewTaskRequest { repo, title, agent })
+    Ok(commands::NewTaskRequest::new(repo, title, agent))
 }
 
 pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {

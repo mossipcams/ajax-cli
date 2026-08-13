@@ -13,6 +13,7 @@ export interface Route {
 
 const TASK_PREFIX = "#/t/";
 const PROJECT_PREFIX = "#/p/";
+const SESSION_PREFIX = "#/session";
 const DIFF_SUFFIX = "/diff";
 
 function safeDecode(s: string): string {
@@ -42,6 +43,16 @@ export function parseRoute(hash: string): Route {
   const query = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
 
   if (value === "#/settings") return { kind: "settings" };
+  if (value === SESSION_PREFIX || value === `${SESSION_PREFIX}/`) {
+    return { kind: "session" };
+  }
+  if (value.startsWith(`${SESSION_PREFIX}/`)) {
+    const encodedHandle = value.slice(`${SESSION_PREFIX}/`.length);
+    if (!encodedHandle) return { kind: "session" };
+    const handle = safeDecode(encodedHandle);
+    if (!handle) return { kind: "dashboard" };
+    return { kind: "session", handle };
+  }
   if (value.startsWith(TASK_PREFIX)) {
     const rest = value.slice(TASK_PREFIX.length).replace(/\/diff\/$/, DIFF_SUFFIX);
     if (!rest) return { kind: "dashboard" };
@@ -84,4 +95,9 @@ export function taskHash(handle: string): string {
 export function taskDiffHash(handle: string, pr?: number): string {
   const base = `${TASK_PREFIX}${encodeURIComponent(handle)}${DIFF_SUFFIX}`;
   return pr !== undefined ? `${base}?pr=${pr}` : base;
+}
+
+export function sessionHash(handle?: string): string {
+  if (!handle) return `${SESSION_PREFIX}`;
+  return `${SESSION_PREFIX}/${encodeURIComponent(handle)}`;
 }

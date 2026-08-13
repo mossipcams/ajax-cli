@@ -26,7 +26,7 @@ pub use new_task::{
     mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
     mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
     start_provisioning_step_for_command, start_task_identity, task_from_new_request,
-    NewTaskRequest, StartPlanObservation, StartProvisioningStep,
+    AgentStartMode, NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use orphan_gc::{

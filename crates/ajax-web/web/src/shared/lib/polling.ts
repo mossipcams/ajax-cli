@@ -25,7 +25,7 @@ export const GET_REQUEST_TIMEOUT_MS = 10000;
 /** Diff Review runs `gh` / `git` which can exceed the default GET budget. */
 export const DIFF_REQUEST_TIMEOUT_MS = 45000;
 
-export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings";
+export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
 
 export function cockpitRefreshIntervalMs(input: {
   visibilityState: DocumentVisibilityState;
@@ -34,7 +34,11 @@ export function cockpitRefreshIntervalMs(input: {
 }): number {
   if (input.visibilityState !== "visible") return REFRESH_INTERVAL_HIDDEN_MS;
   if (input.routeKind === "task") return REFRESH_INTERVAL_TERMINAL_MS;
-  if (input.routeKind === "settings" || input.routeKind === "diff") {
+  if (
+    input.routeKind === "settings" ||
+    input.routeKind === "diff" ||
+    input.routeKind === "session"
+  ) {
     return REFRESH_INTERVAL_IDLE_MS;
   }
   if (

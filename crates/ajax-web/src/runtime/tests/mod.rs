@@ -515,6 +515,10 @@ pub(super) fn state_with_bridge_and_task(bridge: TestBridge) -> WebAppState<OkRu
     )
 }
 
+mod char_http;
+mod char_support;
+mod char_ws_persist;
+mod char_ws_session;
 mod suite_1;
 mod suite_2;
 mod suite_3;

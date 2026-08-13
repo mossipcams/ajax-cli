@@ -22,7 +22,12 @@ Command modules are split by use case:
 - `commands/check.rs`
 - `commands/diff.rs`
 - `commands/merge.rs`
-- `commands/new_task.rs`
+- `commands/new_task.rs` — `NewTaskRequest.agent_start` is `AgentStartMode`:
+  `InteractiveCli` (default) plans worktree, detached tmux, and agent send-keys;
+  `PreparedSession` plans the same worktree and tmux session but skips send-keys
+  so a different conversation host can attach. Presentation flags such as HTTP
+  `orchestration_chat` stay in `ajax-web`; they must not appear on
+  `NewTaskRequest`.
 - `commands/open.rs`
 - `commands/projection.rs`
 - `commands/teardown.rs`

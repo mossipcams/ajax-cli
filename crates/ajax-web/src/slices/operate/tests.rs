@@ -261,6 +261,7 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
             title: "Fix login".to_string(),
             agent: "cursor".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap();
@@ -271,6 +272,67 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
         "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent --model cursor-grok-4.6-high"
     );
     assert!(!line.contains("--cd"));
+}
+
+#[test]
+fn start_task_orchestration_chat_skips_send_keys_for_cursor() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            request_id: String::new(),
+            orchestration_chat: true,
+        },
+    )
+    .unwrap();
+
+    assert!(
+        runner
+            .commands()
+            .iter()
+            .all(|command| command.program != "tmux"
+                || command.args.first() != Some(&"send-keys".to_string())),
+        "prepared session must not inject the interactive agent"
+    );
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == "web/fix-login")
+        .expect("task");
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    assert!(!task.has_side_flag(SideFlag::AgentRunning));
+}
+
+#[test]
+fn start_task_orchestration_chat_rejects_non_cursor() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    let error = super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+            request_id: String::new(),
+            orchestration_chat: true,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        OperateError::UnsupportedCapability("orchestration chat requires the cursor agent")
+    );
+    assert!(runner.commands().is_empty());
 }
 
 #[test]
@@ -286,6 +348,7 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
             title: "Fix login".to_string(),
             agent: "pi".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap();
@@ -311,6 +374,7 @@ fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
             title: "Fix login".to_string(),
             agent: "claude".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap();
@@ -334,6 +398,7 @@ fn start_task_creates_a_new_task_in_the_registry() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap();
@@ -365,6 +430,7 @@ fn start_task_rejects_empty_title() {
             title: "   ".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap_err();
@@ -390,6 +456,7 @@ fn start_task_rejects_unsupported_agent() {
             title: "Fix login".to_string(),
             agent: "/bin/sh".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap_err();
@@ -415,6 +482,7 @@ fn start_task_surfaces_unknown_repo_as_command_error() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap_err();
@@ -451,6 +519,7 @@ fn start_task_skips_fetch_when_origin_fetch_is_fresh() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: String::new(),
+            orchestration_chat: false,
         },
     )
     .unwrap();

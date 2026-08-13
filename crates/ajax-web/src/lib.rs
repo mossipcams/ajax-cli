@@ -1,6 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapters;
+pub mod ports;
 pub mod runtime;
 pub mod slices;
 

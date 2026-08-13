@@ -28,7 +28,7 @@ Authoritative references for agents, in order: explicit user instruction →
 | `ajax-core` | Domain model, registry facade, lifecycle, command planning, policy, live-status reduction, projections, typed output contracts, operator slices |
 | `ajax-cli` | Argument parsing, context load/save, command dispatch, human/JSON rendering, process execution wiring |
 | `ajax-tui` | Native Cockpit UI over `ajax-core` JSON-backed responses |
-| `ajax-web` | Browser Cockpit adapter: HTTP, shell assets, DTOs, local HTTPS identity, server wiring — presentation only, not a second task domain |
+| `ajax-web` | Browser Cockpit adapter: HTTP, shell assets, DTOs, local HTTPS identity, server wiring — presentation only, not a second task domain. Cursor ACP session attach for orchestration chat is an ajax-web browser capability; ajax-core does not own it. |
 | `ajax-supervisor` | Supervised agent execution, process monitoring, repository observation, monitor events |
 
 ## External Substrates
@@ -157,7 +157,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   for core Cockpit use, without classic PWA packaging (manifest, icons, service
   worker), without a service-worker offline mutation model, and without
   replacing the raw xterm/tmux-first terminal model as the default path.
-  Optional Home Screen install enables Declarative Web Push only.
+  Optional Home Screen install enables Declarative Web Push only. Flag-gated
+  Cursor orchestration chat (`#/session`) is the documented composer exception;
+  `#/t/<handle>` remains terminal-first even when that flag is on.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 
@@ -228,7 +230,8 @@ npm run verify:slice -- operate  # example: web operate slice
 
 Slice names for `verify:slice`: core verbs
 `start|resume|review|repair|ship|drop_task|sweep_cleanup`; web
-`operate|cockpit|terminal|install`; plus `cli` / `core` / `web` / `arch`.
+`operate|cockpit|terminal|install|web_session`; plus `cli` / `core` / `web` /
+`arch`.
 
 Full gate before opening a PR: `npm run verify` (see `AGENTS.md`).
 
@@ -241,6 +244,6 @@ Full gate before opening a PR: `npm run verify` (see `AGENTS.md`).
 | Registry, lifecycle, substrate evidence, live status | [`docs/architecture/core-subsystems.md`](docs/architecture/core-subsystems.md) |
 | Command helpers and adapters | [`docs/architecture/commands-adapters.md`](docs/architecture/commands-adapters.md) |
 | CLI composition and supervisor | [`docs/architecture/cli-supervisor.md`](docs/architecture/cli-supervisor.md) |
-| Web Cockpit slices, runtime, terminal, speech | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
+| Web Cockpit slices, runtime, terminal, speech, orchestration chat | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
 | Native Cockpit views | [`docs/architecture/cockpit.md`](docs/architecture/cockpit.md) |
 | Speech operator setup (not architecture ownership) | [`docs/speech-input.md`](docs/speech-input.md) |

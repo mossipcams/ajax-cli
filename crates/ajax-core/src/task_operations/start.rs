@@ -104,6 +104,14 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
         };
     let mut outputs = external_outputs;
 
+    if request.agent_start == commands::AgentStartMode::PreparedSession {
+        context
+            .registry
+            .update_lifecycle(&task.id, crate::models::LifecycleStatus::Active)
+            .map_err(CommandError::Registry)?;
+        checkpoint(context)?;
+    }
+
     commands::mark_task_opened(context, &task.qualified_handle())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
     outputs.extend(crate::task_operations::kernel::execute_external_plan(

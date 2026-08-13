@@ -312,6 +312,7 @@ async fn post_tasks_endpoint_delegates_to_start_bridge_method() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             request_id: "req-1".to_string(),
+            orchestration_chat: false,
         })
     );
 }

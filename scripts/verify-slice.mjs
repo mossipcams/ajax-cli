@@ -8,7 +8,7 @@
  *
  * Names:
  *   start|resume|review|repair|ship|drop_task|sweep_cleanup  → ajax-core slice
- *   operate|cockpit|terminal|install                         → ajax-web slice
+ *   operate|cockpit|terminal|install|web_session             → ajax-web slice
  *   cli|core|web|arch|supervisor|tui                         → crate / arch suite
  */
 
@@ -30,7 +30,7 @@ const CORE_SLICES = new Set([
   "sweep_cleanup",
 ]);
 
-const WEB_SLICES = new Set(["operate", "cockpit", "terminal", "install"]);
+const WEB_SLICES = new Set(["operate", "cockpit", "terminal", "install", "web_session"]);
 
 function run(cmd, args) {
   console.log(`+ ${cmd} ${args.join(" ")}`);
