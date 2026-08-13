@@ -3,6 +3,7 @@ import {
   dashboardHash,
   parseRoute,
   projectHash,
+  sessionHash,
   settingsHash,
   taskDiffHash,
   taskHash,
@@ -20,6 +21,8 @@ import TaskDetail from "@/features/task/TaskDetail";
 import TaskLoadError from "@/features/task/TaskLoadError";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
+import SessionStarter from "@/features/session/SessionStarter";
+import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
@@ -73,6 +76,7 @@ type PendingConfirmState = {
 
 export default function App() {
   const route = useHashRoute();
+  const orchestrationChat = useOrchestrationChatEnabled();
   const {
     cockpit,
     connection,
@@ -411,9 +415,20 @@ export default function App() {
   }, [route]);
 
   useEffect(() => {
+    if (route.kind !== "session") return;
+    if (!orchestrationChat) {
+      go(dashboardHash());
+      return;
+    }
+    if (route.handle) go(taskHash(route.handle));
+  }, [route.kind, route.handle, orchestrationChat]);
+
+  useEffect(() => {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
       document.title = `${route.handle} — Ajax`;
+    } else if (kind === "session" && !route.handle) {
+      document.title = "New session — Ajax";
     } else if (kind === "settings") {
       document.title = "Settings — Ajax";
     } else if (kind === "project" && route.project) {
@@ -532,7 +547,14 @@ export default function App() {
       >
         Dashboard
       </button>
-      <button type="button" data-bottom-action="new-task" onClick={() => setSheetOpen(true)}>
+      <button
+        type="button"
+        data-bottom-action="new-task"
+        onClick={() => {
+          if (orchestrationChat) go(sessionHash());
+          else setSheetOpen(true);
+        }}
+      >
         New
       </button>
     </nav>
@@ -576,6 +598,24 @@ export default function App() {
                   }
                 }}
               />
+            </section>
+          ) : route.kind === "session" ? (
+            <section
+              ref={outletSwipeRef}
+              className={swipeOutletClass || undefined}
+              data-outlet="session"
+              data-testid="outlet-session"
+              aria-live="polite"
+            >
+              {!route.handle ? (
+                <SessionStarter
+                  repos={cockpit.data?.repos?.repos ?? []}
+                  selectedProject={selectedProject}
+                  onBack={() => go(dashboardHash())}
+                  onCockpit={applyCockpit}
+                  onStarted={(handle) => go(taskHash(handle))}
+                />
+              ) : null}
             </section>
           ) : route.kind === "task" ? (
             <section

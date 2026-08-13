@@ -2613,6 +2613,179 @@ html.keyboard-open .app-viewport {
   font-size: 13px;
 }
 
+/* Session starter --------------------------------------------------------- */
+.session-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 0 12px;
+  gap: 0;
+}
+
+.session-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 0 10px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  border-bottom: 1px solid var(--rule);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  backdrop-filter: saturate(140%) blur(10px);
+}
+
+.session-header-back {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--text-body);
+  padding: 6px 0;
+  min-height: 44px;
+}
+
+.session-header-back:hover,
+.session-header-back:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-status-pill {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  line-height: 1.3;
+  color: var(--tone, var(--ink-soft));
+  background: var(--tone-bg, var(--paper-raised));
+}
+
+.session-model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.session-model-picker-label {
+  flex: none;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-model-picker select {
+  min-width: 0;
+  flex: 1;
+  min-height: 44px;
+  max-width: 100%;
+}
+
+.session-starter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 0 20px;
+  overflow-y: auto;
+}
+
+.session-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-field label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-field input,
+.session-field select,
+.session-field textarea {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 16px;
+  resize: none;
+}
+
+.session-field input:focus,
+.session-field select:focus,
+.session-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.session-field input::placeholder,
+.session-field textarea::placeholder {
+  color: var(--ink-muted);
+}
+
+.session-starter-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.session-starter-brief-label {
+  margin: 0;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-starter-actions {
+  display: flex;
+  margin-top: 4px;
+}
+
+.session-starter-actions .pill {
+  flex: 1 1 auto;
+  min-height: 44px;
+}
+
+.session-error {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--danger);
+}
+
 /* TAILWIND THEME ---------------------------------------------------------- */
 /* Token bridge for Tailwind v4 utilities. Maps Tailwind's --color-* namespace
    onto the existing Ajax custom properties so utility classes (bg-*, text-*,

@@ -27,6 +27,12 @@ The browser `webSessionTransport` client and `sessionReducer` fold host WebSocke
 events into view state; they do not own the transcript, prompt queue, or ACP
 process.
 
+The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
+default **off**) gates `#/session`, the Cursor session starter that calls
+`startTask` with `orchestration_chat: true`. Until the chat surface lands, a
+started session and any pasted `#/session/<handle>` URL still open the existing
+`#/t/<handle>` terminal outlet.
+
 When that mode is enabled, agent conversation uses Cursor ACP over stdio
 (`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
 Model catalog parsing lives in the `session_models` slice. Authenticated
