@@ -22,7 +22,7 @@ import TaskLoadError from "@/features/task/TaskLoadError";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
-import SessionStarter from "@/features/session/SessionStarter";
+import SessionStarter, { type SessionStarterContext } from "@/features/session/SessionStarter";
 import SessionChat from "@/features/session/SessionChat";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
@@ -91,7 +91,9 @@ export default function App() {
   } = useCockpitResource();
   const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
   const taskOpenHandle =
-    route.kind === "task" || route.kind === "diff" ? (route.handle ?? null) : null;
+    route.kind === "task" || route.kind === "diff" || (route.kind === "session" && route.handle)
+      ? (route.handle ?? null)
+      : null;
   const { detail, reload } = useTaskDetailResource(taskOpenHandle, {
     applyCockpit,
     applyConnectionError,
@@ -99,6 +101,9 @@ export default function App() {
   });
   const { updateAvailable, checkVersion } = useVersionMonitor();
   const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatFlag);
+  const [sessionStarterContext, setSessionStarterContext] = useState<SessionStarterContext | null>(
+    null,
+  );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
@@ -263,6 +268,12 @@ export default function App() {
       window.removeEventListener("storage", syncFlag);
     };
   }, []);
+
+  useEffect(() => {
+    if (route.kind !== "session" || !route.handle) {
+      setSessionStarterContext(null);
+    }
+  }, [route.kind, route.handle]);
 
   useEffect(() => {
     if (!orchestrationChat && route.kind === "session") {
@@ -508,6 +519,7 @@ export default function App() {
   }
 
   const hideSessionChrome = orchestrationChat && route.kind === "session";
+  const isSessionRoute = route.kind === "session";
 
   const chrome = hideSessionChrome ? null : (
     <div className="cockpit-chrome" data-testid="cockpit-chrome">
@@ -570,7 +582,11 @@ export default function App() {
 
   return (
     <AppViewport>
-      <AppShell chrome={chrome} nav={nav}>
+      <AppShell
+        chrome={chrome}
+        nav={nav}
+        className={isSessionRoute ? "app-shell--session" : undefined}
+      >
         <RouteScroll>
           {route.kind === "settings" ? (
             <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
@@ -611,18 +627,38 @@ export default function App() {
             </section>
           ) : route.kind === "session" && orchestrationChat ? (
             <section
+              ref={outletSwipeRef}
+              className={swipeOutletClass || undefined}
               data-outlet="session"
               data-testid={route.handle ? "outlet-session-chat" : "outlet-session-starter"}
               data-handle={route.handle}
               aria-live="polite"
             >
               {route.handle ? (
-                <SessionChat handle={route.handle} />
+                <SessionChat
+                  handle={route.handle}
+                  detail={detail.data}
+                  detailStatus={detail.status}
+                  detailError={detail.error?.message}
+                  starterContext={sessionStarterContext}
+                  onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                  onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
+                  onCockpit={applyCockpit}
+                  onResult={showResult}
+                  onMutated={() => route.kind === "session" && route.handle && reload()}
+                  onDismiss={() => go(dashboardHash())}
+                  onRetry={reload}
+                />
               ) : (
                 <SessionStarter
                   repos={cockpit.data?.repos?.repos ?? []}
                   selectedProject={selectedProject}
-                  onStarted={(handle) => go(sessionHash(handle))}
+                  onBack={() => go(dashboardHash())}
+                  onCockpit={applyCockpit}
+                  onStarted={(handle, starter) => {
+                    setSessionStarterContext(starter);
+                    go(sessionHash(handle));
+                  }}
                 />
               )}
             </section>

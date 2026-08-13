@@ -82,6 +82,7 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
     "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
     "/api/server/restart": {},
     "/api/server/test-in-stable": { ok: true, restarting: true },
+    "/api/session/models": { models: [{ id: "auto", label: "Auto" }] },
     "__detail__":      DETAIL_FIXTURE,
     ...extra,
   };
