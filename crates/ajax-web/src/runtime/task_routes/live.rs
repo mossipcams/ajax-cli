@@ -217,6 +217,16 @@ where
             }),
         );
     }
+    if request.orchestration_chat && request.agent != "cursor" {
+        return json_value_response(
+            400,
+            serde_json::json!({
+                "ok": false,
+                "request_id": request_id,
+                "error": "orchestration chat requires the cursor agent",
+            }),
+        );
+    }
     let task_key = ajax_core::commands::start_task_identity(&request.repo, &request.title)
         .as_str()
         .to_string();

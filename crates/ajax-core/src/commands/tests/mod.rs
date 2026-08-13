@@ -296,6 +296,7 @@ proptest! {
                 repo: "web".to_string(),
                 title: title.clone(),
                 agent: "codex".to_string(),
+                skip_interactive_agent: false,
             },
         )
         .unwrap();

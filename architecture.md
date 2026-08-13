@@ -112,7 +112,10 @@ file-backed or directory-backed submodule:
 
 - `start`, `resume`, `review`, `repair`, `ship`, `drop_task`, `sweep_cleanup`
 
-Slice names use operator language, not substrate language (Git diff, tmux
+`start` may skip interactive agent send-keys when the caller requests a
+provisioned Cursor launch; worktree and tmux are still created.
+
+Slice names use operator language, not substrate language (Git diff, tmux)
 attach, process cleanup). `ajax-web::slices` is the sibling slice layer for
 browser capabilities.
 
