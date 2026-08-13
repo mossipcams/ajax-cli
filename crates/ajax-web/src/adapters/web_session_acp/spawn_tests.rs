@@ -344,10 +344,7 @@ fn live_cursor_prompt_and_session_load() {
 
     let (client2, report2) =
         AcpStdioClient::spawn(&dir, None, Some(&session_id)).expect("respawn with session/load");
-    assert!(
-        report2.resumed,
-        "session/load should succeed for session_id={session_id}"
-    );
+    assert!(report2.resumed, "session/load should report resumed");
     drop(client2);
 
     let _ = fs::remove_dir_all(dir);
