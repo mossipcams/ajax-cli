@@ -17,7 +17,15 @@ sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
-desktop. From a selected task, swipe-left navigation opens Diff Review
+desktop.
+
+An optional flag-gated **Cursor ACP orchestration chat** session mode is
+specified in [`web-session-behavior.md`](web-session-behavior.md). The
+preference defaults **off**; when off, dashboard and embedded terminal behavior
+is unchanged. Session routes, transport, and UI remain absent until those
+layers exist; the behavior ledger is the contract they implement.
+
+From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
