@@ -11,6 +11,11 @@ detail, embedded raw terminal, Diff Review, and operate flows behave exactly as
 they do today. No session routes, WebSocket, or UI chrome may appear or alter
 existing paths.
 
+## Launch
+
+- Provisioned Cursor starts skip tmux send-keys but still create the task tmux
+  session. Non-Cursor agents cannot use that launch mode.
+
 ## Queue and cancellation across WebSocket reconnect
 
 - At most one `session/prompt` is in flight on the ACP host at a time.

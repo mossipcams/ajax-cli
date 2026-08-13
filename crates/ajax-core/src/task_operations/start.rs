@@ -104,6 +104,32 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
         };
     let mut outputs = external_outputs;
 
+    if request.skip_interactive_agent && request.agent.eq_ignore_ascii_case("cursor") {
+        let agent_sent = context
+            .registry
+            .step_receipts_for_task(&task.id)
+            .into_iter()
+            .any(|receipt| {
+                receipt.operation == TaskOperationKind::Start
+                    && receipt.step_key == "agent_command_sent"
+            });
+        if !agent_sent {
+            commands::mark_new_task_provisioning_step_completed(
+                context,
+                &task.id,
+                StartProvisioningStep::AgentCommandSent,
+            )?;
+            context
+                .registry
+                .record_step_receipt(start_step_receipt(
+                    &task,
+                    StartProvisioningStep::AgentCommandSent,
+                ))
+                .map_err(CommandError::Registry)?;
+            checkpoint(context)?;
+        }
+    }
+
     commands::mark_task_opened(context, &task.qualified_handle())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
     outputs.extend(crate::task_operations::kernel::execute_external_plan(

@@ -112,7 +112,10 @@ file-backed or directory-backed submodule:
 
 - `start`, `resume`, `review`, `repair`, `ship`, `drop_task`, `sweep_cleanup`
 
-Slice names use operator language, not substrate language (Git diff, tmux
+`start` may skip interactive agent send-keys when the caller requests a
+provisioned Cursor launch; worktree and tmux are still created.
+
+Slice names use operator language, not substrate language (Git diff, tmux)
 attach, process cleanup). `ajax-web::slices` is the sibling slice layer for
 browser capabilities.
 
@@ -158,6 +161,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   worker), without a service-worker offline mutation model, and without
   replacing the raw xterm/tmux-first terminal model as the default path.
   Optional Home Screen install enables Declarative Web Push only.
+- Optional orchestration chat uses Cursor ACP over stdio via an `ajax-web`
+  host, not PTY paste. Transcripts persist as JSONL under ajax-web `state_dir`
+  (`web-session/`), not registry or tmux.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

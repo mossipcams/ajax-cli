@@ -149,6 +149,78 @@ where
     })
 }
 
+pub(crate) async fn axum_task_session<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    if !req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    {
+        return text_axum_response(400, "websocket upgrade required");
+    }
+    if !websocket_origin_allowed(req.headers()) {
+        return text_axum_response(403, "websocket origin forbidden");
+    }
+    state.mark_browser_cockpit_seen();
+
+    let model_raw = req
+        .uri()
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key == "model").then_some(value)
+            })
+        })
+        .map(percent_decode_model)
+        .unwrap_or_else(|| "auto".to_string());
+
+    let plan = {
+        let guard = state.shared();
+        match crate::slices::web_session::prepare_task_session(&guard.context, &handle, &model_raw)
+        {
+            Ok(plan) => plan,
+            Err(crate::slices::web_session::SessionRouteError::TaskNotFound) => {
+                return json_value_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": "task not found" }),
+                );
+            }
+            Err(crate::slices::web_session::SessionRouteError::WorktreeMissing) => {
+                return json_value_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": "worktree missing" }),
+                );
+            }
+            Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat) => {
+                return json_value_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": "session chat requires cursor orchestration" }),
+                );
+            }
+        }
+    };
+
+    let hub = Arc::clone(&state.web_session_hub);
+    let (mut parts, body) = req.into_parts();
+    let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(upgrade) => upgrade,
+        Err(_) => return text_axum_response(400, "websocket upgrade required"),
+    };
+    let _ = body;
+    upgrade.on_upgrade(move |socket| async move {
+        crate::adapters::web_session_acp::bridge_task_session_socket(socket, hub, plan).await;
+    })
+}
+
 pub(crate) fn websocket_origin_allowed(headers: &HeaderMap) -> bool {
     let Some(origin) = headers
         .get(header::ORIGIN)
@@ -175,6 +247,37 @@ pub(crate) fn origin_authority(origin: &str) -> Option<&str> {
         return None;
     }
     Some(authority)
+}
+
+fn percent_decode_model(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
+                out.push(char::from(hi * 16 + lo));
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(' ');
+        } else {
+            out.push(char::from(bytes[i]));
+        }
+        i += 1;
+    }
+    out
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub(crate) async fn axum_task_post<C, B>(
@@ -214,6 +317,16 @@ where
                 "ok": false,
                 "request_id": request_id,
                 "error": format!("unsupported agent: {}", request.agent),
+            }),
+        );
+    }
+    if request.orchestration_chat && request.agent != "cursor" {
+        return json_value_response(
+            400,
+            serde_json::json!({
+                "ok": false,
+                "request_id": request_id,
+                "error": "orchestration chat requires the cursor agent",
             }),
         );
     }
