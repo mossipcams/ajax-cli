@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
+import taskDetail from "@/fixtures/task-detail.json";
 import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 
 class StubWebSocket {
@@ -25,7 +26,7 @@ function jsonResponse(body: unknown, status = 200) {
   };
 }
 
-function stubFetch() {
+function stubFetch(includeTask = false) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
@@ -34,6 +35,9 @@ function stubFetch() {
       if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
       if (path === "/api/session/models") {
         return Promise.resolve(jsonResponse({ models: [{ id: "auto", label: "Auto" }] }));
+      }
+      if (includeTask && path.startsWith("/api/tasks/")) {
+        return Promise.resolve(jsonResponse(taskDetail));
       }
       if (path.startsWith("/api/tasks/")) {
         return Promise.reject(new Error(`unexpected task fetch: ${path}`));
@@ -94,5 +98,18 @@ describe("App session routing", () => {
     setHash("#/session");
     expect(await screen.findByTestId("session-starter")).toBeInTheDocument();
     expect(window.location.hash).toBe("#/session");
+  });
+
+  it("renders SessionChat on #/session/<handle> when orchestration chat is enabled", async () => {
+    writeOrchestrationChatEnabled(true);
+    stubFetch(true);
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    expect(await screen.findByTestId("session-head")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/session/web/fix-login");
+    expect(screen.queryByTestId("outlet-task")).not.toBeInTheDocument();
   });
 });
