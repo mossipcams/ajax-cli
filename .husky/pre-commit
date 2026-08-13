@@ -10,6 +10,7 @@
 npm run web:build
 git add crates/ajax-web/web/dist
 
+node scripts/check-file-loc.mjs --staged
 npm run verify
 cargo build --release -p ajax-cli
 cargo install --path crates/ajax-cli --locked --force

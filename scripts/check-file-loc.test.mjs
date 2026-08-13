@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CHANGED_FILE_LOC_FAIL_AT,
+  CHANGED_FILE_LOC_WARN_AT,
   WARN_AT,
   FAIL_AT,
+  PR_LOC_FAIL_AT,
+  PR_LOC_WARN_AT,
   countLines,
   evaluateChangedFiles,
+  evaluateChangedLoc,
   evaluateFileLoc,
+  evaluatePrLoc,
   formatAnnotation,
+  inspectStagedFileLoc,
   isScannedSourcePath,
+  parseNumstat,
   parseNameOnlyList,
 } from "./check-file-loc.mjs";
 
@@ -63,4 +72,45 @@ test("formatAnnotation includes the file path", () => {
 
 test("parseNameOnlyList trims git diff output", () => {
   assert.deepEqual(parseNameOnlyList("a.rs\n\nb.rs\n"), ["a.rs", "b.rs"]);
+});
+
+test("parseNumstat reads additions and deletions", () => {
+  assert.deepEqual(parseNumstat("3\t2\tcrates/foo.rs\n-\t-\timage.png\n"), [
+    { path: "crates/foo.rs", additions: 3, deletions: 2 },
+  ]);
+});
+
+test("changed file LOC warns and fails at its thresholds", () => {
+  assert.equal(
+    evaluateChangedLoc("crates/foo.rs", CHANGED_FILE_LOC_WARN_AT).level,
+    "warning",
+  );
+  assert.equal(
+    evaluateChangedLoc("crates/foo.rs", CHANGED_FILE_LOC_FAIL_AT).level,
+    "error",
+  );
+});
+
+test("PR LOC warns and fails at its thresholds", () => {
+  assert.equal(evaluatePrLoc(PR_LOC_WARN_AT).level, "warning");
+  assert.equal(evaluatePrLoc(PR_LOC_FAIL_AT).level, "error");
+});
+
+test("Husky pre-commit runs the staged LOC check", () => {
+  assert.match(
+    readFileSync(".husky/pre-commit", "utf8"),
+    /node scripts\/check-file-loc\.mjs --staged/,
+  );
+});
+
+test("staged LOC inspection reads indexed file contents", async () => {
+  const result = await inspectStagedFileLoc({
+    runGit: async (args) =>
+      args[0] === "diff" ? "2\t1\tcrates/foo.rs\n" : "one\ntwo\n",
+    readIndex: async () => "one\ntwo\n",
+  });
+
+  assert.deepEqual(result.files, ["crates/foo.rs"]);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.errors, []);
 });
