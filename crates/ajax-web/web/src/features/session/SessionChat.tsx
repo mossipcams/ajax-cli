@@ -61,6 +61,7 @@ import { useSessionModelPreference } from "./sessionModel";
 import { autoGrow } from "./sessionChatChrome";
 import { formatSessionBrief, PIN_THRESHOLD_PX, sessionSeededStorageKey } from "./sessionChatSeed";
 import { useSessionTransport } from "./useSessionTransport";
+import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
@@ -105,6 +106,15 @@ export default function SessionChat({
   onRetry,
 }: Props) {
   const composerId = useId();
+  const rootRef = useRef<HTMLElement | null>(null);
+  const onOpenDiffRef = useRef(onOpenDiff);
+  onOpenDiffRef.current = onOpenDiff;
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+  const { swiping, style } = useSwipePageTransition(rootRef, {
+    onLeft: () => onOpenDiffRef.current?.(),
+    onRight: () => onBackRef.current?.(),
+  });
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
@@ -314,7 +324,13 @@ export default function SessionChat({
   const title = detail?.title || detail?.qualified_handle || handle;
 
   return (
-    <section className="session-page session-chat" data-testid="session-chat" data-handle={handle}>
+    <section
+      ref={rootRef}
+      className={`session-page session-chat${swiping ? " is-diff-swiping" : ""}`}
+      data-testid="session-chat"
+      data-handle={handle}
+      style={style}
+    >
       <LiveHead
         title={title}
         state={state_}

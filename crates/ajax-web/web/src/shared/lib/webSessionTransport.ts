@@ -2,6 +2,9 @@
 
 const OPEN_READY_STATE = 1;
 
+/** Match host FIFO cap (`web_session::MAX_QUEUED_PROMPTS`). */
+const MAX_QUEUED_PROMPTS = 8;
+
 /** Emitted when the upgrade is refused. The browser cannot expose the HTTP
  * status or body of a failed WebSocket handshake, so this string carries no
  * reason — callers recover one from task truth. */
@@ -185,6 +188,7 @@ export function connectWebSessionTransport(
   // never schedule reconnect twice.
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
+    pendingPrompts.length = 0;
     callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });
 
@@ -196,9 +200,15 @@ export function connectWebSessionTransport(
         sendPromptNow(trimmed);
         return;
       }
+      if (pendingPrompts.length >= MAX_QUEUED_PROMPTS) {
+        pendingPrompts.shift();
+      }
       pendingPrompts.push(trimmed);
     },
     sendCancel(keepQueue = false) {
+      if (!keepQueue) {
+        pendingPrompts.length = 0;
+      }
       sendJson(keepQueue ? { type: "cancel", keepQueue: true } : { type: "cancel" });
     },
     setModel(nextModel) {

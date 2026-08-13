@@ -432,6 +432,68 @@ fn read_from_keeps_unresolved_permission_requests() {
 }
 
 #[test]
+fn disk_backed_read_from_honors_dropped_offset() {
+    let dir = scratch_dir("dropped-cursor");
+    let handle = "web/fix-login";
+    let events: Vec<_> = (0..MAX_LOG_EVENTS + 5)
+        .map(|i| note(&i.to_string()))
+        .collect();
+    store::append_events(&dir, handle, &events);
+    let loaded = store::load(&dir, handle);
+    assert_eq!(loaded.dropped, 5);
+    assert_eq!(loaded.events.len(), MAX_LOG_EVENTS);
+
+    let hub = WebSessionHub::new(dir.clone());
+    let (events, next) = hub.read_from(handle, 0);
+    assert_eq!(events.len(), MAX_LOG_EVENTS);
+    assert_eq!(events[0], note("5"));
+    assert_eq!(next, MAX_LOG_EVENTS + 5);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn idle_eviction_preserves_slots_with_in_flight_turn() {
+    let dir = scratch_dir("evict-inflight");
+    let handle_a = "web/evict-inflight-a";
+    let handle_c = "web/evict-inflight-c";
+    let hub = WebSessionHub::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            hub.acquire(handle_a, &dir, "auto").expect("acquire a");
+            hub.submit_prompt(handle_a, "first".to_string())
+                .expect("first");
+            hub.release(handle_a);
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/evict-inflight-idle-{i}");
+                hub.acquire(&handle, &dir, "auto").expect("acquire idle");
+                hub.release(&handle);
+            }
+
+            hub.acquire(handle_c, &dir, "auto").expect("acquire c");
+            hub.release(handle_c);
+
+            hub.acquire(handle_a, &dir, "auto").expect("re-acquire a");
+            let (events, _) = hub.read_from(handle_a, 0);
+            assert!(
+                events.contains(&user_msg("first")),
+                "in-flight slot must survive idle eviction"
+            );
+            hub.cancel(handle_a, true).expect("cancel in-flight");
+            pump_until(&hub, handle_a, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn idle_eviction_preserves_slots_with_queued_prompts() {
     let dir = scratch_dir("evict-queue");
     let handle_a = "web/evict-a";

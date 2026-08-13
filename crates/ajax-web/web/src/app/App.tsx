@@ -432,9 +432,9 @@ export default function App() {
 
   useEffect(() => {
     if (route.kind === "session" && !orchestrationChat) {
-      go(dashboardHash());
+      go(route.handle ? taskHash(route.handle) : dashboardHash());
     }
-  }, [route.kind, orchestrationChat]);
+  }, [route.kind, route.handle, orchestrationChat]);
 
   useEffect(() => {
     const kind = route.kind;

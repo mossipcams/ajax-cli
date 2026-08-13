@@ -5,6 +5,7 @@ import SessionChat, {
   sessionSeededStorageKey,
 } from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
@@ -130,5 +131,21 @@ describe("SessionChat smoke", () => {
       },
     });
     expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBeNull();
+  });
+
+  it("opens Diff Review on a left swipe", async () => {
+    vi.useFakeTimers();
+    const onOpenDiff = vi.fn();
+    mountChat({ onOpenDiff });
+    const root = screen.getByTestId("session-chat");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+    fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onOpenDiff).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 });

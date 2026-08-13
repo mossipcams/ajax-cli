@@ -9,6 +9,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
+const MAX_SESSION_FRAME_BYTES: usize = 4096;
 
 pub async fn bridge_task_session_socket(
     mut socket: WebSocket,
@@ -25,7 +26,6 @@ pub async fn bridge_task_session_socket(
             },
         )
         .await;
-        hub.release(&handle);
         return;
     }
 
@@ -112,6 +112,21 @@ async fn handle_inbound_text(
     text: &str,
     generation: &mut u64,
 ) -> ClientHandleResult {
+    if text.len() > MAX_SESSION_FRAME_BYTES {
+        let ok = send_event(
+            socket,
+            &SessionServerEvent::Error {
+                message: "input frame too large".to_string(),
+            },
+        )
+        .await;
+        return if ok {
+            ClientHandleResult::Continue
+        } else {
+            ClientHandleResult::Stop
+        };
+    }
+
     let message: SessionClientMessage = match serde_json::from_str(text) {
         Ok(message) => message,
         Err(error) => {
@@ -203,6 +218,11 @@ async fn send_event(socket: &mut WebSocket, event: &SessionServerEvent) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_session_frame_bytes_is_4096() {
+        assert_eq!(MAX_SESSION_FRAME_BYTES, 4096);
+    }
 
     #[test]
     fn apply_client_message_rejects_invalid_model() {

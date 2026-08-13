@@ -46,8 +46,8 @@ pub(crate) struct TranscriptLog {
 }
 
 impl TranscriptLog {
-    fn from_events(events: Vec<SessionServerEvent>) -> Self {
-        Self { events, dropped: 0 }
+    fn from_events(events: Vec<SessionServerEvent>, dropped: usize) -> Self {
+        Self { events, dropped }
     }
 
     pub(crate) fn append(&mut self, events: Vec<SessionServerEvent>) {
@@ -238,7 +238,7 @@ impl WebSessionHub {
                     slot.add_holder();
                     return Ok(());
                 }
-                let mut log = TranscriptLog::from_events(stored.events);
+                let mut log = TranscriptLog::from_events(stored.events, stored.dropped);
                 if context_reset_needed(&report, &log) {
                     let note = context_reset_note();
                     log.append(vec![note.clone()]);
@@ -303,8 +303,17 @@ impl WebSessionHub {
 
         let mut sessions = self.sessions.lock().unwrap();
         let Some(slot) = sessions.get_mut(qualified_handle) else {
+            drop(client);
             return Err("session slot missing".to_string());
         };
+        let host_exited = {
+            let mut guard = slot.client.lock().unwrap();
+            guard.host_exited()
+        };
+        if !slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+            drop(client);
+            return Ok(slot.generation);
+        }
         install_replaced_client(
             slot,
             client,
@@ -470,7 +479,7 @@ impl WebSessionHub {
                 if stored.events.is_empty() {
                     (Vec::new(), cursor)
                 } else {
-                    TranscriptLog::from_events(stored.events).read_from(cursor)
+                    TranscriptLog::from_events(stored.events, stored.dropped).read_from(cursor)
                 }
             }
         }
@@ -481,7 +490,11 @@ impl WebSessionHub {
 fn evict_idle_over_limit(sessions: &mut HashMap<String, SessionSlot>) {
     let mut idle: Vec<(String, Instant)> = sessions
         .iter()
-        .filter(|(_, slot)| slot.is_idle() && slot.queued.is_empty())
+        .filter(|(_, slot)| {
+            slot.is_idle()
+                && slot.queued.is_empty()
+                && !slot.client.lock().unwrap().prompt_in_flight()
+        })
         .map(|(handle, slot)| {
             (
                 handle.clone(),

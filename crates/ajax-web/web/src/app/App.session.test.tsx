@@ -4,6 +4,7 @@ import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { taskHash } from "@/shared/lib/routes";
 
 class StubWebSocket {
   readyState = 1;
@@ -78,7 +79,7 @@ describe("App session routing", () => {
     vi.unstubAllGlobals();
   });
 
-  it("redirects #/session/<handle> to the dashboard when orchestration chat is off", async () => {
+  it("redirects #/session/<handle> to the task when orchestration chat is off", async () => {
     let wsConstructCount = 0;
     vi.stubGlobal(
       "WebSocket",
@@ -97,7 +98,7 @@ describe("App session routing", () => {
     await screen.findByText("Fix login");
 
     setHash("#/session/web/fix-login");
-    await waitFor(() => expect(window.location.hash).toBe("#/"));
+    await waitFor(() => expect(window.location.hash).toBe(taskHash("web/fix-login")));
     expect(screen.queryByTestId("session-chat")).not.toBeInTheDocument();
     expect(wsConstructCount).toBe(0);
   });

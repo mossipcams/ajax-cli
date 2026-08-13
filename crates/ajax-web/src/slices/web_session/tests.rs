@@ -274,3 +274,39 @@ fn apply_cancel_to_queue_keep_false_clears() {
     apply_cancel_to_queue(&mut queued, false);
     assert!(queued.is_empty());
 }
+
+#[test]
+fn map_acp_client_request_session_request_permission() {
+    let params = serde_json::json!({
+        "requestId": "req-1",
+        "title": "Run tests?",
+        "message": "Allow npm test",
+    });
+    assert_eq!(
+        map_acp_client_request("session/request_permission", &params),
+        Some(SessionServerEvent::PermissionRequest {
+            request_id: "req-1".to_string(),
+            title: Some("Run tests?".to_string()),
+            detail: Some("Allow npm test".to_string()),
+        })
+    );
+}
+
+#[test]
+fn map_acp_client_request_permission_nested_fields() {
+    let params = serde_json::json!({
+        "request_id": "req-2",
+        "permission": {
+            "title": "Deploy?",
+            "description": "Push to prod",
+        },
+    });
+    assert_eq!(
+        map_acp_client_request("session/request_permission", &params),
+        Some(SessionServerEvent::PermissionRequest {
+            request_id: "req-2".to_string(),
+            title: Some("Deploy?".to_string()),
+            detail: Some("Push to prod".to_string()),
+        })
+    );
+}
