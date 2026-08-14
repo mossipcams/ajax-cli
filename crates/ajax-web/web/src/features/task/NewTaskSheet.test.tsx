@@ -12,6 +12,29 @@ const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
 
 const repos = [{ name: "web" }, { name: "api" }];
 
+const CATALOG = {
+  models: [
+    { id: "gpt-5.6-sol[low]", label: "GPT-5.6-Sol (low)" },
+    { id: "gpt-5.6-sol[high]", label: "GPT-5.6-Sol (high)" },
+  ],
+  default: "gpt-5.6-sol[low]",
+};
+
+function stubCatalog(catalog: unknown = CATALOG) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => catalog }),
+  );
+}
+
+const taskForm = () => screen.getByRole("form", { name: "New task" });
+
+/** Step one → step two. Start only exists on the model page. */
+async function goToModelStep() {
+  fireEvent.submit(taskForm());
+  return screen.findByTestId("new-task-model-page");
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskSheet", () => {
@@ -55,15 +78,78 @@ describe("NewTaskSheet", () => {
   });
 
   it("submits the selected pi agent", async () => {
+    stubCatalog();
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     render(<NewTaskSheet repos={repos} />);
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });
     fireEvent.click(screen.getByRole("radio", { name: "Pi" }));
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].agent).toBe("pi");
+    vi.unstubAllGlobals();
+  });
+
+  it("moves to a model page listing what the chosen harness advertises", async () => {
+    stubCatalog();
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+
+    expect(screen.queryByTestId("new-task-model-page")).not.toBeInTheDocument();
+    await goToModelStep();
+
+    expect(await screen.findByRole("radio", { name: /GPT-5.6-Sol \(high\)/ })).toBeInTheDocument();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("agent=codex");
+    vi.unstubAllGlobals();
+  });
+
+  it("starts on the harness default and submits the picked model", async () => {
+    stubCatalog();
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    await goToModelStep();
+
+    const preselected = await screen.findByRole("radio", { name: /GPT-5.6-Sol \(low\)/ });
+    expect(preselected).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("radio", { name: /GPT-5.6-Sol \(high\)/ }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("gpt-5.6-sol[high]");
+    vi.unstubAllGlobals();
+  });
+
+  it("Back returns to the task page without starting anything", async () => {
+    stubCatalog();
+    const spy = vi.spyOn(api, "startTask");
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    await goToModelStep();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByLabelText("Title")).toHaveValue("Fix login");
+    expect(screen.queryByTestId("new-task-model-page")).not.toBeInTheDocument();
+    expect(spy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends no model when the harness advertises none", async () => {
+    stubCatalog({ models: [], default: "" });
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBeUndefined();
+    vi.unstubAllGlobals();
   });
 
   it("preselects the matching repo for the selected project", () => {
@@ -104,7 +190,8 @@ describe("NewTaskSheet", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix Login" },
     });
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     await waitFor(() => expect(onOpenTask).toHaveBeenCalledWith("web/fix-login"));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -123,7 +210,8 @@ describe("NewTaskSheet", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalledOnce());
     const arg = spy.mock.calls[0][0];
     expect(arg.title).toBe("Fix login");
@@ -144,7 +232,8 @@ describe("NewTaskSheet", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "x" },
     });
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     expect(await screen.findByText("Repo busy")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -156,7 +245,8 @@ describe("NewTaskSheet", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "x" },
     });
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     expect(await screen.findByText("Action failed — network error")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -251,7 +341,8 @@ describe("NewTaskSheet remembered defaults", () => {
       target: { value: "Fix login" },
     });
     fireEvent.click(screen.getByRole("radio", { name: "Pi" }));
-    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await goToModelStep();
+    fireEvent.submit(taskForm());
     await waitFor(() => expect(localStorage.getItem("ajax.newTask.agent")).toBe("pi"));
     expect(localStorage.getItem("ajax.newTask.repo")).toBe("web");
   });

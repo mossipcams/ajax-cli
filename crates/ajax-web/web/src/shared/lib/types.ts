@@ -187,6 +187,8 @@ export interface StartTaskRequest {
   agent: string;
   request_id: string;
   orchestration_chat?: boolean;
+  /** Cursor model id; omitted launches the server default. */
+  model?: string;
 }
 
 export interface OperationRequest {

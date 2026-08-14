@@ -72,12 +72,22 @@ export const DETAIL_FIXTURE = {
 export const VERSION_A = { version: "0.20.5", test_in_stable: false };
 export const VERSION_B = { version: "0.21.0-new", test_in_stable: false };
 
+export const SESSION_MODELS = {
+  models: [
+    { id: "auto", label: "Auto" },
+    { id: "cursor-grok-4.6-high", label: "Cursor Grok 4.6" },
+    { id: "composer-2.5", label: "Composer 2.5" },
+  ],
+  default: "cursor-grok-4.6-high",
+};
+
 // ---- fetch mock helper ---------------------------------------------------
 
 export async function mockFetch(page: Page, extra: Record<string, unknown> = {}) {
   const routes: Record<string, unknown> = {
     "/api/cockpit":    COCKPIT_FIXTURE,
     "/api/version":    VERSION_A,
+    "/api/session/models": SESSION_MODELS,
     "/api/health":     { status: "ok" },
     "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
     "/api/server/restart": {},

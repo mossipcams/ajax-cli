@@ -612,6 +612,8 @@ export default function App() {
                 handle={route.handle}
                 title={detail.data?.title}
                 selectedPr={route.pr}
+                agent={detail.data?.agent}
+                onSwappedAgent={reload}
                 onBack={() => {
                   if (route.kind === "diff" && route.handle) {
                     go(

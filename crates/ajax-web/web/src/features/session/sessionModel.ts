@@ -53,16 +53,38 @@ export interface SessionModelOption {
   label: string;
 }
 
-export async function fetchSessionModels(): Promise<SessionModelOption[]> {
+/** Catalog plus the model the server launches when the request omits one. */
+export interface SessionModelCatalog {
+  models: SessionModelOption[];
+  default: string;
+}
+
+/** Cursor always has Auto; a bridge harness with no answer has nothing to
+ *  offer, and an empty catalog means "let the harness choose". */
+function fallbackCatalog(agent: string): SessionModelCatalog {
+  if (agent !== "cursor") return { models: [], default: "" };
+  return {
+    models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
+    default: DEFAULT_SESSION_MODEL,
+  };
+}
+
+/** Models the given harness can run; each harness advertises its own list. */
+export async function fetchSessionModels(agent = "cursor"): Promise<SessionModelCatalog> {
   try {
-    const response = await fetch("/api/session/models", { credentials: "same-origin" });
-    if (!response.ok) return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
-    const body = (await response.json()) as { models?: SessionModelOption[] };
-    if (!Array.isArray(body.models) || body.models.length === 0) {
-      return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
-    }
-    return body.models.filter((m) => m && typeof m.id === "string" && typeof m.label === "string");
+    const response = await fetch(`/api/session/models?agent=${encodeURIComponent(agent)}`, {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return fallbackCatalog(agent);
+    const body = (await response.json()) as { models?: SessionModelOption[]; default?: string };
+    if (!Array.isArray(body.models) || body.models.length === 0) return fallbackCatalog(agent);
+    return {
+      models: body.models.filter(
+        (m) => m && typeof m.id === "string" && typeof m.label === "string",
+      ),
+      default: typeof body.default === "string" ? body.default : "",
+    };
   } catch {
-    return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
+    return fallbackCatalog(agent);
   }
 }

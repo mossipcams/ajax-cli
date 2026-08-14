@@ -174,6 +174,8 @@ test("new task sheet Start submits and opens the task", async ({ page }) => {
   const sheet = page.locator("[data-testid='new-task-sheet']");
   await expect(sheet).toBeVisible();
   await sheet.locator("#new-task-title-input").fill("Add logout");
+  await sheet.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
   await sheet.getByRole("button", { name: "Start" }).click();
 
   await expect(page.locator("[data-testid='new-task-sheet']")).toHaveCount(0, { timeout: 10_000 });
@@ -181,6 +183,33 @@ test("new task sheet Start submits and opens the task", async ({ page }) => {
   await expect(page.locator("[data-outlet='task']")).toHaveAttribute("data-handle", "web/add-logout", {
     timeout: 10_000,
   });
+});
+
+// Step two lists the chosen harness's own models and must not widen the card.
+// jsdom sees neither the second page's layout nor the per-harness fetch.
+test("new task sheet steps to the harness model page", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const sheet = page.locator("[data-testid='new-task-sheet']");
+  await expect(sheet).toBeVisible();
+  await sheet.locator("#new-task-title-input").fill("Add logout");
+  await expect(page.getByTestId("new-task-model-page")).toHaveCount(0);
+
+  await sheet.getByRole("radio", { name: "Cursor" }).click();
+  await sheet.getByRole("button", { name: "Next" }).click();
+
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
+  const preselected = sheet.getByRole("radio", { name: /Cursor Grok 4.6/ });
+  await expect(preselected).toHaveAttribute("aria-checked", "true");
+  expect(
+    await sheet.locator(".sheet-card").evaluate((card) => card.scrollWidth - card.clientWidth),
+  ).toBe(0);
+
+  await sheet.getByRole("button", { name: "Back" }).click();
+  await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
 });
 
 // Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in

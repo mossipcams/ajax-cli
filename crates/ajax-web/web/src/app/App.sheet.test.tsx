@@ -70,6 +70,9 @@ describe("App new-task sheet route coupling", () => {
         }
         if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
         if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [], default: "" }));
+        }
         return Promise.reject(new Error(`unexpected fetch: ${path}`));
       }),
     );
@@ -81,6 +84,9 @@ describe("App new-task sheet route coupling", () => {
     expect(screen.getByTestId("new-task-sheet")).toBeInTheDocument();
 
     fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Swipe back test" } });
+    // Step one commits the harness; Start lives on the model page.
+    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await screen.findByTestId("new-task-model-page");
     fireEvent.submit(screen.getByRole("form", { name: "New task" }));
 
     await screen.findByTestId("outlet-task");
@@ -100,6 +106,9 @@ describe("App new-task sheet route coupling", () => {
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
         if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
         if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [], default: "" }));
+        }
         return Promise.reject(new Error(`unexpected fetch: ${path}`));
       }),
     );
@@ -133,6 +142,9 @@ describe("App new-task sheet route coupling", () => {
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
         if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
         if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [], default: "" }));
+        }
         if (path === "/api/health") return Promise.resolve(jsonResponse({ status: "ok" }));
         return Promise.reject(new Error(`unexpected fetch: ${path}`));
       }),
