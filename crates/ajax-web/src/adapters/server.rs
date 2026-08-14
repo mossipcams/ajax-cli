@@ -60,6 +60,11 @@ fn should_exit_after_launch(result: Result<(), String>) -> bool {
     result.is_ok()
 }
 
+// #873: keep the current listener until dev-web-restart.sh stops it after install.
+fn should_exit_after_test_in_stable_launch(_result: Result<(), String>) -> bool {
+    false
+}
+
 /// Re-exec the current process or spawn a configured restart script after a short
 /// delay, then exit only when the successor spawn succeeded.
 ///
@@ -263,8 +268,8 @@ pub fn test_in_stable_enabled_from_env() -> bool {
     process_test_in_stable_config().is_some()
 }
 
-/// Spawn the detached Test in Stable wrapper with stable profile args, then exit
-/// only when the wrapper spawn succeeded.
+/// Spawn the detached Test in Stable wrapper with stable profile args. Do not exit
+/// the live server; `dev-web-restart.sh` stops the old process after install.
 ///
 /// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_test_in_stable() {
@@ -281,7 +286,7 @@ pub fn schedule_test_in_stable() {
                     if let Err(ref error) = launch {
                         eprintln!("Ajax web test-in-stable failed: {error}");
                     }
-                    should_exit_after_launch(launch)
+                    should_exit_after_test_in_stable_launch(launch)
                 })
                 .unwrap_or(false);
             if exit {
@@ -309,6 +314,15 @@ mod tests {
     fn should_exit_after_launch_only_on_success() {
         assert!(super::should_exit_after_launch(Ok(())));
         assert!(!super::should_exit_after_launch(Err(
+            "spawn failed".to_string()
+        )));
+    }
+
+    #[test]
+    fn test_in_stable_does_not_exit_after_spawn_success() {
+        // Would have failed when Test in Stable exited immediately and left :8787 empty (#873).
+        assert!(!super::should_exit_after_test_in_stable_launch(Ok(())));
+        assert!(!super::should_exit_after_test_in_stable_launch(Err(
             "spawn failed".to_string()
         )));
     }
