@@ -40,6 +40,9 @@ pub struct StartTaskRequest {
     pub request_id: String,
     #[serde(default)]
     pub orchestration_chat: bool,
+    /// Cursor model id chosen in the browser; absent launches the Ajax default.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,17 +187,39 @@ fn start_task_with_checkpoint_inner<R: Registry>(
     if !supported_start_agent(&request.agent) {
         return Err(OperateError::UnsupportedCapability("unsupported agent"));
     }
-    if request.orchestration_chat && request.agent != "cursor" {
+    if request.orchestration_chat && !supports_acp_session(&request.agent) {
         return Err(OperateError::UnsupportedCapability(
-            "orchestration chat requires the cursor agent",
+            "orchestration chat requires an agent Ajax can start over ACP",
         ));
     }
+
+    // Same id shape a session accepts; the launch line shell-quotes it.
+    let model = match request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        None => None,
+        Some(raw) => {
+            if !supports_acp_session(&request.agent) {
+                return Err(OperateError::UnsupportedCapability(
+                    "model selection requires an agent Ajax can start over ACP",
+                ));
+            }
+            if !ajax_core::adapters::valid_cursor_model_id(raw) {
+                return Err(OperateError::UnsupportedCapability("unsupported model"));
+            }
+            Some(raw.to_string())
+        }
+    };
 
     let core_request = NewTaskRequest {
         repo: request.repo,
         title: request.title,
         agent: request.agent,
         skip_interactive_agent: request.orchestration_chat,
+        model,
     };
     let observation = start_plan_observation(context, &core_request);
     let (_intent, plan) =
@@ -248,6 +273,50 @@ fn start_plan_observation<R: Registry>(
 /// slice validation must never disagree.
 pub fn supported_start_agent(agent: &str) -> bool {
     matches!(agent, "codex" | "claude" | "cursor" | "pi")
+}
+
+/// Move an existing provisioned task to another harness, optionally pinning the
+/// model it should run. The caller drops any live ACP slot for the task.
+pub fn swap_task_agent<R: Registry>(
+    context: &mut CommandContext<R>,
+    handle: &str,
+    agent: &str,
+    model: Option<&str>,
+) -> Result<OperateOutcome, OperateError> {
+    if !supported_start_agent(agent) {
+        return Err(OperateError::UnsupportedCapability("unsupported agent"));
+    }
+    let model = match model.map(str::trim).filter(|model| !model.is_empty()) {
+        Some(model) if !ajax_core::adapters::valid_cursor_model_id(model) => {
+            return Err(OperateError::UnsupportedCapability("unsupported model"));
+        }
+        other => other,
+    };
+
+    commands::swap_task_agent(context, handle, agent_client_from_name(agent), model)
+        .map_err(|error| OperateError::Command(error, false))?;
+
+    Ok(OperateOutcome {
+        state_changed: true,
+        output: format!("moved {handle} to {agent}"),
+    })
+}
+
+/// True when the harness has an ACP entry point, so a provisioned (no send-keys)
+/// start can be driven from the browser instead of the tmux pane.
+pub fn supports_acp_session(agent: &str) -> bool {
+    ajax_core::adapters::acp_launch_for_agent(agent_client_from_name(agent)).is_some()
+}
+
+fn agent_client_from_name(agent: &str) -> ajax_core::models::AgentClient {
+    use ajax_core::models::AgentClient;
+    match agent.trim().to_ascii_lowercase().as_str() {
+        "codex" => AgentClient::Codex,
+        "claude" => AgentClient::Claude,
+        "cursor" => AgentClient::Cursor,
+        "pi" => AgentClient::Pi,
+        _ => AgentClient::Other,
+    }
 }
 
 fn execute_task_command<R: Registry>(

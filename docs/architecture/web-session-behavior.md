@@ -13,11 +13,17 @@ existing paths.
 
 ## Launch
 
-- Provisioned Cursor starts skip tmux send-keys but still create the task tmux
-  session. Non-Cursor agents cannot use that launch mode.
-- Session attach is only for Cursor tasks whose registry metadata records
-  `skip_interactive_agent` (provisioned orchestration-chat launch). Interactive
-  Cursor tasks (tmux send-keys launch) receive HTTP 409 `NotOrchestrationChat`.
+- Provisioned starts skip tmux send-keys but still create the task tmux session.
+  Every harness with an ACP entry point (Cursor native, Codex/Claude/Pi via their
+  bridges) may use that launch mode; a harness without one cannot.
+- Session attach is only for tasks whose registry metadata records
+  `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
+  entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
+  `NotOrchestrationChat`.
+- The model chosen when the task was created is stored on the task and used for
+  its session unless the socket pins a different one.
+- Moving a task to another harness is refused unless it was launched over ACP,
+  and drops the live ACP slot so the next attach spawns the new harness.
 
 ## Queue and cancellation across WebSocket reconnect
 

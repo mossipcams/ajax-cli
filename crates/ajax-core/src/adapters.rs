@@ -6,7 +6,10 @@ pub mod github;
 pub mod process;
 pub mod tmux;
 
-pub use agent::{agent_launch_spec, AgentLaunch, CURSOR_DEFAULT_MODEL};
+pub use agent::{
+    acp_args_for_candidate, acp_launch_for_agent, agent_launch_spec, valid_cursor_model_id,
+    AcpLaunch, AgentLaunch, CURSOR_DEFAULT_MODEL,
+};
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
@@ -486,6 +489,7 @@ mod tests {
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: "fix login".to_string(),
+            model: None,
         };
 
         assert_eq!(
@@ -499,6 +503,7 @@ mod tests {
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: String::new(),
+            model: None,
         };
 
         assert_eq!(
@@ -514,6 +519,7 @@ mod tests {
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: String::new(),
+            model: None,
         };
 
         assert_eq!(
@@ -529,6 +535,7 @@ mod tests {
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: "fix login".to_string(),
+            model: None,
         };
 
         assert_eq!(
@@ -542,6 +549,46 @@ mod tests {
                     "fix login"
                 ]
             )
+        );
+    }
+
+    #[test]
+    fn acp_launch_maps_every_supported_harness_to_its_entry_point() {
+        use crate::adapters::agent::acp_launch_for_agent;
+        use crate::models::AgentClient;
+
+        let cursor = acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp");
+        assert_eq!(cursor.candidates[0], ("agent", &["acp"][..]));
+        assert!(cursor.model_pins_at_spawn);
+
+        for (client, program) in [
+            (AgentClient::Codex, "codex-acp"),
+            (AgentClient::Claude, "claude-agent-acp"),
+            (AgentClient::Pi, "pi-acp"),
+        ] {
+            let launch = acp_launch_for_agent(client).expect("bridge acp");
+            assert_eq!(launch.candidates[0].0, program);
+            assert!(launch.candidates[0].1.is_empty());
+            // The bridges take no model on argv; they select in-band.
+            assert!(!launch.model_pins_at_spawn);
+        }
+
+        assert!(acp_launch_for_agent(AgentClient::Other).is_none());
+    }
+
+    #[test]
+    fn agent_adapter_cursor_launch_uses_selected_model() {
+        use crate::models::AgentClient;
+
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: String::new(),
+            model: Some("composer-2.5".to_string()),
+        };
+
+        assert_eq!(
+            agent_launch_spec("cursor", AgentClient::Cursor, &launch),
+            CommandSpec::new("cursor", ["agent", "--model", "composer-2.5"])
         );
     }
 

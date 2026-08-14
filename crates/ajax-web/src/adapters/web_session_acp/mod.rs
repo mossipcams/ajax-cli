@@ -1,6 +1,7 @@
-//! Cursor ACP stdio host for Ajax Web Session orchestration chat.
+//! Per-harness ACP stdio host for Ajax Web Session orchestration chat.
 
 mod bridge;
+mod catalog;
 mod client;
 mod hub;
 mod store;
@@ -15,6 +16,7 @@ mod hub_tests;
 mod spawn_tests;
 
 pub use bridge::bridge_task_session_socket;
+pub use catalog::{read_agent_model_catalog, AgentModelCatalog};
 pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};
 pub use hub::WebSessionHub;
 

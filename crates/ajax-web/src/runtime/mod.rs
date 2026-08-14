@@ -318,8 +318,30 @@ async fn axum_health() -> AxumResponse {
     json_value_response(200, serde_json::json!({ "ok": true }))
 }
 
-async fn axum_session_models() -> AxumResponse {
-    Json(crate::slices::session_models::list_session_models()).into_response()
+async fn axum_session_models(uri: axum::http::Uri) -> AxumResponse {
+    let agent = uri
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key == "agent").then_some(value)
+            })
+        })
+        .unwrap_or("cursor")
+        .to_string();
+    // Reading a bridge catalog spawns a short-lived process; keep it off the
+    // async worker so the event loop is not blocked on stdio.
+    match tokio::task::spawn_blocking(move || {
+        crate::slices::session_models::list_session_models(&agent)
+    })
+    .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(_) => json_value_response(
+            500,
+            serde_json::json!({ "ok": false, "error": "model catalog worker failed" }),
+        ),
+    }
 }
 
 async fn axum_version() -> AxumResponse {

@@ -6,6 +6,7 @@ use crate::slices::web_session::{
     apply_cancel_to_queue, dispatch_prompt, map_acp_client_request, map_acp_session_update,
     PromptDispatch, SessionServerEvent,
 };
+use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -104,6 +105,8 @@ struct SessionSlot {
     last_released: Option<Instant>,
     /// Cleared when pump observes process exit. Acquire must respawn before reuse.
     acp_alive: bool,
+    /// Harness whose ACP process this slot runs; respawn must reuse it.
+    agent: AgentClient,
 }
 
 impl SessionSlot {
@@ -149,6 +152,7 @@ impl WebSessionHub {
         qualified_handle: &str,
         worktree_path: &Path,
         model: &str,
+        agent: AgentClient,
     ) -> Result<(), String> {
         enum AcquirePlan {
             ReplaceExisting { resume_id: Option<String> },
@@ -185,6 +189,7 @@ impl WebSessionHub {
             AcquirePlan::InsertNew => stored.acp_session_id.clone(),
         };
         let (client, report) = match AcpStdioClient::spawn(
+            agent,
             worktree_path,
             spawn_model_arg(model),
             resume_id.as_deref(),
@@ -265,6 +270,7 @@ impl WebSessionHub {
                         queued: VecDeque::new(),
                         last_released: None,
                         acp_alive: true,
+                        agent,
                     },
                 );
             }
@@ -280,11 +286,12 @@ impl WebSessionHub {
         worktree_path: &Path,
         model: &str,
     ) -> Result<u64, String> {
-        let resume_id = {
+        let (resume_id, agent) = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(slot) = sessions.get_mut(qualified_handle) else {
                 return Err("session slot missing".to_string());
             };
+            let agent = slot.agent;
             let host_exited = {
                 let mut client = slot.client.lock().unwrap();
                 client.host_exited()
@@ -295,11 +302,15 @@ impl WebSessionHub {
             let resume_id =
                 replace_resume_id(&slot.model, model, &self.state_dir, qualified_handle);
             begin_cancel_slot_client(slot);
-            resume_id
+            (resume_id, agent)
         };
 
-        let (client, report) =
-            AcpStdioClient::spawn(worktree_path, spawn_model_arg(model), resume_id.as_deref())?;
+        let (client, report) = AcpStdioClient::spawn(
+            agent,
+            worktree_path,
+            spawn_model_arg(model),
+            resume_id.as_deref(),
+        )?;
 
         let mut sessions = self.sessions.lock().unwrap();
         let Some(slot) = sessions.get_mut(qualified_handle) else {
@@ -346,6 +357,17 @@ impl WebSessionHub {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.get_mut(handle) {
             slot.release_holder();
+        }
+    }
+
+    /// Forget this task's slot so the next acquire spawns from scratch. Used
+    /// when the task moves to another harness: the live child belongs to the
+    /// old one and must not keep serving the task.
+    pub fn drop_session(&self, handle: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(slot) = sessions.remove(handle) {
+            let mut client = slot.client.lock().unwrap();
+            let _ = client.begin_cancel();
         }
     }
 

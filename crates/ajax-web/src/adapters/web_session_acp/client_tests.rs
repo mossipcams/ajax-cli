@@ -1,10 +1,11 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
 use super::client::{
-    cursor_acp_args_for_program, cursor_acp_program_candidates, load_session_advertised,
-    session_new_params, AcpClientEvent, AcpStdioClient,
+    acp_args_for_program, load_session_advertised, session_new_params, AcpClientEvent,
+    AcpStdioClient,
 };
 use super::{with_test_acp_extra_args, with_test_acp_program};
+use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -86,9 +87,13 @@ fn session_new_params_carry_mcp_servers_array() {
     );
 }
 
+fn cursor_launch() -> ajax_core::adapters::AcpLaunch {
+    ajax_core::adapters::acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp launch")
+}
+
 #[test]
 fn cursor_acp_command_prefers_agent_binary() {
-    let candidates = cursor_acp_program_candidates();
+    let candidates = cursor_launch().candidates;
     assert_eq!(candidates[0].0, "agent");
     assert_eq!(candidates[0].1, &["acp"][..]);
     assert_eq!(candidates[1].0, "cursor");
@@ -97,19 +102,36 @@ fn cursor_acp_command_prefers_agent_binary() {
 
 #[test]
 fn cursor_acp_args_insert_model_before_acp() {
+    let launch = cursor_launch();
     assert_eq!(
-        cursor_acp_args_for_program(&["acp"], Some("composer-2.5")),
+        acp_args_for_program(launch, &["acp"], Some("composer-2.5")),
         vec!["--model", "composer-2.5", "acp"]
     );
     assert_eq!(
-        cursor_acp_args_for_program(&["agent", "acp"], Some("gpt-5.6-sol-medium")),
+        acp_args_for_program(launch, &["agent", "acp"], Some("gpt-5.6-sol-medium")),
         vec!["agent", "--model", "gpt-5.6-sol-medium", "acp"]
     );
     assert_eq!(
-        cursor_acp_args_for_program(&["acp"], Some("auto")),
+        acp_args_for_program(launch, &["acp"], Some("auto")),
         vec!["acp"]
     );
-    assert_eq!(cursor_acp_args_for_program(&["acp"], None), vec!["acp"]);
+    assert_eq!(acp_args_for_program(launch, &["acp"], None), vec!["acp"]);
+}
+
+// The bridges take no `--model` on argv; a pinned model must not leak onto them.
+#[test]
+fn bridge_acp_args_never_carry_a_model_flag() {
+    for agent in [AgentClient::Codex, AgentClient::Claude, AgentClient::Pi] {
+        let launch = ajax_core::adapters::acp_launch_for_agent(agent).expect("bridge acp launch");
+        assert!(
+            !launch.model_pins_at_spawn,
+            "{agent:?} must not pin at spawn"
+        );
+        assert!(
+            acp_args_for_program(launch, launch.candidates[0].1, Some("composer-2.5")).is_empty(),
+            "{agent:?} argv must stay bare"
+        );
+    }
 }
 
 #[test]
@@ -118,7 +140,8 @@ fn fake_spawn_reports_load_session_advertised() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        let (_client, report) = AcpStdioClient::spawn(&dir, None, None).expect("spawn fake acp");
+        let (_client, report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         assert!(report.load_session_advertised);
     });
 
@@ -132,7 +155,7 @@ fn fake_begin_prompt_receives_pong_and_turn_end() {
 
     with_test_acp_program(&script, || {
         let (mut client, _report) =
-            AcpStdioClient::spawn(&dir, None, None).expect("spawn fake acp");
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         client.begin_prompt("ping").expect("begin_prompt");
         pump_until_pong_or_prompt_finished(&client, Duration::from_secs(5));
     });
@@ -147,7 +170,7 @@ fn fake_second_begin_prompt_while_in_flight_returns_err() {
 
     with_test_acp_program(&script, || {
         let (mut client, _report) =
-            AcpStdioClient::spawn(&dir, None, None).expect("spawn fake acp");
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         client.begin_prompt("first").expect("first begin_prompt");
         let err = client
             .begin_prompt("second")
@@ -164,13 +187,15 @@ fn fake_resume_drains_replayed_session_updates() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        let (client, first_report) = AcpStdioClient::spawn(&dir, None, None).expect("first spawn");
+        let (client, first_report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("first spawn");
         assert!(!first_report.resumed);
         let session_id = client.session_id().to_string();
         drop(client);
 
         let (client2, second_report) =
-            AcpStdioClient::spawn(&dir, None, Some(&session_id)).expect("resume spawn");
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
+                .expect("resume spawn");
         assert!(second_report.resumed);
         assert_eq!(client2.session_id(), session_id);
         assert!(
@@ -188,13 +213,15 @@ fn fake_load_fail_falls_back_to_new_session() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        let (client, _first_report) = AcpStdioClient::spawn(&dir, None, None).expect("first spawn");
+        let (client, _first_report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("first spawn");
         let resume_id = client.session_id().to_string();
         drop(client);
 
         with_test_acp_extra_args(&["--load-fail"], || {
             let (mut client2, report) =
-                AcpStdioClient::spawn(&dir, None, Some(&resume_id)).expect("spawn after load fail");
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id))
+                    .expect("spawn after load fail");
             assert!(!report.resumed);
             assert!(!client2.session_id().is_empty());
             client2.begin_prompt("after-fail").expect("begin_prompt");
@@ -212,7 +239,7 @@ fn host_exited_and_kill_host_for_test() {
 
     with_test_acp_program(&script, || {
         let (mut client, _report) =
-            AcpStdioClient::spawn(&dir, None, None).expect("spawn fake acp");
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         assert!(!client.host_exited());
         let _pid = client.child_id();
         client.kill_host_for_test();

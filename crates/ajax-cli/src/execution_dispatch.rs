@@ -567,6 +567,7 @@ mod tests {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         };
 
         let observation = start_plan_observation(&context, &request);

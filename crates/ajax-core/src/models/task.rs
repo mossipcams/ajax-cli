@@ -50,6 +50,9 @@ pub struct Task {
 /// Registry metadata: Cursor launched without interactive agent send-keys.
 pub const SKIP_INTERACTIVE_AGENT_KEY: &str = "skip_interactive_agent";
 
+/// Registry metadata: model the operator picked for this task's agent.
+pub const SESSION_MODEL_KEY: &str = "session_model";
+
 impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -153,6 +156,26 @@ impl Task {
                 .insert(SKIP_INTERACTIVE_AGENT_KEY.to_string(), "1".to_string());
         } else {
             self.metadata.remove(SKIP_INTERACTIVE_AGENT_KEY);
+        }
+    }
+
+    /// Model the operator picked for this task's agent, if any.
+    pub fn session_model(&self) -> Option<&str> {
+        self.metadata
+            .get(SESSION_MODEL_KEY)
+            .map(String::as_str)
+            .filter(|model| !model.is_empty())
+    }
+
+    pub fn set_session_model(&mut self, model: Option<&str>) {
+        match model.map(str::trim).filter(|model| !model.is_empty()) {
+            Some(model) => {
+                self.metadata
+                    .insert(SESSION_MODEL_KEY.to_string(), model.to_string());
+            }
+            None => {
+                self.metadata.remove(SESSION_MODEL_KEY);
+            }
         }
     }
 

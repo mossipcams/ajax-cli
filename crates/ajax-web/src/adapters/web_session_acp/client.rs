@@ -6,6 +6,10 @@
 //! session/prompt, session/cancel, session/update notifications, and permission
 //! requests from the agent.
 
+use ajax_core::{
+    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch},
+    models::AgentClient,
+};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -93,19 +97,22 @@ pub struct AcpStdioClient {
     next_id: u64,
     pending: PendingResponses,
     session_id: String,
+    /// Kept because each harness advertises its model catalog here.
+    session_new_result: Value,
     child: Child,
     _reader: thread::JoinHandle<()>,
 }
 
 impl AcpStdioClient {
-    /// Spawn Cursor ACP. `model` of `None`/`Some("auto")` omits `--model` so
-    /// Cursor's default applies; any other id is pinned at process start.
+    /// Spawn the harness's ACP process. `model` is only placed on the argv for
+    /// harnesses that pin at spawn (Cursor); the bridges select in-band.
     pub fn spawn(
+        agent: AgentClient,
         worktree_path: &Path,
         model: Option<&str>,
         resume_session_id: Option<&str>,
     ) -> Result<(Self, SpawnReport), String> {
-        let mut child = spawn_cursor_acp_process(worktree_path, model)?;
+        let mut child = spawn_acp_process(agent, worktree_path, model)?;
         let stdin = child
             .stdin
             .take()
@@ -125,6 +132,7 @@ impl AcpStdioClient {
             next_id: 1,
             pending,
             session_id: String::new(),
+            session_new_result: Value::Null,
             child,
             _reader: reader,
         };
@@ -243,11 +251,19 @@ impl AcpStdioClient {
 
     fn session_new(&mut self, worktree_path: &Path) -> Result<String, String> {
         let response = self.call("session/new", session_new_params(worktree_path))?;
-        response
+        let session_id = response
             .get("sessionId")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| "session/new missing sessionId".to_string())
+            .ok_or_else(|| "session/new missing sessionId".to_string())?;
+        self.session_new_result = response;
+        Ok(session_id)
+    }
+
+    /// Raw `session/new` result, which is where each harness advertises the
+    /// models it can run. Empty until a session has been created.
+    pub fn session_new_result(&self) -> &Value {
+        &self.session_new_result
     }
 
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
@@ -350,33 +366,21 @@ pub(crate) fn model_uses_cli_default(model: Option<&str>) -> bool {
     }
 }
 
-/// Argv templates for spawning Cursor ACP (`--model` is inserted later).
-pub(crate) fn cursor_acp_program_candidates() -> [(&'static str, &'static [&'static str]); 2] {
-    [("agent", &["acp"]), ("cursor", &["agent", "acp"])]
+/// Build argv for one candidate program of this harness's ACP launch.
+pub(crate) fn acp_args_for_program(
+    launch: AcpLaunch,
+    base_args: &[&str],
+    model: Option<&str>,
+) -> Vec<String> {
+    let model = (!model_uses_cli_default(model)).then_some(model).flatten();
+    acp_args_for_candidate(launch, base_args, model)
 }
 
-/// Build argv for one candidate program, inserting `--model <id>` before `acp`.
-pub(crate) fn cursor_acp_args_for_program(base_args: &[&str], model: Option<&str>) -> Vec<String> {
-    let mut args: Vec<String> = base_args.iter().map(|s| (*s).to_string()).collect();
-    if model_uses_cli_default(model) {
-        return args;
-    }
-    let Some(model) = model.map(str::trim).filter(|s| !s.is_empty()) else {
-        return args;
-    };
-    // `agent acp` → `agent --model ID acp`; `cursor agent acp` → `cursor agent --model ID acp`.
-    if let Some(acp_at) = args.iter().position(|a| a == "acp") {
-        args.insert(acp_at, "--model".to_string());
-        args.insert(acp_at + 1, model.to_string());
-    } else {
-        args.push("--model".to_string());
-        args.push(model.to_string());
-        args.push("acp".to_string());
-    }
-    args
-}
-
-fn spawn_cursor_acp_process(worktree_path: &Path, model: Option<&str>) -> Result<Child, String> {
+fn spawn_acp_process(
+    agent: AgentClient,
+    worktree_path: &Path,
+    model: Option<&str>,
+) -> Result<Child, String> {
     #[cfg(test)]
     if let Some(program) = TEST_ACP_PROGRAM.with(|slot| slot.borrow().clone()) {
         let extra_args = TEST_ACP_EXTRA_ARGS.with(|slot| slot.borrow().clone());
@@ -393,9 +397,11 @@ fn spawn_cursor_acp_process(worktree_path: &Path, model: Option<&str>) -> Result
             .map_err(|error| format!("failed to spawn test acp program: {error}"));
     }
 
-    let mut last_error = String::from("failed to spawn cursor acp process");
-    for (program, base_args) in cursor_acp_program_candidates() {
-        let args = cursor_acp_args_for_program(base_args, model);
+    let Some(launch) = acp_launch_for_agent(agent) else {
+        return Err(format!("no ACP mapping for agent {agent:?}"));
+    };
+    for (program, base_args) in launch.candidates {
+        let args = acp_args_for_program(launch, base_args, model);
         let mut command = Command::new(program);
         command.args(&args);
         command
@@ -403,12 +409,15 @@ fn spawn_cursor_acp_process(worktree_path: &Path, model: Option<&str>) -> Result
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        match command.spawn() {
-            Ok(child) => return Ok(child),
-            Err(error) => last_error = format!("failed to spawn {program} acp: {error}"),
+        if let Ok(child) = command.spawn() {
+            return Ok(child);
         }
     }
-    Err(last_error)
+    // Every candidate is missing: an install problem, not a runtime failure.
+    Err(format!(
+        "{agent:?} ACP agent is not installed — {}",
+        launch.install_hint
+    ))
 }
 
 fn read_loop(

@@ -18,7 +18,12 @@ pub async fn bridge_task_session_socket(
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
-    if let Err(error) = hub.acquire(&plan.qualified_handle, &plan.worktree_path, &model) {
+    if let Err(error) = hub.acquire(
+        &plan.qualified_handle,
+        &plan.worktree_path,
+        &model,
+        plan.agent,
+    ) {
         let _ = send_event(
             &mut socket,
             &SessionServerEvent::Error {

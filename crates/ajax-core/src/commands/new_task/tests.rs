@@ -33,17 +33,40 @@ fn agent_send_keys_line(plan: &crate::commands::CommandPlan) -> &str {
 }
 
 #[test]
-fn skip_interactive_agent_cursor_plan_skips_agent_send_keys() {
+fn skip_interactive_agent_plan_skips_send_keys_for_every_acp_harness() {
+    for agent in ["codex", "claude", "cursor", "pi"] {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: agent.to_string(),
+            skip_interactive_agent: true,
+            model: None,
+        };
+        let plan = new_task_plan(&context, request).expect("plan");
+        assert!(
+            plan.commands.iter().all(|command| {
+                !(command.program == "tmux"
+                    && command.args.first() == Some(&"send-keys".to_string()))
+            }),
+            "{agent} should not send keys when provisioned"
+        );
+    }
+}
+
+#[test]
+fn skip_interactive_agent_plan_still_sends_keys_without_acp() {
     let context = context();
     let request = NewTaskRequest {
         repo: "web".to_string(),
         title: "Fix login".to_string(),
-        agent: "cursor".to_string(),
+        agent: "aider".to_string(),
         skip_interactive_agent: true,
+        model: None,
     };
     let plan = new_task_plan(&context, request).expect("plan");
-    assert!(plan.commands.iter().all(|command| {
-        !(command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string()))
+    assert!(plan.commands.iter().any(|command| {
+        command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string())
     }));
 }
 
@@ -57,6 +80,7 @@ fn task_from_new_request_sets_skip_interactive_agent_for_cursor() {
             title: "Fix login".to_string(),
             agent: "cursor".to_string(),
             skip_interactive_agent: true,
+            model: None,
         },
     )
     .unwrap();
@@ -73,6 +97,7 @@ fn task_from_new_request_skips_bit_when_cursor_interactive() {
             title: "Fix login".to_string(),
             agent: "cursor".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -80,15 +105,37 @@ fn task_from_new_request_skips_bit_when_cursor_interactive() {
 }
 
 #[test]
-fn task_from_new_request_skips_bit_for_non_cursor_even_when_flag_true() {
+fn task_from_new_request_sets_skip_bit_for_every_acp_harness() {
+    let context = context();
+    for agent in ["codex", "claude", "cursor", "pi"] {
+        let task = task_from_new_request(
+            &context,
+            &NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: agent.to_string(),
+                skip_interactive_agent: true,
+                model: None,
+            },
+        )
+        .unwrap();
+        assert!(task.skip_interactive_agent(), "{agent} should provision");
+    }
+}
+
+// An agent Ajax cannot start over ACP has nothing to drive a provisioned task,
+// so it keeps the tmux send-keys launch even when the flag is set.
+#[test]
+fn task_from_new_request_skips_bit_for_agent_without_acp() {
     let context = context();
     let task = task_from_new_request(
         &context,
         &NewTaskRequest {
             repo: "web".to_string(),
             title: "Fix login".to_string(),
-            agent: "codex".to_string(),
+            agent: "aider".to_string(),
             skip_interactive_agent: true,
+            model: None,
         },
     )
     .unwrap();
@@ -124,6 +171,7 @@ fn unknown_agent_is_preserved_for_execution_but_classified_other() {
             title: "Fix login".to_string(),
             agent: "custom-agent-cli".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -138,6 +186,7 @@ fn unknown_agent_is_preserved_for_execution_but_classified_other() {
                 title: "Fix login".to_string(),
                 agent: "custom-agent-cli".to_string(),
                 skip_interactive_agent: false,
+                model: None,
             }
         )
         .unwrap()
@@ -166,6 +215,7 @@ fn repo_name_cannot_escape_managed_namespace() {
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
                 skip_interactive_agent: false,
+                model: None,
             },
         )
         .unwrap_err();
@@ -186,6 +236,7 @@ fn new_task_plan_claude_agent_command_omits_cd_flag_and_skips_permissions() {
             title: "Fix login".to_string(),
             agent: "claude".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -204,6 +255,7 @@ fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
         title: "Fix login".to_string(),
         agent: "cursor".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -229,6 +281,7 @@ fn new_task_plan_pi_agent_stores_pi_client() {
         title: "Fix login".to_string(),
         agent: "pi".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let plan = new_task_plan(&context, request.clone()).unwrap();
 
@@ -261,6 +314,7 @@ fn new_task_plan_launches_agent_through_runtime_wrapper() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -281,6 +335,7 @@ fn new_task_plan_has_no_standalone_setup_command() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -302,6 +357,7 @@ fn new_task_plan_folds_husky_into_agent_send_keys() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -332,6 +388,7 @@ fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -354,6 +411,7 @@ fn new_task_plan_fetches_origin_and_branches_from_remote_tracking_ref() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let plan = new_task_plan(&context, request).unwrap();
@@ -383,6 +441,7 @@ fn new_task_plan_skips_fetch_when_origin_fetch_is_fresh() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: Some(Duration::from_secs(30)),
@@ -416,6 +475,7 @@ fn new_task_plan_fetches_when_origin_fetch_is_stale() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: Some(Duration::from_secs(120)),
@@ -440,6 +500,7 @@ fn new_task_plan_fetches_when_origin_fetch_age_is_unknown() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let observation = StartPlanObservation {
         origin_fetch_age: None,
@@ -464,6 +525,7 @@ fn default_new_task_plan_preserves_legacy_sibling_worktree_path() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let plan = new_task_plan(&context, request).unwrap();
@@ -500,6 +562,7 @@ fn rooted_new_task_plan_and_recorded_task_use_runtime_worktree_root() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let plan = new_task_plan(&context, request.clone()).unwrap();
@@ -531,6 +594,7 @@ fn start_provisioning_named_steps_update_state_without_numeric_command_indexes()
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let task = record_new_task(&mut context, &request).unwrap();
     let task_id = task.id.clone();
@@ -629,6 +693,7 @@ fn new_task_plan_blocks_when_worktree_path_already_exists() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let error = new_task_plan(&context, request).unwrap_err();
@@ -657,6 +722,7 @@ fn new_task_plan_blocks_when_target_branch_already_exists() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let error = new_task_plan_with_observation(&context, request, &observation).unwrap_err();
@@ -689,6 +755,7 @@ fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         };
 
         let error = new_task_plan(&context, request).unwrap_err();
@@ -723,6 +790,7 @@ fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         };
 
         let error = new_task_plan(&context, request).unwrap_err();

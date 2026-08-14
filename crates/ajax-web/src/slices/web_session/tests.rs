@@ -34,9 +34,30 @@ fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
 }
 
 #[test]
-fn prepare_task_session_rejects_non_cursor_agent() {
+fn prepare_task_session_admits_every_provisioned_acp_harness() {
+    for (agent, label) in [
+        (AgentClient::Codex, "codex"),
+        (AgentClient::Claude, "claude"),
+        (AgentClient::Pi, "pi"),
+    ] {
+        let mut task = crate::test_support::fix_login_task();
+        task.selected_agent = agent;
+        task.set_skip_interactive_agent(true);
+        let worktree = std::env::temp_dir().join(format!("ajax-web-session-test-{label}"));
+        let _ = std::fs::remove_dir_all(&worktree);
+        std::fs::create_dir_all(&worktree).expect("worktree dir");
+        task.worktree_path = worktree;
+        let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+        let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+        assert_eq!(plan.agent, agent, "{label} should attach to its own ACP");
+    }
+}
+
+#[test]
+fn prepare_task_session_rejects_agent_without_acp() {
     let mut task = crate::test_support::fix_login_task();
-    task.selected_agent = AgentClient::Codex;
+    task.selected_agent = AgentClient::Other;
+    task.set_skip_interactive_agent(true);
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
     assert_eq!(error, SessionRouteError::NotOrchestrationChat);

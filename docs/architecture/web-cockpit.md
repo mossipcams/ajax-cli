@@ -28,21 +28,46 @@ events into view state; they do not own the transcript, prompt queue, or ACP
 process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
-default **off**) gates `#/session`, the Cursor session starter that calls
-`startTask` with `orchestration_chat: true`. When the flag is on,
+default **off**) gates `#/session` and makes task creation provisioned: with it
+on, the New task sheet calls `startTask` with `orchestration_chat: true` for the
+chosen harness. When the flag is on,
 `#/session/<handle>` renders SessionChat (live head + transcript + composer);
 the terminal is the escape hatch sheet; Diff Review remains swipe-left. The
 browser still does not own transcript/queue.
 
-When that mode is enabled, agent conversation uses Cursor ACP over stdio
-(`agent --model <id> acp` via the `ajax-web` ACP adapter), not PTY paste.
-Model catalog parsing lives in the `session_models` slice. Authenticated
-`GET /api/session/models` lists Cursor models; authenticated
-`GET /api/tasks/{handle}/session` WebSocket upgrade is transport-only over
-`WebSessionHub` (snapshot via cursor replay). Session admission policy lives in
-the `web_session` slice: Cursor **and** the durable provisioned-launch bit on
-the task (`skip_interactive_agent` in registry metadata, not the browser
-Settings flag). Routes and the bridge call hub methods only.
+When that mode is enabled, agent conversation runs over ACP stdio via the
+`ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
+`session_models` slice. Authenticated `GET /api/tasks/{handle}/session` WebSocket
+upgrade is transport-only over `WebSessionHub` (snapshot via cursor replay).
+Session admission policy lives in the `web_session` slice and is stated below.
+Routes and the bridge call hub methods only.
+
+ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
+harness to its ACP entry point — Cursor `agent acp` (native), Codex `codex-acp`,
+Claude `claude-agent-acp`, Pi `pi-acp` — and records whether the model pins on the
+spawn argv. Only Cursor does; the bridges select in-band, so their argv stays
+bare. A harness with no mapping keeps the tmux send-keys launch. When no candidate
+program can be spawned, the host reports an install hint rather than a spawn
+error.
+
+A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
+offered for every mapped harness, and session attach admits any task whose agent
+has an ACP launch **and** whose registry metadata carries the provisioned bit.
+
+The **New task** sheet is two steps: repository/title/harness, then a model page
+listing what that harness advertises. `GET /api/session/models?agent=` serves the
+catalog — Cursor from `agent models`, the bridges from their own `session/new`
+handshake (`models.availableModels` or `configOptions[id=model]`), cached per
+agent. The chosen model is stored on the task (`session_model` metadata) and
+applied when its session starts; `POST /api/tasks` validates the id shape and
+rejects a model for an agent with no ACP launch.
+
+`POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
+another harness, exposed as the Harness switch on the Diff Review page. It is
+refused for a task that was launched interactively, because that task's agent is
+live in its tmux pane and the registry must not name a harness that is not the
+running process. On success the host drops the task's ACP slot so the next attach
+spawns the new harness.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One

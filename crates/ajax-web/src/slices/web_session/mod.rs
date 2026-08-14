@@ -1,6 +1,9 @@
 //! Browser orchestration-chat wire protocol and ACP update mapping.
 
-use ajax_core::{commands::CommandContext, models::AgentClient, registry::Registry};
+use ajax_core::{
+    adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
+    registry::Registry,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::VecDeque, path::PathBuf};
@@ -106,11 +109,8 @@ pub fn normalize_session_model(raw: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Ok(default_session_model());
     }
-    if trimmed.len() > 128 {
-        return Err("model id too long".to_string());
-    }
-    if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err("model id must not contain whitespace".to_string());
+    if !ajax_core::adapters::valid_cursor_model_id(trimmed) {
+        return Err("model id must not contain whitespace or exceed 128 chars".to_string());
     }
     Ok(trimmed.to_string())
 }
@@ -372,6 +372,8 @@ pub struct SessionAttachPlan {
     pub worktree_path: PathBuf,
     /// Normalized Cursor model id (`auto` for CLI default).
     pub model: String,
+    /// Harness whose ACP process backs this session.
+    pub agent: AgentClient,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -393,19 +395,30 @@ pub fn prepare_task_session<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or(SessionRouteError::TaskNotFound)?;
 
-    if task.selected_agent != AgentClient::Cursor || !task.skip_interactive_agent() {
+    // Any harness Ajax can start over ACP qualifies; the durable provisioned bit
+    // still decides, so an interactive tmux task never gets a second agent.
+    if acp_launch_for_agent(task.selected_agent).is_none() || !task.skip_interactive_agent() {
         return Err(SessionRouteError::NotOrchestrationChat);
     }
     if !task.worktree_path.exists() {
         return Err(SessionRouteError::WorktreeMissing);
     }
 
-    let model = normalize_session_model(model).unwrap_or_else(|_| default_session_model());
+    // The browser may pin a model per socket; otherwise the task's own choice
+    // (made when it was created) wins over the bare default.
+    let model = match normalize_session_model(model) {
+        Ok(model) if model != default_session_model() => model,
+        _ => task
+            .session_model()
+            .map(str::to_string)
+            .unwrap_or_else(default_session_model),
+    };
 
     Ok(SessionAttachPlan {
         qualified_handle: qualified_handle.to_string(),
         worktree_path: task.worktree_path.clone(),
         model,
+        agent: task.selected_agent,
     })
 }
 

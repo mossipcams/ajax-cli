@@ -239,6 +239,79 @@ async fn axum_task_keys_route_is_not_supported() {
 }
 
 #[tokio::test]
+async fn post_task_swaps_a_provisioned_task_to_another_harness() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "swap-agent");
+
+    let response = post_json(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login",
+        r#"{"agent":"claude","model":"claude-opus-5"}"#,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    use ajax_core::registry::Registry as _;
+    let task = state
+        .shared()
+        .context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+        .expect("task")
+        .clone();
+    assert_eq!(task.selected_agent, ajax_core::models::AgentClient::Claude);
+    assert_eq!(task.session_model(), Some("claude-opus-5"));
+}
+
+// An interactive task still has its agent live in tmux; the registry must not
+// claim a harness that is not the process actually running.
+#[tokio::test]
+async fn post_task_refuses_to_swap_an_interactive_task() {
+    let (state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "swap-agent-interactive",
+    );
+
+    let response = post_json(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login",
+        r#"{"agent":"claude"}"#,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    use ajax_core::registry::Registry as _;
+    assert_eq!(
+        state
+            .shared()
+            .context
+            .registry
+            .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+            .expect("task")
+            .selected_agent,
+        ajax_core::models::AgentClient::Codex
+    );
+}
+
+#[tokio::test]
+async fn post_task_without_an_agent_body_is_still_not_found() {
+    let (_state, cookie, app) = app_with(
+        context_with_task(),
+        TestBridge::default(),
+        "swap-agent-unknown-body",
+    );
+
+    let response = post_json(&app, &cookie, "/api/tasks/web%2Ffix-login", "{}").await;
+
+    assert_json_not_found(response, "not found").await;
+}
+
+#[tokio::test]
 async fn axum_task_snapshot_route_is_not_supported() {
     let (_state, cookie, app) = app_with(
         context_with_task(),
@@ -328,6 +401,7 @@ async fn post_tasks_endpoint_delegates_to_start_bridge_method() {
             agent: "codex".to_string(),
             request_id: "req-1".to_string(),
             orchestration_chat: false,
+            model: None,
         })
     );
 }

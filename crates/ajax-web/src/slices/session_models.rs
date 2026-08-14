@@ -1,7 +1,13 @@
-//! Cursor model catalog for orchestration chat (`agent models`).
+//! Per-harness model catalog for task creation and orchestration chat.
+//!
+//! Cursor lists its models through the CLI (`agent models`). The other
+//! harnesses advertise theirs on the ACP `session/new` handshake, so their
+//! catalog costs one short-lived bridge process — cached like Cursor's.
 
+use ajax_core::{adapters::CURSOR_DEFAULT_MODEL, models::AgentClient};
 use serde::Serialize;
 use std::{
+    collections::HashMap,
     process::Command,
     sync::Mutex,
     time::{Duration, Instant},
@@ -18,42 +24,96 @@ pub struct SessionModelOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionModelsResponse {
     pub models: Vec<SessionModelOption>,
+    /// Model the harness runs when the operator picks nothing.
+    pub default: String,
+    /// Agent this catalog belongs to, echoed so the browser can cache per agent.
+    pub agent: String,
 }
 
 struct Cache {
     fetched_at: Instant,
-    models: Vec<SessionModelOption>,
+    response: SessionModelsResponse,
 }
 
-static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+static CACHE: Mutex<Option<HashMap<String, Cache>>> = Mutex::new(None);
 
-/// List Cursor models for the session picker. Soft-fails to Auto alone.
-pub fn list_session_models() -> SessionModelsResponse {
+/// Agent name as the browser sends it, mapped to a client Ajax can start.
+pub fn agent_client_from_name(agent: &str) -> AgentClient {
+    match agent.trim().to_ascii_lowercase().as_str() {
+        "codex" => AgentClient::Codex,
+        "claude" => AgentClient::Claude,
+        "pi" => AgentClient::Pi,
+        "cursor" | "" => AgentClient::Cursor,
+        _ => AgentClient::Other,
+    }
+}
+
+/// List the models `agent` can run. Soft-fails to the harness default alone.
+pub fn list_session_models(agent: &str) -> SessionModelsResponse {
+    let key = agent.trim().to_ascii_lowercase();
+    let key = if key.is_empty() {
+        "cursor".to_string()
+    } else {
+        key
+    };
+
     if let Ok(guard) = CACHE.lock() {
-        if let Some(cache) = guard.as_ref() {
+        if let Some(cache) = guard.as_ref().and_then(|entries| entries.get(&key)) {
             if cache.fetched_at.elapsed() < CACHE_TTL {
-                return SessionModelsResponse {
-                    models: cache.models.clone(),
-                };
+                return cache.response.clone();
             }
         }
     }
 
-    let models = fetch_models_from_agent().unwrap_or_else(|| {
-        vec![SessionModelOption {
-            id: "auto".to_string(),
-            label: "Auto".to_string(),
-        }]
-    });
+    let response = fetch_catalog(&key);
 
     if let Ok(mut guard) = CACHE.lock() {
-        *guard = Some(Cache {
-            fetched_at: Instant::now(),
-            models: models.clone(),
-        });
+        guard.get_or_insert_with(HashMap::new).insert(
+            key,
+            Cache {
+                fetched_at: Instant::now(),
+                response: response.clone(),
+            },
+        );
     }
 
-    SessionModelsResponse { models }
+    response
+}
+
+fn fetch_catalog(agent: &str) -> SessionModelsResponse {
+    let client = agent_client_from_name(agent);
+    if client == AgentClient::Cursor {
+        let models = fetch_models_from_agent().unwrap_or_else(|| {
+            vec![SessionModelOption {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+            }]
+        });
+        return SessionModelsResponse {
+            models,
+            default: CURSOR_DEFAULT_MODEL.to_string(),
+            agent: agent.to_string(),
+        };
+    }
+
+    // The bridges only advertise their catalog inside a session, so this costs
+    // one short-lived ACP process per cache miss.
+    let catalog =
+        crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir());
+    let models = catalog
+        .models
+        .into_iter()
+        .map(|(id, label)| SessionModelOption { id, label })
+        .collect::<Vec<_>>();
+    let default = catalog
+        .default_model
+        .or_else(|| models.first().map(|model| model.id.clone()))
+        .unwrap_or_default();
+    SessionModelsResponse {
+        models,
+        default,
+        agent: agent.to_string(),
+    }
 }
 
 fn fetch_models_from_agent() -> Option<Vec<SessionModelOption>> {

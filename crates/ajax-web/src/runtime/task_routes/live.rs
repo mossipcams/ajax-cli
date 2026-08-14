@@ -203,7 +203,7 @@ where
             Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat) => {
                 return json_value_response(
                     409,
-                    serde_json::json!({ "ok": false, "error": "session chat requires cursor orchestration" }),
+                    serde_json::json!({ "ok": false, "error": "session chat requires a provisioned ACP task" }),
                 );
             }
         }
@@ -280,19 +280,90 @@ fn from_hex(byte: u8) -> Option<u8> {
     }
 }
 
+/// Move a task to another harness: `{ "agent": "codex", "model": "..." }`.
+/// Any other body stays a 404 so this route keeps its previous surface.
 pub(crate) async fn axum_task_post<C, B>(
-    State(_state): State<WebAppState<C, B>>,
-    AxumPath(_handle): AxumPath<String>,
-    _body: Bytes,
+    State(state): State<WebAppState<C, B>>,
+    AxumPath(handle): AxumPath<String>,
+    body: Bytes,
 ) -> AxumResponse
 where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
-    json_value_response(
-        404,
-        serde_json::json!({ "ok": false, "error": "not found" }),
-    )
+    #[derive(serde::Deserialize)]
+    struct SwapAgentRequest {
+        agent: String,
+        #[serde(default)]
+        model: Option<String>,
+    }
+
+    let Ok(request) = serde_json::from_slice::<SwapAgentRequest>(&body) else {
+        return json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "not found" }),
+        );
+    };
+    let handle = percent_decode_model(&handle);
+    let hub = Arc::clone(&state.web_session_hub);
+
+    let response = tokio::task::spawn_blocking(move || {
+        let _lane = state.control_lane.blocking_lock();
+        state.run_optimistic(
+            None,
+            "cockpit state changed while the harness swap was running",
+            |context, _runner, bridge| {
+                let result = crate::slices::operate::swap_task_agent(
+                    context,
+                    &handle,
+                    &request.agent,
+                    request.model.as_deref(),
+                );
+                match result {
+                    Ok(outcome) => {
+                        // The live child belongs to the previous harness.
+                        hub.drop_session(&handle);
+                        let _ = bridge.persist_registry_snapshot(context);
+                        let response = match operation_success_response(outcome, context) {
+                            Ok(response) => response,
+                            Err(error) => response_from_web_error(error, None),
+                        };
+                        (response, true)
+                    }
+                    Err(error) => {
+                        let status = match error {
+                            crate::slices::operate::OperateError::Command(
+                                ajax_core::commands::CommandError::TaskNotFound(_),
+                                _,
+                            ) => 404,
+                            crate::slices::operate::OperateError::UnsupportedCapability(_) => 400,
+                            _ => 409,
+                        };
+                        let body = serde_json::json!({
+                            "ok": false,
+                            "error": crate::slices::operate::format_operate_error(&error),
+                            "code": crate::slices::operate::operate_error_code(&error),
+                        });
+                        (
+                            match crate::runtime::json_response(status, body) {
+                                Ok(response) => response,
+                                Err(error) => response_from_web_error(error, None),
+                            },
+                            false,
+                        )
+                    }
+                }
+            },
+        )
+    })
+    .await
+    .unwrap_or_else(|error| {
+        response_from_web_error(
+            WebError::CommandFailed(format!("harness swap worker failed: {error}")),
+            None,
+        )
+    });
+    response.into_axum_response()
 }
 
 pub(crate) async fn axum_start_task<C, B>(
@@ -320,13 +391,13 @@ where
             }),
         );
     }
-    if request.orchestration_chat && request.agent != "cursor" {
+    if request.orchestration_chat && !crate::slices::operate::supports_acp_session(&request.agent) {
         return json_value_response(
             400,
             serde_json::json!({
                 "ok": false,
                 "request_id": request_id,
-                "error": "orchestration chat requires the cursor agent",
+                "error": "orchestration chat requires an agent Ajax can start over ACP",
             }),
         );
     }
