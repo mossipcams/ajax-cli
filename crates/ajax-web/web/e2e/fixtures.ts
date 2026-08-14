@@ -81,6 +81,15 @@ export const SESSION_MODELS = {
   default: "cursor-grok-4.6-high",
 };
 
+/** A real harness catalog is long — Codex lists 29 — and the default sits deep. */
+export const LONG_SESSION_MODELS = {
+  models: Array.from({ length: 29 }, (_, index) => ({
+    id: `model-${index}`,
+    label: `Model ${index}`,
+  })),
+  default: "model-24",
+};
+
 // ---- fetch mock helper ---------------------------------------------------
 
 export async function mockFetch(page: Page, extra: Record<string, unknown> = {}) {

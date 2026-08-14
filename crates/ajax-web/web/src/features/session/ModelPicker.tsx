@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchSessionModels, type SessionModelCatalog } from "./sessionModel";
 
 interface Props {
@@ -18,6 +18,7 @@ interface Props {
  */
 export default function ModelPicker({ agent, agentLabel, value, onChange, onCatalog }: Props) {
   const [catalog, setCatalog] = useState<SessionModelCatalog | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,6 +36,16 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
 
+  // Long catalogs scroll: bring the current choice into view rather than
+  // opening on whatever happens to be first.
+  useEffect(() => {
+    if (!value) return;
+    listRef.current
+      ?.querySelector<HTMLElement>("[aria-checked='true']")
+      // Optional call: jsdom has no scrollIntoView.
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [value, catalog]);
+
   if (catalog === null) {
     return <p className="sheet-note">Reading models from {agentLabel}…</p>;
   }
@@ -48,7 +59,12 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
   }
 
   return (
-    <div className="model-picker" role="radiogroup" aria-label={`${agentLabel} models`}>
+    <div
+      className="model-picker"
+      role="radiogroup"
+      aria-label={`${agentLabel} models`}
+      ref={listRef}
+    >
       {catalog.models.map((option) => (
         <button
           key={option.id}

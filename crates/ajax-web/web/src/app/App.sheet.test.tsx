@@ -58,6 +58,34 @@ describe("App new-task sheet route coupling", () => {
     vi.unstubAllGlobals();
   });
 
+  // Found in dev: with orchestration chat on, New used to route to the session
+  // starter, which hid the sheet exactly when its ACP path matters.
+  it("opens the new-task sheet from New even with orchestration chat enabled", async () => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [], default: "" }));
+        }
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+
+    expect(screen.getByTestId("new-task-sheet")).toBeInTheDocument();
+    expect(window.location.hash).not.toContain("#/session");
+    localStorage.removeItem("ajax.web.session.orchestrationChat");
+  });
+
   it("does not show the new-task sheet after starting a task and navigating back to the dashboard", async () => {
     vi.stubGlobal(
       "fetch",

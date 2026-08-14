@@ -569,10 +569,9 @@ export default function App() {
       <button
         type="button"
         data-bottom-action="new-task"
-        onClick={() => {
-          if (orchestrationChat) go(sessionHash());
-          else setSheetOpen(true);
-        }}
+        // The New task sheet is the creator in both modes: it picks the harness
+        // and its model, and starts provisioned when orchestration chat is on.
+        onClick={() => setSheetOpen(true)}
       >
         New
       </button>

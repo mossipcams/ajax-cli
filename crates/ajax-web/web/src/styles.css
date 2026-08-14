@@ -2279,6 +2279,15 @@ html.keyboard-open .session-composer textarea {
   margin-top: 6px;
 }
 
+/* A harness can list 30+ models. Cap the list inside the sheet so Back/Start
+   stay on screen instead of being pushed past the card. */
+.sheet-card .model-picker {
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .model-option {
   display: flex;
   align-items: center;

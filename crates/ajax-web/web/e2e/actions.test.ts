@@ -5,6 +5,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
+  LONG_SESSION_MODELS,
   mockFetch,
 } from "./fixtures";
 
@@ -210,6 +211,33 @@ test("new task sheet steps to the harness model page", async ({ page }) => {
 
   await sheet.getByRole("button", { name: "Back" }).click();
   await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
+});
+
+// Found against the real dev server: Codex lists 29 models, which grew the card
+// until Start sat below the viewport and the preselected default was off-screen.
+test("long model catalog keeps Start reachable and scrolls to the default", async ({ page }) => {
+  await mockFetch(page, { "/api/session/models": LONG_SESSION_MODELS });
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const sheet = page.locator("[data-testid='new-task-sheet']");
+  await sheet.locator("#new-task-title-input").fill("Long catalog");
+  await sheet.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
+  await expect(sheet.getByRole("radio", { name: "Model 24" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+
+  const start = sheet.getByRole("button", { name: "Start" });
+  const box = await start.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box, "Start must be laid out").not.toBeNull();
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+
+  // The list itself scrolls, and it opens on the current choice.
+  expect(await sheet.locator(".model-picker").evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
 // Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in
