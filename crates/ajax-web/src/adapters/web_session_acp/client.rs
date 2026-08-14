@@ -7,7 +7,10 @@
 //! requests from the agent.
 
 use ajax_core::{
-    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch, AcpModelSelection},
+    adapters::{
+        acp_args_for_candidate, acp_launch_for_agent, parse_model_selection, AcpLaunch,
+        AcpModelSelection,
+    },
     models::AgentClient,
 };
 use serde_json::{json, Value};
@@ -159,39 +162,46 @@ impl AcpStdioClient {
         Ok((client, report))
     }
 
-    /// Tell a bridge harness which model to run. Cursor is already pinned on its
-    /// argv; Codex takes `session/set_model`, Claude and Pi take a `model`
-    /// config option. A refusal is not fatal — the harness keeps its own default.
+    /// Tell a bridge harness which model to run, and any option that rides with
+    /// it (the reasoning level is a separate config option on every bridge).
+    /// Cursor is already pinned on its argv. A refusal is not fatal — the
+    /// harness keeps its own default and the session continues.
     fn apply_model_in_band(&mut self, agent: AgentClient, model: Option<&str>) {
-        let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+        let Some(raw) = model.map(str::trim).filter(|model| !model.is_empty()) else {
             return;
         };
-        if model_uses_cli_default(Some(model)) {
+        if model_uses_cli_default(Some(raw)) {
             return;
         }
         let Some(launch) = acp_launch_for_agent(agent) else {
             return;
         };
-        let session_id = self.session_id.clone();
-        let (method, params) = match launch.model_selection {
-            AcpModelSelection::SpawnArg => return,
-            AcpModelSelection::SetModel => (
-                "session/set_model",
-                json!({ "sessionId": session_id, "modelId": model }),
-            ),
-            AcpModelSelection::ConfigOption => (
-                "session/set_config_option",
-                json!({ "sessionId": session_id, "configId": "model", "value": model }),
-            ),
+        if matches!(launch.model_selection, AcpModelSelection::SpawnArg) {
+            return;
+        }
+        let Some(selection) = parse_model_selection(raw) else {
+            return;
         };
-        if let Err(error) = self.call(method, params) {
-            tracing::warn!(
-                target: "ajax_web",
-                agent = ?agent,
-                model = %model,
-                error = %error,
-                "acp model selection refused"
-            );
+
+        let session_id = self.session_id.clone();
+        let mut settings = vec![("model".to_string(), selection.model)];
+        settings.extend(selection.options);
+        for (config_id, value) in settings {
+            let params = json!({
+                "sessionId": session_id,
+                "configId": config_id,
+                "value": value,
+            });
+            if let Err(error) = self.call("session/set_config_option", params) {
+                tracing::warn!(
+                    target: "ajax_web",
+                    agent = ?agent,
+                    config_id = %config_id,
+                    value = %value,
+                    error = %error,
+                    "acp model selection refused"
+                );
+            }
         }
     }
 

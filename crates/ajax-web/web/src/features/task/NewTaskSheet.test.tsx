@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,24 @@ const CATALOG = {
   default: "gpt-5.6-sol[low]",
 };
 
+// Claude and the other bridges keep the reasoning level in its own option.
+const CATALOG_WITH_REASONING = {
+  models: [
+    { id: "opus", label: "Opus" },
+    { id: "haiku", label: "Haiku" },
+  ],
+  default: "opus",
+  reasoning: {
+    id: "effort",
+    label: "Effort",
+    default: "high",
+    options: [
+      { id: "low", label: "Low" },
+      { id: "high", label: "High" },
+    ],
+  },
+};
+
 function stubCatalog(catalog: unknown = CATALOG) {
   vi.stubGlobal(
     "fetch",
@@ -35,6 +53,9 @@ async function goToModelStep() {
   return screen.findByTestId("new-task-model-page");
 }
 
+// The sheet remembers the last model per harness, so tests must not inherit
+// each other's choices.
+beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskSheet", () => {
@@ -122,6 +143,51 @@ describe("NewTaskSheet", () => {
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].model).toBe("gpt-5.6-sol[high]");
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the harness reasoning level and sends it with the model", async () => {
+    stubCatalog(CATALOG_WITH_REASONING);
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    await goToModelStep();
+
+    // The harness's own current level is preselected, not the first option.
+    const level = await screen.findByRole("radio", { name: "High" });
+    expect(level).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("opus|effort=low");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the reasoning level when the model changes", async () => {
+    stubCatalog(CATALOG_WITH_REASONING);
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    await goToModelStep();
+
+    fireEvent.click(await screen.findByRole("radio", { name: "Low" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Haiku" }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("haiku|effort=low");
+    vi.unstubAllGlobals();
+  });
+
+  it("offers no reasoning row for a harness that has none", async () => {
+    stubCatalog();
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    await goToModelStep();
+    await screen.findByRole("radio", { name: /GPT-5.6-Sol \(low\)/ });
+    expect(screen.queryByTestId("model-reasoning")).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

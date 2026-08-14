@@ -12,17 +12,66 @@ pub fn valid_cursor_model_id(id: &str) -> bool {
 
 /// How a harness is told which model to run.
 ///
-/// Verified against the installed bridges: Codex answers `session/set_model`,
-/// Claude and Pi answer `session/set_config_option` with `configId: "model"`,
-/// and Cursor takes `--model` before it speaks ACP at all.
+/// Verified against the installed bridges: Codex, Claude, and Pi all answer
+/// `session/set_config_option { configId, value }`, which also carries the
+/// reasoning level they expose as a separate option. Cursor takes `--model`
+/// before it speaks ACP at all, and bakes the level into the model id.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AcpModelSelection {
     /// `--model <id>` on the spawn argv.
     SpawnArg,
-    /// `session/set_model { sessionId, modelId }` after the session exists.
-    SetModel,
-    /// `session/set_config_option { sessionId, configId: "model", value }`.
+    /// `session/set_config_option { sessionId, configId, value }` per option.
     ConfigOption,
+}
+
+/// A model choice plus the harness options that go with it, written
+/// `opus|effort=high`. Cursor has no options and is just the bare id.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelSelection {
+    pub model: String,
+    /// Extra harness config options, e.g. `("effort", "high")`.
+    pub options: Vec<(String, String)>,
+}
+
+impl ModelSelection {
+    /// Rebuild the stored form. Round-trips with [`parse_model_selection`].
+    pub fn encode(&self) -> String {
+        let mut out = self.model.clone();
+        for (key, value) in &self.options {
+            out.push('|');
+            out.push_str(key);
+            out.push('=');
+            out.push_str(value);
+        }
+        out
+    }
+}
+
+/// Parse a stored selection. `None` when any piece is not a bounded token, so
+/// the same check guards ids arriving from the browser.
+pub fn parse_model_selection(raw: &str) -> Option<ModelSelection> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 256 {
+        return None;
+    }
+    let mut parts = raw.split('|');
+    let model = parts.next()?.trim();
+    if !valid_cursor_model_id(model) {
+        return None;
+    }
+    let mut options = Vec::new();
+    for part in parts {
+        let (key, value) = part.split_once('=')?;
+        let (key, value) = (key.trim(), value.trim());
+        if !valid_cursor_model_id(key) || !valid_cursor_model_id(value) {
+            return None;
+        }
+        options.push((key.to_string(), value.to_string()));
+    }
+    Some(ModelSelection {
+        model: model.to_string(),
+        options,
+    })
 }
 
 /// How one harness is started as an ACP stdio agent.
@@ -68,7 +117,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             candidates: &[("codex-acp", &[])],
             // Codex 0.147 speaks its own `app-server` protocol, not ACP.
             native_program: Some("codex"),
-            model_selection: AcpModelSelection::SetModel,
+            model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
             install_hint: "npm install -g @agentclientprotocol/codex-acp",
         }),
@@ -104,7 +153,10 @@ pub fn acp_args_for_candidate(
     if !launch.model_pins_at_spawn() {
         return args;
     }
-    let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+    let Some(model) = model
+        .and_then(parse_model_selection)
+        .map(|selection| selection.model)
+    else {
         return args;
     };
     match args.iter().position(|arg| arg == "acp") {

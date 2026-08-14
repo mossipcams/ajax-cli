@@ -207,7 +207,8 @@ fn start_task_with_checkpoint_inner<R: Registry>(
                     "model selection requires an agent Ajax can start over ACP",
                 ));
             }
-            if !ajax_core::adapters::valid_cursor_model_id(raw) {
+            // `model|configId=value`: the model id plus any harness option.
+            if ajax_core::adapters::parse_model_selection(raw).is_none() {
                 return Err(OperateError::UnsupportedCapability("unsupported model"));
             }
             Some(raw.to_string())

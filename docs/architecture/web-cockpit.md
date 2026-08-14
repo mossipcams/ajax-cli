@@ -48,9 +48,17 @@ harness to its ACP entry point and to how it accepts a model:
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
 | Cursor | `agent acp` (native) | `--model` on the spawn argv |
-| Codex | `codex-acp` | `session/set_model` |
-| Claude | `claude-agent-acp` | `session/set_config_option` (`configId: "model"`) |
-| Pi | `pi-acp` | `session/set_config_option` (`configId: "model"`) |
+| Codex | `codex-acp` | `session/set_config_option` |
+| Claude | `claude-agent-acp` | `session/set_config_option` |
+| Pi | `pi-acp` | `session/set_config_option` |
+
+Every bridge answers `session/set_config_option { sessionId, configId, value }`,
+which carries both the model and the reasoning level those harnesses expose as a
+**separate** option (`effort`, `reasoning_effort`, `thought_level` — matched by
+its `thought_level` category). Cursor has no second axis: its model ids already
+name the level. A selection is therefore stored as `model|configId=value`, e.g.
+`opus|effort=low`, parsed by `parse_model_selection` in core and applied one
+config option at a time.
 
 Cursor is the only harness that speaks ACP itself today; the others are reached
 through their ACP adapters. Each mapping also names the harness CLI that *could*
@@ -69,12 +77,19 @@ offered for every mapped harness, and session attach admits any task whose agent
 has an ACP launch **and** whose registry metadata carries the provisioned bit.
 
 The **New task** sheet is two steps: repository/title/harness, then a model page
-listing what that harness advertises. `GET /api/session/models?agent=` serves the
-catalog — Cursor from `agent models`, the bridges from their own `session/new`
-handshake (`models.availableModels` or `configOptions[id=model]`), cached per
-agent. The chosen model is stored on the task (`session_model` metadata) and
-applied when its session starts; `POST /api/tasks` validates the id shape and
-rejects a model for an agent with no ACP launch.
+listing what that harness advertises, with its reasoning level beside the model
+list when it has one. `GET /api/session/models?agent=` serves the catalog —
+Cursor from `agent models`, the bridges from their own `session/new` handshake.
+
+That handshake costs a short-lived bridge process, so the catalog is cached
+against the **harness CLI version** rather than a clock: each request reads
+`<harness> --version` (cheap), reuses the stored catalog when it matches, and
+re-reads the catalog only after the harness has been updated. A version that
+cannot be read is never treated as a cache hit.
+
+The chosen selection is stored on the task (`session_model` metadata) and applied
+when its session starts; `POST /api/tasks` validates its shape and rejects a
+model for an agent with no ACP launch.
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
 another harness, exposed as the Harness switch on the Diff Review page. It is

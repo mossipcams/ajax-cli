@@ -53,10 +53,45 @@ export interface SessionModelOption {
   label: string;
 }
 
+/** A second axis beside the models, e.g. the reasoning level. */
+export interface SessionModelGroup {
+  /** Config id the harness answers to, e.g. `effort`. */
+  id: string;
+  label: string;
+  options: SessionModelOption[];
+  default: string;
+}
+
 /** Catalog plus the model the server launches when the request omits one. */
 export interface SessionModelCatalog {
   models: SessionModelOption[];
   default: string;
+  reasoning?: SessionModelGroup;
+}
+
+/**
+ * A selection is the model id plus any harness options, written
+ * `opus|effort=high`. The server parses the same form.
+ */
+export function encodeModelSelection(model: string, options: Record<string, string>): string {
+  const extras = Object.entries(options)
+    .filter(([key, value]) => key && value)
+    .map(([key, value]) => `|${key}=${value}`)
+    .join("");
+  return model ? `${model}${extras}` : "";
+}
+
+export function decodeModelSelection(raw: string): {
+  model: string;
+  options: Record<string, string>;
+} {
+  const [model = "", ...rest] = raw.split("|");
+  const options: Record<string, string> = {};
+  for (const part of rest) {
+    const [key, value] = part.split("=");
+    if (key && value) options[key] = value;
+  }
+  return { model, options };
 }
 
 /** Cursor always has Auto; a bridge harness with no answer has nothing to
@@ -76,13 +111,20 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
       credentials: "same-origin",
     });
     if (!response.ok) return fallbackCatalog(agent);
-    const body = (await response.json()) as { models?: SessionModelOption[]; default?: string };
+    const body = (await response.json()) as {
+      models?: SessionModelOption[];
+      default?: string;
+      reasoning?: SessionModelGroup;
+    };
     if (!Array.isArray(body.models) || body.models.length === 0) return fallbackCatalog(agent);
     return {
       models: body.models.filter(
         (m) => m && typeof m.id === "string" && typeof m.label === "string",
       ),
       default: typeof body.default === "string" ? body.default : "",
+      ...(body.reasoning && Array.isArray(body.reasoning.options)
+        ? { reasoning: body.reasoning }
+        : {}),
     };
   } catch {
     return fallbackCatalog(agent);

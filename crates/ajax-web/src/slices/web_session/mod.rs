@@ -116,7 +116,7 @@ pub fn normalize_session_model(raw: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Ok(default_session_model());
     }
-    if !ajax_core::adapters::valid_cursor_model_id(trimmed) {
+    if ajax_core::adapters::parse_model_selection(trimmed).is_none() {
         return Err("model id must not contain whitespace or exceed 128 chars".to_string());
     }
     Ok(trimmed.to_string())

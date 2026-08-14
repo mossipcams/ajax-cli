@@ -166,13 +166,7 @@ fn every_bridge_harness_names_the_cli_that_could_speak_acp_natively() {
 fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
     use ajax_core::adapters::{acp_launch_for_agent, AcpModelSelection};
 
-    assert_eq!(
-        acp_launch_for_agent(AgentClient::Codex)
-            .expect("codex")
-            .model_selection,
-        AcpModelSelection::SetModel
-    );
-    for agent in [AgentClient::Claude, AgentClient::Pi] {
+    for agent in [AgentClient::Codex, AgentClient::Claude, AgentClient::Pi] {
         assert_eq!(
             acp_launch_for_agent(agent).expect("bridge").model_selection,
             AcpModelSelection::ConfigOption,
@@ -182,7 +176,10 @@ fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
 
     let script = fake_acp_fixture();
     for (agent, expected) in [
-        (AgentClient::Codex, "model:session/set_model:composer-2.5"),
+        (
+            AgentClient::Codex,
+            "model:session/set_config_option:composer-2.5",
+        ),
         (
             AgentClient::Claude,
             "model:session/set_config_option:composer-2.5",

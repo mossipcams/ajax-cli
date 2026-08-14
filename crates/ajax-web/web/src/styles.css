@@ -2324,6 +2324,32 @@ html.keyboard-open .session-composer textarea {
   color: var(--ink-muted);
 }
 
+/* Reasoning level: a short row of levels, not a full-width list. */
+.reasoning-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.reasoning-option {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  background: var(--paper);
+  color: var(--ink-muted);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+}
+
+.reasoning-option.is-selected {
+  background: var(--accent-deep);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
 .sheet-note {
   margin: 12px 0 0;
   font-size: var(--text-body-sm);
