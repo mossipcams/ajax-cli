@@ -1,7 +1,7 @@
-// The settled transcript: what the agent has already said. Nothing streams
-// here — live work lives in the head — so this list can hold its scroll
-// position while the agent works. Tool traces stay out; a turn lands as prose
-// plus at most one summary note.
+// Session transcript: settled agent prose plus the live tail. Only the last
+// agent row streams while busy; earlier rows stay settled so this list can
+// hold scroll position. Tool traces stay out; a turn lands as prose plus at
+// most one summary note.
 
 import { memo } from "react";
 import Markdown from "./Markdown";
@@ -29,7 +29,7 @@ const Row = memo(function Row({
         data-testid="session-message-agent"
         {...(live ? { "data-live": "true" } : {})}
       >
-        <Markdown source={entry.text} />
+        <Markdown source={entry.text} smooth={live} />
       </article>
     );
   }

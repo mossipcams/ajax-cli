@@ -393,7 +393,7 @@ pub fn prepare_task_session<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or(SessionRouteError::TaskNotFound)?;
 
-    if task.selected_agent != AgentClient::Cursor {
+    if task.selected_agent != AgentClient::Cursor || !task.skip_interactive_agent() {
         return Err(SessionRouteError::NotOrchestrationChat);
     }
     if !task.worktree_path.exists() {

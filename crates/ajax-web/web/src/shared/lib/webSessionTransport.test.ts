@@ -128,4 +128,43 @@ describe("connectWebSessionTransport", () => {
     socket.emit("close");
     expect(cbs.onClosed).toHaveBeenCalledOnce();
   });
+
+  it("sendCancel() clears pre-ready pending prompts before flush", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    transport.sendPrompt("Queued");
+    transport.sendCancel();
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(socket.sent).not.toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
+    transport.dispose();
+  });
+
+  it("sendCancel(true) keeps pre-ready pending prompts for flush", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    transport.sendPrompt("Queued");
+    transport.sendCancel(true);
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
+    transport.dispose();
+  });
+
+  it("clears pre-ready pending prompts when the socket fails to open", async () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    transport.sendPrompt("Queued");
+    socket.emit("error");
+    await Promise.resolve();
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "error",
+      message: "Session WebSocket failed to open",
+    });
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(socket.sent).not.toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
+    transport.dispose();
+  });
 });

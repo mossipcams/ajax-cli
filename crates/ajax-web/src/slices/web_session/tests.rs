@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 fn prepare_task_session_returns_worktree_for_cursor_task() {
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Cursor;
+    task.set_skip_interactive_agent(true);
     let worktree = std::env::temp_dir().join("ajax-web-session-test-fix-login");
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
@@ -17,6 +18,19 @@ fn prepare_task_session_returns_worktree_for_cursor_task() {
     assert!(plan
         .worktree_path
         .ends_with("ajax-web-session-test-fix-login"));
+}
+
+#[test]
+fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Cursor;
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-interactive-cursor");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
+    assert_eq!(error, SessionRouteError::NotOrchestrationChat);
 }
 
 #[test]
@@ -259,4 +273,40 @@ fn apply_cancel_to_queue_keep_false_clears() {
     let mut queued = VecDeque::from(["next".to_string()]);
     apply_cancel_to_queue(&mut queued, false);
     assert!(queued.is_empty());
+}
+
+#[test]
+fn map_acp_client_request_session_request_permission() {
+    let params = serde_json::json!({
+        "requestId": "req-1",
+        "title": "Run tests?",
+        "message": "Allow npm test",
+    });
+    assert_eq!(
+        map_acp_client_request("session/request_permission", &params),
+        Some(SessionServerEvent::PermissionRequest {
+            request_id: "req-1".to_string(),
+            title: Some("Run tests?".to_string()),
+            detail: Some("Allow npm test".to_string()),
+        })
+    );
+}
+
+#[test]
+fn map_acp_client_request_permission_nested_fields() {
+    let params = serde_json::json!({
+        "request_id": "req-2",
+        "permission": {
+            "title": "Deploy?",
+            "description": "Push to prod",
+        },
+    });
+    assert_eq!(
+        map_acp_client_request("session/request_permission", &params),
+        Some(SessionServerEvent::PermissionRequest {
+            request_id: "req-2".to_string(),
+            title: Some("Deploy?".to_string()),
+            detail: Some("Push to prod".to_string()),
+        })
+    );
 }

@@ -8,7 +8,7 @@ use crate::slices::web_session::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
@@ -33,7 +33,7 @@ impl HolderCount {
 /// growing without limit. Cap is owned by `store::MAX_LOG_EVENTS`.
 /// Slots with no sockets keep their ACP child alive so a reload can resume.
 /// This bounds how many such children may linger.
-const MAX_IDLE_SESSIONS: usize = 8;
+pub(crate) const MAX_IDLE_SESSIONS: usize = 8;
 
 /// Append-only transcript. Sockets hold absolute cursors into it, which is what
 /// lets a reload replay and two devices both receive every event — the ACP
@@ -46,8 +46,8 @@ pub(crate) struct TranscriptLog {
 }
 
 impl TranscriptLog {
-    fn from_events(events: Vec<SessionServerEvent>) -> Self {
-        Self { events, dropped: 0 }
+    fn from_events(events: Vec<SessionServerEvent>, dropped: usize) -> Self {
+        Self { events, dropped }
     }
 
     pub(crate) fn append(&mut self, events: Vec<SessionServerEvent>) {
@@ -61,10 +61,33 @@ impl TranscriptLog {
 
     /// Events at or after `cursor`, plus the cursor to read from next. A cursor
     /// left behind by trimming resumes at the oldest event still held.
+    /// Resolved permission requests are omitted so reconnect does not flash
+    /// already-answered prompts.
     pub(crate) fn read_from(&self, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         let next = self.dropped + self.events.len();
         let start = cursor.saturating_sub(self.dropped).min(self.events.len());
-        (self.events[start..].to_vec(), next)
+        let resolved: HashSet<String> = self
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                SessionServerEvent::PermissionResolved { request_id, .. } => {
+                    Some(request_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let events = self.events[start..]
+            .iter()
+            .filter(|event| {
+                !matches!(
+                    event,
+                    SessionServerEvent::PermissionRequest { request_id, .. }
+                        if resolved.contains(request_id)
+                )
+            })
+            .cloned()
+            .collect();
+        (events, next)
     }
 }
 
@@ -127,60 +150,125 @@ impl WebSessionHub {
         worktree_path: &Path,
         model: &str,
     ) -> Result<(), String> {
+        enum AcquirePlan {
+            ReplaceExisting { resume_id: Option<String> },
+            InsertNew,
+        }
+
+        let plan = {
+            let mut sessions = self.sessions.lock().unwrap();
+            if let Some(slot) = sessions.get_mut(qualified_handle) {
+                let host_exited = {
+                    let mut client = slot.client.lock().unwrap();
+                    client.host_exited()
+                };
+                if slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+                    let resume_id =
+                        replace_resume_id(&slot.model, model, &self.state_dir, qualified_handle);
+                    begin_cancel_slot_client(slot);
+                    // Pin before spawn so idle LRU cannot drop this slot unlocked.
+                    slot.add_holder();
+                    AcquirePlan::ReplaceExisting { resume_id }
+                } else {
+                    slot.add_holder();
+                    return Ok(());
+                }
+            } else {
+                evict_idle_over_limit(&mut sessions);
+                AcquirePlan::InsertNew
+            }
+        };
+
+        let stored = store::load(&self.state_dir, qualified_handle);
+        let resume_id = match &plan {
+            AcquirePlan::ReplaceExisting { resume_id } => resume_id.clone(),
+            AcquirePlan::InsertNew => stored.acp_session_id.clone(),
+        };
+        let (client, report) = match AcpStdioClient::spawn(
+            worktree_path,
+            spawn_model_arg(model),
+            resume_id.as_deref(),
+        ) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                if matches!(plan, AcquirePlan::ReplaceExisting { .. }) {
+                    let mut sessions = self.sessions.lock().unwrap();
+                    if let Some(slot) = sessions.get_mut(qualified_handle) {
+                        slot.release_holder();
+                    }
+                }
+                return Err(error);
+            }
+        };
+
         let mut sessions = self.sessions.lock().unwrap();
-        if let Some(slot) = sessions.get_mut(qualified_handle) {
-            let host_exited = {
-                let mut client = slot.client.lock().unwrap();
-                client.host_exited()
-            };
-            if slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
-                replace_slot_client(
+        match plan {
+            AcquirePlan::ReplaceExisting { .. } => {
+                let Some(slot) = sessions.get_mut(qualified_handle) else {
+                    return Err("session slot missing".to_string());
+                };
+                install_replaced_client(
                     slot,
-                    worktree_path,
+                    client,
+                    &report,
                     model,
                     &self.state_dir,
                     qualified_handle,
                 )?;
             }
-            slot.add_holder();
-            return Ok(());
+            AcquirePlan::InsertNew => {
+                if let Some(slot) = sessions.get_mut(qualified_handle) {
+                    let host_exited = {
+                        let mut guard = slot.client.lock().unwrap();
+                        guard.host_exited()
+                    };
+                    if !slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+                        drop(client);
+                        slot.add_holder();
+                        return Ok(());
+                    }
+                    install_replaced_client(
+                        slot,
+                        client,
+                        &report,
+                        model,
+                        &self.state_dir,
+                        qualified_handle,
+                    )?;
+                    slot.add_holder();
+                    return Ok(());
+                }
+                let mut log = TranscriptLog::from_events(stored.events, stored.dropped);
+                if context_reset_needed(&report, &log) {
+                    let note = context_reset_note();
+                    log.append(vec![note.clone()]);
+                    store::append_events(
+                        &self.state_dir,
+                        qualified_handle,
+                        std::slice::from_ref(&note),
+                    );
+                }
+                store::save_meta(
+                    &self.state_dir,
+                    qualified_handle,
+                    Some(client.session_id()),
+                    model,
+                );
+                sessions.insert(
+                    qualified_handle.to_string(),
+                    SessionSlot {
+                        client: Arc::new(Mutex::new(client)),
+                        model: model.to_string(),
+                        generation: 0,
+                        holders: HolderCount(1),
+                        log,
+                        queued: VecDeque::new(),
+                        last_released: None,
+                        acp_alive: true,
+                    },
+                );
+            }
         }
-        evict_idle_over_limit(&mut sessions);
-        let stored = store::load(&self.state_dir, qualified_handle);
-        let (client, report) = AcpStdioClient::spawn(
-            worktree_path,
-            spawn_model_arg(model),
-            stored.acp_session_id.as_deref(),
-        )?;
-        let mut log = TranscriptLog::from_events(stored.events);
-        if context_reset_needed(&report, &log) {
-            let note = context_reset_note();
-            log.append(vec![note.clone()]);
-            store::append_events(
-                &self.state_dir,
-                qualified_handle,
-                std::slice::from_ref(&note),
-            );
-        }
-        store::save_meta(
-            &self.state_dir,
-            qualified_handle,
-            Some(client.session_id()),
-            model,
-        );
-        sessions.insert(
-            qualified_handle.to_string(),
-            SessionSlot {
-                client: Arc::new(Mutex::new(client)),
-                model: model.to_string(),
-                generation: 0,
-                holders: HolderCount(1),
-                log,
-                queued: VecDeque::new(),
-                last_released: None,
-                acp_alive: true,
-            },
-        );
         Ok(())
     }
 
@@ -192,22 +280,48 @@ impl WebSessionHub {
         worktree_path: &Path,
         model: &str,
     ) -> Result<u64, String> {
+        let resume_id = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(slot) = sessions.get_mut(qualified_handle) else {
+                return Err("session slot missing".to_string());
+            };
+            let host_exited = {
+                let mut client = slot.client.lock().unwrap();
+                client.host_exited()
+            };
+            if !slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+                return Ok(slot.generation);
+            }
+            let resume_id =
+                replace_resume_id(&slot.model, model, &self.state_dir, qualified_handle);
+            begin_cancel_slot_client(slot);
+            resume_id
+        };
+
+        let (client, report) =
+            AcpStdioClient::spawn(worktree_path, spawn_model_arg(model), resume_id.as_deref())?;
+
         let mut sessions = self.sessions.lock().unwrap();
         let Some(slot) = sessions.get_mut(qualified_handle) else {
+            drop(client);
             return Err("session slot missing".to_string());
         };
-        if slot_must_replace(slot.acp_alive, &slot.model, model, {
-            let mut client = slot.client.lock().unwrap();
-            client.host_exited()
-        }) {
-            replace_slot_client(
-                slot,
-                worktree_path,
-                model,
-                &self.state_dir,
-                qualified_handle,
-            )?;
+        let host_exited = {
+            let mut guard = slot.client.lock().unwrap();
+            guard.host_exited()
+        };
+        if !slot_must_replace(slot.acp_alive, &slot.model, model, host_exited) {
+            drop(client);
+            return Ok(slot.generation);
         }
+        install_replaced_client(
+            slot,
+            client,
+            &report,
+            model,
+            &self.state_dir,
+            qualified_handle,
+        )?;
         Ok(slot.generation)
     }
 
@@ -365,7 +479,7 @@ impl WebSessionHub {
                 if stored.events.is_empty() {
                     (Vec::new(), cursor)
                 } else {
-                    TranscriptLog::from_events(stored.events).read_from(cursor)
+                    TranscriptLog::from_events(stored.events, stored.dropped).read_from(cursor)
                 }
             }
         }
@@ -376,7 +490,11 @@ impl WebSessionHub {
 fn evict_idle_over_limit(sessions: &mut HashMap<String, SessionSlot>) {
     let mut idle: Vec<(String, Instant)> = sessions
         .iter()
-        .filter(|(_, slot)| slot.is_idle())
+        .filter(|(_, slot)| {
+            slot.is_idle()
+                && slot.queued.is_empty()
+                && !slot.client.lock().unwrap().prompt_in_flight()
+        })
         .map(|(handle, slot)| {
             (
                 handle.clone(),
@@ -421,27 +539,34 @@ fn context_reset_note() -> SessionServerEvent {
     }
 }
 
-/// Best-effort cancel, then drop and replace the ACP child. Transcript stays.
-fn replace_slot_client(
+fn begin_cancel_slot_client(slot: &SessionSlot) {
+    let mut client = slot.client.lock().unwrap();
+    let _ = client.begin_cancel();
+}
+
+fn replace_resume_id(
+    slot_model: &str,
+    want_model: &str,
+    state_dir: &Path,
+    handle: &str,
+) -> Option<String> {
+    if slot_model == want_model {
+        store::load(state_dir, handle).acp_session_id
+    } else {
+        None
+    }
+}
+
+/// Best-effort cancel already done; spawn happened outside the sessions lock.
+fn install_replaced_client(
     slot: &mut SessionSlot,
-    worktree_path: &Path,
+    new_client: AcpStdioClient,
+    report: &super::client::SpawnReport,
     model: &str,
     state_dir: &Path,
     handle: &str,
 ) -> Result<(), String> {
-    {
-        let mut client = slot.client.lock().unwrap();
-        let _ = client.begin_cancel();
-    }
-    // Same model: try ACP session/load. Model change starts a new conversation.
-    let resume_id = if slot.model == model {
-        store::load(state_dir, handle).acp_session_id
-    } else {
-        None
-    };
-    let (new_client, report) =
-        AcpStdioClient::spawn(worktree_path, spawn_model_arg(model), resume_id.as_deref())?;
-    if context_reset_needed(&report, &slot.log) {
+    if context_reset_needed(report, &slot.log) {
         let note = context_reset_note();
         slot.append_to_log(state_dir, handle, vec![note]);
     }

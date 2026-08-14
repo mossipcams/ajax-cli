@@ -17,6 +17,7 @@ pub struct StoredSession {
     pub acp_session_id: Option<String>,
     pub model: String,
     pub events: Vec<SessionServerEvent>,
+    pub dropped: usize,
 }
 
 impl Default for StoredSession {
@@ -25,6 +26,7 @@ impl Default for StoredSession {
             acp_session_id: None,
             model: "auto".to_string(),
             events: Vec::new(),
+            dropped: 0,
         }
     }
 }
@@ -36,6 +38,8 @@ struct DiskMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     acp_session_id: Option<String>,
     model: String,
+    #[serde(default)]
+    dropped: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +74,7 @@ pub fn load(state_dir: &Path, handle: &str) -> StoredSession {
             ParsedLine::Meta(meta) => {
                 session.acp_session_id = meta.acp_session_id;
                 session.model = meta.model;
+                session.dropped = meta.dropped;
             }
             ParsedLine::Event(event) => session.events.push(event),
             ParsedLine::Skip => {}
@@ -82,7 +87,7 @@ pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, m
     let mut session = load(state_dir, handle);
     session.acp_session_id = acp_session_id.map(str::to_string);
     session.model = model.to_string();
-    let _ = rewrite_file(state_dir, handle, &session);
+    persist(state_dir, handle, &session);
 }
 
 pub fn append_events(state_dir: &Path, handle: &str, new_events: &[SessionServerEvent]) {
@@ -94,8 +99,9 @@ pub fn append_events(state_dir: &Path, handle: &str, new_events: &[SessionServer
     if session.events.len() > MAX_LOG_EVENTS {
         let excess = session.events.len() - MAX_LOG_EVENTS;
         session.events.drain(..excess);
+        session.dropped += excess;
     }
-    let _ = rewrite_file(state_dir, handle, &session);
+    persist(state_dir, handle, &session);
 }
 
 enum ParsedLine {
@@ -132,27 +138,41 @@ fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
         .join(format!("{}.jsonl", encode_handle(handle)))
 }
 
-fn rewrite_file(state_dir: &Path, handle: &str, session: &StoredSession) -> Result<(), ()> {
+fn persist(state_dir: &Path, handle: &str, session: &StoredSession) {
+    if let Err(error) = rewrite_file(state_dir, handle, session) {
+        tracing::warn!(%error, handle, "failed to persist web session transcript");
+    }
+}
+
+fn rewrite_file(
+    state_dir: &Path,
+    handle: &str,
+    session: &StoredSession,
+) -> Result<(), std::io::Error> {
     let dir = state_dir.join(WEB_SESSION_DIR);
-    fs::create_dir_all(&dir).map_err(|_| ())?;
+    fs::create_dir_all(&dir)?;
     let path = session_path(state_dir, handle);
-    let mut file = fs::File::create(&path).map_err(|_| ())?;
+    let tmp_path = path.with_extension("jsonl.tmp");
+    let mut file = fs::File::create(&tmp_path)?;
     let meta = DiskMeta {
         kind: "meta".to_string(),
         v: 1,
         acp_session_id: session.acp_session_id.clone(),
         model: session.model.clone(),
+        dropped: session.dropped,
     };
-    let meta_line = serde_json::to_string(&meta).map_err(|_| ())?;
-    writeln!(file, "{meta_line}").map_err(|_| ())?;
+    let meta_line = serde_json::to_string(&meta).map_err(std::io::Error::other)?;
+    writeln!(file, "{meta_line}")?;
     for event in &session.events {
         let row = serde_json::json!({
             "kind": "event",
             "event": event,
         });
-        let line = serde_json::to_string(&row).map_err(|_| ())?;
-        writeln!(file, "{line}").map_err(|_| ())?;
+        let line = serde_json::to_string(&row).map_err(std::io::Error::other)?;
+        writeln!(file, "{line}")?;
     }
+    file.sync_all()?;
+    fs::rename(tmp_path, path)?;
     Ok(())
 }
 
@@ -227,6 +247,7 @@ mod tests {
         append_events(&dir, handle, &events);
         let loaded = load(&dir, handle);
         assert_eq!(loaded.events.len(), MAX_LOG_EVENTS);
+        assert_eq!(loaded.dropped, 5);
         assert_eq!(loaded.events[0], note("5"));
         assert_eq!(
             loaded.events[MAX_LOG_EVENTS - 1],

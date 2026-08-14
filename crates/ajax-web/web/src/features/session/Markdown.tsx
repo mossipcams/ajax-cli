@@ -7,6 +7,7 @@
 // inject agent output into the DOM as markup.
 
 import type { ReactNode } from "react";
+import { useSmoothText } from "./useSmoothText";
 
 type Block =
   | { kind: "code"; lang: string; text: string }
@@ -91,10 +92,17 @@ export function renderInline(text: string, keyPrefix: string): ReactNode[] {
   });
 }
 
-export default function Markdown({ source }: { source: string }) {
+export default function Markdown({
+  source,
+  smooth = false,
+}: {
+  source: string;
+  smooth?: boolean;
+}) {
+  const text = useSmoothText(source, smooth);
   return (
     <div className="md">
-      {parseBlocks(source).map((block, index) => {
+      {parseBlocks(text).map((block, index) => {
         const key = `b${index}`;
         if (block.kind === "code") {
           return (

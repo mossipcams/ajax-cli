@@ -48,6 +48,54 @@ fn skip_interactive_agent_cursor_plan_skips_agent_send_keys() {
 }
 
 #[test]
+fn task_from_new_request_sets_skip_interactive_agent_for_cursor() {
+    let context = context();
+    let task = task_from_new_request(
+        &context,
+        &NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            skip_interactive_agent: true,
+        },
+    )
+    .unwrap();
+    assert!(task.skip_interactive_agent());
+}
+
+#[test]
+fn task_from_new_request_skips_bit_when_cursor_interactive() {
+    let context = context();
+    let task = task_from_new_request(
+        &context,
+        &NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            skip_interactive_agent: false,
+        },
+    )
+    .unwrap();
+    assert!(!task.skip_interactive_agent());
+}
+
+#[test]
+fn task_from_new_request_skips_bit_for_non_cursor_even_when_flag_true() {
+    let context = context();
+    let task = task_from_new_request(
+        &context,
+        &NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+            skip_interactive_agent: true,
+        },
+    )
+    .unwrap();
+    assert!(!task.skip_interactive_agent());
+}
+
+#[test]
 fn rooted_repo_dir_hash_is_stable_for_known_path() {
     let path = Path::new("/Users/matt/projects/web");
     let first = super::rooted_repo_dir("web", path);

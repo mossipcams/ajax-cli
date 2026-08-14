@@ -432,9 +432,9 @@ export default function App() {
 
   useEffect(() => {
     if (route.kind === "session" && !orchestrationChat) {
-      go(dashboardHash());
+      go(route.handle ? taskHash(route.handle) : dashboardHash());
     }
-  }, [route.kind, orchestrationChat]);
+  }, [route.kind, route.handle, orchestrationChat]);
 
   useEffect(() => {
     const kind = route.kind;
@@ -553,7 +553,7 @@ export default function App() {
     </div>
   );
 
-  const isSessionRoute = route.kind === "session";
+  const isSessionRoute = route.kind === "session" && orchestrationChat;
   const hideBottomNav = isSessionRoute;
 
   const nav = hideBottomNav ? null : (
@@ -628,7 +628,7 @@ export default function App() {
                 }}
               />
             </section>
-          ) : route.kind === "session" ? (
+          ) : route.kind === "session" && orchestrationChat ? (
             <section
               ref={outletSwipeRef}
               className={swipeOutletClass || undefined}

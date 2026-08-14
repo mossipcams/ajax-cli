@@ -15,6 +15,9 @@ existing paths.
 
 - Provisioned Cursor starts skip tmux send-keys but still create the task tmux
   session. Non-Cursor agents cannot use that launch mode.
+- Session attach is only for Cursor tasks whose registry metadata records
+  `skip_interactive_agent` (provisioned orchestration-chat launch). Interactive
+  Cursor tasks (tmux send-keys launch) receive HTTP 409 `NotOrchestrationChat`.
 
 ## Queue and cancellation across WebSocket reconnect
 
@@ -27,6 +30,7 @@ existing paths.
 - After a WebSocket drop and reconnect, the host replays the durable transcript
   from cursor; queued prompts and in-flight state remain host-owned — reconnect
   must not duplicate or lose queued work that survived on the host.
+- Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
 
 ## Model switching across ACP process replacement
 
@@ -49,6 +53,8 @@ existing paths.
 
 ## Permission persistence
 
+- Unrecognized ACP `sessionUpdate` kinds (except dropped capability announcements) are
+  stored as `artifact` events in the host transcript.
 - Operator answers to ACP permission requests are recorded as
   `permission_resolved` in the host transcript.
 - Reconnect or full page reload replay must not resurrect a permission prompt

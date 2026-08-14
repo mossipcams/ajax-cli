@@ -40,7 +40,9 @@ Model catalog parsing lives in the `session_models` slice. Authenticated
 `GET /api/session/models` lists Cursor models; authenticated
 `GET /api/tasks/{handle}/session` WebSocket upgrade is transport-only over
 `WebSessionHub` (snapshot via cursor replay). Session admission policy lives in
-the `web_session` slice; routes and the bridge call hub methods only.
+the `web_session` slice: Cursor **and** the durable provisioned-launch bit on
+the task (`skip_interactive_agent` in registry metadata, not the browser
+Settings flag). Routes and the bridge call hub methods only.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One

@@ -400,6 +400,14 @@ fn start_task_orchestration_chat_skips_send_keys_for_cursor() {
     )
     .unwrap();
 
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == "web/fix-login")
+        .expect("task created");
+    assert!(task.skip_interactive_agent());
+
     assert!(
         runner
             .commands()
