@@ -8,7 +8,7 @@ pub mod tmux;
 
 pub use agent::{
     acp_args_for_candidate, acp_launch_for_agent, agent_launch_spec, valid_cursor_model_id,
-    AcpLaunch, AgentLaunch, CURSOR_DEFAULT_MODEL,
+    AcpLaunch, AcpModelSelection, AgentLaunch, CURSOR_DEFAULT_MODEL,
 };
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
@@ -559,7 +559,7 @@ mod tests {
 
         let cursor = acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp");
         assert_eq!(cursor.candidates[0], ("agent", &["acp"][..]));
-        assert!(cursor.model_pins_at_spawn);
+        assert!(cursor.model_pins_at_spawn());
 
         for (client, program) in [
             (AgentClient::Codex, "codex-acp"),
@@ -570,7 +570,7 @@ mod tests {
             assert_eq!(launch.candidates[0].0, program);
             assert!(launch.candidates[0].1.is_empty());
             // The bridges take no model on argv; they select in-band.
-            assert!(!launch.model_pins_at_spawn);
+            assert!(!launch.model_pins_at_spawn());
         }
 
         assert!(acp_launch_for_agent(AgentClient::Other).is_none());

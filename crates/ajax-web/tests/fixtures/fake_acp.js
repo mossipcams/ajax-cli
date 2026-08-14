@@ -39,6 +39,13 @@ function handleRequest(msg) {
     send({ jsonrpc: '2.0', id, result: { sessionId } });
     return;
   }
+  // Model selection: echo what the client asked for so tests can assert the
+  // request shape each harness family uses.
+  if (method === 'session/set_model' || method === 'session/set_config_option') {
+    send({ jsonrpc: '2.0', id, result: { applied: { method, params } } });
+    replayUpdate(`model:${method}:${params?.modelId ?? params?.value ?? ''}`);
+    return;
+  }
   if (method === 'session/load') {
     if (loadFail) {
       send({

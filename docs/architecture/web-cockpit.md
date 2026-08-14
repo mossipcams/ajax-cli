@@ -43,12 +43,26 @@ Session admission policy lives in the `web_session` slice and is stated below.
 Routes and the bridge call hub methods only.
 
 ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
-harness to its ACP entry point — Cursor `agent acp` (native), Codex `codex-acp`,
-Claude `claude-agent-acp`, Pi `pi-acp` — and records whether the model pins on the
-spawn argv. Only Cursor does; the bridges select in-band, so their argv stays
-bare. A harness with no mapping keeps the tmux send-keys launch. When no candidate
-program can be spawned, the host reports an install hint rather than a spawn
-error.
+harness to its ACP entry point and to how it accepts a model:
+
+| Harness | ACP entry point | Model selection |
+| --- | --- | --- |
+| Cursor | `agent acp` (native) | `--model` on the spawn argv |
+| Codex | `codex-acp` | `session/set_model` |
+| Claude | `claude-agent-acp` | `session/set_config_option` (`configId: "model"`) |
+| Pi | `pi-acp` | `session/set_config_option` (`configId: "model"`) |
+
+Cursor is the only harness that speaks ACP itself today; the others are reached
+through their ACP adapters. Each mapping also names the harness CLI that *could*
+serve ACP natively (`codex`, `claude`, `pi`), and the host prefers that CLI as
+soon as its `--help` advertises an `acp` subcommand — asked rather than
+attempted, because an unknown argument is a prompt to some CLIs. A harness with
+no mapping keeps the tmux send-keys launch, and when no candidate program can be
+spawned the host reports an install hint rather than a spawn error.
+
+A session with no operator-chosen model runs the harness default: Cursor uses
+`CURSOR_DEFAULT_MODEL`, the same model an interactive Cursor task launches with,
+and a bridge harness is left to pick for itself.
 
 A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
 offered for every mapped harness, and session attach admits any task whose agent

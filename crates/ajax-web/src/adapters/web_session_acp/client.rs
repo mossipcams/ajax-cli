@@ -7,7 +7,7 @@
 //! requests from the agent.
 
 use ajax_core::{
-    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch},
+    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch, AcpModelSelection},
     models::AgentClient,
 };
 use serde_json::{json, Value};
@@ -21,7 +21,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(test)]
@@ -151,11 +151,48 @@ impl AcpStdioClient {
         } else {
             client.session_id = client.session_new(worktree_path)?;
         }
+        client.apply_model_in_band(agent, model);
         let report = SpawnReport {
             load_session_advertised,
             resumed,
         };
         Ok((client, report))
+    }
+
+    /// Tell a bridge harness which model to run. Cursor is already pinned on its
+    /// argv; Codex takes `session/set_model`, Claude and Pi take a `model`
+    /// config option. A refusal is not fatal — the harness keeps its own default.
+    fn apply_model_in_band(&mut self, agent: AgentClient, model: Option<&str>) {
+        let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+            return;
+        };
+        if model_uses_cli_default(Some(model)) {
+            return;
+        }
+        let Some(launch) = acp_launch_for_agent(agent) else {
+            return;
+        };
+        let session_id = self.session_id.clone();
+        let (method, params) = match launch.model_selection {
+            AcpModelSelection::SpawnArg => return,
+            AcpModelSelection::SetModel => (
+                "session/set_model",
+                json!({ "sessionId": session_id, "modelId": model }),
+            ),
+            AcpModelSelection::ConfigOption => (
+                "session/set_config_option",
+                json!({ "sessionId": session_id, "configId": "model", "value": model }),
+            ),
+        };
+        if let Err(error) = self.call(method, params) {
+            tracing::warn!(
+                target: "ajax_web",
+                agent = ?agent,
+                model = %model,
+                error = %error,
+                "acp model selection refused"
+            );
+        }
     }
 
     pub fn session_id(&self) -> &str {
@@ -376,6 +413,66 @@ pub(crate) fn acp_args_for_program(
     acp_args_for_candidate(launch, base_args, model)
 }
 
+/// Candidate list for this harness, native endpoint first.
+///
+/// A harness that grows its own `acp` subcommand should be used directly rather
+/// than through its packaged adapter, so the CLI is asked (once per TTL) whether
+/// it advertises one. Asking beats trying: an unknown argument is a prompt to
+/// some CLIs, which would start a real session.
+fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+    if let Some(program) = launch.native_program {
+        if native_acp_advertised(program) {
+            candidates.push((program.to_string(), vec!["acp".to_string()]));
+        }
+    }
+    for (program, base_args) in launch.candidates {
+        candidates.push((
+            (*program).to_string(),
+            base_args.iter().map(|arg| (*arg).to_string()).collect(),
+        ));
+    }
+    candidates
+}
+
+/// True when `<program> --help` lists an `acp` subcommand. Cached: this runs on
+/// every session acquire and the answer only changes when the CLI is upgraded.
+fn native_acp_advertised(program: &str) -> bool {
+    static CACHE: Mutex<Option<HashMap<String, (Instant, bool)>>> = Mutex::new(None);
+    const TTL: Duration = Duration::from_secs(300);
+
+    if let Ok(guard) = CACHE.lock() {
+        if let Some((checked_at, advertised)) =
+            guard.as_ref().and_then(|entries| entries.get(program))
+        {
+            if checked_at.elapsed() < TTL {
+                return *advertised;
+            }
+        }
+    }
+
+    let advertised = Command::new(program)
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with("acp ") || line == "acp"
+            })
+        });
+
+    if let Ok(mut guard) = CACHE.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(program.to_string(), (Instant::now(), advertised));
+    }
+    advertised
+}
+
 fn spawn_acp_process(
     agent: AgentClient,
     worktree_path: &Path,
@@ -400,9 +497,10 @@ fn spawn_acp_process(
     let Some(launch) = acp_launch_for_agent(agent) else {
         return Err(format!("no ACP mapping for agent {agent:?}"));
     };
-    for (program, base_args) in launch.candidates {
-        let args = acp_args_for_program(launch, base_args, model);
-        let mut command = Command::new(program);
+    for (program, base_args) in acp_candidates(launch) {
+        let base_args: Vec<&str> = base_args.iter().map(String::as_str).collect();
+        let args = acp_args_for_program(launch, &base_args, model);
+        let mut command = Command::new(&program);
         command.args(&args);
         command
             .current_dir(worktree_path)

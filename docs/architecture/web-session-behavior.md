@@ -21,7 +21,12 @@ existing paths.
   entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
   `NotOrchestrationChat`.
 - The model chosen when the task was created is stored on the task and used for
-  its session unless the socket pins a different one.
+  its session unless the socket pins a different one. With neither, Cursor runs
+  `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
+- Cursor takes its model on the spawn argv; Codex takes `session/set_model` and
+  Claude and Pi take `session/set_config_option` once the session exists. A
+  harness that refuses the selection keeps its own default and the session
+  continues.
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
 

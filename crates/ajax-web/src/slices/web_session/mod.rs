@@ -102,6 +102,13 @@ fn default_session_model() -> String {
     "auto".to_string()
 }
 
+/// Model a harness runs when neither the socket nor the task pins one. Cursor
+/// gets the Ajax default (the same one an interactive Cursor task launches
+/// with); a bridge harness has none here and picks for itself.
+fn harness_default_model(agent: AgentClient) -> Option<&'static str> {
+    acp_launch_for_agent(agent).and_then(|launch| launch.default_model)
+}
+
 /// Normalize a client-supplied model id for ACP spawn.
 /// Empty / whitespace → `auto`. Rejects control chars, spaces, and oversized ids.
 pub fn normalize_session_model(raw: &str) -> Result<String, String> {
@@ -405,13 +412,14 @@ pub fn prepare_task_session<R: Registry>(
     }
 
     // The browser may pin a model per socket; otherwise the task's own choice
-    // (made when it was created) wins over the bare default.
+    // (made when it was created) wins, then the harness default.
     let model = match normalize_session_model(model) {
         Ok(model) if model != default_session_model() => model,
         _ => task
             .session_model()
             .map(str::to_string)
-            .unwrap_or_else(default_session_model),
+            .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
+            .unwrap_or_default(),
     };
 
     Ok(SessionAttachPlan {

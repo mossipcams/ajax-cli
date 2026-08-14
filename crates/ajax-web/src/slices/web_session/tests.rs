@@ -14,7 +14,9 @@ fn prepare_task_session_returns_worktree_for_cursor_task() {
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.qualified_handle, "web/fix-login");
-    assert_eq!(plan.model, "auto");
+    // A Cursor session runs the same model an interactive Cursor task launches
+    // with, not the bare `auto` sentinel.
+    assert_eq!(plan.model, ajax_core::adapters::CURSOR_DEFAULT_MODEL);
     assert!(plan
         .worktree_path
         .ends_with("ajax-web-session-test-fix-login"));
@@ -31,6 +33,39 @@ fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
     assert_eq!(error, SessionRouteError::NotOrchestrationChat);
+}
+
+// A bridge harness has no Ajax-side default: it picks for itself unless the
+// operator chose a model when the task was created.
+#[test]
+fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    task.set_skip_interactive_agent(true);
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-codex-default");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    assert_eq!(plan.model, "");
+}
+
+#[test]
+fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("gpt-5.6-sol[high]"));
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-codex-stored");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    assert_eq!(plan.model, "gpt-5.6-sol[high]");
 }
 
 #[test]

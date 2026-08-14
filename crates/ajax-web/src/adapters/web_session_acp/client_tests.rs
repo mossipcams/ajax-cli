@@ -124,7 +124,7 @@ fn bridge_acp_args_never_carry_a_model_flag() {
     for agent in [AgentClient::Codex, AgentClient::Claude, AgentClient::Pi] {
         let launch = ajax_core::adapters::acp_launch_for_agent(agent).expect("bridge acp launch");
         assert!(
-            !launch.model_pins_at_spawn,
+            !launch.model_pins_at_spawn(),
             "{agent:?} must not pin at spawn"
         );
         assert!(
@@ -132,6 +132,110 @@ fn bridge_acp_args_never_carry_a_model_flag() {
             "{agent:?} argv must stay bare"
         );
     }
+}
+
+// Native first: a harness that grows its own `acp` subcommand must be used
+// directly instead of its packaged adapter. Recorded per harness in core.
+#[test]
+fn every_bridge_harness_names_the_cli_that_could_speak_acp_natively() {
+    use ajax_core::adapters::acp_launch_for_agent;
+
+    assert_eq!(
+        acp_launch_for_agent(AgentClient::Cursor)
+            .expect("cursor")
+            .native_program,
+        None,
+        "cursor's candidates are already its own binary"
+    );
+    for (agent, program) in [
+        (AgentClient::Codex, "codex"),
+        (AgentClient::Claude, "claude"),
+        (AgentClient::Pi, "pi"),
+    ] {
+        assert_eq!(
+            acp_launch_for_agent(agent).expect("bridge").native_program,
+            Some(program),
+            "{agent:?} should prefer its own CLI once it advertises acp"
+        );
+    }
+}
+
+// Each harness family takes its model a different way; the bridges would
+// silently keep their own default if the client skipped the in-band call.
+#[test]
+fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
+    use ajax_core::adapters::{acp_launch_for_agent, AcpModelSelection};
+
+    assert_eq!(
+        acp_launch_for_agent(AgentClient::Codex)
+            .expect("codex")
+            .model_selection,
+        AcpModelSelection::SetModel
+    );
+    for agent in [AgentClient::Claude, AgentClient::Pi] {
+        assert_eq!(
+            acp_launch_for_agent(agent).expect("bridge").model_selection,
+            AcpModelSelection::ConfigOption,
+            "{agent:?} selects its model through a config option"
+        );
+    }
+
+    let script = fake_acp_fixture();
+    for (agent, expected) in [
+        (AgentClient::Codex, "model:session/set_model:composer-2.5"),
+        (
+            AgentClient::Claude,
+            "model:session/set_config_option:composer-2.5",
+        ),
+    ] {
+        let dir = scratch_dir(&format!("model-in-band-{agent:?}"));
+        with_test_acp_program(&script, || {
+            let (client, _report) =
+                AcpStdioClient::spawn(agent, &dir, Some("composer-2.5"), None).expect("spawn");
+            let mut seen = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match client.wait_event(Duration::from_millis(200)) {
+                    Some(AcpClientEvent::SessionUpdate(update)) => {
+                        seen.push(update.to_string());
+                        if seen.iter().any(|text| text.contains(expected)) {
+                            return;
+                        }
+                    }
+                    Some(_) => {}
+                    None => {}
+                }
+            }
+            panic!("{agent:?} never selected its model in band; saw {seen:?}");
+        });
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+// Cursor pins on argv, so it must not also ask over the wire.
+#[test]
+fn spawn_does_not_select_in_band_for_cursor() {
+    let dir = scratch_dir("model-cursor-argv");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some("composer-2.5"), None)
+                .expect("spawn");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            if let Some(AcpClientEvent::SessionUpdate(update)) =
+                client.wait_event(Duration::from_millis(100))
+            {
+                assert!(
+                    !update.to_string().contains("model:session/"),
+                    "cursor must not select in band: {update}"
+                );
+            }
+        }
+    });
+
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
