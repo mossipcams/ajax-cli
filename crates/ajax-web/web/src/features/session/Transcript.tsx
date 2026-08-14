@@ -29,7 +29,7 @@ const Row = memo(function Row({
         data-testid="session-message-agent"
         {...(live ? { "data-live": "true" } : {})}
       >
-        <Markdown source={entry.text} smooth={live} />
+        <Markdown source={entry.text} />
       </article>
     );
   }

@@ -208,6 +208,25 @@ fn map_agent_message_chunk_to_browser_message() {
 }
 
 #[test]
+fn map_agent_message_chunk_preserves_newline_only_delta() {
+    let update = serde_json::json!({
+        "sessionId": "sess_1",
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "\n" }
+        }
+    });
+    let events = map_acp_session_update(&update);
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "\n".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn cancel_message_defaults_keep_queue_false() {
     let msg: SessionClientMessage = serde_json::from_str(r#"{"type":"cancel"}"#).expect("cancel");
     assert_eq!(msg, SessionClientMessage::Cancel { keep_queue: false });

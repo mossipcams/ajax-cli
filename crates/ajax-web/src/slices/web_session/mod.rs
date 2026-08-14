@@ -321,7 +321,7 @@ pub fn map_acp_client_request(method: &str, params: &Value) -> Option<SessionSer
 }
 
 fn message_event(role: &str, text: String) -> Vec<SessionServerEvent> {
-    if text.trim().is_empty() {
+    if text.is_empty() {
         return Vec::new();
     }
     vec![SessionServerEvent::Message {
