@@ -69,10 +69,10 @@ These paths are outside this task and must remain untouched.
 - [x] Rewrite root `AGENTS.md` as the concise shared contract.
 - [x] Validate requirement coverage, referenced paths, size reduction, diff
   scope, and unchanged application/test/workflow files.
-- [ ] Create an isolated PR worktree and commit only the approved documentation
+- [x] Create an isolated PR worktree and commit only the approved documentation
   changes through the repository's local verification gate.
-- [ ] Push the branch, create the PR, and wait for GitHub checks to finish.
-- [ ] Apply the committed documentation delta to every pre-existing Ajax
+- [x] Push the branch and create the PR.
+- [x] Apply the committed documentation delta to every pre-existing Ajax
   worktree without overwriting unrelated local changes.
 
 ## Validation
@@ -116,6 +116,22 @@ These paths are outside this task and must remain untouched.
   with `fatal: this operation must be run in a work tree` because this checkout's
   `.git/config` has `core.bare=true`; explicit `--git-dir=.git --work-tree=.`
   status and diff commands succeeded.
+- `npm ci`: exit 0 and installed the locked toolchain; npm reported three
+  existing high-severity dependency advisories and no lockfile was changed.
+- `npm run web:build`: exit 0; the embedded bundle had no generated diff.
+- `git commit -m 'chore(agent): reduce root AGENTS context'`: exit 0 through
+  the Husky hook. Its web build, staged file-size check, `npm run verify`,
+  release build, and locked `cargo install` all passed.
+- Pushed `chore/trim-agent-contract` and created
+  <https://github.com/mossipcams/ajax-cli/pull/878>.
+- The canonical patch applied directly to five registered worktrees. The
+  `ajax-chat` branch had an older committed `AGENTS.md`, so its unmodified
+  copy was replaced after the remaining patch passed `git apply --check`;
+  unrelated active `architecture.md`, application, test, and generated-asset
+  edits were preserved.
+- A SHA-256/content assertion passed for the canonical agent documents and the
+  architecture PR-gate link across the bare root and all six pre-existing
+  registered worktrees.
 
 ## Deviations
 
