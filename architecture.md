@@ -236,7 +236,8 @@ Slice names for `verify:slice`: core verbs
 `start|resume|review|repair|ship|drop_task|sweep_cleanup`; web
 `operate|cockpit|terminal|install`; plus `cli` / `core` / `web` / `arch`.
 
-Full gate before opening a PR: `npm run verify` (see `AGENTS.md`).
+Full gate before opening a PR: see
+[`docs/agent/pull-requests.md`](docs/agent/pull-requests.md#local-verification-gate-before-a-pr).
 
 ## Navigation Map
 
