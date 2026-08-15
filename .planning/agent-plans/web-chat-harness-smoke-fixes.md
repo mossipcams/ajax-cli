@@ -49,7 +49,7 @@
   full access to `session/set_config_option`, and remove legacy mode handling.
 - [x] Task 14: add a failing Settings regression and disclose full tool access
   without approval prompts on the orchestration-chat toggle.
-- [ ] Task 15: update architecture, rebuild assets, run focused and broad
+- [x] Task 15: update architecture, rebuild assets, run focused and broad
   verification, and update PR #890 through CI.
 
 ## Validation
