@@ -15,7 +15,7 @@ interface Props {
   selectedProject?: string | null;
   onClose?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
-  onOpenTask?: (handle: string) => void;
+  onOpenTask?: (handle: string, cockpit?: BrowserCockpitView) => void;
 }
 
 const LAST_AGENT_KEY = "ajax.newTask.agent";
@@ -76,6 +76,12 @@ export default function NewTaskSheet({
   const [dragOffset, setDragOffset] = useState(0);
   const sheetRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (repos.length && !repos.some((option) => option.name === repo)) {
+      setRepo(initialRepo(repos, selectedProject));
+    }
+  }, [repo, repos, selectedProject]);
 
   // Focus restore is ours, not Radix's: modal DialogContent always preventDefaults
   // onCloseAutoFocus and focuses its triggerRef, and this sheet has no Dialog.Trigger,
@@ -141,7 +147,9 @@ export default function NewTaskSheet({
         return;
       }
       savePrefs();
-      onOpenTask?.(startTaskHandle(repo, title));
+      const handle = startTaskHandle(repo, title);
+      if (result.response.cockpit) onOpenTask?.(handle, result.response.cockpit);
+      else onOpenTask?.(handle);
       onClose?.();
     } catch {
       setError("Action failed — network error");

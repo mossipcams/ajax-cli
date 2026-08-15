@@ -1,6 +1,6 @@
 use super::hub::{
-    already_noted, context_reset_note, map_request_finished, permission_response,
-    slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
+    already_noted, context_reset_note, map_acp_session_update_with_startup, map_request_finished,
+    permission_response, slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
 };
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -203,6 +203,26 @@ fn drain_maps_session_update_notifications() {
     });
     let events = map_acp_session_update(&update);
     assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn pi_startup_info_is_a_note_instead_of_agent_prose() {
+    let startup = "pi v0.80.10 ---\nContext\n/repo/AGENTS.md";
+    let update = json!({
+        "sessionId": "sess",
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": startup }
+        }
+    });
+
+    assert_eq!(
+        map_acp_session_update_with_startup(&update, Some(startup)),
+        vec![SessionServerEvent::Message {
+            role: "note".to_string(),
+            text: startup.to_string(),
+        }]
+    );
 }
 
 #[test]

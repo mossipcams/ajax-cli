@@ -288,8 +288,16 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
       // old thread into a column of "Status: running".
       return { ...state, status: event.state.trim() || null };
 
-    case "turn_end":
-      return settleTurn(state);
+    case "turn_end": {
+      const settled = settleTurn(state);
+      return event.stopReason?.toLowerCase() === "error"
+        ? push(settled, {
+            kind: "note",
+            tone: "error",
+            text: "The agent stopped without a response. Check the selected model or try again.",
+          })
+        : settled;
+    }
 
     case "artifact":
       // Unknown ACP update kinds are not conversation. Drop them rather than

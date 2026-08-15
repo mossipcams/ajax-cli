@@ -9,7 +9,8 @@ use agent_client_protocol::{
             LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionKind,
             PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
             RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
-            SessionNotification, SetSessionConfigOptionRequest, TextContent,
+            SessionModeState, SessionNotification, SetSessionConfigOptionRequest,
+            SetSessionModeRequest, TextContent,
         },
         ProtocolVersion,
     },
@@ -249,16 +250,21 @@ async fn initialize_session(
         .is_some();
     let mut resumed = false;
     let mut session_id = None;
+    let mut modes = None;
     if let Some(resume_id) = resume_session_id {
-        let mut restored = false;
         if resume_advertised {
-            restored = send_resume(connection, resume_id, cwd).await;
+            if let Some(response) = send_resume(connection, resume_id, cwd).await {
+                resumed = true;
+                modes = response.modes;
+            }
         }
-        if !restored && load_session_advertised {
-            restored = send_load(connection, resume_id, cwd).await;
+        if !resumed && load_session_advertised {
+            if let Some(response) = send_load(connection, resume_id, cwd).await {
+                resumed = true;
+                modes = response.modes;
+            }
         }
-        if restored {
-            resumed = true;
+        if resumed {
             session_id = Some(resume_id.to_string());
         }
     }
@@ -277,9 +283,11 @@ async fn initialize_session(
             .map_err(|error| format!("ACP session/new failed: {error}"))?;
             let value = serde_json::to_value(&response)
                 .map_err(|error| format!("invalid session/new response: {error}"))?;
+            modes = response.modes.clone();
             (response.session_id.to_string(), value)
         }
     };
+    apply_permission_mode(connection, agent, &session_id, modes.as_ref()).await;
     apply_model(connection, agent, &session_id, model).await;
 
     Ok(ConnectionReady {
@@ -290,36 +298,82 @@ async fn initialize_session(
     })
 }
 
-async fn send_resume(connection: &ConnectionTo<Agent>, session_id: &str, cwd: &Path) -> bool {
-    matches!(
-        tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            connection
-                .send_request(ResumeSessionRequest::new(
-                    session_id.to_string(),
-                    cwd.to_path_buf()
-                ))
-                .block_task(),
-        )
-        .await,
-        Ok(Ok(_))
+async fn send_resume(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    cwd: &Path,
+) -> Option<agent_client_protocol::schema::v1::ResumeSessionResponse> {
+    tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        connection
+            .send_request(ResumeSessionRequest::new(
+                session_id.to_string(),
+                cwd.to_path_buf(),
+            ))
+            .block_task(),
     )
+    .await
+    .ok()?
+    .ok()
 }
 
-async fn send_load(connection: &ConnectionTo<Agent>, session_id: &str, cwd: &Path) -> bool {
-    matches!(
-        tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            connection
-                .send_request(LoadSessionRequest::new(
-                    session_id.to_string(),
-                    cwd.to_path_buf()
-                ))
-                .block_task(),
-        )
-        .await,
-        Ok(Ok(_))
+async fn send_load(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    cwd: &Path,
+) -> Option<agent_client_protocol::schema::v1::LoadSessionResponse> {
+    tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        connection
+            .send_request(LoadSessionRequest::new(
+                session_id.to_string(),
+                cwd.to_path_buf(),
+            ))
+            .block_task(),
     )
+    .await
+    .ok()?
+    .ok()
+}
+
+pub(super) fn preferred_permission_mode(
+    agent: AgentClient,
+    modes: Option<&SessionModeState>,
+) -> Option<&'static str> {
+    let expected = match agent {
+        AgentClient::Codex => "agent-full-access",
+        AgentClient::Claude => "bypassPermissions",
+        AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => return None,
+    };
+    modes?
+        .available_modes
+        .iter()
+        .any(|mode| mode.id.0.as_ref() == expected)
+        .then_some(expected)
+}
+
+async fn apply_permission_mode(
+    connection: &ConnectionTo<Agent>,
+    agent: AgentClient,
+    session_id: &str,
+    modes: Option<&SessionModeState>,
+) {
+    let Some(mode) = preferred_permission_mode(agent, modes) else {
+        return;
+    };
+    if modes.is_some_and(|state| state.current_mode_id.0.as_ref() == mode) {
+        return;
+    }
+    let result = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        connection
+            .send_request(SetSessionModeRequest::new(session_id.to_string(), mode))
+            .block_task(),
+    )
+    .await;
+    if !matches!(result, Ok(Ok(_))) {
+        tracing::warn!(target: "ajax_web", agent = ?agent, mode, "ACP permission mode refused");
+    }
 }
 
 async fn apply_model(

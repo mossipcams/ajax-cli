@@ -267,6 +267,21 @@ describe("NewTaskSheet", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("adopts the first repository when repository data arrives after opening", async () => {
+    stubCatalog();
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const { rerender } = render(<NewTaskSheet repos={[]} />);
+
+    rerender(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Late repos" } });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].repo).toBe("web");
+    vi.unstubAllGlobals();
+  });
+
   it("opens the new task route on successful start", async () => {
     vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     const onOpenTask = vi.fn();

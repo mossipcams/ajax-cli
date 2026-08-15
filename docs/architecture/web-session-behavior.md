@@ -32,6 +32,13 @@ existing paths.
   continues.
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
+- Ajax orchestration sessions are trusted local automation. After session
+  creation or restore, the host selects an exact, advertised non-interactive
+  mode for harnesses whose stable mode id is known: `agent-full-access` for
+  Codex and `bypassPermissions` for Claude. It never infers a security mode
+  from its display name and does not reinterpret Pi thinking modes or unknown
+  Cursor modes. An unavailable or refused mode keeps the standard operator
+  permission flow as the safe fallback.
 
 ## Queue and cancellation across WebSocket reconnect
 
@@ -78,6 +85,17 @@ existing paths.
   `permission_resolved` in the host transcript.
 - Reconnect or full page reload replay must not resurrect a permission prompt
   whose `requestId` already has a matching `permission_resolved` entry.
+
+## In-flight activity freshness
+
+- The host-reported unresolved prompt remains the only authority for whether a
+  turn is in flight; browser timers do not alter task or session lifecycle.
+- While a turn is in flight, the live head measures time since the most recent
+  ACP event. After one minute without an event it says `No recent activity` and
+  shows the elapsed minutes while preserving Stop. A later event resets the
+  indicator, and turn completion removes it.
+- This is a freshness warning, not a claim that the agent is stalled: stable
+  ACP v1 has no portable stalled-state signal.
 
 ## Duplicate process and prompt prevention
 

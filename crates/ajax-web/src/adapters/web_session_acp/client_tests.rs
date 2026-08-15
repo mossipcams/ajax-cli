@@ -1,9 +1,10 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
+use super::sdk_connection::preferred_permission_mode;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
-    v1::{AgentCapabilities, InitializeResponse, NewSessionRequest},
+    v1::{AgentCapabilities, InitializeResponse, NewSessionRequest, SessionMode, SessionModeState},
     ProtocolVersion,
 };
 use ajax_core::models::AgentClient;
@@ -78,6 +79,48 @@ fn load_session_advertised_from_initialize_result() {
             .agent_capabilities
             .load_session
     );
+}
+
+#[test]
+fn trusted_permission_mode_must_be_exact_and_advertised() {
+    let modes = SessionModeState::new(
+        "default",
+        vec![
+            SessionMode::new("default", "Default"),
+            SessionMode::new("agent-full-access", "Full Access"),
+            SessionMode::new("bypassPermissions", "Bypass Permissions"),
+            SessionMode::new("high", "High Thinking"),
+        ],
+    );
+
+    assert_eq!(
+        preferred_permission_mode(AgentClient::Codex, Some(&modes)),
+        Some("agent-full-access")
+    );
+    assert_eq!(
+        preferred_permission_mode(AgentClient::Claude, Some(&modes)),
+        Some("bypassPermissions")
+    );
+    assert_eq!(
+        preferred_permission_mode(AgentClient::Pi, Some(&modes)),
+        None
+    );
+    assert_eq!(
+        preferred_permission_mode(AgentClient::Cursor, Some(&modes)),
+        None
+    );
+    assert_eq!(
+        preferred_permission_mode(
+            AgentClient::Codex,
+            Some(&SessionModeState::new(
+                "default",
+                vec![SessionMode::new("full-access", "Full Access")],
+            )),
+        ),
+        None,
+        "display names and similar IDs must not trigger a security mode"
+    );
+    assert_eq!(preferred_permission_mode(AgentClient::Codex, None), None);
 }
 
 /// Cursor validates `session/new` params and rejects a missing

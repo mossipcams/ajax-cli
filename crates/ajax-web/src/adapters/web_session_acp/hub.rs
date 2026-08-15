@@ -627,10 +627,14 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
     let mut events = Vec::new();
     let mut host_exited = false;
     let mut prompt_finished = false;
+    let startup_info = client
+        .session_new_result()
+        .pointer("/_meta/piAcp/startupInfo")
+        .and_then(Value::as_str);
     while let Some(event) = client.poll_event() {
         match event {
             AcpClientEvent::SessionUpdate(params) => {
-                events.extend(map_acp_session_update(&params));
+                events.extend(map_acp_session_update_with_startup(&params, startup_info));
             }
             AcpClientEvent::ClientRequest { id, method, params } => {
                 if let Some(mut mapped) = map_acp_client_request(&method, &params) {
@@ -667,6 +671,21 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
         }
     }
     (events, host_exited, prompt_finished)
+}
+
+pub(crate) fn map_acp_session_update_with_startup(
+    params: &Value,
+    startup_info: Option<&str>,
+) -> Vec<SessionServerEvent> {
+    let mut events = map_acp_session_update(params);
+    for event in &mut events {
+        if let SessionServerEvent::Message { role, text } = event {
+            if role == "agent" && startup_info == Some(text.as_str()) {
+                *role = "note".to_string();
+            }
+        }
+    }
+    events
 }
 
 /// A finished `session/prompt` is the only signal the browser gets that the

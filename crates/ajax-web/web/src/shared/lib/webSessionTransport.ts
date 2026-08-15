@@ -157,6 +157,7 @@ export function connectWebSessionTransport(
     if (!parsed) return;
     if (parsed.type === "ready") {
       ready = true;
+      callbacks.onEvent(parsed);
       const nextModel =
         typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
       callbacks.onReady(nextModel);
@@ -188,6 +189,7 @@ export function connectWebSessionTransport(
   // never schedule reconnect twice.
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
+    if (disposed) return;
     pendingPrompts.length = 0;
     callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });

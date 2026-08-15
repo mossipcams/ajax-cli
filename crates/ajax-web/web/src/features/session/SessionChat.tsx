@@ -137,6 +137,7 @@ export default function SessionChat({
   });
   // Read inside the resize observer without resubscribing on every pin flip.
   const pinnedRef = useRef(true);
+  const lastActivityAtRef = useRef(Date.now());
 
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [draft, setDraft] = useState("");
@@ -148,6 +149,12 @@ export default function SessionChat({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [followUpQueued, setFollowUpQueued] = useState(false);
+  const [activityAgeMs, setActivityAgeMs] = useState(0);
+
+  const markActivity = useCallback(() => {
+    lastActivityAtRef.current = Date.now();
+    setActivityAgeMs(0);
+  }, []);
 
   starterRef.current = starterContext;
   detailRef.current = detail;
@@ -169,14 +176,19 @@ export default function SessionChat({
     transportRef,
     connectedRef,
     everOpenedRef,
+    onActivity: markActivity,
     setConnected,
     setEverOpened,
   });
 
   useEffect(() => {
-    if (!handle) return;
-    dispatch({ type: "reset" });
-  }, [handle]);
+    if (!state.busy) return;
+    const timer = window.setInterval(
+      () => setActivityAgeMs(Date.now() - lastActivityAtRef.current),
+      30_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [state.busy]);
 
   // Seeded from an effect rather than from onReady: a transport that reports
   // ready synchronously does so before transportRef is assigned, which silently
@@ -191,13 +203,14 @@ export default function SessionChat({
     if (!transport) return;
     const brief = formatSessionBrief(starter);
     try {
+      markActivity();
       transport.sendPrompt(brief);
     } catch {
       return;
     }
     dispatch({ type: "prompt", text: brief });
     sessionStorage.setItem(sessionSeededStorageKey(handle), "1");
-  }, [connected, handle]);
+  }, [connected, handle, markActivity]);
 
   // Follow the live edge only while the operator is already at it. Yanking the
   // viewport back mid-read is what made a streaming turn impossible to follow.
@@ -284,6 +297,7 @@ export default function SessionChat({
     }
 
     transportRef.current?.sendPrompt(text);
+    if (!state.busy) markActivity();
     dispatch({ type: "prompt", text });
     draftRef.current = "";
     setDraft("");
@@ -340,6 +354,7 @@ export default function SessionChat({
         tool={activeTool(state)}
         planStep={activePlanStep(state.plan)}
         status={state.status}
+        activityAgeMs={state.busy ? activityAgeMs : 0}
         connected={connected}
         actions={
           safeActions.length ? (
