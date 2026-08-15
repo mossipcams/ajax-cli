@@ -13,8 +13,17 @@ async function mockScriptedSession(
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
     socket.onMessage((message) => {
       if (typeof message !== "string") return;
-      const event = JSON.parse(message) as { type?: string; text?: string };
+      const event = JSON.parse(message) as {
+        type?: string;
+        text?: string;
+        clientMessageId?: string;
+      };
       if (event.type !== "prompt" || !event.text) return;
+      if (event.clientMessageId) {
+        socket.send(
+          JSON.stringify({ type: "prompt_accepted", clientMessageId: event.clientMessageId }),
+        );
+      }
       turn += 1;
       if (options.errorTurn) {
         const events = [
