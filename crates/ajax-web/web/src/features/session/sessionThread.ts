@@ -72,6 +72,8 @@ export interface SessionState {
   /** A turn is in flight: the agent owes us output. */
   busy: boolean;
   decision: Decision | null;
+  /** Permission ids answered locally or durably by the host. */
+  resolvedPermissionIds: string[];
   /** Last agent-reported run state, shown in the head rather than appended. */
   status: string | null;
   /** Current-turn tool calls. Head only; summarized into the transcript on settle. */
@@ -93,6 +95,7 @@ export const initialSessionState: SessionState = {
   entries: [],
   busy: false,
   decision: null,
+  resolvedPermissionIds: [],
   status: null,
   tools: [],
   plan: [],
@@ -228,8 +231,17 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     case "prompt":
       return { ...appendProse(state, "user", action.text), busy: true };
 
-    case "decided":
-      return { ...state, decision: null };
+    case "decided": {
+      if (!state.decision) return state;
+      const requestId = state.decision.requestId;
+      return {
+        ...state,
+        decision: null,
+        resolvedPermissionIds: state.resolvedPermissionIds.includes(requestId)
+          ? state.resolvedPermissionIds
+          : [...state.resolvedPermissionIds, requestId],
+      };
+    }
 
     case "event":
       return applyEvent(state, action.event);
@@ -270,6 +282,12 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
     case "permission_request":
       // The decision belongs in the head, where the operator is already
       // looking. It is deliberately not also appended to the transcript.
+      if (
+        state.resolvedPermissionIds.includes(event.requestId) ||
+        state.decision?.requestId === event.requestId
+      ) {
+        return state;
+      }
       return {
         ...state,
         decision: {
@@ -281,10 +299,14 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
 
     case "permission_resolved":
       // Replay after approve/reject must not resurrect the head prompt.
-      if (state.decision?.requestId === event.requestId) {
-        return { ...state, decision: null };
-      }
-      return state;
+      return {
+        ...state,
+        decision:
+          state.decision?.requestId === event.requestId ? null : state.decision,
+        resolvedPermissionIds: state.resolvedPermissionIds.includes(event.requestId)
+          ? state.resolvedPermissionIds
+          : [...state.resolvedPermissionIds, event.requestId],
+      };
 
     case "status":
       // Run state replaces itself in the head. Appending it is what turned the

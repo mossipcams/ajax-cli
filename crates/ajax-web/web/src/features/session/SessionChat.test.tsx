@@ -95,6 +95,8 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
     expect(screen.getByTestId("session-head")).toBeInTheDocument();
     expect(screen.getByTestId("session-composer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument();
   });
 
   it("keeps transcript events replayed before ready", () => {

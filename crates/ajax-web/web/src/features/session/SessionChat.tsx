@@ -37,7 +37,9 @@ import {
   type FormEvent,
   type UIEvent,
 } from "react";
+import type { Terminal } from "@xterm/xterm";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
+import type { TerminalConnection } from "@/shared/lib/terminalConnection";
 import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 import TaskLoadError from "@/features/task/TaskLoadError";
@@ -62,6 +64,7 @@ import { autoGrow } from "./sessionChatChrome";
 import { formatSessionBrief, PIN_THRESHOLD_PX, sessionSeededStorageKey } from "./sessionChatSeed";
 import { useSessionTransport } from "./useSessionTransport";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
 
@@ -118,6 +121,8 @@ export default function SessionChat({
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
+  const speechTermRef = useRef<Terminal | undefined>(undefined);
+  const speechConnectionRef = useRef<TerminalConnection | undefined>(undefined);
   const connectedRef = useRef(false);
   const everOpenedRef = useRef(false);
   const draftRef = useRef("");
@@ -155,6 +160,27 @@ export default function SessionChat({
     lastActivityAtRef.current = Date.now();
     setActivityAgeMs(0);
   }, []);
+
+  const insertSpeechText = useCallback((text: string) => {
+    const current = draftRef.current;
+    const separator = current && !/\s$/.test(current) ? " " : "";
+    const next = `${current}${separator}${text}`;
+    draftRef.current = next;
+    setDraft(next);
+    return true;
+  }, []);
+
+  const {
+    speechModel,
+    micAriaLabel,
+    micArmed,
+    toggleMic,
+  } = useTaskTerminalSpeech({
+    handle: handle ?? "",
+    termRef: speechTermRef,
+    connectionRef: speechConnectionRef,
+    pasteThroughTerm: insertSpeechText,
+  });
 
   starterRef.current = starterContext;
   detailRef.current = detail;
@@ -402,37 +428,64 @@ export default function SessionChat({
           aria-label="Session composer"
           onSubmit={submitComposer}
         >
-          <textarea
-            id={composerId}
-            rows={1}
-            enterKeyHint="send"
-            placeholder={
-              !connected
-                ? everOpened
-                  ? "Reconnecting…"
-                  : "Starting…"
-                : state.busy && followUpQueued
-                  ? "Enter again to stop and send"
-                  : state.busy
-                    ? "Sends after this turn…"
-                    : "Message…"
-            }
-            aria-label="Message"
-            ref={composerRef}
-            value={draft}
-            onChange={(e) => {
-              const next = e.target.value;
-              draftRef.current = next;
-              autoGrow(e.currentTarget, next.length < draft.length);
-              setDraft(next);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendDraft();
+          <div className="session-composer-row">
+            <textarea
+              id={composerId}
+              rows={1}
+              enterKeyHint="send"
+              placeholder={
+                !connected
+                  ? everOpened
+                    ? "Reconnecting…"
+                    : "Starting…"
+                  : state.busy && followUpQueued
+                    ? "Enter again to stop and send"
+                    : state.busy
+                      ? "Sends after this turn…"
+                      : "Message…"
               }
-            }}
-          />
+              aria-label="Message"
+              ref={composerRef}
+              value={draft}
+              onChange={(e) => {
+                const next = e.target.value;
+                draftRef.current = next;
+                autoGrow(e.currentTarget, next.length < draft.length);
+                setDraft(next);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendDraft();
+                }
+              }}
+            />
+            <div className="session-composer-actions">
+              <button
+                type="button"
+                className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}`}
+                aria-label={micArmed ? "Stop voice input" : micAriaLabel}
+                title={micArmed ? "Stop voice input" : micAriaLabel}
+                disabled={!connected || speechModel.state === "connecting" || speechModel.state === "finalizing"}
+                onClick={toggleMic}
+              >
+                Mic
+              </button>
+              <button
+                type="submit"
+                className="session-composer-button session-composer-send"
+                aria-label="Send"
+                disabled={!connected || !draft.trim()}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+          {speechModel.errorMessage || speechModel.state === "listening" ? (
+            <p className="session-speech-status" role="status" aria-live="polite">
+              {speechModel.errorMessage ?? "Listening…"}
+            </p>
+          ) : null}
         </form>
       </div>
 

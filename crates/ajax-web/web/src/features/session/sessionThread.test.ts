@@ -213,6 +213,18 @@ describe("sessionReducer", () => {
     expect(state.decision).toBeNull();
   });
 
+  it("ignores a duplicate permission request after it was answered", () => {
+    const answered = sessionReducer(
+      run([{ type: "permission_request", requestId: "7", title: "Run tests?" }]),
+      { type: "decided" },
+    );
+    const replayed = sessionReducer(answered, {
+      type: "event",
+      event: { type: "permission_request", requestId: "7", title: "Run tests?" },
+    });
+    expect(replayed.decision).toBeNull();
+  });
+
   it("tracks the turn: busy on prompt, settled on turn_end", () => {
     const busy = run([{ prompt: "Fix the test" }]);
     expect(busy.busy).toBe(true);
