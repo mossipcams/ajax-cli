@@ -39,6 +39,11 @@ pub enum SessionServerEvent {
     Ready {
         #[serde(default = "default_session_model")]
         model: String,
+        /// Whether a turn is actually in flight. The transcript alone cannot say:
+        /// replayed history has no turn-start marker, so a trailing host note
+        /// would otherwise leave the browser reading "Working" forever.
+        #[serde(default)]
+        busy: bool,
     },
     #[serde(rename = "message")]
     Message { role: String, text: String },

@@ -1,6 +1,6 @@
 use super::hub::{
-    map_request_finished, permission_response, slot_must_replace, TranscriptLog, WebSessionHub,
-    MAX_IDLE_SESSIONS,
+    already_noted, context_reset_note, map_request_finished, permission_response,
+    slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
 };
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -60,6 +60,26 @@ where
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+// The browser treats an `agent` message as a live turn, so this host note has
+// to be a note — otherwise replaying it leaves the thread reading "Working"
+// with nothing running. Restarts must not stack copies of it either.
+#[test]
+fn the_context_reset_note_is_host_commentary_and_is_written_once() {
+    let note = context_reset_note();
+    let crate::slices::web_session::SessionServerEvent::Message { role, .. } = &note else {
+        panic!("expected a message event, got {note:?}");
+    };
+    assert_eq!(role, "note", "an agent role would mark the thread busy");
+
+    let mut log = TranscriptLog::default();
+    assert!(!already_noted(&log, &note));
+    log.append(vec![note.clone()]);
+    assert!(
+        already_noted(&log, &note),
+        "a second restart must not append the same note again"
+    );
 }
 
 #[test]

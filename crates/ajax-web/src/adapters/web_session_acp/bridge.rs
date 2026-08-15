@@ -35,10 +35,24 @@ pub async fn bridge_task_session_socket(
     }
 
     let mut generation = hub.generation(&handle);
+    let mut cursor = 0usize;
+
+    // Replay first, then `ready`: the transcript has no turn-start marker, so
+    // whatever it implies about a live turn must be overruled by the host's own
+    // answer — otherwise a note written after the last turn reads as "Working".
+    let (replayed, next) = hub.read_from(&handle, cursor);
+    cursor = next;
+    for event in replayed {
+        if !send_event(&mut socket, &event).await {
+            hub.release(&handle);
+            return;
+        }
+    }
     if !send_event(
         &mut socket,
         &SessionServerEvent::Ready {
             model: hub.model(&handle).unwrap_or_else(|| model.clone()),
+            busy: hub.busy(&handle),
         },
     )
     .await
@@ -46,8 +60,6 @@ pub async fn bridge_task_session_socket(
         hub.release(&handle);
         return;
     }
-
-    let mut cursor = 0usize;
 
     loop {
         tokio::select! {
@@ -82,7 +94,8 @@ pub async fn bridge_task_session_socket(
                     generation = current_generation;
                     cursor = 0;
                     let model = hub.model(&handle).unwrap_or_else(|| "auto".to_string());
-                    if !send_event(&mut socket, &SessionServerEvent::Ready { model }).await {
+                    let busy = hub.busy(&handle);
+                    if !send_event(&mut socket, &SessionServerEvent::Ready { model, busy }).await {
                         hub.release(&handle);
                         return;
                     }
@@ -153,7 +166,8 @@ async fn handle_inbound_text(
     match apply_client_message(hub, handle, worktree_path, message, generation) {
         Ok(ApplyClientMessageOutcome::Applied) => ClientHandleResult::Continue,
         Ok(ApplyClientMessageOutcome::ModelChanged { model }) => {
-            let ok = send_event(socket, &SessionServerEvent::Ready { model }).await;
+            // A model swap respawns the child, so nothing is in flight.
+            let ok = send_event(socket, &SessionServerEvent::Ready { model, busy: false }).await;
             if ok {
                 ClientHandleResult::Continue
             } else {

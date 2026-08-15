@@ -244,8 +244,8 @@ impl WebSessionHub {
                     return Ok(());
                 }
                 let mut log = TranscriptLog::from_events(stored.events, stored.dropped);
-                if context_reset_needed(&report, &log) {
-                    let note = context_reset_note();
+                let note = context_reset_note();
+                if context_reset_needed(&report, &log) && !already_noted(&log, &note) {
                     log.append(vec![note.clone()]);
                     store::append_events(
                         &self.state_dir,
@@ -334,6 +334,14 @@ impl WebSessionHub {
             qualified_handle,
         )?;
         Ok(slot.generation)
+    }
+
+    /// True when this task's ACP child is mid-turn or has prompts queued.
+    pub fn busy(&self, handle: &str) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(handle).is_some_and(|slot| {
+            !slot.queued.is_empty() || slot.client.lock().unwrap().prompt_in_flight()
+        })
     }
 
     pub fn model(&self, handle: &str) -> Option<String> {
@@ -554,11 +562,20 @@ fn context_reset_needed(report: &super::client::SpawnReport, log: &TranscriptLog
     !report.resumed && !log.events.is_empty()
 }
 
-fn context_reset_note() -> SessionServerEvent {
+/// Host commentary, not agent output: the browser marks an `agent` message as a
+/// live turn, so a note in that role would leave the thread reading "Working"
+/// with nothing running.
+pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
-        role: "agent".to_string(),
+        role: "note".to_string(),
         text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
     }
+}
+
+/// True when the log already ends with this note. Each restart would otherwise
+/// stack another identical copy on the transcript.
+pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> bool {
+    log.events.last() == Some(note)
 }
 
 fn begin_cancel_slot_client(slot: &SessionSlot) {
@@ -588,8 +605,8 @@ fn install_replaced_client(
     state_dir: &Path,
     handle: &str,
 ) -> Result<(), String> {
-    if context_reset_needed(report, &slot.log) {
-        let note = context_reset_note();
+    let note = context_reset_note();
+    if context_reset_needed(report, &slot.log) && !already_noted(&slot.log, &note) {
         slot.append_to_log(state_dir, handle, vec![note]);
     }
     store::save_meta(state_dir, handle, Some(new_client.session_id()), model);

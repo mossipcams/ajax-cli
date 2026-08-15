@@ -36,6 +36,52 @@ const toolCall = (
   ...overrides,
 });
 
+describe("ready settles the turn state", () => {
+  it("clears a busy thread that replayed history left set", () => {
+    const busy = sessionReducer(initialSessionState, {
+      type: "event",
+      event: { type: "message", role: "agent", text: "working" },
+    });
+    expect(busy.busy).toBe(true);
+
+    const settled = sessionReducer(busy, {
+      type: "event",
+      event: { type: "ready", model: "gpt-5.6-sol", busy: false },
+    });
+
+    expect(settled.busy).toBe(false);
+  });
+
+  it("leaves state alone when the host says nothing about it", () => {
+    const busy = sessionReducer(initialSessionState, {
+      type: "event",
+      event: { type: "message", role: "agent", text: "working" },
+    });
+
+    expect(sessionReducer(busy, { type: "event", event: { type: "ready" } }).busy).toBe(true);
+  });
+});
+
+describe("host notes", () => {
+  it("does not put the thread to work", () => {
+    // Regression: the restart note arrived as role "agent", which left the head
+    // stuck on Working/Thinking with no turn in flight.
+    const state = sessionReducer(initialSessionState, {
+      type: "event",
+      event: {
+        type: "message",
+        role: "note",
+        text: "Model context reset after restart. Prior turns are still visible here.",
+      },
+    });
+
+    expect(state.busy).toBe(false);
+    expect(state.entries.at(-1)).toEqual(
+      expect.objectContaining({ kind: "note", tone: "info" }),
+    );
+  });
+});
+
 describe("sessionReducer", () => {
   it("coalesces consecutive agent chunks into one paragraph", () => {
     const state = run([
