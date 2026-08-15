@@ -81,6 +81,7 @@ interface Props {
   /** In-progress ACP plan step, if any. Not the whole checklist. */
   planStep: string | null;
   status: string | null;
+  activityAgeMs: number;
   connected: boolean;
   /** The task's own actions, rendered by the caller so the head stays free of
    * mutation wiring. Shown only in the `attention` state. */
@@ -101,6 +102,7 @@ export default function LiveHead({
   tool,
   planStep,
   status,
+  activityAgeMs,
   connected,
   actions,
   onBack,
@@ -109,6 +111,7 @@ export default function LiveHead({
   onStop,
   onOpenDetails,
 }: Props) {
+  const quiet = state === "working" && activityAgeMs >= 60_000;
   return (
     <section
       className={`session-head tone-${tone}`}
@@ -123,10 +126,12 @@ export default function LiveHead({
         </button>
         <h1 className="session-title">{title}</h1>
         <span
-          className={`status-dot${state === "working" ? " is-live" : ""}`}
+          className={`status-dot${state === "working" && !quiet ? " is-live" : ""}`}
           aria-hidden="true"
         />
-        <span className="session-head-label">{STATE_LABELS[state]}</span>
+        <span className="session-head-label">
+          {quiet ? "No recent activity" : STATE_LABELS[state]}
+        </span>
         {!connected ? (
           <span className="session-head-offline" data-testid="session-head-offline">
             Reconnecting
@@ -184,6 +189,11 @@ export default function LiveHead({
           ) : null}
           {!tool && !planStep ? (
             <p className="session-head-quiet">{status ?? "Thinking…"}</p>
+          ) : null}
+          {quiet ? (
+            <p className="session-head-quiet" data-testid="session-head-activity-age">
+              Last update {Math.max(1, Math.floor(activityAgeMs / 60_000))}m ago
+            </p>
           ) : null}
         </div>
       ) : null}

@@ -25,6 +25,7 @@ interface Options {
   transportRef: MutableRefObject<WebSessionTransport | undefined>;
   connectedRef: MutableRefObject<boolean>;
   everOpenedRef: MutableRefObject<boolean>;
+  onActivity: () => void;
   setConnected: (connected: boolean) => void;
   setEverOpened: (everOpened: boolean) => void;
 }
@@ -37,6 +38,7 @@ export function useSessionTransport({
   transportRef,
   connectedRef,
   everOpenedRef,
+  onActivity,
   setConnected,
   setEverOpened,
 }: Options): void {
@@ -69,6 +71,8 @@ export function useSessionTransport({
     const open = () => {
       transportRef.current?.dispose();
       transportRef.current = undefined;
+      // Clear before the host replays its durable transcript, never after.
+      dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
@@ -79,14 +83,11 @@ export function useSessionTransport({
             setEverOpened(true);
             reconnecting = false;
             writeSessionModel(nextModel);
-            if (!connectedRef.current) {
-              // Reconnect only: clear before the host transcript replays.
-              dispatch({ type: "reset" });
-            }
             connectedRef.current = true;
             setConnected(true);
           },
           onEvent: (event) => {
+            onActivity();
             // The socket cannot report why an upgrade was refused, so swap its
             // blank failure for the reason the task detail already carries.
             if (event.type === "error" && event.message === OPEN_FAILURE) {

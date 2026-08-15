@@ -76,10 +76,15 @@ describe("connectWebSessionTransport", () => {
     socket.readyState = OPEN_READY_STATE;
     socket.emit("open");
     socket.emit("message", {
-      data: JSON.stringify({ type: "ready", model: "composer-2.5" }),
+      data: JSON.stringify({ type: "ready", model: "composer-2.5", busy: true }),
     } as MessageEvent);
 
     expect(cbs.onReady).toHaveBeenCalledWith("composer-2.5");
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "ready",
+      model: "composer-2.5",
+      busy: true,
+    });
     transport.sendPrompt("Ship it");
     expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
       expect.objectContaining({ type: "prompt", text: "Ship it" }),

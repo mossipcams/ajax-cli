@@ -222,6 +222,7 @@ export default function SettingsView({
             id="orchestration-chat-toggle"
             data-testid="orchestration-chat-toggle"
             type="checkbox"
+            aria-describedby="orchestration-chat-description"
             checked={orchestrationChat}
             onChange={(event) => {
               const enabled = event.target.checked;
@@ -231,6 +232,9 @@ export default function SettingsView({
           />
           Orchestration chat session
         </label>
+        <p id="orchestration-chat-description" className="settings-note">
+          Supported agents run with full tool access and without approval prompts.
+        </p>
       </div>
 
       <div className="settings-section" data-testid="dev-settings">

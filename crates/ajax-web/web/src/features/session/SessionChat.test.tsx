@@ -18,12 +18,15 @@ const transport = {
 };
 
 let emit: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
+let ready: ((model: string) => void) | undefined;
+let autoReady = true;
 
 function stubSessionTransport() {
   vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
     (_handle, callbacks) => {
       emit = callbacks.onEvent;
-      callbacks.onReady("auto");
+      ready = callbacks.onReady;
+      if (autoReady) callbacks.onReady("auto");
       return transport;
     },
   );
@@ -54,6 +57,8 @@ afterEach(() => {
 describe("SessionChat smoke", () => {
   beforeEach(() => {
     emit = undefined;
+    ready = undefined;
+    autoReady = true;
     transport.sendPrompt.mockClear();
     transport.respondPermission.mockClear();
     localStorage.clear();
@@ -73,11 +78,38 @@ describe("SessionChat smoke", () => {
     stubSessionTransport();
   });
 
+  it("keeps replayed chat history when the session becomes ready", () => {
+    autoReady = false;
+    mountChat();
+    send({ type: "message", role: "user", text: "Prior question" });
+    send({ type: "message", role: "agent", text: "Prior answer" });
+
+    act(() => ready?.("auto"));
+
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("Prior question");
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Prior answer");
+  });
+
   it("leads with the live head", () => {
     mountChat();
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
     expect(screen.getByTestId("session-head")).toBeInTheDocument();
     expect(screen.getByTestId("session-composer")).toBeInTheDocument();
+  });
+
+  it("keeps transcript events replayed before ready", () => {
+    vi.restoreAllMocks();
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, callbacks) => {
+        callbacks.onEvent({ type: "message", role: "agent", text: "Earlier reply" });
+        callbacks.onReady("auto");
+        return transport;
+      },
+    );
+
+    mountChat();
+
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Earlier reply");
   });
 
   it("sends composer messages through ACP on Enter", () => {
@@ -106,6 +138,40 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-decision")).toHaveTextContent("Run cargo test?");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(transport.respondPermission).toHaveBeenCalledWith("7", true);
+  });
+
+  // Regression for #889: stable ACP v1 has no stalled signal, so expose event
+  // freshness without changing the host-owned in-flight state.
+  it("shows when a busy turn has stopped producing ACP activity", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
+    mountChat({
+      detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Keep going" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
+
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
+    expect(screen.getByTestId("session-head-activity-age")).toHaveTextContent(
+      "Last update 1m ago",
+    );
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "One more thing" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
+
+    send({ type: "message", role: "thought", text: "Checking files" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
+    send({ type: "turn_end" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");
+    expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("seeds the session brief after transport is ready", () => {

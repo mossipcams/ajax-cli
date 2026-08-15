@@ -187,6 +187,11 @@ describe("SettingsView", () => {
       test_in_stable: false,
     });
     render(<SettingsView />);
+    expect(
+      screen.getByText(
+        "Supported agents run with full tool access and without approval prompts.",
+      ),
+    ).toBeInTheDocument();
     const toggle = screen.getByTestId("orchestration-chat-toggle");
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);

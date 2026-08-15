@@ -229,6 +229,17 @@ describe("sessionReducer", () => {
     expect(settled.busy).toBe(false);
   });
 
+  it("surfaces a turn that ends in error without an agent response", () => {
+    const state = run([{ prompt: "go" }, { type: "turn_end", stopReason: "error" }]);
+
+    expect(state.busy).toBe(false);
+    expect(state.entries[1]).toMatchObject({
+      kind: "note",
+      tone: "error",
+      text: "The agent stopped without a response. Check the selected model or try again.",
+    });
+  });
+
   it("folds a turn's tools into one summary note on settle", () => {
     const state = run([
       toolCall("c1", { kind: "read", status: "completed" }),

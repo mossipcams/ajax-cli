@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -86,6 +86,54 @@ describe("App new-task sheet route coupling", () => {
     localStorage.removeItem("ajax.web.session.orchestrationChat");
   });
 
+  it("opens a newly created session-capable task in orchestration chat", async () => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    const handle = "web/chat-route";
+    const updatedCockpit = {
+      ...cockpit,
+      cards: [
+        ...cockpit.cards,
+        {
+          ...cockpit.cards[0],
+          id: handle,
+          qualified_handle: handle,
+          title: "Chat route",
+          session_capable: true,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks") {
+          return Promise.resolve(jsonResponse({ ok: true, cockpit: updatedCockpit }));
+        }
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [], default: "" }));
+        }
+        if (path.startsWith("/api/tasks/")) {
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: handle, session_capable: true }),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await screen.findByText("Fix login");
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Chat route" } });
+    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+    await screen.findByTestId("new-task-model-page");
+    fireEvent.submit(screen.getByRole("form", { name: "New task" }));
+
+    await waitFor(() => expect(window.location.hash).toBe("#/session/web%2Fchat-route"));
+    localStorage.removeItem("ajax.web.session.orchestrationChat");
+  });
   it("does not show the new-task sheet after starting a task and navigating back to the dashboard", async () => {
     vi.stubGlobal(
       "fetch",
