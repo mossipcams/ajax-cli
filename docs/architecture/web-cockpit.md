@@ -86,6 +86,11 @@ A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
 offered for every mapped harness, and session attach admits any task whose agent
 has an ACP launch **and** whose registry metadata carries the provisioned bit.
 
+Cards and task detail carry that same answer as `session_capable`, so the browser
+opens chat only for a task the host will actually attach. An interactive task
+keeps its agent in tmux and opens its terminal instead; a session URL for such a
+task falls back to the terminal route rather than sitting on a refused socket.
+
 The **New task** sheet is two steps: repository/title/harness, then a model page
 listing what that harness advertises, with its reasoning level beside the model
 list when it has one. `GET /api/session/models?agent=` serves the catalog —

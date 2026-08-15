@@ -16,6 +16,9 @@ existing paths.
 - Provisioned starts skip tmux send-keys but still create the task tmux session.
   Every harness with an ACP entry point (Cursor native, Codex/Claude/Pi via their
   bridges) may use that launch mode; a harness without one cannot.
+- The browser routes a task to chat only when its projection reports
+  `session_capable`; anything else opens the terminal, including a session URL
+  typed or bookmarked for an interactive task.
 - Session attach is only for tasks whose registry metadata records
   `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
   entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409

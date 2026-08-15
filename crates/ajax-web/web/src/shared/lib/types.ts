@@ -131,6 +131,8 @@ export interface BrowserTaskCard {
   status_explanation?: string | null;
   last_activity_unix_secs: number;
   actions: WebAction[];
+  /** True when the task can hold an ACP session rather than a tmux terminal. */
+  session_capable?: boolean;
 }
 
 export interface BrowserCockpitView {
@@ -179,6 +181,8 @@ export interface BrowserTaskDetail {
   created_unix_secs: number;
   last_activity_unix_secs: number;
   agent_attempts: BrowserAgentAttempt[];
+  /** True when the task can hold an ACP session rather than a tmux terminal. */
+  session_capable?: boolean;
 }
 
 export interface StartTaskRequest {

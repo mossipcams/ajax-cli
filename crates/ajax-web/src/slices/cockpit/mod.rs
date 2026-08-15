@@ -37,6 +37,9 @@ pub struct BrowserTaskCard {
     pub attention: ajax_core::ui_state::AttentionBand,
     pub last_activity_unix_secs: u64,
     pub actions: Vec<WebAction>,
+    /// True when this task can hold an ACP session: an interactive task keeps
+    /// its agent in tmux, so opening it as a chat would attach to nothing.
+    pub session_capable: bool,
 }
 
 pub fn browser_cockpit_json<R: Registry>(
@@ -67,8 +70,20 @@ fn host_native_backend() -> BrowserBackend {
     }
 }
 
+/// Whether a session may attach: the same rule the session slice enforces.
+fn session_capable<R: Registry>(
+    context: &CommandContext<R>,
+    id: &ajax_core::models::TaskId,
+) -> bool {
+    context.registry.get_task(id).is_some_and(|task| {
+        task.skip_interactive_agent()
+            && ajax_core::adapters::acp_launch_for_agent(task.selected_agent).is_some()
+    })
+}
+
 fn browser_task_card<R: Registry>(context: &CommandContext<R>, card: &TaskCard) -> BrowserTaskCard {
     BrowserTaskCard {
+        session_capable: session_capable(context, &card.id),
         id: card.id.as_str().to_string(),
         qualified_handle: card.qualified_handle.clone(),
         repo: repo_of_handle(&card.qualified_handle),
@@ -115,6 +130,8 @@ pub struct BrowserTaskDetail {
     pub created_unix_secs: u64,
     pub last_activity_unix_secs: u64,
     pub agent_attempts: Vec<BrowserAgentAttempt>,
+    /// True when this task can hold an ACP session (see [`BrowserTaskCard`]).
+    pub session_capable: bool,
 }
 
 #[derive(Serialize)]
@@ -143,6 +160,8 @@ pub fn browser_task_detail_view<R: Registry>(
     let agent_activity = live_status_summary.clone();
 
     Some(BrowserTaskDetail {
+        session_capable: task.skip_interactive_agent()
+            && ajax_core::adapters::acp_launch_for_agent(task.selected_agent).is_some(),
         qualified_handle: task.qualified_handle(),
         repo: task.repo.clone(),
         title: task.title.clone(),

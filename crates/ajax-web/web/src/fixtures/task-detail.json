@@ -49,5 +49,6 @@
       "completed_unix_secs": 1700001000,
       "outcome": "Done"
     }
-  ]
+  ],
+  "session_capable": false
 }

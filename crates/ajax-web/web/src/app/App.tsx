@@ -265,7 +265,12 @@ export default function App() {
     endTapToFeedback(interactionId, "nav_start");
     // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
     // A single rAF still runs before paint and would keep INP ~400–500ms.
-    const hash = orchestrationChat ? sessionHash(handle) : taskHash(handle);
+    // Only a provisioned (ACP) task can hold a session; an interactive task
+    // keeps its agent in tmux, so chat would open on a socket the host refuses.
+    const sessionCapable = cockpit.data?.cards?.some(
+      (card) => card.qualified_handle === handle && card.session_capable,
+    );
+    const hash = orchestrationChat && sessionCapable ? sessionHash(handle) : taskHash(handle);
     window.setTimeout(() => {
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
@@ -435,6 +440,15 @@ export default function App() {
       go(route.handle ? taskHash(route.handle) : dashboardHash());
     }
   }, [route.kind, route.handle, orchestrationChat]);
+
+  // A session on a task the host will not attach (interactive, or an agent with
+  // no ACP entry point) would sit on a refused socket. Send it to the terminal.
+  useEffect(() => {
+    if (route.kind !== "session" || !route.handle) return;
+    if (detail.status !== "ready" || !detail.data) return;
+    if (detail.data.qualified_handle !== route.handle) return;
+    if (detail.data.session_capable === false) go(taskHash(route.handle));
+  }, [route.kind, route.handle, detail.status, detail.data]);
 
   useEffect(() => {
     const kind = route.kind;
