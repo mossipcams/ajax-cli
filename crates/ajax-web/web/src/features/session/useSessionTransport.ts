@@ -70,6 +70,8 @@ export function useSessionTransport({
     const open = () => {
       transportRef.current?.dispose();
       transportRef.current = undefined;
+      // Clear before the host replays its durable transcript, never after.
+      dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
@@ -80,10 +82,6 @@ export function useSessionTransport({
             setEverOpened(true);
             reconnecting = false;
             writeSessionModel(nextModel);
-            if (!connectedRef.current) {
-              // Reconnect only: clear before the host transcript replays.
-              dispatch({ type: "reset" });
-            }
             connectedRef.current = true;
             setConnected(true);
           },

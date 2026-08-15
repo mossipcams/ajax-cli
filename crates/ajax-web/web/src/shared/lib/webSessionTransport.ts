@@ -159,6 +159,7 @@ export function connectWebSessionTransport(
       ready = true;
       const nextModel =
         typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
+      callbacks.onEvent(parsed);
       callbacks.onReady(nextModel);
       while (pendingPrompts.length > 0) {
         const text = pendingPrompts.shift();
