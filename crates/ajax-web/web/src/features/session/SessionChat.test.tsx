@@ -140,6 +140,9 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-decision")).toHaveTextContent("Run cargo test?");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(transport.respondPermission).toHaveBeenCalledWith("7", true);
+    expect(screen.getByTestId("session-decision")).toBeInTheDocument();
+    send({ type: "permission_resolved", requestId: "7", approved: true });
+    expect(screen.queryByTestId("session-decision")).not.toBeInTheDocument();
   });
 
   // Regression for #889: stable ACP v1 has no stalled signal, so expose event

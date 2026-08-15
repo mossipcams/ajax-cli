@@ -342,7 +342,6 @@ export default function SessionChat({
     const decision = state.decision;
     if (!decision || !connected) return;
     transportRef.current?.respondPermission(decision.requestId, approved);
-    dispatch({ type: "decided" });
   }
 
   if (!handle) return null;
