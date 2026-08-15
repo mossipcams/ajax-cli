@@ -111,14 +111,18 @@ pub fn list_session_models(agent: &str) -> SessionModelsResponse {
     let mut response = fetch_catalog(&key);
     response.harness_version = version.clone();
 
-    if let Ok(mut guard) = CACHE.lock() {
-        guard.get_or_insert_with(HashMap::new).insert(
-            key,
-            Cache {
-                harness_version: version,
-                response: response.clone(),
-            },
-        );
+    // Never cache a failure: a harness that was briefly unreachable would then
+    // stay "not installed" until its version changed, which may be never.
+    if response.error.is_none() && !version.is_empty() {
+        if let Ok(mut guard) = CACHE.lock() {
+            guard.get_or_insert_with(HashMap::new).insert(
+                key,
+                Cache {
+                    harness_version: version,
+                    response: response.clone(),
+                },
+            );
+        }
     }
 
     response
@@ -299,6 +303,18 @@ mod tests {
                 "the cursor catalog should be stored under its harness version"
             );
         }
+    }
+
+    // A harness that cannot be reached must be retried, not remembered: the
+    // fix is usually an install, and the version it would key on never changes.
+    #[test]
+    fn a_failed_catalog_read_is_not_cached() {
+        let failed = list_session_models("other");
+        assert!(failed.error.is_some() || failed.models.is_empty());
+        assert!(
+            !cached_versions().iter().any(|(agent, _)| agent == "other"),
+            "an unreachable harness must not be cached"
+        );
     }
 
     #[test]
