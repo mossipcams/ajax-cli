@@ -18,12 +18,15 @@ const transport = {
 };
 
 let emit: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
+let ready: ((model: string) => void) | undefined;
+let autoReady = true;
 
 function stubSessionTransport() {
   vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
     (_handle, callbacks) => {
       emit = callbacks.onEvent;
-      callbacks.onReady("auto");
+      ready = callbacks.onReady;
+      if (autoReady) callbacks.onReady("auto");
       return transport;
     },
   );
@@ -54,6 +57,8 @@ afterEach(() => {
 describe("SessionChat smoke", () => {
   beforeEach(() => {
     emit = undefined;
+    ready = undefined;
+    autoReady = true;
     transport.sendPrompt.mockClear();
     transport.respondPermission.mockClear();
     localStorage.clear();
@@ -71,6 +76,18 @@ describe("SessionChat smoke", () => {
       }),
     );
     stubSessionTransport();
+  });
+
+  it("keeps replayed chat history when the session becomes ready", () => {
+    autoReady = false;
+    mountChat();
+    send({ type: "message", role: "user", text: "Prior question" });
+    send({ type: "message", role: "agent", text: "Prior answer" });
+
+    act(() => ready?.("auto"));
+
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("Prior question");
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Prior answer");
   });
 
   it("leads with the live head", () => {

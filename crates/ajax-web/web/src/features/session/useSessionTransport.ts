@@ -44,7 +44,6 @@ export function useSessionTransport({
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
-    dispatch({ type: "reset" });
     let disposed = false;
     let handshakeAttempts = 0;
     let reconnectAttempts = 0;
@@ -73,7 +72,8 @@ export function useSessionTransport({
     const open = () => {
       transportRef.current?.dispose();
       transportRef.current = undefined;
-      if (reconnecting) dispatch({ type: "reset" });
+      // Clear before the host replays its durable transcript, never after.
+      dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
