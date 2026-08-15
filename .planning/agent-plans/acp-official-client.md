@@ -149,3 +149,26 @@ not reset or overwrite that delta.
   acceptance criteria remained separate.
 - The operator explicitly requested uninterrupted completion, so the approved
   per-task continuation pauses were waived while red/green evidence was kept.
+
+## PR preparation and conflict resolution
+
+- Existing PR: [#879](https://github.com/mossipcams/ajax-cli/pull/879); the ACP
+  work updates that PR rather than creating a duplicate.
+- Strategy: merge `origin/main` into `ajax/older-task-create` so unrelated
+  user-owned worktree edits remain in place and existing PR history is not
+  rewritten. Safety backup branch created before the merge.
+- `bridge.rs`: the PR side added per-harness acquisition plus authoritative
+  replay/`busy` state; the base side added immediate outbound flushing after
+  inbound messages. The resolution preserves both by routing poll and inbound
+  paths through `flush_outbound`, retaining the agent argument and emitting
+  `busy` on every `ready` event. Discarding either side would regress harness
+  routing or visible chat latency; naively taking both created duplicate poll
+  logic and an obsolete `Ready` shape.
+- `web/dist/app.js`: both sides changed generated bundle output. It was rebuilt
+  from the semantically merged TypeScript sources with `npm run web:build`; no
+  minified code was hand-merged.
+- Focused post-merge validation: bridge tests 3/3, Web Session tests 97/97,
+  and session reducer/chat tests 33/33 passed.
+- The ACP commit and merge-resolution commit both passed the complete Husky
+  pre-commit gate: embedded web rebuild, staged Rust LOC check, `npm run
+  verify`, release `ajax-cli` build, and locked forced install.

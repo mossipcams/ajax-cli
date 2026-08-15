@@ -76,7 +76,22 @@ pub async fn bridge_task_session_socket(
                         )
                         .await
                         {
-                            ClientHandleResult::Continue => {}
+                            // Inbound prompt/cancel/permission: flush log events now
+                            // instead of waiting for the 50ms poll tick.
+                            ClientHandleResult::Continue => {
+                                if !flush_outbound(
+                                    &mut socket,
+                                    &hub,
+                                    &handle,
+                                    &mut cursor,
+                                    &mut generation,
+                                )
+                                .await
+                                {
+                                    hub.release(&handle);
+                                    return;
+                                }
+                            }
                             ClientHandleResult::Stop => {
                                 hub.release(&handle);
                                 return;
@@ -89,26 +104,17 @@ pub async fn bridge_task_session_socket(
                 }
             }
             _ = sleep(Duration::from_millis(EVENT_POLL_MS)) => {
-                let current_generation = hub.generation(&handle);
-                if current_generation != generation {
-                    generation = current_generation;
-                    cursor = 0;
-                    let model = hub.model(&handle).unwrap_or_else(|| "auto".to_string());
-                    let busy = hub.busy(&handle);
-                    if !send_event(&mut socket, &SessionServerEvent::Ready { model, busy }).await {
-                        hub.release(&handle);
-                        return;
-                    }
-                }
-
-                hub.pump(&handle);
-                let (outbound, next) = hub.read_from(&handle, cursor);
-                cursor = next;
-                for event in outbound {
-                    if !send_event(&mut socket, &event).await {
-                        hub.release(&handle);
-                        return;
-                    }
+                if !flush_outbound(
+                    &mut socket,
+                    &hub,
+                    &handle,
+                    &mut cursor,
+                    &mut generation,
+                )
+                .await
+                {
+                    hub.release(&handle);
+                    return;
                 }
             }
         }
@@ -227,6 +233,35 @@ pub(crate) fn apply_client_message(
     }
 }
 
+async fn flush_outbound(
+    socket: &mut WebSocket,
+    hub: &WebSessionHub,
+    handle: &str,
+    cursor: &mut usize,
+    generation: &mut u64,
+) -> bool {
+    let current_generation = hub.generation(handle);
+    if current_generation != *generation {
+        *generation = current_generation;
+        *cursor = 0;
+        let model = hub.model(handle).unwrap_or_else(|| "auto".to_string());
+        let busy = hub.busy(handle);
+        if !send_event(socket, &SessionServerEvent::Ready { model, busy }).await {
+            return false;
+        }
+    }
+
+    hub.pump(handle);
+    let (outbound, next) = hub.read_from(handle, *cursor);
+    *cursor = next;
+    for event in outbound {
+        if !send_event(socket, &event).await {
+            return false;
+        }
+    }
+    true
+}
+
 async fn send_event(socket: &mut WebSocket, event: &SessionServerEvent) -> bool {
     match serde_json::to_string(event) {
         Ok(payload) => socket.send(Message::Text(payload.into())).await.is_ok(),
@@ -237,6 +272,20 @@ async fn send_event(socket: &mut WebSocket, event: &SessionServerEvent) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::web_session_acp::with_test_acp_program;
+    use ajax_core::models::AgentClient;
+    use std::path::PathBuf;
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ajax-web-bridge-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn fake_acp_fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
+    }
 
     #[test]
     fn max_session_frame_bytes_is_4096() {
@@ -258,5 +307,40 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("whitespace"));
+    }
+
+    #[test]
+    fn apply_client_message_prompt_records_user_message_immediately() {
+        let dir = scratch_dir("prompt-flush");
+        let handle = "web/prompt-flush";
+        let hub = WebSessionHub::new(dir.clone());
+        let script = fake_acp_fixture();
+
+        with_test_acp_program(&script, || {
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            let mut generation = hub.generation(handle);
+            apply_client_message(
+                &hub,
+                handle,
+                &dir,
+                SessionClientMessage::Prompt {
+                    text: "hello".to_string(),
+                },
+                &mut generation,
+            )
+            .expect("prompt");
+
+            let (events, _) = hub.read_from(handle, 0);
+            assert!(events.iter().any(|event| {
+                matches!(
+                    event,
+                    SessionServerEvent::Message { role, text }
+                        if role == "user" && text == "hello"
+                )
+            }));
+        });
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
