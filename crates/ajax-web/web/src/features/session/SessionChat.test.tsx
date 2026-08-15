@@ -97,6 +97,21 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-composer")).toBeInTheDocument();
   });
 
+  it("keeps transcript events replayed before ready", () => {
+    vi.restoreAllMocks();
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, callbacks) => {
+        callbacks.onEvent({ type: "message", role: "agent", text: "Earlier reply" });
+        callbacks.onReady("auto");
+        return transport;
+      },
+    );
+
+    mountChat();
+
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Earlier reply");
+  });
+
   it("sends composer messages through ACP on Enter", () => {
     mountChat();
     fireEvent.change(screen.getByLabelText("Message"), {
@@ -123,6 +138,40 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-decision")).toHaveTextContent("Run cargo test?");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(transport.respondPermission).toHaveBeenCalledWith("7", true);
+  });
+
+  // Regression for #889: stable ACP v1 has no stalled signal, so expose event
+  // freshness without changing the host-owned in-flight state.
+  it("shows when a busy turn has stopped producing ACP activity", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
+    mountChat({
+      detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Keep going" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
+
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
+    expect(screen.getByTestId("session-head-activity-age")).toHaveTextContent(
+      "Last update 1m ago",
+    );
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "One more thing" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
+
+    send({ type: "message", role: "thought", text: "Checking files" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
+    send({ type: "turn_end" });
+    expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");
+    expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("seeds the session brief after transport is ready", () => {

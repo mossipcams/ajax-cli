@@ -41,7 +41,7 @@ import {
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
-import type { WebAction } from "@/shared/lib/types";
+import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
 import {
   beginInteraction,
   capturePwaLaunch,
@@ -260,18 +260,18 @@ export default function App() {
     location.hash = hash;
   }
 
-  function openTask(handle: string) {
+  function openTask(handle: string, latestCockpit?: BrowserCockpitView) {
     const interactionId = beginInteraction("open_task");
     endTapToFeedback(interactionId, "nav_start");
     // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
     // A single rAF still runs before paint and would keep INP ~400–500ms.
     // Only a provisioned (ACP) task can hold a session; an interactive task
     // keeps its agent in tmux, so chat would open on a socket the host refuses.
-    const sessionCapable = cockpit.data?.cards?.some(
-      (card) => card.qualified_handle === handle && card.session_capable,
-    );
-    const hash = orchestrationChat && sessionCapable ? sessionHash(handle) : taskHash(handle);
     window.setTimeout(() => {
+      const sessionCapable = (latestCockpit ?? cockpitRef.current.data)?.cards?.some(
+        (card) => card.qualified_handle === handle && card.session_capable,
+      );
+      const hash = orchestrationChat && sessionCapable ? sessionHash(handle) : taskHash(handle);
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
       endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });

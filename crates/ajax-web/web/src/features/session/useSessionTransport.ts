@@ -25,6 +25,7 @@ interface Options {
   transportRef: MutableRefObject<WebSessionTransport | undefined>;
   connectedRef: MutableRefObject<boolean>;
   everOpenedRef: MutableRefObject<boolean>;
+  onActivity: () => void;
   setConnected: (connected: boolean) => void;
   setEverOpened: (everOpened: boolean) => void;
 }
@@ -37,6 +38,7 @@ export function useSessionTransport({
   transportRef,
   connectedRef,
   everOpenedRef,
+  onActivity,
   setConnected,
   setEverOpened,
 }: Options): void {
@@ -86,6 +88,7 @@ export function useSessionTransport({
             setConnected(true);
           },
           onEvent: (event) => {
+            onActivity();
             // The socket cannot report why an upgrade was refused, so swap its
             // blank failure for the reason the task detail already carries.
             if (event.type === "error" && event.message === OPEN_FAILURE) {
