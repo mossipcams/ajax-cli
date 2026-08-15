@@ -215,6 +215,8 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let state_dir = Arc::new(state_dir.clone());
         let hub_dir = state_dir.as_ref().clone();
+        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
+        web_session_hub.start_background_pump();
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -236,7 +238,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub: Arc::new(WebSessionHub::new(hub_dir)),
+            web_session_hub,
         }
     }
 
@@ -278,6 +280,8 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let hub_dir = state_dir.clone();
         let state_dir = Arc::new(state_dir);
+        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
+        web_session_hub.start_background_pump();
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -299,7 +303,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub: Arc::new(WebSessionHub::new(hub_dir)),
+            web_session_hub,
         })
     }
 

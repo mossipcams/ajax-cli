@@ -125,6 +125,23 @@ Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 `WebSessionHub` owns prompt queueing, cancellation, model switching, permission
 answers, and transcript replay cursors; transport layers call hub methods only.
 
+Prompt frames carry a browser-generated `clientMessageId`. The host records a
+`prompt_accepted` event and ignores duplicate IDs, while the browser keeps
+unacknowledged prompts in a session-scoped outbox and retries them after a
+socket drop. A host-owned background pump drains live ACP slots even when no
+browser socket is attached. Transcript events append to JSONL; bounded
+compaction is the only rewrite, and adjacent streamed agent/thought chunks are
+coalesced before persistence.
+
+Reconnects read the current browser model preference for every new socket, so a
+model change cannot be replaced by the value captured by an older effect.
+Incoming ACP v1 notifications remain typed through the host queue. Stable
+message, thought, tool, plan, mode, configuration, session-info, and usage
+updates are mapped explicitly; unsupported capability announcements are
+dropped, and unknown legacy updates remain generic artifacts. Ajax advertises
+no ACP filesystem or terminal client capabilities until worktree-scoped
+handlers exist.
+
 From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by

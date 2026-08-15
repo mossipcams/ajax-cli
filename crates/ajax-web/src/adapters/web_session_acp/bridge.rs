@@ -206,8 +206,14 @@ pub(crate) fn apply_client_message(
     generation: &mut u64,
 ) -> Result<ApplyClientMessageOutcome, String> {
     match message {
-        SessionClientMessage::Prompt { text } => {
-            hub.submit_prompt(handle, text)?;
+        SessionClientMessage::Prompt {
+            text,
+            client_message_id,
+        } => {
+            if client_message_id.trim().is_empty() {
+                return Err("prompt clientMessageId is required".to_string());
+            }
+            hub.submit_prompt_with_id(handle, client_message_id, text)?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
         SessionClientMessage::Cancel { keep_queue } => {
@@ -326,6 +332,7 @@ mod tests {
                 &dir,
                 SessionClientMessage::Prompt {
                     text: "hello".to_string(),
+                    client_message_id: "prompt-1".to_string(),
                 },
                 &mut generation,
             )

@@ -20,6 +20,7 @@ use std::{
 };
 
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
+use agent_client_protocol::schema::v1::SessionNotification;
 
 #[cfg(test)]
 use std::{cell::RefCell, path::PathBuf};
@@ -83,7 +84,8 @@ fn drain_stderr(stderr: impl std::io::Read + Send + 'static, sink: Arc<Mutex<Str
 
 #[derive(Debug, Clone)]
 pub enum AcpClientEvent {
-    SessionUpdate(Value),
+    SessionUpdate(Box<SessionNotification>),
+    UnknownSessionUpdate(Value),
     ClientRequest {
         id: Value,
         method: String,

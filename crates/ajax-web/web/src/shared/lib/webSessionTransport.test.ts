@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import {
   connectWebSessionTransport,
   type WebSessionTransportCallbacks,
@@ -50,6 +50,10 @@ function callbacks(): WebSessionTransportCallbacks {
 }
 
 describe("connectWebSessionTransport", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -77,7 +81,9 @@ describe("connectWebSessionTransport", () => {
 
     expect(cbs.onReady).toHaveBeenCalledWith("composer-2.5");
     transport.sendPrompt("Ship it");
-    expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "Ship it" }));
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "Ship it" }),
+    );
 
     socket.emit("message", {
       data: JSON.stringify({ type: "message", role: "agent", text: "On it" }),
@@ -104,8 +110,67 @@ describe("connectWebSessionTransport", () => {
     expect(socket.sent).toHaveLength(0);
     socket.readyState = OPEN_READY_STATE;
     socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
-    expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "First" }));
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "First" }),
+    );
     transport.dispose();
+  });
+
+  it("assigns prompt ids and handles host acceptance acknowledgements", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport(
+      "web/fix-login",
+      cbs,
+      platformFor(socket),
+      "auto",
+    );
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    transport.sendPrompt("Ship it");
+
+    const prompt = JSON.parse(socket.sent.at(-1) ?? "{}") as Record<string, unknown>;
+    expect(prompt).toMatchObject({ type: "prompt", text: "Ship it" });
+    expect(typeof prompt.clientMessageId).toBe("string");
+
+    socket.emit("message", {
+      data: JSON.stringify({ type: "prompt_accepted", clientMessageId: prompt.clientMessageId }),
+    } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "prompt_accepted",
+      clientMessageId: prompt.clientMessageId,
+    });
+    transport.dispose();
+  });
+
+  it("retries an unacknowledged prompt on a new transport", () => {
+    const firstSocket = fakeSocket();
+    const first = connectWebSessionTransport(
+      "web/fix-login",
+      callbacks(),
+      platformFor(firstSocket),
+    );
+    firstSocket.readyState = OPEN_READY_STATE;
+    firstSocket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    first.sendPrompt("Retry me");
+    const firstPrompt = JSON.parse(firstSocket.sent.at(-1) ?? "{}") as Record<string, string>;
+    first.dispose();
+
+    const secondSocket = fakeSocket();
+    const second = connectWebSessionTransport(
+      "web/fix-login",
+      callbacks(),
+      platformFor(secondSocket),
+    );
+    secondSocket.readyState = OPEN_READY_STATE;
+    secondSocket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(JSON.parse(secondSocket.sent.at(-1) ?? "{}")).toEqual({
+      type: "prompt",
+      text: "Retry me",
+      clientMessageId: firstPrompt.clientMessageId,
+    });
+    second.dispose();
   });
 
   it("sendCancel(true) sends keepQueue on the wire", () => {
@@ -147,7 +212,9 @@ describe("connectWebSessionTransport", () => {
     transport.sendCancel(true);
     socket.readyState = OPEN_READY_STATE;
     socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
-    expect(socket.sent).toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "Queued" }),
+    );
     transport.dispose();
   });
 

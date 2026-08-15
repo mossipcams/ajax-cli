@@ -44,6 +44,11 @@ existing paths.
 - After a WebSocket drop and reconnect, the host replays the durable transcript
   from cursor; queued prompts and in-flight state remain host-owned — reconnect
   must not duplicate or lose queued work that survived on the host.
+- Each browser prompt has a stable `clientMessageId`; the host persists a
+  `prompt_accepted` acknowledgement and dispatches each ID at most once. The
+  browser retries only prompts still absent from that acknowledgement.
+- A host background pump continues draining ACP slots after the last socket
+  closes, so an in-flight or queued turn does not depend on browser presence.
 - Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
 
 ## Model switching across ACP process replacement
@@ -65,6 +70,21 @@ existing paths.
 - If load is unsupported or fails, the JSONL transcript still reloads and exactly
   one agent-visible note states that model context reset; the composer keeps
   working.
+- Transcript events append to JSONL without a per-event full rewrite; bounded
+  compaction preserves absolute replay cursors. Adjacent agent/thought chunks
+  may be coalesced before persistence.
+
+## Reconnect model and ACP capabilities
+
+- Every reconnect reads the current browser model preference and sends it in the
+  next session URL; it never reuses a stale hook-captured value.
+- The ACP client keeps v1 `SessionNotification` values typed through mapping.
+  Message, thought, tool, plan, mode, configuration, session-info, and usage
+  updates have explicit mappings; unsupported capability announcements are
+  ignored by the chat projection.
+- Ajax advertises neither `fs/*` nor `terminal/*` client capabilities. Agents
+  must not depend on those requests until Ajax adds worktree-scoped handlers;
+  the ACP protocol's unsupported-method response remains the boundary.
 
 ## Permission persistence
 

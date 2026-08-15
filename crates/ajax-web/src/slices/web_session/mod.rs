@@ -1,5 +1,9 @@
 //! Browser orchestration-chat wire protocol and ACP update mapping.
 
+use agent_client_protocol::schema::v1::{
+    ContentBlock, ContentChunk, SessionNotification, SessionUpdate, ToolCall, ToolCallStatus,
+    ToolCallUpdate, ToolKind,
+};
 use ajax_core::{
     adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
     registry::Registry,
@@ -14,7 +18,11 @@ pub const SESSION_PROTOCOL_VERSION: u32 = 1;
 #[serde(tag = "type")]
 pub enum SessionClientMessage {
     #[serde(rename = "prompt")]
-    Prompt { text: String },
+    Prompt {
+        text: String,
+        #[serde(rename = "clientMessageId")]
+        client_message_id: String,
+    },
     #[serde(rename = "cancel")]
     Cancel {
         #[serde(default, rename = "keepQueue")]
@@ -47,6 +55,11 @@ pub enum SessionServerEvent {
     },
     #[serde(rename = "message")]
     Message { role: String, text: String },
+    #[serde(rename = "prompt_accepted")]
+    PromptAccepted {
+        #[serde(rename = "clientMessageId")]
+        client_message_id: String,
+    },
     #[serde(rename = "artifact")]
     Artifact {
         kind: String,
@@ -216,6 +229,129 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
             body: serde_json::to_string_pretty(update_body).ok(),
         }],
         _ => Vec::new(),
+    }
+}
+
+/// Map the official ACP v1 notification without erasing its typed update first.
+pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<SessionServerEvent> {
+    match &update.update {
+        SessionUpdate::UserMessageChunk(chunk) => typed_message_event("user", chunk),
+        SessionUpdate::AgentMessageChunk(chunk) => typed_message_event("agent", chunk),
+        SessionUpdate::AgentThoughtChunk(chunk) => typed_message_event("thought", chunk),
+        SessionUpdate::ToolCall(call) => typed_tool_call_event(call),
+        SessionUpdate::ToolCallUpdate(call) => typed_tool_call_update_event(call),
+        SessionUpdate::Plan(plan) => vec![SessionServerEvent::Plan {
+            entries: plan
+                .entries
+                .iter()
+                .filter(|entry| !entry.content.trim().is_empty())
+                .map(|entry| PlanEntry {
+                    content: entry.content.trim().to_string(),
+                    status: plan_status(&entry.status).to_string(),
+                })
+                .collect(),
+        }],
+        SessionUpdate::CurrentModeUpdate(mode) => vec![SessionServerEvent::Status {
+            state: "mode".to_string(),
+            detail: Some(mode.current_mode_id.to_string()),
+        }],
+        SessionUpdate::ConfigOptionUpdate(update) => typed_artifact("config", update),
+        SessionUpdate::SessionInfoUpdate(update) => typed_artifact("session_info", update),
+        SessionUpdate::UsageUpdate(update) => typed_artifact("usage", update),
+        SessionUpdate::AvailableCommandsUpdate(_) => Vec::new(),
+        _ => Vec::new(),
+    }
+}
+
+fn typed_message_event(role: &str, chunk: &ContentChunk) -> Vec<SessionServerEvent> {
+    let ContentBlock::Text(text) = &chunk.content else {
+        return Vec::new();
+    };
+    message_event(role, text.text.clone())
+}
+
+fn typed_tool_call_event(call: &ToolCall) -> Vec<SessionServerEvent> {
+    vec![SessionServerEvent::ToolCall {
+        call_id: call.tool_call_id.to_string(),
+        title: call.title.clone(),
+        kind: tool_kind(call.kind).to_string(),
+        status: tool_status(call.status).to_string(),
+        locations: call
+            .locations
+            .iter()
+            .map(|location| location.path.display().to_string())
+            .collect(),
+    }]
+}
+
+fn typed_tool_call_update_event(call: &ToolCallUpdate) -> Vec<SessionServerEvent> {
+    vec![SessionServerEvent::ToolCall {
+        call_id: call.tool_call_id.to_string(),
+        title: call.fields.title.clone().unwrap_or_default(),
+        kind: call
+            .fields
+            .kind
+            .map(tool_kind)
+            .unwrap_or_default()
+            .to_string(),
+        status: call
+            .fields
+            .status
+            .map(tool_status)
+            .unwrap_or_default()
+            .to_string(),
+        locations: call
+            .fields
+            .locations
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|location| location.path.display().to_string())
+            .collect(),
+    }]
+}
+
+fn typed_artifact<T: Serialize>(kind: &str, update: &T) -> Vec<SessionServerEvent> {
+    vec![SessionServerEvent::Artifact {
+        kind: kind.to_string(),
+        title: None,
+        body: serde_json::to_string_pretty(update).ok(),
+    }]
+}
+
+fn tool_kind(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Read => "read",
+        ToolKind::Edit => "edit",
+        ToolKind::Delete => "delete",
+        ToolKind::Move => "move",
+        ToolKind::Search => "search",
+        ToolKind::Execute => "execute",
+        ToolKind::Think => "think",
+        ToolKind::Fetch => "fetch",
+        ToolKind::SwitchMode => "switch_mode",
+        ToolKind::Other => "other",
+        _ => "other",
+    }
+}
+
+fn tool_status(status: ToolCallStatus) -> &'static str {
+    match status {
+        ToolCallStatus::Pending => "pending",
+        ToolCallStatus::InProgress => "in_progress",
+        ToolCallStatus::Completed => "completed",
+        ToolCallStatus::Failed => "failed",
+        _ => "pending",
+    }
+}
+
+fn plan_status(status: &agent_client_protocol::schema::v1::PlanEntryStatus) -> &'static str {
+    use agent_client_protocol::schema::v1::PlanEntryStatus;
+    match status {
+        PlanEntryStatus::Pending => "pending",
+        PlanEntryStatus::InProgress => "in_progress",
+        PlanEntryStatus::Completed => "completed",
+        _ => "pending",
     }
 }
 

@@ -220,9 +220,10 @@ fn live_cursor_prompt_and_session_load() {
         if let Some(event) = client.wait_event(Duration::from_millis(200)) {
             match event {
                 AcpClientEvent::SessionUpdate(params) => {
-                    let text = params
-                        .pointer("/update/content/text")
-                        .and_then(|v| v.as_str())
+                    let text = serde_json::to_value(&params)
+                        .ok()
+                        .and_then(|value| value.pointer("/update/content/text").cloned())
+                        .and_then(|value| value.as_str().map(str::to_string))
                         .unwrap_or_default();
                     if text.contains("pong") {
                         saw_pong = true;
