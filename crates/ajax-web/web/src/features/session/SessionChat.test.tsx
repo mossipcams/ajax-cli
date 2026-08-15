@@ -87,10 +87,11 @@ describe("SessionChat smoke", () => {
     });
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
     expect(transport.sendPrompt).toHaveBeenCalledWith("Please fix the flaky test");
-    send({ type: "message", role: "user", text: "Please fix the flaky test" });
     expect(screen.getByTestId("session-message-user")).toHaveTextContent(
       "Please fix the flaky test",
     );
+    send({ type: "message", role: "user", text: "Please fix the flaky test" });
+    expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
   it("surfaces a permission request in the head with Approve and Reject", () => {

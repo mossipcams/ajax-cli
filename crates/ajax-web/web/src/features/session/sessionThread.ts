@@ -223,12 +223,10 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     case "reset":
       return initialSessionState;
 
-    // The prompt is not appended here: the host records it in the shared
-    // transcript and streams it back, so one socket cannot show a message the
-    // log does not have — and a reload replays your turns as well as the
-    // agent's. This only marks the turn in flight.
+    // Optimistic operator turn: show the bubble on Enter. The host still owns
+    // the durable transcript; an identical user echo is skipped in appendProse.
     case "prompt":
-      return { ...state, busy: true, proseOpen: false };
+      return { ...appendProse(state, "user", action.text), busy: true };
 
     case "decided":
       return { ...state, decision: null };
