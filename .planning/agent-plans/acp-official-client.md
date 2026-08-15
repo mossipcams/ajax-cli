@@ -172,3 +172,9 @@ not reset or overwrite that delta.
 - The ACP commit and merge-resolution commit both passed the complete Husky
   pre-commit gate: embedded web rebuild, staged Rust LOC check, `npm run
   verify`, release `ajax-cli` build, and locked forced install.
+- CI follow-up: GitHub Nextest failed because the first-run smoke sandbox did
+  not provide the ACP adapter executables that `ajax doctor` now checks. The
+  existing smoke test reproduced the failure with `PATH=/usr/bin:/bin`; adding
+  fake `codex-acp`, `claude-agent-acp`, and `pi-acp` executables made both
+  `cargo test -p ajax-cli --test smoke_user_flows smoke_first_run_health_check`
+  and the sanitized test binary pass 1/1.
