@@ -490,6 +490,7 @@ export default function SessionChat({
 
                     <SessionModelSelect
                       id={`${composerId}-model`}
+                      agent={detail?.agent}
                       value={sessionModel}
                       disabled={state.busy || !connected}
                       onChange={(id) => {

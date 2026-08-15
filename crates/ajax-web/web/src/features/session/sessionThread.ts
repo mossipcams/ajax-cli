@@ -305,6 +305,8 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
       };
 
     case "ready":
-      return state;
+      // The host is the authority on whether a turn is live. Replayed history
+      // has no turn-start marker, so trailing events must not decide it.
+      return event.busy === undefined ? state : { ...state, busy: event.busy };
   }
 }

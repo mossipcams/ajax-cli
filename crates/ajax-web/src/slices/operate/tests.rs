@@ -262,6 +262,7 @@ fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
             agent: "cursor".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap();
@@ -288,6 +289,7 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
             agent: "pi".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap();
@@ -298,6 +300,113 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
         agent_send_keys_line(runner.commands()),
         "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
     );
+}
+
+#[test]
+fn start_task_cursor_agent_command_uses_selected_model() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            request_id: String::new(),
+            orchestration_chat: false,
+            model: Some("composer-2.5".to_string()),
+        },
+    )
+    .unwrap();
+
+    let line = agent_send_keys_line(runner.commands());
+    assert!(
+        line.ends_with("cursor agent --model composer-2.5"),
+        "{line}"
+    );
+}
+
+// A bridge harness takes no model on argv, so the choice is recorded on the
+// task and applied when its ACP session starts.
+#[test]
+fn start_task_stores_the_model_for_a_bridge_harness() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+            request_id: String::new(),
+            orchestration_chat: true,
+            model: Some("gpt-5.6-sol[high]".to_string()),
+        },
+    )
+    .unwrap();
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == "web/fix-login")
+        .expect("task created");
+    assert_eq!(task.session_model(), Some("gpt-5.6-sol[high]"));
+}
+
+#[test]
+fn start_task_rejects_model_for_agent_without_acp() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    let error = super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "aider".to_string(),
+            request_id: String::new(),
+            orchestration_chat: false,
+            model: Some("composer-2.5".to_string()),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        super::OperateError::UnsupportedCapability("unsupported agent")
+    );
+}
+
+#[test]
+fn start_task_rejects_shell_bearing_model_id() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    let error = super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            request_id: String::new(),
+            orchestration_chat: false,
+            model: Some("auto; rm -rf /".to_string()),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        super::OperateError::UnsupportedCapability("unsupported model")
+    );
+    assert!(runner.commands().is_empty());
 }
 
 #[test]
@@ -314,6 +423,7 @@ fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
             agent: "claude".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap();
@@ -338,6 +448,7 @@ fn start_task_creates_a_new_task_in_the_registry() {
             agent: "codex".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap();
@@ -370,6 +481,7 @@ fn start_task_rejects_empty_title() {
             agent: "codex".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap_err();
@@ -396,6 +508,7 @@ fn start_task_orchestration_chat_skips_send_keys_for_cursor() {
             agent: "cursor".to_string(),
             request_id: String::new(),
             orchestration_chat: true,
+            model: None,
         },
     )
     .unwrap();
@@ -418,28 +531,43 @@ fn start_task_orchestration_chat_skips_send_keys_for_cursor() {
     );
 }
 
+// Every harness Ajax can start over ACP provisions the same way Cursor does.
 #[test]
-fn start_task_orchestration_chat_rejects_non_cursor_agent() {
-    let mut context = context_with_managed_repo();
-    let mut runner = RecordingCommandRunner::default();
+fn start_task_orchestration_chat_provisions_each_acp_harness() {
+    for agent in ["codex", "claude", "pi"] {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
 
-    let error = super::start_task(
-        &mut context,
-        &mut runner,
-        super::StartTaskRequest {
-            repo: "web".to_string(),
-            title: "Fix login".to_string(),
-            agent: "codex".to_string(),
-            request_id: String::new(),
-            orchestration_chat: true,
-        },
-    )
-    .unwrap_err();
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: agent.to_string(),
+                request_id: String::new(),
+                orchestration_chat: true,
+                model: None,
+            },
+        )
+        .unwrap();
 
-    assert_eq!(
-        error,
-        OperateError::UnsupportedCapability("orchestration chat requires the cursor agent")
-    );
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("task created");
+        assert!(task.skip_interactive_agent(), "{agent} should provision");
+        assert!(
+            runner
+                .commands()
+                .iter()
+                .all(|command| !(command.program == "tmux"
+                    && command.args.first() == Some(&"send-keys".to_string()))),
+            "{agent} must not also launch interactively in tmux"
+        );
+    }
 }
 
 #[test]
@@ -456,6 +584,7 @@ fn start_task_rejects_unsupported_agent() {
             agent: "/bin/sh".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap_err();
@@ -482,6 +611,7 @@ fn start_task_surfaces_unknown_repo_as_command_error() {
             agent: "codex".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap_err();
@@ -519,6 +649,7 @@ fn start_task_skips_fetch_when_origin_fetch_is_fresh() {
             agent: "codex".to_string(),
             request_id: String::new(),
             orchestration_chat: false,
+            model: None,
         },
     )
     .unwrap();

@@ -275,6 +275,7 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
             title: "fix logout".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -348,6 +349,7 @@ fn new_task_plan_preserves_paths_with_spaces_as_command_arguments() {
             title: "fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -386,6 +388,7 @@ fn new_task_plan_rejects_unknown_repo() {
             title: "fix login".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap_err();
@@ -404,6 +407,7 @@ fn new_task_plan_slugifies_title_into_branch_session_and_handle() {
             title: "Ship oauth v2!".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -452,6 +456,7 @@ fn new_task_plan_allows_reusing_removed_task_handle() {
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -478,6 +483,7 @@ fn new_task_request_creates_provisional_task_record() {
         title: "Fix login!".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let task = task_from_new_request(&context, &request).unwrap();
@@ -502,6 +508,7 @@ fn new_task_request_slugifies_blank_titles_to_task() {
         title: "!!!".to_string(),
         agent: "claude".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let task = task_from_new_request(&context, &request).unwrap();
@@ -518,6 +525,7 @@ fn record_new_task_adds_provisional_task_to_registry() {
         title: "Add cache".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let task = record_new_task(&mut context, &request).unwrap();
@@ -546,6 +554,7 @@ fn record_new_task_reuses_removed_task_handle() {
             title: "Fix login!".to_string(),
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         },
     )
     .unwrap();
@@ -556,6 +565,7 @@ fn record_new_task_reuses_removed_task_handle() {
         title: "Fix login!".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let task = record_new_task(&mut context, &request).unwrap();
@@ -582,6 +592,7 @@ fn new_task_provisioning_state_updates_live_in_core() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let task = record_new_task(&mut context, &request).unwrap();
     let task_id = task.id.clone();

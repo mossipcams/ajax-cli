@@ -45,7 +45,8 @@
           "destructive": true,
           "confirmation_required": true
         }
-      ]
+      ],
+      "session_capable": false
     }
   ],
   "inbox": {

@@ -13,11 +13,25 @@ existing paths.
 
 ## Launch
 
-- Provisioned Cursor starts skip tmux send-keys but still create the task tmux
-  session. Non-Cursor agents cannot use that launch mode.
-- Session attach is only for Cursor tasks whose registry metadata records
-  `skip_interactive_agent` (provisioned orchestration-chat launch). Interactive
-  Cursor tasks (tmux send-keys launch) receive HTTP 409 `NotOrchestrationChat`.
+- Provisioned starts skip tmux send-keys but still create the task tmux session.
+  Every harness with an ACP entry point (Cursor native, Codex/Claude/Pi via their
+  bridges) may use that launch mode; a harness without one cannot.
+- The browser routes a task to chat only when its projection reports
+  `session_capable`; anything else opens the terminal, including a session URL
+  typed or bookmarked for an interactive task.
+- Session attach is only for tasks whose registry metadata records
+  `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
+  entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
+  `NotOrchestrationChat`.
+- The model chosen when the task was created is stored on the task and used for
+  its session unless the socket pins a different one. With neither, Cursor runs
+  `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
+- Cursor takes its model on the spawn argv; Codex takes `session/set_model` and
+  Claude and Pi take `session/set_config_option` once the session exists. A
+  harness that refuses the selection keeps its own default and the session
+  continues.
+- Moving a task to another harness is refused unless it was launched over ACP,
+  and drops the live ACP slot so the next attach spawns the new harness.
 
 ## Queue and cancellation across WebSocket reconnect
 
@@ -43,8 +57,9 @@ existing paths.
 ## Restart and transcript recovery
 
 - UI transcript survives `ajax-web` restart via JSONL under `state_dir`.
-- On acquire after restart, when Cursor advertises `loadSession`, the host calls
-  `session/load` with the stored ACP session id.
+- On acquire after restart, the host restores the stored ACP session id with
+  `session/resume` when advertised, otherwise `session/load`. If resume fails
+  and load is advertised, load is attempted before a new session is created.
 - Cursor may emit `session/update` replay notifications before the load result;
   the host drains them so JSONL is not duplicated.
 - If load is unsupported or fails, the JSONL transcript still reloads and exactly
@@ -55,6 +70,10 @@ existing paths.
 
 - Unrecognized ACP `sessionUpdate` kinds (except dropped capability announcements) are
   stored as `artifact` events in the host transcript.
+- ACP `session/request_permission` is correlated by its JSON-RPC request id; an
+  approval or rejection selects a matching advertised ACP permission option,
+  and cancellation resolves every pending request with the standard cancelled
+  outcome before sending `session/cancel`.
 - Operator answers to ACP permission requests are recorded as
   `permission_resolved` in the host transcript.
 - Reconnect or full page reload replay must not resurrect a permission prompt

@@ -6,6 +6,7 @@ use crate::slices::web_session::{
     apply_cancel_to_queue, dispatch_prompt, map_acp_client_request, map_acp_session_update,
     PromptDispatch, SessionServerEvent,
 };
+use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -104,6 +105,8 @@ struct SessionSlot {
     last_released: Option<Instant>,
     /// Cleared when pump observes process exit. Acquire must respawn before reuse.
     acp_alive: bool,
+    /// Harness whose ACP process this slot runs; respawn must reuse it.
+    agent: AgentClient,
 }
 
 impl SessionSlot {
@@ -149,6 +152,7 @@ impl WebSessionHub {
         qualified_handle: &str,
         worktree_path: &Path,
         model: &str,
+        agent: AgentClient,
     ) -> Result<(), String> {
         enum AcquirePlan {
             ReplaceExisting { resume_id: Option<String> },
@@ -185,6 +189,7 @@ impl WebSessionHub {
             AcquirePlan::InsertNew => stored.acp_session_id.clone(),
         };
         let (client, report) = match AcpStdioClient::spawn(
+            agent,
             worktree_path,
             spawn_model_arg(model),
             resume_id.as_deref(),
@@ -239,8 +244,8 @@ impl WebSessionHub {
                     return Ok(());
                 }
                 let mut log = TranscriptLog::from_events(stored.events, stored.dropped);
-                if context_reset_needed(&report, &log) {
-                    let note = context_reset_note();
+                let note = context_reset_note();
+                if context_reset_needed(&report, &log) && !already_noted(&log, &note) {
                     log.append(vec![note.clone()]);
                     store::append_events(
                         &self.state_dir,
@@ -265,6 +270,7 @@ impl WebSessionHub {
                         queued: VecDeque::new(),
                         last_released: None,
                         acp_alive: true,
+                        agent,
                     },
                 );
             }
@@ -280,11 +286,12 @@ impl WebSessionHub {
         worktree_path: &Path,
         model: &str,
     ) -> Result<u64, String> {
-        let resume_id = {
+        let (resume_id, agent) = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(slot) = sessions.get_mut(qualified_handle) else {
                 return Err("session slot missing".to_string());
             };
+            let agent = slot.agent;
             let host_exited = {
                 let mut client = slot.client.lock().unwrap();
                 client.host_exited()
@@ -295,11 +302,15 @@ impl WebSessionHub {
             let resume_id =
                 replace_resume_id(&slot.model, model, &self.state_dir, qualified_handle);
             begin_cancel_slot_client(slot);
-            resume_id
+            (resume_id, agent)
         };
 
-        let (client, report) =
-            AcpStdioClient::spawn(worktree_path, spawn_model_arg(model), resume_id.as_deref())?;
+        let (client, report) = AcpStdioClient::spawn(
+            agent,
+            worktree_path,
+            spawn_model_arg(model),
+            resume_id.as_deref(),
+        )?;
 
         let mut sessions = self.sessions.lock().unwrap();
         let Some(slot) = sessions.get_mut(qualified_handle) else {
@@ -325,6 +336,14 @@ impl WebSessionHub {
         Ok(slot.generation)
     }
 
+    /// True when this task's ACP child is mid-turn or has prompts queued.
+    pub fn busy(&self, handle: &str) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(handle).is_some_and(|slot| {
+            !slot.queued.is_empty() || slot.client.lock().unwrap().prompt_in_flight()
+        })
+    }
+
     pub fn model(&self, handle: &str) -> Option<String> {
         let sessions = self.sessions.lock().unwrap();
         sessions.get(handle).map(|slot| slot.model.clone())
@@ -346,6 +365,17 @@ impl WebSessionHub {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.get_mut(handle) {
             slot.release_holder();
+        }
+    }
+
+    /// Forget this task's slot so the next acquire spawns from scratch. Used
+    /// when the task moves to another harness: the live child belongs to the
+    /// old one and must not keep serving the task.
+    pub fn drop_session(&self, handle: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(slot) = sessions.remove(handle) {
+            let mut client = slot.client.lock().unwrap();
+            let _ = client.cancel();
         }
     }
 
@@ -399,7 +429,7 @@ impl WebSessionHub {
         };
         let client = Arc::clone(&slot.client);
         apply_cancel_to_queue(&mut slot.queued, keep_queue);
-        let result = client.lock().unwrap().begin_cancel().map(|_| ());
+        let result = client.lock().unwrap().cancel();
         result
     }
 
@@ -416,18 +446,21 @@ impl WebSessionHub {
         let Some(slot) = sessions.get_mut(handle) else {
             return Err("session slot missing".to_string());
         };
-        let resolved = SessionServerEvent::PermissionResolved {
-            request_id: request_id.to_string(),
-            approved,
-        };
-        slot.append_to_log(&self.state_dir, handle, vec![resolved]);
         let client = Arc::clone(&slot.client);
         let id = parse_json_rpc_id(request_id);
-        let result = client
+        client
             .lock()
             .unwrap()
-            .respond_client_request(&id, permission_response(approved, reason));
-        result
+            .respond_client_request(&id, permission_response(approved, reason))?;
+        slot.append_to_log(
+            &self.state_dir,
+            handle,
+            vec![SessionServerEvent::PermissionResolved {
+                request_id: request_id.to_string(),
+                approved,
+            }],
+        );
+        Ok(())
     }
 
     /// Move whatever the ACP client has produced into the slot's transcript.
@@ -532,16 +565,25 @@ fn context_reset_needed(report: &super::client::SpawnReport, log: &TranscriptLog
     !report.resumed && !log.events.is_empty()
 }
 
-fn context_reset_note() -> SessionServerEvent {
+/// Host commentary, not agent output: the browser marks an `agent` message as a
+/// live turn, so a note in that role would leave the thread reading "Working"
+/// with nothing running.
+pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
-        role: "agent".to_string(),
+        role: "note".to_string(),
         text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
     }
 }
 
+/// True when the log already ends with this note. Each restart would otherwise
+/// stack another identical copy on the transcript.
+pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> bool {
+    log.events.last() == Some(note)
+}
+
 fn begin_cancel_slot_client(slot: &SessionSlot) {
     let mut client = slot.client.lock().unwrap();
-    let _ = client.begin_cancel();
+    let _ = client.cancel();
 }
 
 fn replace_resume_id(
@@ -566,8 +608,8 @@ fn install_replaced_client(
     state_dir: &Path,
     handle: &str,
 ) -> Result<(), String> {
-    if context_reset_needed(report, &slot.log) {
-        let note = context_reset_note();
+    let note = context_reset_note();
+    if context_reset_needed(report, &slot.log) && !already_noted(&slot.log, &note) {
         slot.append_to_log(state_dir, handle, vec![note]);
     }
     store::save_meta(state_dir, handle, Some(new_client.session_id()), model);

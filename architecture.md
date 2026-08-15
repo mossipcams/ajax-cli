@@ -161,8 +161,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   worker), without a service-worker offline mutation model, and without
   replacing the raw xterm/tmux-first terminal model as the default path.
   Optional Home Screen install enables Declarative Web Push only.
-- Optional orchestration chat uses Cursor ACP over stdio via an `ajax-web`
-  host, not PTY paste. Transcripts persist as JSONL under ajax-web `state_dir`
+- Optional orchestration chat uses ACP over stdio via an `ajax-web` host, not
+  PTY paste. The host uses the official Rust ACP runtime and negotiates stable
+  protocol v1. Transcripts persist as JSONL under ajax-web `state_dir`
   (`web-session/`), not registry or tmux.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.

@@ -53,16 +53,87 @@ export interface SessionModelOption {
   label: string;
 }
 
-export async function fetchSessionModels(): Promise<SessionModelOption[]> {
+/** A second axis beside the models, e.g. the reasoning level. */
+export interface SessionModelGroup {
+  /** Config id the harness answers to, e.g. `effort`. */
+  id: string;
+  label: string;
+  options: SessionModelOption[];
+  default: string;
+}
+
+/** Catalog plus the model the server launches when the request omits one. */
+export interface SessionModelCatalog {
+  models: SessionModelOption[];
+  default: string;
+  reasoning?: SessionModelGroup;
+  /** Set when the harness could not be read at all (missing, or not on PATH). */
+  error?: string;
+}
+
+/**
+ * A selection is the model id plus any harness options, written
+ * `opus|effort=high`. The server parses the same form.
+ */
+export function encodeModelSelection(model: string, options: Record<string, string>): string {
+  const extras = Object.entries(options)
+    .filter(([key, value]) => key && value)
+    .map(([key, value]) => `|${key}=${value}`)
+    .join("");
+  return model ? `${model}${extras}` : "";
+}
+
+export function decodeModelSelection(raw: string): {
+  model: string;
+  options: Record<string, string>;
+} {
+  const [model = "", ...rest] = raw.split("|");
+  const options: Record<string, string> = {};
+  for (const part of rest) {
+    const [key, value] = part.split("=");
+    if (key && value) options[key] = value;
+  }
+  return { model, options };
+}
+
+/** Cursor always has Auto; a bridge harness with no answer has nothing to
+ *  offer, and an empty catalog means "let the harness choose". */
+function fallbackCatalog(agent: string): SessionModelCatalog {
+  if (agent !== "cursor") return { models: [], default: "" };
+  return {
+    models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
+    default: DEFAULT_SESSION_MODEL,
+  };
+}
+
+/** Models the given harness can run; each harness advertises its own list. */
+export async function fetchSessionModels(agent = "cursor"): Promise<SessionModelCatalog> {
   try {
-    const response = await fetch("/api/session/models", { credentials: "same-origin" });
-    if (!response.ok) return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
-    const body = (await response.json()) as { models?: SessionModelOption[] };
+    const response = await fetch(`/api/session/models?agent=${encodeURIComponent(agent)}`, {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return fallbackCatalog(agent);
+    const body = (await response.json()) as {
+      models?: SessionModelOption[];
+      default?: string;
+      reasoning?: SessionModelGroup;
+      error?: string;
+    };
     if (!Array.isArray(body.models) || body.models.length === 0) {
-      return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
+      return body.error
+        ? { models: [], default: "", error: body.error }
+        : fallbackCatalog(agent);
     }
-    return body.models.filter((m) => m && typeof m.id === "string" && typeof m.label === "string");
+    return {
+      models: body.models.filter(
+        (m) => m && typeof m.id === "string" && typeof m.label === "string",
+      ),
+      default: typeof body.default === "string" ? body.default : "",
+      ...(body.reasoning && Array.isArray(body.reasoning.options)
+        ? { reasoning: body.reasoning }
+        : {}),
+    };
   } catch {
-    return [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }];
+    return fallbackCatalog(agent);
   }
 }

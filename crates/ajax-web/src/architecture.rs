@@ -14,11 +14,12 @@ mod tests {
         "terminal",
         "web_session",
     ];
-    const ADAPTERS: [&str; 10] = [
+    const ADAPTERS: [&str; 11] = [
         "assets",
         "browser_session",
         "cloudflare_access",
         "http",
+        "program",
         "server",
         "skills",
         "stt_provider",

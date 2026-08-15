@@ -1,10 +1,20 @@
 use super::CommandContext;
 use crate::{
-    adapters::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS},
+    adapters::{acp_adapter_packages, DoctorEnvironment, REQUIRED_DOCTOR_TOOLS},
     output::{DoctorCheck, DoctorResponse},
     registry::Registry,
 };
 use std::collections::BTreeSet;
+
+fn agent_label(client: crate::models::AgentClient) -> &'static str {
+    match client {
+        crate::models::AgentClient::Claude => "claude",
+        crate::models::AgentClient::Codex => "codex",
+        crate::models::AgentClient::Cursor => "cursor",
+        crate::models::AgentClient::Pi => "pi",
+        crate::models::AgentClient::Other => "other",
+    }
+}
 
 pub fn doctor<R: Registry>(context: &CommandContext<R>) -> DoctorResponse {
     doctor_with_environment(context, &DoctorEnvironment::from_path())
@@ -39,6 +49,25 @@ pub fn doctor_with_environment<R: Registry>(
             },
         }
     }));
+    // Browser sessions drive Codex, Claude, and Pi through their Agent Client
+    // Protocol adapters. They are separate installs, so name the missing one
+    // rather than letting a session fail with an empty model list.
+    checks.extend(
+        acp_adapter_packages()
+            .into_iter()
+            .map(|(client, program, package)| {
+                let ok = environment.has_tool(program);
+                DoctorCheck {
+                    name: format!("acp:{}", agent_label(client)),
+                    ok,
+                    message: if ok {
+                        format!("{program} available")
+                    } else {
+                        format!("{program} not found on PATH — npm install -g {package}")
+                    },
+                }
+            }),
+    );
     checks.push(repo_name_check(context));
     for repo in &context.config.repos {
         let repo_path_exists = environment.path_exists(&repo.path);

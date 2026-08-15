@@ -25,7 +25,7 @@ export interface WebSessionTransportPlatform {
 }
 
 export type WebSessionServerEvent =
-  | { type: "ready"; model?: string }
+  | { type: "ready"; model?: string; busy?: boolean }
   | { type: "message"; role: string; text: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {

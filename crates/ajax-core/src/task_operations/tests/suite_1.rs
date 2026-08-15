@@ -98,6 +98,7 @@ fn start_operation_plan_returns_task_intent_and_commands_without_mutating_regist
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
 
     let (intent, plan) = plan_start_task_operation(&context, request).unwrap();
@@ -138,6 +139,7 @@ fn start_operation_execution_failure_preserves_intent_and_marks_provisioning_fai
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
     let mut runner = FirstCommandFailsRunner::default();
@@ -184,6 +186,7 @@ fn start_operation_records_receipts_for_successful_provisioning_steps() {
         title: "Fix login".to_string(),
         agent: "codex".to_string(),
         skip_interactive_agent: false,
+        model: None,
     };
     let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
     let mut runner = RecordingQueuedRunner::default();

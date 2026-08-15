@@ -27,7 +27,7 @@ describe("sessionModel", () => {
     expect(readSessionModel()).toBe("composer-2.5");
   });
 
-  it("fetches models from the session API", async () => {
+  it("fetches models and the launch default from the session API", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -37,12 +37,44 @@ describe("sessionModel", () => {
             { id: "auto", label: "Auto" },
             { id: "composer-2.5", label: "Composer 2.5" },
           ],
+          default: "cursor-grok-4.6-high",
         }),
       }),
     );
-    await expect(fetchSessionModels()).resolves.toEqual([
-      { id: "auto", label: "Auto" },
-      { id: "composer-2.5", label: "Composer 2.5" },
-    ]);
+    await expect(fetchSessionModels()).resolves.toEqual({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "composer-2.5", label: "Composer 2.5" },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+  });
+
+  it("reports no default when the API omits one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ models: [{ id: "composer-2.5", label: "Composer 2.5" }] }),
+      }),
+    );
+    await expect(fetchSessionModels()).resolves.toEqual({
+      models: [{ id: "composer-2.5", label: "Composer 2.5" }],
+      default: "",
+    });
+  });
+
+  it("asks for the requested harness and offers Cursor Auto when it cannot answer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchSessionModels("cursor")).resolves.toEqual({
+      models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
+      default: DEFAULT_SESSION_MODEL,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("agent=cursor");
+
+    // A bridge harness has no Auto sentinel: an empty catalog means "harness picks".
+    await expect(fetchSessionModels("codex")).resolves.toEqual({ models: [], default: "" });
   });
 });

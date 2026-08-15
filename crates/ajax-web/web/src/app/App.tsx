@@ -265,7 +265,12 @@ export default function App() {
     endTapToFeedback(interactionId, "nav_start");
     // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
     // A single rAF still runs before paint and would keep INP ~400–500ms.
-    const hash = orchestrationChat ? sessionHash(handle) : taskHash(handle);
+    // Only a provisioned (ACP) task can hold a session; an interactive task
+    // keeps its agent in tmux, so chat would open on a socket the host refuses.
+    const sessionCapable = cockpit.data?.cards?.some(
+      (card) => card.qualified_handle === handle && card.session_capable,
+    );
+    const hash = orchestrationChat && sessionCapable ? sessionHash(handle) : taskHash(handle);
     window.setTimeout(() => {
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
@@ -436,6 +441,15 @@ export default function App() {
     }
   }, [route.kind, route.handle, orchestrationChat]);
 
+  // A session on a task the host will not attach (interactive, or an agent with
+  // no ACP entry point) would sit on a refused socket. Send it to the terminal.
+  useEffect(() => {
+    if (route.kind !== "session" || !route.handle) return;
+    if (detail.status !== "ready" || !detail.data) return;
+    if (detail.data.qualified_handle !== route.handle) return;
+    if (detail.data.session_capable === false) go(taskHash(route.handle));
+  }, [route.kind, route.handle, detail.status, detail.data]);
+
   useEffect(() => {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
@@ -569,10 +583,9 @@ export default function App() {
       <button
         type="button"
         data-bottom-action="new-task"
-        onClick={() => {
-          if (orchestrationChat) go(sessionHash());
-          else setSheetOpen(true);
-        }}
+        // The New task sheet is the creator in both modes: it picks the harness
+        // and its model, and starts provisioned when orchestration chat is on.
+        onClick={() => setSheetOpen(true)}
       >
         New
       </button>
@@ -612,6 +625,8 @@ export default function App() {
                 handle={route.handle}
                 title={detail.data?.title}
                 selectedPr={route.pr}
+                agent={detail.data?.agent}
+                onSwappedAgent={reload}
                 onBack={() => {
                   if (route.kind === "diff" && route.handle) {
                     go(

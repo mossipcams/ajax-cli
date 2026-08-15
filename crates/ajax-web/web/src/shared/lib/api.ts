@@ -372,6 +372,18 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
   return postMutation("/api/tasks", req);
 }
 
+/** Move an existing ACP-backed task to another harness (and model). */
+export async function swapTaskAgent(
+  handle: string,
+  agent: string,
+  model?: string,
+): Promise<MutationResult> {
+  return postMutation(`/api/tasks/${encodeURIComponent(handle)}`, {
+    agent,
+    ...(model ? { model } : {}),
+  });
+}
+
 export async function checkHealth(): Promise<boolean> {
   try {
     const response = await fetch("/api/health", getOptions());

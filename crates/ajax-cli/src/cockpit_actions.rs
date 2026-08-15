@@ -246,6 +246,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             title,
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         };
         let (_intent, plan) = plan_start_task_operation_with_observation(
             context,
@@ -382,6 +383,7 @@ where
             title,
             agent: "codex".to_string(),
             skip_interactive_agent: false,
+            model: None,
         };
         let (_intent, plan) = plan_start_task_operation_with_observation(
             context,

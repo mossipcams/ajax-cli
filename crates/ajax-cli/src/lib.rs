@@ -488,6 +488,7 @@ pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTask
         title,
         agent,
         skip_interactive_agent: false,
+        model: None,
     })
 }
 

@@ -1,6 +1,9 @@
 //! Browser orchestration-chat wire protocol and ACP update mapping.
 
-use ajax_core::{commands::CommandContext, models::AgentClient, registry::Registry};
+use ajax_core::{
+    adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
+    registry::Registry,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::VecDeque, path::PathBuf};
@@ -36,6 +39,11 @@ pub enum SessionServerEvent {
     Ready {
         #[serde(default = "default_session_model")]
         model: String,
+        /// Whether a turn is actually in flight. The transcript alone cannot say:
+        /// replayed history has no turn-start marker, so a trailing host note
+        /// would otherwise leave the browser reading "Working" forever.
+        #[serde(default)]
+        busy: bool,
     },
     #[serde(rename = "message")]
     Message { role: String, text: String },
@@ -99,6 +107,13 @@ fn default_session_model() -> String {
     "auto".to_string()
 }
 
+/// Model a harness runs when neither the socket nor the task pins one. Cursor
+/// gets the Ajax default (the same one an interactive Cursor task launches
+/// with); a bridge harness has none here and picks for itself.
+fn harness_default_model(agent: AgentClient) -> Option<&'static str> {
+    acp_launch_for_agent(agent).and_then(|launch| launch.default_model)
+}
+
 /// Normalize a client-supplied model id for ACP spawn.
 /// Empty / whitespace → `auto`. Rejects control chars, spaces, and oversized ids.
 pub fn normalize_session_model(raw: &str) -> Result<String, String> {
@@ -106,11 +121,8 @@ pub fn normalize_session_model(raw: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Ok(default_session_model());
     }
-    if trimmed.len() > 128 {
-        return Err("model id too long".to_string());
-    }
-    if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err("model id must not contain whitespace".to_string());
+    if ajax_core::adapters::parse_model_selection(trimmed).is_none() {
+        return Err("model id must not contain whitespace or exceed 128 chars".to_string());
     }
     Ok(trimmed.to_string())
 }
@@ -297,10 +309,12 @@ pub fn map_acp_client_request(method: &str, params: &Value) -> Option<SessionSer
                 .get("requestId")
                 .or_else(|| params.get("request_id"))
                 .or_else(|| params.get("id"))
-                .and_then(Value::as_str)?
+                .and_then(Value::as_str)
+                .unwrap_or_default()
                 .to_string();
             let title = params
                 .get("title")
+                .or_else(|| params.pointer("/toolCall/title"))
                 .or_else(|| params.pointer("/permission/title"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
@@ -372,6 +386,8 @@ pub struct SessionAttachPlan {
     pub worktree_path: PathBuf,
     /// Normalized Cursor model id (`auto` for CLI default).
     pub model: String,
+    /// Harness whose ACP process backs this session.
+    pub agent: AgentClient,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -393,19 +409,31 @@ pub fn prepare_task_session<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or(SessionRouteError::TaskNotFound)?;
 
-    if task.selected_agent != AgentClient::Cursor || !task.skip_interactive_agent() {
+    // Any harness Ajax can start over ACP qualifies; the durable provisioned bit
+    // still decides, so an interactive tmux task never gets a second agent.
+    if acp_launch_for_agent(task.selected_agent).is_none() || !task.skip_interactive_agent() {
         return Err(SessionRouteError::NotOrchestrationChat);
     }
     if !task.worktree_path.exists() {
         return Err(SessionRouteError::WorktreeMissing);
     }
 
-    let model = normalize_session_model(model).unwrap_or_else(|_| default_session_model());
+    // The browser may pin a model per socket; otherwise the task's own choice
+    // (made when it was created) wins, then the harness default.
+    let model = match normalize_session_model(model) {
+        Ok(model) if model != default_session_model() => model,
+        _ => task
+            .session_model()
+            .map(str::to_string)
+            .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
+            .unwrap_or_default(),
+    };
 
     Ok(SessionAttachPlan {
         qualified_handle: qualified_handle.to_string(),
         worktree_path: task.worktree_path.clone(),
         model,
+        agent: task.selected_agent,
     })
 }
 

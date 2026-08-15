@@ -8,6 +8,7 @@ mod new_task;
 mod open;
 mod orphan_gc;
 mod projection;
+mod swap_agent;
 mod task_state;
 mod task_window;
 mod teardown;
@@ -33,6 +34,7 @@ pub use orphan_gc::{
     append_orphan_gc_to_plan, classify_orphans, collect_orphan_gc_commands, orphan_gc_commands,
     OrphanGcMode, OrphanGcTarget,
 };
+pub use swap_agent::swap_task_agent;
 pub use task_window::{
     mark_task_window_repaired, task_window_repair_plan, task_window_repair_plan_with_open_mode,
 };

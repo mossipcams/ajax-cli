@@ -6,6 +6,9 @@ import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
+import ModelPicker from "@/features/session/ModelPicker";
+import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
   repos: RepoSummary[];
@@ -17,13 +20,8 @@ interface Props {
 
 const LAST_AGENT_KEY = "ajax.newTask.agent";
 const LAST_REPO_KEY = "ajax.newTask.repo";
-
-const AGENTS = [
-  { value: "codex", label: "Codex" },
-  { value: "claude", label: "Claude" },
-  { value: "cursor", label: "Cursor" },
-  { value: "pi", label: "Pi" },
-] as const;
+/** Model is remembered per harness — the catalogs share no ids. */
+const LAST_MODEL_KEY_PREFIX = "ajax.newTask.model.";
 
 function readPref(key: string): string | null {
   try {
@@ -69,6 +67,9 @@ export default function NewTaskSheet({
   const [repo, setRepo] = useState(() => initialRepo(repos, selectedProject));
   const [title, setTitle] = useState("");
   const [agent, setAgent] = useState(initialAgent);
+  const [step, setStep] = useState<"task" | "model">("task");
+  const [model, setModel] = useState("");
+  const orchestrationChat = useOrchestrationChatEnabled();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -98,6 +99,7 @@ export default function NewTaskSheet({
     try {
       localStorage.setItem(LAST_AGENT_KEY, agent);
       localStorage.setItem(LAST_REPO_KEY, repo);
+      localStorage.setItem(`${LAST_MODEL_KEY_PREFIX}${agent}`, model);
     } catch {
       // Private mode / storage denied: defaults just won't stick.
     }
@@ -115,6 +117,11 @@ export default function NewTaskSheet({
       return;
     }
     setError(null);
+    if (step === "task") {
+      setModel("");
+      setStep("model");
+      return;
+    }
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -122,6 +129,9 @@ export default function NewTaskSheet({
         repo,
         title: title.trim(),
         agent,
+        ...(model ? { model } : {}),
+        // Every harness Ajax can start over ACP runs the task through ACP.
+        ...(orchestrationChat ? { orchestration_chat: true } : {}),
         request_id: requestId(),
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
@@ -192,9 +202,26 @@ export default function NewTaskSheet({
               {/* No id here: Slot lets child props win, so a hand-written id would
                   override Radix's titleId and leave aria-labelledby dangling. */}
               <SheetTitle asChild>
-                <h2>New task</h2>
+                <h2>{step === "task" ? "New task" : `Model — ${agentLabel(agent)}`}</h2>
               </SheetTitle>
 
+          {step === "model" ? (
+            <div className="model-page" data-testid="new-task-model-page">
+              <ModelPicker
+                agent={agent}
+                agentLabel={agentLabel(agent)}
+                value={model}
+                onChange={setModel}
+                onCatalog={(catalog) =>
+                  setModel(
+                    (current) =>
+                      current || readPref(`${LAST_MODEL_KEY_PREFIX}${agent}`) || catalog.default,
+                  )
+                }
+              />
+            </div>
+          ) : (
+            <>
           <label htmlFor="new-task-repo">Repository</label>
           {repos.length ? (
             <select id="new-task-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
@@ -249,14 +276,21 @@ export default function NewTaskSheet({
             ))}
           </div>
 
+            </>
+          )}
+
           {error ? <p className="sheet-error">{error}</p> : null}
 
           <div className="sheet-actions">
-            <Button type="button" variant="secondary" onClick={() => onClose?.()}>
-              Cancel
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => (step === "model" ? setStep("task") : onClose?.())}
+            >
+              {step === "model" ? "Back" : "Cancel"}
             </Button>
             <Button type="submit" variant="default" disabled={submitting}>
-              Start
+              {step === "model" ? "Start" : "Next"}
             </Button>
             </div>
           </form>

@@ -1,10 +1,11 @@
 use super::hub::{
-    map_request_finished, permission_response, slot_must_replace, TranscriptLog, WebSessionHub,
-    MAX_IDLE_SESSIONS,
+    already_noted, context_reset_note, map_request_finished, permission_response,
+    slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
 };
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use crate::slices::web_session::{map_acp_session_update, SessionServerEvent, MAX_QUEUED_PROMPTS};
+use ajax_core::models::AgentClient;
 use serde_json::json;
 use std::{
     path::PathBuf,
@@ -59,6 +60,26 @@ where
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+// The browser treats an `agent` message as a live turn, so this host note has
+// to be a note — otherwise replaying it leaves the thread reading "Working"
+// with nothing running. Restarts must not stack copies of it either.
+#[test]
+fn the_context_reset_note_is_host_commentary_and_is_written_once() {
+    let note = context_reset_note();
+    let crate::slices::web_session::SessionServerEvent::Message { role, .. } = &note else {
+        panic!("expected a message event, got {note:?}");
+    };
+    assert_eq!(role, "note", "an agent role would mark the thread busy");
+
+    let mut log = TranscriptLog::default();
+    assert!(!already_noted(&log, &note));
+    log.append(vec![note.clone()]);
+    assert!(
+        already_noted(&log, &note),
+        "a second restart must not append the same note again"
+    );
 }
 
 #[test]
@@ -192,7 +213,8 @@ fn submit_prompt_records_user_message_and_starts_when_idle() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto").expect("acquire");
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
         hub.submit_prompt(handle, "hello".to_string())
             .expect("submit");
         pump_until(&hub, handle, Duration::from_secs(5), |events| {
@@ -219,7 +241,8 @@ fn submit_prompt_queues_while_in_flight() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle, &dir, "auto").expect("acquire");
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
             hub.submit_prompt(handle, "first".to_string())
                 .expect("first");
             hub.submit_prompt(handle, "second".to_string())
@@ -260,7 +283,8 @@ fn submit_prompt_cap_drops_oldest_while_in_flight() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle, &dir, "auto").expect("acquire");
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
             hub.submit_prompt(handle, "hold".to_string()).expect("hold");
             for i in 0..MAX_QUEUED_PROMPTS {
                 hub.submit_prompt(handle, format!("q{i}")).expect("queue");
@@ -307,7 +331,8 @@ fn cancel_keep_queue_false_clears_queued_prompts() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle, &dir, "auto").expect("acquire");
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
             hub.submit_prompt(handle, "first".to_string())
                 .expect("first");
             hub.submit_prompt(handle, "queued".to_string())
@@ -340,7 +365,8 @@ fn cancel_keep_queue_true_preserves_queued_prompts() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle, &dir, "auto").expect("acquire");
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
             hub.submit_prompt(handle, "first".to_string())
                 .expect("first");
             hub.submit_prompt(handle, "kept".to_string()).expect("kept");
@@ -367,17 +393,28 @@ fn answer_permission_records_permission_resolved() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto").expect("acquire");
-        hub.answer_permission(handle, "42", true, Some("ok"))
-            .expect("answer");
-        let (events, _) = hub.read_from(handle, 0);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            SessionServerEvent::PermissionResolved {
-                request_id,
-                approved: true,
-            } if request_id == "42"
-        )));
+        with_test_acp_extra_args(&["--permission"], || {
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            hub.submit_prompt(handle, "permission".to_string())
+                .expect("prompt");
+            pump_until(&hub, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| matches!(
+                    event,
+                    SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
+                ))
+            });
+            hub.answer_permission(handle, "42", true, Some("ok"))
+                .expect("answer");
+            let (events, _) = hub.read_from(handle, 0);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::PermissionResolved {
+                    request_id,
+                    approved: true,
+                } if request_id == "42"
+            )));
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -461,21 +498,25 @@ fn idle_eviction_preserves_slots_with_in_flight_turn() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle_a, &dir, "auto").expect("acquire a");
+            hub.acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
             hub.submit_prompt(handle_a, "first".to_string())
                 .expect("first");
             hub.release(handle_a);
 
             for i in 0..MAX_IDLE_SESSIONS {
                 let handle = format!("web/evict-inflight-idle-{i}");
-                hub.acquire(&handle, &dir, "auto").expect("acquire idle");
+                hub.acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
                 hub.release(&handle);
             }
 
-            hub.acquire(handle_c, &dir, "auto").expect("acquire c");
+            hub.acquire(handle_c, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire c");
             hub.release(handle_c);
 
-            hub.acquire(handle_a, &dir, "auto").expect("re-acquire a");
+            hub.acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
             let (events, _) = hub.read_from(handle_a, 0);
             assert!(
                 events.contains(&user_msg("first")),
@@ -503,7 +544,8 @@ fn idle_eviction_preserves_slots_with_queued_prompts() {
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
-            hub.acquire(handle_a, &dir, "auto").expect("acquire a");
+            hub.acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
             hub.submit_prompt(handle_a, "first".to_string())
                 .expect("first");
             hub.submit_prompt(handle_a, "kept".to_string())
@@ -512,14 +554,17 @@ fn idle_eviction_preserves_slots_with_queued_prompts() {
 
             for i in 0..MAX_IDLE_SESSIONS {
                 let handle = format!("web/evict-idle-{i}");
-                hub.acquire(&handle, &dir, "auto").expect("acquire idle");
+                hub.acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
                 hub.release(&handle);
             }
 
-            hub.acquire(handle_c, &dir, "auto").expect("acquire c");
+            hub.acquire(handle_c, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire c");
             hub.release(handle_c);
 
-            hub.acquire(handle_a, &dir, "auto").expect("re-acquire a");
+            hub.acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
             hub.cancel(handle_a, true).expect("cancel keep queue");
 
             pump_until(&hub, handle_a, Duration::from_secs(5), |events| {

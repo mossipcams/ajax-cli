@@ -1,6 +1,8 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
-    adapters::{agent_launch_spec, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
+    adapters::{
+        acp_launch_for_agent, agent_launch_spec, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter,
+    },
     config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
@@ -26,6 +28,8 @@ pub struct NewTaskRequest {
     pub agent: String,
     /// When true with Cursor, create worktree + tmux but skip interactive agent send-keys.
     pub skip_interactive_agent: bool,
+    /// Operator-chosen Cursor model; `None` launches the Ajax default.
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +137,7 @@ pub fn new_task_plan_with_observation<R: Registry>(
         &AgentLaunch {
             worktree_path: worktree_path_string.clone(),
             prompt: String::new(),
+            model: request.model.clone(),
         },
     );
     let launch = agent_runtime_command(
@@ -160,8 +165,10 @@ pub fn new_task_plan_with_observation<R: Registry>(
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
+    // A provisioned start replaces send-keys with the harness's ACP process, so
+    // it is only offered for harnesses Ajax knows how to start over ACP.
     let skip_agent_send_keys =
-        request.skip_interactive_agent && selected_agent == AgentClient::Cursor;
+        request.skip_interactive_agent && acp_launch_for_agent(selected_agent).is_some();
     if !skip_agent_send_keys {
         let agent_launch_line =
             fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
@@ -216,9 +223,10 @@ pub fn task_from_new_request<R: Registry>(
         CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
     })?;
 
-    if request.skip_interactive_agent && task.selected_agent == AgentClient::Cursor {
+    if request.skip_interactive_agent && acp_launch_for_agent(task.selected_agent).is_some() {
         task.set_skip_interactive_agent(true);
     }
+    task.set_session_model(request.model.as_deref());
 
     Ok(task)
 }

@@ -7,6 +7,20 @@ use std::{
 
 pub const REQUIRED_DOCTOR_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
 
+/// Tools reported by `ajax doctor` beyond the required ones: the ACP adapters
+/// that back browser sessions for Codex, Claude, and Pi.
+pub fn doctor_probe_tools() -> Vec<String> {
+    REQUIRED_DOCTOR_TOOLS
+        .iter()
+        .map(|tool| (*tool).to_string())
+        .chain(
+            super::agent::acp_adapter_packages()
+                .into_iter()
+                .map(|(_, program, _)| program.to_string()),
+        )
+        .collect()
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DoctorEnvironment {
     available_tools: BTreeSet<String>,
@@ -29,13 +43,11 @@ impl DoctorEnvironment {
         let Some(path) = std::env::var_os("PATH") else {
             return Self::default();
         };
-        let available_tools = REQUIRED_DOCTOR_TOOLS
-            .iter()
-            .copied()
+        let available_tools = doctor_probe_tools()
+            .into_iter()
             .filter(|tool| {
                 std::env::split_paths(&path).any(|directory| directory.join(tool).is_file())
             })
-            .map(str::to_string)
             .collect();
 
         Self {

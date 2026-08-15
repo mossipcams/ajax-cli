@@ -3,6 +3,7 @@
 use super::client::{with_test_acp_program, AcpClientEvent, AcpStdioClient};
 use super::hub::WebSessionHub;
 use crate::slices::web_session::SessionServerEvent;
+use ajax_core::models::AgentClient;
 use std::{
     fs,
     path::PathBuf,
@@ -75,11 +76,13 @@ fn g1_respawns_after_child_death_and_prompt_works() {
     let hub = WebSessionHub::new(dir.clone());
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto").expect("first acquire");
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
         let pid1 = hub.child_id(handle).expect("pid1");
         hub.kill_host_for_test(handle);
 
-        hub.acquire(handle, &dir, "auto").expect("second acquire");
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("second acquire");
         let pid2 = hub.child_id(handle).expect("pid2");
         assert_ne!(pid1, pid2);
 
@@ -100,7 +103,8 @@ fn g1_load_fail_appends_context_reset_note() {
     let hub = WebSessionHub::new(dir.clone());
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto").expect("first acquire");
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
         hub.record(
             handle,
             SessionServerEvent::Message {
@@ -111,7 +115,7 @@ fn g1_load_fail_appends_context_reset_note() {
         hub.kill_host_for_test(handle);
 
         super::client::with_test_acp_extra_args(&["--load-fail"], || {
-            hub.acquire(handle, &dir, "auto")
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire after load-fail spawn");
         });
 
@@ -129,7 +133,8 @@ fn g1_successful_load_drains_replay_from_transcript() {
     let hub = WebSessionHub::new(dir.clone());
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto").expect("first acquire");
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
         hub.record(
             handle,
             SessionServerEvent::Message {
@@ -147,7 +152,7 @@ fn g1_successful_load_drains_replay_from_transcript() {
         let (_, cursor) = hub.read_from(handle, 0);
         hub.kill_host_for_test(handle);
 
-        hub.acquire(handle, &dir, "auto")
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
             .expect("acquire after successful load");
 
         let (delta, _) = hub.read_from(handle, cursor);
@@ -177,7 +182,8 @@ fn live_cursor_initialize_advertises_load_session() {
     }
 
     let dir = scratch_dir("live-init");
-    let (client, report) = AcpStdioClient::spawn(&dir, None, None).expect("spawn live agent acp");
+    let (client, report) =
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn live agent acp");
     assert!(
         report.load_session_advertised,
         "initialize must advertise loadSession on current Cursor"
@@ -201,7 +207,7 @@ fn live_cursor_prompt_and_session_load() {
 
     let dir = scratch_dir("live-smoke");
     let (mut client, _report) =
-        AcpStdioClient::spawn(&dir, None, None).expect("spawn live agent acp");
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn live agent acp");
     let session_id = client.session_id().to_string();
 
     client
@@ -242,7 +248,8 @@ fn live_cursor_prompt_and_session_load() {
     drop(client);
 
     let (client2, report2) =
-        AcpStdioClient::spawn(&dir, None, Some(&session_id)).expect("respawn with session/load");
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
+            .expect("respawn with session/load");
     assert!(report2.resumed, "session/load should report resumed");
     drop(client2);
 

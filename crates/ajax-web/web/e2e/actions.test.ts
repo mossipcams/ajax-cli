@@ -5,6 +5,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
+  LONG_SESSION_MODELS,
   mockFetch,
 } from "./fixtures";
 
@@ -174,6 +175,8 @@ test("new task sheet Start submits and opens the task", async ({ page }) => {
   const sheet = page.locator("[data-testid='new-task-sheet']");
   await expect(sheet).toBeVisible();
   await sheet.locator("#new-task-title-input").fill("Add logout");
+  await sheet.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
   await sheet.getByRole("button", { name: "Start" }).click();
 
   await expect(page.locator("[data-testid='new-task-sheet']")).toHaveCount(0, { timeout: 10_000 });
@@ -181,6 +184,60 @@ test("new task sheet Start submits and opens the task", async ({ page }) => {
   await expect(page.locator("[data-outlet='task']")).toHaveAttribute("data-handle", "web/add-logout", {
     timeout: 10_000,
   });
+});
+
+// Step two lists the chosen harness's own models and must not widen the card.
+// jsdom sees neither the second page's layout nor the per-harness fetch.
+test("new task sheet steps to the harness model page", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const sheet = page.locator("[data-testid='new-task-sheet']");
+  await expect(sheet).toBeVisible();
+  await sheet.locator("#new-task-title-input").fill("Add logout");
+  await expect(page.getByTestId("new-task-model-page")).toHaveCount(0);
+
+  await sheet.getByRole("radio", { name: "Cursor" }).click();
+  await sheet.getByRole("button", { name: "Next" }).click();
+
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
+  const preselected = sheet.getByRole("radio", { name: /Cursor Grok 4.6/ });
+  await expect(preselected).toHaveAttribute("aria-checked", "true");
+  expect(
+    await sheet.locator(".sheet-card").evaluate((card) => card.scrollWidth - card.clientWidth),
+  ).toBe(0);
+
+  await sheet.getByRole("button", { name: "Back" }).click();
+  await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
+});
+
+// Found against the real dev server: Codex lists 29 models, which grew the card
+// until Start sat below the viewport and the preselected default was off-screen.
+test("long model catalog keeps Start reachable and scrolls to the default", async ({ page }) => {
+  await mockFetch(page, { "/api/session/models": LONG_SESSION_MODELS });
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const sheet = page.locator("[data-testid='new-task-sheet']");
+  await sheet.locator("#new-task-title-input").fill("Long catalog");
+  await sheet.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByTestId("new-task-model-page")).toBeVisible();
+  await expect(sheet.getByRole("radio", { name: "Model 24" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+
+  const start = sheet.getByRole("button", { name: "Start" });
+  const box = await start.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box, "Start must be laid out").not.toBeNull();
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+
+  // The list itself scrolls, and it opens on the current choice.
+  expect(await sheet.locator(".model-picker").evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
 // Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in

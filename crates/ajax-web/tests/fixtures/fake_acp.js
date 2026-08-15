@@ -3,6 +3,12 @@
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
 const holdPromptMode = process.argv.includes('--hold-prompt');
+const malformedMode = process.argv.includes('--malformed');
+const badInitialize = process.argv.includes('--bad-initialize');
+const permissionMode = process.argv.includes('--permission');
+const resumeMode = process.argv.includes('--resume') || process.argv.includes('--resume-fail');
+const resumeFail = process.argv.includes('--resume-fail');
+const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const sessionId = 'fake-sess-1';
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
@@ -28,15 +34,34 @@ function replayUpdate(text) {
 function handleRequest(msg) {
   const { id, method, params } = msg;
   if (method === 'initialize') {
+    if (badInitialize) {
+      process.stderr.write('agent login required\n');
+      send({ jsonrpc: '2.0', id, result: { protocolVersion: 'broken' } });
+      return;
+    }
     send({
       jsonrpc: '2.0',
       id,
-      result: { agentCapabilities: { loadSession: true } },
+      result: {
+        protocolVersion,
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: resumeMode ? { resume: {} } : {},
+        },
+      },
     });
     return;
   }
   if (method === 'session/new') {
     send({ jsonrpc: '2.0', id, result: { sessionId } });
+    if (malformedMode) process.stdout.write('{not-json}\n');
+    return;
+  }
+  // Model selection: echo what the client asked for so tests can assert the
+  // request shape each harness family uses.
+  if (method === 'session/set_model' || method === 'session/set_config_option') {
+    send({ jsonrpc: '2.0', id, result: { configOptions: [] } });
+    replayUpdate(`model:${method}:${params?.modelId ?? params?.value ?? ''}`);
     return;
   }
   if (method === 'session/load') {
@@ -52,7 +77,32 @@ function handleRequest(msg) {
     send({ jsonrpc: '2.0', id, result: {} });
     return;
   }
+  if (method === 'session/resume') {
+    if (resumeFail) {
+      send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'resume failed' } });
+    } else {
+      send({ jsonrpc: '2.0', id, result: {} });
+    }
+    return;
+  }
   if (method === 'session/prompt') {
+    if (permissionMode) {
+      heldPromptId = id;
+      send({
+        jsonrpc: '2.0',
+        id: 42,
+        method: 'session/request_permission',
+        params: {
+          sessionId,
+          toolCall: { toolCallId: 'call-1', title: 'Run tests' },
+          options: [
+            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
+          ],
+        },
+      });
+      return;
+    }
     if (holdRemaining > 0) {
       holdRemaining -= 1;
       heldPromptId = id;
@@ -63,15 +113,13 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/cancel') {
-    if (heldPromptId !== null) {
-      send({
-        jsonrpc: '2.0',
-        id: heldPromptId,
-        result: { stopReason: 'cancelled' },
-      });
-      heldPromptId = null;
-    }
-    send({ jsonrpc: '2.0', id, result: {} });
+    // Every installed harness rejects cancel as a request; it is a
+    // notification. Answer like they do so the client cannot regress.
+    send({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: '"Method not found": session/cancel' },
+    });
     return;
   }
   send({
@@ -92,6 +140,24 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.method && msg.id === undefined) {
+    // ACP cancellation is a notification: it ends the in-flight turn with
+    // stopReason "cancelled".
+    if (msg.method === 'session/cancel' && heldPromptId !== null) {
+      send({
+        jsonrpc: '2.0',
+        id: heldPromptId,
+        result: { stopReason: 'cancelled' },
+      });
+      heldPromptId = null;
+    }
+    if (msg.method !== 'session/cancel') replayUpdate(`notification:${msg.method}`);
+    return;
+  }
+  if (permissionMode && msg.id === 42 && msg.result) {
+    const outcome = msg.result.outcome ?? {};
+    replayUpdate(`permission:${outcome.outcome}:${outcome.optionId ?? ''}`);
+    send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn' } });
+    heldPromptId = null;
     return;
   }
   if (msg.id !== undefined && msg.method) {

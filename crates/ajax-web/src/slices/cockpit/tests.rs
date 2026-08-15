@@ -10,6 +10,49 @@ use ajax_core::{
     registry::{InMemoryRegistry, Registry as _},
 };
 
+// Routing depends on this: the browser opens chat only for tasks the host will
+// actually attach, so the card must mark capability the same way the session
+// slice admits one.
+#[test]
+fn cards_mark_only_provisioned_acp_tasks_as_session_capable() {
+    use ajax_core::models::AgentClient;
+
+    let mut interactive = crate::test_support::fix_login_task();
+    interactive.selected_agent = AgentClient::Cursor;
+
+    let mut provisioned = crate::test_support::task_in("web", "chat-task", "Chat task");
+    provisioned.selected_agent = AgentClient::Cursor;
+    provisioned.set_skip_interactive_agent(true);
+
+    let mut no_acp = crate::test_support::task_in("web", "other-task", "Other task");
+    no_acp.selected_agent = AgentClient::Other;
+    no_acp.set_skip_interactive_agent(true);
+
+    let context =
+        crate::test_support::context_with_tasks(&["web"], vec![interactive, provisioned, no_acp]);
+    let view = super::browser_cockpit_view(&context);
+    let capable = |handle: &str| {
+        view.cards
+            .iter()
+            .find(|card| card.qualified_handle == handle)
+            .unwrap_or_else(|| panic!("expected a card for {handle}"))
+            .session_capable
+    };
+
+    assert!(
+        capable("web/chat-task"),
+        "provisioned Cursor holds a session"
+    );
+    assert!(
+        !capable("web/fix-login"),
+        "interactive task keeps its terminal"
+    );
+    assert!(
+        !capable("web/other-task"),
+        "an agent without ACP cannot attach"
+    );
+}
+
 #[test]
 fn cockpit_slice_serializes_empty_projection() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
