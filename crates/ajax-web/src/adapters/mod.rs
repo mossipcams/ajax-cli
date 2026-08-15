@@ -4,6 +4,7 @@ pub mod assets;
 pub mod browser_session;
 pub(crate) mod cloudflare_access;
 pub mod http;
+pub mod program;
 pub mod server;
 pub mod skills;
 pub mod stt_provider;

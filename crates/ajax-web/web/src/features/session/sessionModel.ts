@@ -67,6 +67,8 @@ export interface SessionModelCatalog {
   models: SessionModelOption[];
   default: string;
   reasoning?: SessionModelGroup;
+  /** Set when the harness could not be read at all (missing, or not on PATH). */
+  error?: string;
 }
 
 /**
@@ -115,8 +117,13 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
       models?: SessionModelOption[];
       default?: string;
       reasoning?: SessionModelGroup;
+      error?: string;
     };
-    if (!Array.isArray(body.models) || body.models.length === 0) return fallbackCatalog(agent);
+    if (!Array.isArray(body.models) || body.models.length === 0) {
+      return body.error
+        ? { models: [], default: "", error: body.error }
+        : fallbackCatalog(agent);
+    }
     return {
       models: body.models.filter(
         (m) => m && typeof m.id === "string" && typeof m.label === "string",

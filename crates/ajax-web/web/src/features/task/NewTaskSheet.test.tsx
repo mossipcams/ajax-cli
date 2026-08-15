@@ -191,6 +191,25 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
+  // Found in dev: an nvm switch left the bridges off the server's PATH and the
+  // page said the harness "lists no models", hiding a fixable install problem.
+  it("shows why a harness could not be read instead of an empty list", async () => {
+    stubCatalog({
+      models: [],
+      default: "",
+      error: "codex-acp is not installed — npm install -g @agentclientprotocol/codex-acp",
+    });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    await goToModelStep();
+
+    expect(await screen.findByTestId("model-catalog-error")).toHaveTextContent(
+      "codex-acp is not installed",
+    );
+    vi.unstubAllGlobals();
+  });
+
   it("Back returns to the task page without starting anything", async () => {
     stubCatalog();
     const spy = vi.spyOn(api, "startTask");

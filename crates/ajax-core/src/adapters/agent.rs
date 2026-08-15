@@ -91,6 +91,9 @@ pub struct AcpLaunch {
     /// Model Ajax runs when the operator has picked none. `None` means the
     /// harness picks for itself.
     pub default_model: Option<&'static str>,
+    /// npm package providing the ACP program, when the harness needs one.
+    /// Ajax can run it on demand instead of requiring a global install.
+    pub acp_package: Option<&'static str>,
     /// Shown when no candidate program can be spawned.
     pub install_hint: &'static str,
 }
@@ -111,6 +114,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             native_program: None,
             model_selection: AcpModelSelection::SpawnArg,
             default_model: Some(CURSOR_DEFAULT_MODEL),
+            acp_package: None,
             install_hint: "install the Cursor CLI (`agent`)",
         }),
         AgentClient::Codex => Some(AcpLaunch {
@@ -119,6 +123,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             native_program: Some("codex"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
+            acp_package: Some("@agentclientprotocol/codex-acp"),
             install_hint: "npm install -g @agentclientprotocol/codex-acp",
         }),
         AgentClient::Claude => Some(AcpLaunch {
@@ -127,6 +132,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             native_program: Some("claude"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
+            acp_package: Some("@agentclientprotocol/claude-agent-acp"),
             install_hint: "npm install -g @agentclientprotocol/claude-agent-acp",
         }),
         AgentClient::Pi => Some(AcpLaunch {
@@ -135,10 +141,29 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             native_program: Some("pi"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
+            acp_package: Some("pi-acp"),
             install_hint: "npm install -g pi-acp",
         }),
         AgentClient::Other => None,
     }
+}
+
+/// Harnesses whose ACP support comes from a separate adapter package, with the
+/// program each one installs. Used by `ajax doctor` and by the session host.
+pub fn acp_adapter_packages() -> Vec<(AgentClient, &'static str, &'static str)> {
+    [
+        AgentClient::Codex,
+        AgentClient::Claude,
+        AgentClient::Pi,
+        AgentClient::Cursor,
+    ]
+    .into_iter()
+    .filter_map(|client| {
+        let launch = acp_launch_for_agent(client)?;
+        let package = launch.acp_package?;
+        Some((client, launch.candidates[0].0, package))
+    })
+    .collect()
 }
 
 /// Argv for one ACP candidate, inserting `--model <id>` only where supported.

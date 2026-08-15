@@ -403,6 +403,21 @@ worktrees separate:
 The `ajax-cli` source repo should not be included in the default managed repo
 list at first.
 
+## Agent Client Protocol adapters
+
+Browser sessions drive each harness over the Agent Client Protocol. Cursor
+speaks it natively (`agent acp`); Codex, Claude, and Pi each need their adapter:
+
+```bash
+npm install -g @agentclientprotocol/codex-acp \
+               @agentclientprotocol/claude-agent-acp \
+               pi-acp
+```
+
+`ajax doctor` reports these as `acp:codex`, `acp:claude`, and `acp:pi`. Without
+one, Ajax falls back to `npx -y <package>`, which works but pays a fetch on the
+first session.
+
 ## Validation
 
 Before release-sensitive changes, run the strongest applicable local checks:

@@ -59,7 +59,13 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
   }
 
   if (catalog.models.length === 0) {
-    return (
+    // A harness Ajax cannot start is an install problem the operator can fix;
+    // a harness with nothing to offer is normal.
+    return catalog.error ? (
+      <p className="sheet-error" data-testid="model-catalog-error">
+        {catalog.error}
+      </p>
+    ) : (
       <p className="sheet-note">
         {agentLabel} lists no models here; it will start on its own default.
       </p>

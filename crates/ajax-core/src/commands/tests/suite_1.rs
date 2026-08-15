@@ -652,14 +652,50 @@ fn doctor_and_status_return_basic_health() {
         TestCommand::new("web", "cargo test"),
         TestCommand::new("api", "cargo test"),
     ];
-    let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-        .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
+    // A healthy host also has the ACP adapters that back browser sessions.
+    let environment = DoctorEnvironment::from_available_tools([
+        "git",
+        "tmux",
+        "codex",
+        "codex-acp",
+        "claude-agent-acp",
+        "pi-acp",
+    ])
+    .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
 
     let doctor = doctor_with_environment(&context, &environment);
     let status = status(&context);
 
     assert!(doctor.checks.iter().all(|check| check.ok));
     assert_eq!(status.tasks.len(), 1);
+}
+
+// Sessions for Codex, Claude, and Pi need their Agent Client Protocol adapters;
+// a missing one is an install the operator can do, so name it.
+#[test]
+fn doctor_names_the_missing_acp_adapter_package() {
+    let context = context_with_tasks();
+    let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"]);
+
+    let doctor = doctor_with_environment(&context, &environment);
+
+    for (agent, package) in [
+        ("codex", "@agentclientprotocol/codex-acp"),
+        ("claude", "@agentclientprotocol/claude-agent-acp"),
+        ("pi", "pi-acp"),
+    ] {
+        let check = doctor
+            .checks
+            .iter()
+            .find(|check| check.name == format!("acp:{agent}"))
+            .unwrap_or_else(|| panic!("expected an acp:{agent} check"));
+        assert!(!check.ok, "{agent} adapter should report missing");
+        assert!(
+            check.message.contains(package),
+            "{agent} check should name {package}: {}",
+            check.message
+        );
+    }
 }
 
 #[test]

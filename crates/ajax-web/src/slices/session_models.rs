@@ -11,7 +11,7 @@
 
 use ajax_core::{adapters::CURSOR_DEFAULT_MODEL, models::AgentClient};
 use serde::Serialize;
-use std::{collections::HashMap, process::Command, sync::Mutex};
+use std::{collections::HashMap, sync::Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionModelOption {
@@ -40,6 +40,10 @@ pub struct SessionModelsResponse {
     /// Reasoning level, when this harness exposes one separately.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<SessionModelGroup>,
+    /// Why the catalog is empty, when the harness could not be read at all.
+    /// An empty list with no error means the harness offers no choice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     /// Harness version this catalog was read from.
     pub harness_version: String,
 }
@@ -61,7 +65,10 @@ pub fn harness_version(agent: AgentClient) -> String {
         AgentClient::Pi => "pi",
         AgentClient::Other => return String::new(),
     };
-    Command::new(program)
+    let Some(mut command) = crate::adapters::program::harness_command(program) else {
+        return String::new();
+    };
+    command
         .arg("--version")
         .output()
         .ok()
@@ -146,6 +153,20 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
             agent: agent.to_string(),
             // Cursor carries its reasoning level inside the model id.
             reasoning: None,
+            error: None,
+            harness_version: String::new(),
+        };
+    }
+
+    // A harness Ajax cannot start at all is an install or PATH problem, not a
+    // harness with nothing to offer. Say which, rather than showing a bare list.
+    if let Some(missing) = missing_acp_program(client) {
+        return SessionModelsResponse {
+            models: Vec::new(),
+            default: String::new(),
+            agent: agent.to_string(),
+            reasoning: None,
+            error: Some(missing),
             harness_version: String::new(),
         };
     }
@@ -164,6 +185,9 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
         .or_else(|| models.first().map(|model| model.id.clone()))
         .unwrap_or_default();
     SessionModelsResponse {
+        error: models
+            .is_empty()
+            .then(|| format!("{agent} started but listed no models")),
         models,
         default,
         agent: agent.to_string(),
@@ -185,8 +209,26 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     }
 }
 
+/// Install hint when none of a harness's ACP programs can be found.
+fn missing_acp_program(client: AgentClient) -> Option<String> {
+    let launch = ajax_core::adapters::acp_launch_for_agent(client)?;
+    let found = launch
+        .candidates
+        .iter()
+        .any(|(program, _)| crate::adapters::program::resolve_program(program).is_some());
+    (!found).then(|| {
+        format!(
+            "{} is not installed — {}",
+            launch.candidates[0].0, launch.install_hint
+        )
+    })
+}
+
 fn fetch_models_from_agent() -> Option<Vec<SessionModelOption>> {
-    let output = Command::new("agent").arg("models").output().ok()?;
+    let output = crate::adapters::program::harness_command("agent")?
+        .arg("models")
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }

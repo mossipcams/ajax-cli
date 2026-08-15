@@ -7,9 +7,9 @@ pub mod process;
 pub mod tmux;
 
 pub use agent::{
-    acp_args_for_candidate, acp_launch_for_agent, agent_launch_spec, parse_model_selection,
-    valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch, ModelSelection,
-    CURSOR_DEFAULT_MODEL,
+    acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, agent_launch_spec,
+    parse_model_selection, valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch,
+    ModelSelection, CURSOR_DEFAULT_MODEL,
 };
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,

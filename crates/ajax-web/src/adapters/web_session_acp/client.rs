@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::Path,
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Stdio},
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc, Mutex,
@@ -442,6 +442,15 @@ fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
             base_args.iter().map(|arg| (*arg).to_string()).collect(),
         ));
     }
+    // Last resort: run the adapter straight from npm. A machine that has it
+    // installed never reaches this, and one that does not still gets a session
+    // instead of an error — at the cost of the first fetch.
+    if let Some(package) = launch.acp_package {
+        candidates.push((
+            "npx".to_string(),
+            vec!["-y".to_string(), package.to_string()],
+        ));
+    }
     candidates
 }
 
@@ -461,7 +470,11 @@ fn native_acp_advertised(program: &str) -> bool {
         }
     }
 
-    let advertised = Command::new(program)
+    let Some(mut probe) = crate::adapters::program::harness_command(program) else {
+        return false;
+    };
+    #[allow(clippy::let_and_return)]
+    let advertised = probe
         .arg("--help")
         .stdin(Stdio::null())
         .output()
@@ -491,7 +504,7 @@ fn spawn_acp_process(
     #[cfg(test)]
     if let Some(program) = TEST_ACP_PROGRAM.with(|slot| slot.borrow().clone()) {
         let extra_args = TEST_ACP_EXTRA_ARGS.with(|slot| slot.borrow().clone());
-        let mut command = Command::new("node");
+        let mut command = std::process::Command::new("node");
         command.arg(program);
         command.args(extra_args);
         command
@@ -510,7 +523,10 @@ fn spawn_acp_process(
     for (program, base_args) in acp_candidates(launch) {
         let base_args: Vec<&str> = base_args.iter().map(String::as_str).collect();
         let args = acp_args_for_program(launch, &base_args, model);
-        let mut command = Command::new(&program);
+        // Resolved outside the server's PATH when a version manager moved it.
+        let Some(mut command) = crate::adapters::program::harness_command(&program) else {
+            continue;
+        };
         command.args(&args);
         command
             .current_dir(worktree_path)

@@ -61,7 +61,17 @@ name the level. A selection is therefore stored as `model|configId=value`, e.g.
 config option at a time.
 
 Cursor is the only harness that speaks ACP itself today; the others are reached
-through their ACP adapters. Each mapping also names the harness CLI that *could*
+through their Agent Client Protocol adapters, which are separate installs:
+`@agentclientprotocol/codex-acp`, `@agentclientprotocol/claude-agent-acp`, and
+`pi-acp`. `ajax doctor` reports each one as `acp:<harness>` and names the package
+when it is missing, and the host falls back to `npx -y <package>` so a host
+without the global install still gets a session.
+
+Harness binaries are resolved through `adapters::program`: the server's own
+`PATH`, then the operator's login shell. `ajax-cli web` runs under tmux or a
+service manager, so a version manager moving `codex` or an adapter between node
+versions would otherwise make a harness silently invisible — which the catalog
+then reported as "no models". Each mapping also names the harness CLI that *could*
 serve ACP natively (`codex`, `claude`, `pi`), and the host prefers that CLI as
 soon as its `--help` advertises an `acp` subcommand — asked rather than
 attempted, because an unknown argument is a prompt to some CLIs. A harness with
