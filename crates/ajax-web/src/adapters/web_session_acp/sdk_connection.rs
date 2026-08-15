@@ -9,8 +9,8 @@ use agent_client_protocol::{
             LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionKind,
             PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
             RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
-            SessionModeState, SessionNotification, SetSessionConfigOptionRequest,
-            SetSessionModeRequest, TextContent,
+            SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions,
+            SessionNotification, SetSessionConfigOptionRequest, TextContent,
         },
         ProtocolVersion,
     },
@@ -250,18 +250,18 @@ async fn initialize_session(
         .is_some();
     let mut resumed = false;
     let mut session_id = None;
-    let mut modes = None;
+    let mut config_options = None;
     if let Some(resume_id) = resume_session_id {
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
                 resumed = true;
-                modes = response.modes;
+                config_options = response.config_options;
             }
         }
         if !resumed && load_session_advertised {
             if let Some(response) = send_load(connection, resume_id, cwd).await {
                 resumed = true;
-                modes = response.modes;
+                config_options = response.config_options;
             }
         }
         if resumed {
@@ -283,11 +283,11 @@ async fn initialize_session(
             .map_err(|error| format!("ACP session/new failed: {error}"))?;
             let value = serde_json::to_value(&response)
                 .map_err(|error| format!("invalid session/new response: {error}"))?;
-            modes = response.modes.clone();
+            config_options = response.config_options;
             (response.session_id.to_string(), value)
         }
     };
-    apply_permission_mode(connection, agent, &session_id, modes.as_ref()).await;
+    apply_permission_config(connection, agent, &session_id, config_options.as_deref()).await;
     apply_model(connection, agent, &session_id, model).await;
 
     Ok(ConnectionReady {
@@ -336,43 +336,58 @@ async fn send_load(
     .ok()
 }
 
-pub(super) fn preferred_permission_mode(
+pub(super) fn preferred_permission_config(
     agent: AgentClient,
-    modes: Option<&SessionModeState>,
-) -> Option<&'static str> {
+    config_options: Option<&[SessionConfigOption]>,
+) -> Option<(&'static str, &'static str)> {
     let expected = match agent {
         AgentClient::Codex => "agent-full-access",
         AgentClient::Claude => "bypassPermissions",
         AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => return None,
     };
-    modes?
-        .available_modes
+    let option = config_options?
         .iter()
-        .any(|mode| mode.id.0.as_ref() == expected)
-        .then_some(expected)
+        .find(|option| option.id.0.as_ref() == "mode")?;
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let advertised = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options
+            .iter()
+            .any(|option| option.value.0.as_ref() == expected),
+        SessionConfigSelectOptions::Grouped(groups) => groups.iter().any(|group| {
+            group
+                .options
+                .iter()
+                .any(|option| option.value.0.as_ref() == expected)
+        }),
+        _ => false,
+    };
+    (advertised && select.current_value.0.as_ref() != expected).then_some(("mode", expected))
 }
 
-async fn apply_permission_mode(
+async fn apply_permission_config(
     connection: &ConnectionTo<Agent>,
     agent: AgentClient,
     session_id: &str,
-    modes: Option<&SessionModeState>,
+    config_options: Option<&[SessionConfigOption]>,
 ) {
-    let Some(mode) = preferred_permission_mode(agent, modes) else {
+    let Some((config_id, value)) = preferred_permission_config(agent, config_options) else {
         return;
     };
-    if modes.is_some_and(|state| state.current_mode_id.0.as_ref() == mode) {
-        return;
-    }
     let result = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         connection
-            .send_request(SetSessionModeRequest::new(session_id.to_string(), mode))
+            .send_request(SetSessionConfigOptionRequest::new(
+                session_id.to_string(),
+                config_id,
+                value,
+            ))
             .block_task(),
     )
     .await;
     if !matches!(result, Ok(Ok(_))) {
-        tracing::warn!(target: "ajax_web", agent = ?agent, mode, "ACP permission mode refused");
+        tracing::warn!(target: "ajax_web", agent = ?agent, value, "ACP permission config refused");
     }
 }
 

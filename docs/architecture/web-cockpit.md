@@ -28,8 +28,9 @@ events into view state; they do not own the transcript, prompt queue, or ACP
 process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
-default **off**) gates `#/session` and makes task creation provisioned: with it
-on, the New task sheet calls `startTask` with `orchestration_chat: true` for the
+default **off**) gates `#/session`, discloses full tool access without approval
+prompts for supported agents, and makes task creation provisioned: with it on,
+the New task sheet calls `startTask` with `orchestration_chat: true` for the
 chosen harness. When the flag is on,
 `#/session/<handle>` renders SessionChat (live head + transcript + composer);
 the terminal is the escape hatch sheet; Diff Review remains swipe-left. The
@@ -48,9 +49,11 @@ protocol v1 and rejects a peer that selects another version. Session restore
 prefers `session/resume` when advertised, falls back to `session/load`, then
 creates a new session. Permission requests stay host-owned while pending and are
 answered with ACP's standard selected-option or cancelled outcome. For trusted
-local orchestration, the adapter first selects a known exact full-access mode
-when the agent advertises it (`agent-full-access` for Codex,
-`bypassPermissions` for Claude); manual permission remains the fallback.
+local orchestration, the adapter consumes only ACP `configOptions` and sends
+`session/set_config_option` for the exact advertised `mode` value
+(`agent-full-access` for Codex, `bypassPermissions` for Claude). Legacy `modes`
+and `session/set_mode` are intentionally unsupported; manual permission remains
+the fallback when the current ACP configuration cannot provide full access.
 
 ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
 harness to its ACP entry point and to how it accepts a model:

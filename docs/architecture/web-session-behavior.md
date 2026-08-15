@@ -32,13 +32,15 @@ existing paths.
   continues.
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
-- Ajax orchestration sessions are trusted local automation. After session
-  creation or restore, the host selects an exact, advertised non-interactive
-  mode for harnesses whose stable mode id is known: `agent-full-access` for
-  Codex and `bypassPermissions` for Claude. It never infers a security mode
-  from its display name and does not reinterpret Pi thinking modes or unknown
-  Cursor modes. An unavailable or refused mode keeps the standard operator
-  permission flow as the safe fallback.
+- Ajax orchestration sessions are trusted local automation, and the Settings
+  toggle discloses that supported agents run with full tool access and without
+  approval prompts. After session creation or restore, the host reads only ACP
+  `configOptions`, finds the exact `mode` option and an exact advertised value,
+  then sends `session/set_config_option`: `agent-full-access` for Codex or
+  `bypassPermissions` for Claude. It ignores legacy `modes` and never sends
+  `session/set_mode`; it also does not reinterpret model, thought-level, Pi, or
+  unknown Cursor options. Missing, unadvertised, or refused configuration keeps
+  the standard ACP permission flow as the safe fallback.
 
 ## Queue and cancellation across WebSocket reconnect
 

@@ -1,10 +1,13 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
-use super::sdk_connection::preferred_permission_mode;
+use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
-    v1::{AgentCapabilities, InitializeResponse, NewSessionRequest, SessionMode, SessionModeState},
+    v1::{
+        AgentCapabilities, InitializeResponse, NewSessionRequest, SessionConfigOption,
+        SessionConfigOptionCategory, SessionConfigSelectOption,
+    },
     ProtocolVersion,
 };
 use ajax_core::models::AgentClient;
@@ -82,45 +85,66 @@ fn load_session_advertised_from_initialize_result() {
 }
 
 #[test]
-fn trusted_permission_mode_must_be_exact_and_advertised() {
-    let modes = SessionModeState::new(
-        "default",
-        vec![
-            SessionMode::new("default", "Default"),
-            SessionMode::new("agent-full-access", "Full Access"),
-            SessionMode::new("bypassPermissions", "Bypass Permissions"),
-            SessionMode::new("high", "High Thinking"),
-        ],
-    );
+fn trusted_permission_config_must_be_exact_and_advertised() {
+    let options = vec![
+        SessionConfigOption::select(
+            "mode",
+            "Mode",
+            "default",
+            vec![
+                SessionConfigSelectOption::new("default", "Default"),
+                SessionConfigSelectOption::new("agent-full-access", "Full Access"),
+                SessionConfigSelectOption::new("bypassPermissions", "Bypass Permissions"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Mode),
+        SessionConfigOption::select(
+            "effort",
+            "Thinking",
+            "high",
+            vec![SessionConfigSelectOption::new(
+                "agent-full-access",
+                "Misleading value",
+            )],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+    ];
 
     assert_eq!(
-        preferred_permission_mode(AgentClient::Codex, Some(&modes)),
-        Some("agent-full-access")
+        preferred_permission_config(AgentClient::Codex, Some(&options)),
+        Some(("mode", "agent-full-access"))
     );
     assert_eq!(
-        preferred_permission_mode(AgentClient::Claude, Some(&modes)),
-        Some("bypassPermissions")
+        preferred_permission_config(AgentClient::Claude, Some(&options)),
+        Some(("mode", "bypassPermissions"))
     );
     assert_eq!(
-        preferred_permission_mode(AgentClient::Pi, Some(&modes)),
+        preferred_permission_config(AgentClient::Pi, Some(&options)),
         None
     );
     assert_eq!(
-        preferred_permission_mode(AgentClient::Cursor, Some(&modes)),
+        preferred_permission_config(AgentClient::Cursor, Some(&options)),
         None
     );
     assert_eq!(
-        preferred_permission_mode(
+        preferred_permission_config(
             AgentClient::Codex,
-            Some(&SessionModeState::new(
+            Some(&[SessionConfigOption::select(
+                "mode",
+                "Mode",
                 "default",
-                vec![SessionMode::new("full-access", "Full Access")],
-            )),
+                vec![SessionConfigSelectOption::new("full-access", "Full Access",)],
+            )]),
         ),
         None,
         "display names and similar IDs must not trigger a security mode"
     );
-    assert_eq!(preferred_permission_mode(AgentClient::Codex, None), None);
+    assert_eq!(
+        preferred_permission_config(AgentClient::Codex, Some(&options[1..])),
+        None,
+        "values advertised by non-mode config options must be ignored"
+    );
+    assert_eq!(preferred_permission_config(AgentClient::Codex, None), None);
 }
 
 /// Cursor validates `session/new` params and rejects a missing

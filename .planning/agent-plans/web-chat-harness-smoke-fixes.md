@@ -7,7 +7,7 @@
 - Classify Cursor and Pi live failures as Ajax defects or provider/environment failures.
 - Re-run focused, full web, browser, and live harness verification.
 - Keep the four-harness, three-turn browser flow as deterministic regression coverage.
-- Select known advertised non-interactive ACP modes for trusted local sessions.
+- Select known advertised full-access ACP config options for trusted local sessions.
 - Expose when an in-flight ACP turn has produced no recent activity (#889).
 
 ## Non-goals
@@ -20,6 +20,8 @@
 
 - Approved by the user on 2026-08-15: implement until finished.
 - Regression extension approved by the user on 2026-08-15: implement until finished.
+- Config-options-only ACP alignment approved by the user on 2026-08-15:
+  implement until all tasks are done, with no legacy compatibility.
 
 ## Checklist
 
@@ -43,6 +45,12 @@
 - [x] Task 11: update the owning architecture contracts and defect tracking.
 - [x] Task 12: run focused and broad verification, rebuild assets, and publish
   the scoped PR.
+- [x] Task 13: add a failing config-option policy regression, switch trusted
+  full access to `session/set_config_option`, and remove legacy mode handling.
+- [x] Task 14: add a failing Settings regression and disclose full tool access
+  without approval prompts on the orchestration-chat toggle.
+- [ ] Task 15: update architecture, rebuild assets, run focused and broad
+  verification, and update PR #890 through CI.
 
 ## Validation
 
@@ -80,6 +88,15 @@
 - Known non-product validation limits: direct WebKit live testing rejected the
   local self-signed certificate; the mock WebKit smoke suite passed. The optional
   Cursor live resume test failed its upstream `session/load` resume assertion.
+- Config-options-only follow-up: `trusted_permission_config_must_be_exact_and_advertised`
+  and the unchanged manual-permission fallback regression passed; `cargo test -p
+  ajax-web` passed 371 tests on rerun after one known environment-variable race
+  between the adjacent Test-in-Stable endpoint tests caused an initial 200/404
+  mismatch. `cargo nextest run --all-features --test-threads=1` passed 1,984 tests.
+- Config-options-only follow-up: `npm run web:test -- --run` passed 848 tests
+  with 9 skipped; `npm run web:smoke` passed 121 with 3 skipped. Clippy, Cargo
+  check/doc tests, TypeScript, ESLint, ast-grep, CI workflow checks, deterministic
+  production build, formatting, diff checks, and the Impeccable detector passed.
 
 ## Deviations and assumptions
 
