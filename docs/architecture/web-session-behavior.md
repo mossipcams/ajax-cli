@@ -57,8 +57,9 @@ existing paths.
 ## Restart and transcript recovery
 
 - UI transcript survives `ajax-web` restart via JSONL under `state_dir`.
-- On acquire after restart, when Cursor advertises `loadSession`, the host calls
-  `session/load` with the stored ACP session id.
+- On acquire after restart, the host restores the stored ACP session id with
+  `session/resume` when advertised, otherwise `session/load`. If resume fails
+  and load is advertised, load is attempted before a new session is created.
 - Cursor may emit `session/update` replay notifications before the load result;
   the host drains them so JSONL is not duplicated.
 - If load is unsupported or fails, the JSONL transcript still reloads and exactly
@@ -69,6 +70,10 @@ existing paths.
 
 - Unrecognized ACP `sessionUpdate` kinds (except dropped capability announcements) are
   stored as `artifact` events in the host transcript.
+- ACP `session/request_permission` is correlated by its JSON-RPC request id; an
+  approval or rejection selects a matching advertised ACP permission option,
+  and cancellation resolves every pending request with the standard cancelled
+  outcome before sending `session/cancel`.
 - Operator answers to ACP permission requests are recorded as
   `permission_resolved` in the host transcript.
 - Reconnect or full page reload replay must not resurrect a permission prompt

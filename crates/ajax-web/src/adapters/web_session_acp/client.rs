@@ -1,31 +1,25 @@
-//! Minimal newline-delimited JSON-RPC stdio client for Cursor ACP.
-//!
-//! We implement this locally instead of pulling `agent-client-protocol` because
-//! the published SDK targets a different async runtime shape than ajax-web's
-//! tokio WebSocket bridge. This module covers initialize, session/new,
-//! session/prompt, session/cancel, session/update notifications, and permission
-//! requests from the agent.
+//! Task-scoped process facade over the official ACP Rust SDK connection actor.
 
 use ajax_core::{
-    adapters::{
-        acp_args_for_candidate, acp_launch_for_agent, parse_model_selection, AcpLaunch,
-        AcpModelSelection,
-    },
+    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch},
     models::AgentClient,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::Path,
-    process::{Child, ChildStdin, Stdio},
+    process::{Child, Stdio},
     sync::{
-        mpsc::{self, Receiver, Sender},
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
         Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
 };
+
+use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
 
 #[cfg(test)]
 use std::{cell::RefCell, path::PathBuf};
@@ -65,12 +59,27 @@ where
     })
 }
 
-enum PendingResponse {
-    Blocking(Sender<Result<Value, String>>),
-    Streaming { method: &'static str },
-}
+/// Bound on the ACP handshake (initialize, session/new, config). Generous for a
+/// cold bridge, short enough that a stuck harness reports rather than hangs.
+pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(45);
 
-type PendingResponses = Arc<Mutex<HashMap<u64, PendingResponse>>>;
+/// Keep only the last few KiB: enough to explain a failure, bounded for a
+/// long-lived session.
+const STDERR_TAIL_BYTES: usize = 4096;
+
+fn drain_stderr(stderr: impl std::io::Read + Send + 'static, sink: Arc<Mutex<String>>) {
+    let reader = BufReader::new(stderr);
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let mut tail = sink.lock().unwrap();
+        tail.push_str(&line);
+        tail.push('\n');
+        if tail.len() > STDERR_TAIL_BYTES {
+            let cut = tail.len() - STDERR_TAIL_BYTES;
+            *tail = tail[cut..].to_string();
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum AcpClientEvent {
@@ -95,15 +104,15 @@ pub struct SpawnReport {
 }
 
 pub struct AcpStdioClient {
-    stdin: ChildStdin,
+    commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     events: Receiver<AcpClientEvent>,
     next_id: u64,
-    pending: PendingResponses,
+    busy: Arc<AtomicBool>,
     session_id: String,
     /// Kept because each harness advertises its model catalog here.
     session_new_result: Value,
     child: Child,
-    _reader: thread::JoinHandle<()>,
+    _connection: thread::JoinHandle<()>,
 }
 
 impl AcpStdioClient {
@@ -124,85 +133,61 @@ impl AcpStdioClient {
             .stdout
             .take()
             .ok_or_else(|| "acp process missing stdout".to_string())?;
-        let pending: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
+        let stderr_tail: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        if let Some(stderr) = child.stderr.take() {
+            let sink = Arc::clone(&stderr_tail);
+            thread::spawn(move || drain_stderr(stderr, sink));
+        }
         let (event_tx, event_rx) = mpsc::channel();
-        let pending_for_reader = Arc::clone(&pending);
-        let reader = thread::spawn(move || read_loop(stdout, pending_for_reader, event_tx));
-
-        let mut client = Self {
-            stdin,
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let busy = Arc::new(AtomicBool::new(false));
+        let connection_busy = Arc::clone(&busy);
+        let cwd = worktree_path.to_path_buf();
+        let model = model.map(str::to_string);
+        let resume_session_id = resume_session_id.map(str::to_string);
+        let connection = thread::spawn(move || {
+            sdk_connection::run(RunOptions {
+                stdin,
+                stdout,
+                commands: command_rx,
+                events: event_tx,
+                ready: ready_tx,
+                busy: connection_busy,
+                agent,
+                cwd,
+                model,
+                resume_session_id,
+            });
+        });
+        let ready = ready_rx
+            .recv_timeout(HANDSHAKE_TIMEOUT + Duration::from_secs(1))
+            .map_err(|_| format!("ACP startup timed out{}", stderr_hint(&stderr_tail)))?
+            .map_err(|error| format!("{error}{}", stderr_hint(&stderr_tail)))?;
+        let ConnectionReady {
+            session_id,
+            session_new_result,
+            load_session_advertised,
+            resumed,
+        } = ready;
+        if resumed {
+            while event_rx.try_recv().is_ok() {}
+        }
+        let client = Self {
+            commands: command_tx,
             events: event_rx,
             next_id: 1,
-            pending,
-            session_id: String::new(),
-            session_new_result: Value::Null,
+            busy,
+            session_id,
+            session_new_result,
             child,
-            _reader: reader,
+            _connection: connection,
         };
-        let init_result = client.initialize()?;
-        let load_session_advertised = load_session_advertised(&init_result);
-        let mut resumed = false;
-        if let Some(resume_id) = resume_session_id.filter(|_| load_session_advertised) {
-            if client.session_load(worktree_path, resume_id).is_ok() {
-                client.session_id = resume_id.to_string();
-                client.drain_pending_events();
-                resumed = true;
-            } else {
-                client.drain_pending_events();
-                client.session_id = client.session_new(worktree_path)?;
-            }
-        } else {
-            client.session_id = client.session_new(worktree_path)?;
-        }
-        client.apply_model_in_band(agent, model);
         let report = SpawnReport {
             load_session_advertised,
             resumed,
         };
         Ok((client, report))
-    }
-
-    /// Tell a bridge harness which model to run, and any option that rides with
-    /// it (the reasoning level is a separate config option on every bridge).
-    /// Cursor is already pinned on its argv. A refusal is not fatal — the
-    /// harness keeps its own default and the session continues.
-    fn apply_model_in_band(&mut self, agent: AgentClient, model: Option<&str>) {
-        let Some(raw) = model.map(str::trim).filter(|model| !model.is_empty()) else {
-            return;
-        };
-        if model_uses_cli_default(Some(raw)) {
-            return;
-        }
-        let Some(launch) = acp_launch_for_agent(agent) else {
-            return;
-        };
-        if matches!(launch.model_selection, AcpModelSelection::SpawnArg) {
-            return;
-        }
-        let Some(selection) = parse_model_selection(raw) else {
-            return;
-        };
-
-        let session_id = self.session_id.clone();
-        let mut settings = vec![("model".to_string(), selection.model)];
-        settings.extend(selection.options);
-        for (config_id, value) in settings {
-            let params = json!({
-                "sessionId": session_id,
-                "configId": config_id,
-                "value": value,
-            });
-            if let Err(error) = self.call("session/set_config_option", params) {
-                tracing::warn!(
-                    target: "ajax_web",
-                    agent = ?agent,
-                    config_id = %config_id,
-                    value = %value,
-                    error = %error,
-                    "acp model selection refused"
-                );
-            }
-        }
     }
 
     pub fn session_id(&self) -> &str {
@@ -239,72 +224,66 @@ impl AcpStdioClient {
     }
 
     pub fn begin_prompt(&mut self, text: &str) -> Result<u64, String> {
-        if self.prompt_in_flight() {
+        if self.busy.swap(true, Ordering::AcqRel) {
             return Err("prompt already in flight".to_string());
         }
-        self.begin_request(
-            "session/prompt",
-            json!({
-                "sessionId": self.session_id,
-                "prompt": [{ "type": "text", "text": text }],
-            }),
-        )
+        let id = self.next_id;
+        self.next_id += 1;
+        let (result_tx, result_rx) = mpsc::channel();
+        if self
+            .commands
+            .send(ClientCommand::Prompt {
+                id,
+                text: text.to_string(),
+                result: result_tx,
+            })
+            .is_err()
+        {
+            self.busy.store(false, Ordering::Release);
+            return Err("ACP connection is closed".to_string());
+        }
+        match result_rx.recv_timeout(HANDSHAKE_TIMEOUT) {
+            Ok(Ok(())) => Ok(id),
+            Ok(Err(error)) => {
+                self.busy.store(false, Ordering::Release);
+                Err(error)
+            }
+            Err(_) => {
+                self.busy.store(false, Ordering::Release);
+                Err("ACP prompt dispatch timed out".to_string())
+            }
+        }
     }
 
-    pub fn begin_cancel(&mut self) -> Result<u64, String> {
-        self.begin_request("session/cancel", json!({ "sessionId": self.session_id }))
+    /// Cancel the in-flight turn.
+    ///
+    /// ACP cancellation is a notification. Sent as a request, every installed
+    /// harness answers `Method not found` and keeps working — Stop did nothing.
+    /// The agent ends the turn with `stopReason: "cancelled"`, which settles the
+    /// prompt already in flight.
+    pub fn cancel(&mut self) -> Result<(), String> {
+        self.command_result(|result| ClientCommand::Cancel { result })
     }
 
     pub(crate) fn prompt_in_flight(&self) -> bool {
-        self.pending.lock().unwrap().values().any(|entry| {
-            matches!(
-                entry,
-                PendingResponse::Streaming {
-                    method: "session/prompt"
-                }
-            )
-        })
+        self.busy.load(Ordering::Acquire)
     }
 
     pub fn respond_client_request(&mut self, id: &Value, result: Value) -> Result<(), String> {
-        self.write_response(id, result)
-    }
-
-    fn initialize(&mut self) -> Result<Value, String> {
-        let response = self.call(
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": {},
-                "clientInfo": { "name": "ajax-web", "version": env!("CARGO_PKG_VERSION") }
-            }),
-        )?;
-        self.write_notification("notifications/initialized", json!({}))?;
-        Ok(response)
-    }
-
-    fn session_load(&mut self, worktree_path: &Path, session_id: &str) -> Result<(), String> {
-        let mut params = session_new_params(worktree_path);
-        if let Value::Object(ref mut map) = params {
-            map.insert("sessionId".to_string(), json!(session_id));
-        }
-        self.call("session/load", params)?;
-        Ok(())
-    }
-
-    fn drain_pending_events(&self) {
-        while self.poll_event().is_some() {}
-    }
-
-    fn session_new(&mut self, worktree_path: &Path) -> Result<String, String> {
-        let response = self.call("session/new", session_new_params(worktree_path))?;
-        let session_id = response
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "session/new missing sessionId".to_string())?;
-        self.session_new_result = response;
-        Ok(session_id)
+        let approved = result
+            .get("approved")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "permission response missing approved".to_string())?;
+        let request_id = match id {
+            Value::String(value) => value.clone(),
+            Value::Number(value) => value.to_string(),
+            _ => return Err("unsupported permission request id".to_string()),
+        };
+        self.command_result(|result| ClientCommand::RespondPermission {
+            request_id,
+            approved,
+            result,
+        })
     }
 
     /// Raw `session/new` result, which is where each harness advertises the
@@ -313,96 +292,41 @@ impl AcpStdioClient {
         &self.session_new_result
     }
 
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let (tx, rx) = mpsc::channel();
-        self.pending
-            .lock()
-            .unwrap()
-            .insert(id, PendingResponse::Blocking(tx));
-        self.write_request(method, params, id)?;
-        match rx.recv_timeout(Duration::from_secs(120)) {
-            Ok(Ok(value)) => Ok(value),
-            Ok(Err(message)) => Err(message),
-            Err(_) => Err(format!("acp request timed out: {method}")),
-        }
-    }
-
-    fn begin_request(&mut self, method: &'static str, params: Value) -> Result<u64, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.pending
-            .lock()
-            .unwrap()
-            .insert(id, PendingResponse::Streaming { method });
-        if let Err(error) = self.write_request(method, params, id) {
-            self.pending.lock().unwrap().remove(&id);
-            return Err(error);
-        }
-        Ok(id)
-    }
-
-    fn write_request(&mut self, method: &str, params: Value, id: u64) -> Result<(), String> {
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        write_line(&mut self.stdin, &payload)
-    }
-
-    fn write_notification(&mut self, method: &str, params: Value) -> Result<(), String> {
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        write_line(&mut self.stdin, &payload)
-    }
-
-    fn write_response(&mut self, id: &Value, result: Value) -> Result<(), String> {
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
-        });
-        write_line(&mut self.stdin, &payload)
+    fn command_result(
+        &self,
+        command: impl FnOnce(mpsc::Sender<Result<(), String>>) -> ClientCommand,
+    ) -> Result<(), String> {
+        let (result_tx, result_rx) = mpsc::channel();
+        self.commands
+            .send(command(result_tx))
+            .map_err(|_| "ACP connection is closed".to_string())?;
+        result_rx
+            .recv_timeout(HANDSHAKE_TIMEOUT)
+            .map_err(|_| "ACP command timed out".to_string())?
     }
 }
 
 impl Drop for AcpStdioClient {
     fn drop(&mut self) {
+        let _ = self.commands.send(ClientCommand::Shutdown);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-fn write_line(stdin: &mut ChildStdin, payload: &Value) -> Result<(), String> {
-    let mut line = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-    line.push('\n');
-    stdin
-        .write_all(line.as_bytes())
-        .map_err(|error| format!("acp stdin write failed: {error}"))
-}
-
-/// `mcpServers` is required and must be an array. Omitting it fails Cursor's
-/// schema validation, which it surfaces only as JSON-RPC "Internal error" —
-/// the orchestration session could never start without this key.
-pub(crate) fn session_new_params(worktree_path: &Path) -> Value {
-    json!({
-        "cwd": worktree_path.display().to_string(),
-        "mcpServers": [],
-    })
-}
-
-pub(crate) fn load_session_advertised(value: &Value) -> bool {
-    value
-        .get("agentCapabilities")
-        .and_then(|caps| caps.get("loadSession"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+fn stderr_hint(stderr_tail: &Mutex<String>) -> String {
+    let tail = stderr_tail.lock().unwrap();
+    let line = tail
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .trim();
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!(" — {}", line.chars().take(200).collect::<String>())
+    }
 }
 
 /// True when `--model` should be omitted (Cursor default / Auto).
@@ -511,7 +435,7 @@ fn spawn_acp_process(
             .current_dir(worktree_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         return command
             .spawn()
             .map_err(|error| format!("failed to spawn test acp program: {error}"));
@@ -532,7 +456,7 @@ fn spawn_acp_process(
             .current_dir(worktree_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         if let Ok(child) = command.spawn() {
             return Ok(child);
         }
@@ -542,64 +466,4 @@ fn spawn_acp_process(
         "{agent:?} ACP agent is not installed — {}",
         launch.install_hint
     ))
-}
-
-fn read_loop(
-    stdout: impl std::io::Read + Send + 'static,
-    pending: PendingResponses,
-    event_tx: Sender<AcpClientEvent>,
-) {
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            let _ = event_tx.send(AcpClientEvent::Exited);
-            break;
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(method) = value.get("method").and_then(Value::as_str) {
-            if method == "session/update" {
-                let params = value.get("params").cloned().unwrap_or(Value::Null);
-                let _ = event_tx.send(AcpClientEvent::SessionUpdate(params));
-                continue;
-            }
-            if let Some(id) = value.get("id") {
-                let params = value.get("params").cloned().unwrap_or(Value::Null);
-                let _ = event_tx.send(AcpClientEvent::ClientRequest {
-                    id: id.clone(),
-                    method: method.to_string(),
-                    params,
-                });
-                continue;
-            }
-        }
-        if let Some(id) = value.get("id").and_then(Value::as_u64) {
-            let pending_entry = pending.lock().unwrap().remove(&id);
-            let Some(pending_entry) = pending_entry else {
-                continue;
-            };
-            let result = if let Some(error) = value.get("error") {
-                Err(error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("acp error")
-                    .to_string())
-            } else {
-                Ok(value.get("result").cloned().unwrap_or(Value::Null))
-            };
-            match pending_entry {
-                PendingResponse::Blocking(tx) => {
-                    let _ = tx.send(result);
-                }
-                PendingResponse::Streaming { method } => {
-                    let _ = event_tx.send(AcpClientEvent::RequestFinished { id, method, result });
-                }
-            }
-        }
-    }
-    let _ = event_tx.send(AcpClientEvent::Exited);
 }

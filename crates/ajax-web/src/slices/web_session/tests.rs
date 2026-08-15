@@ -348,6 +348,30 @@ fn map_acp_client_request_session_request_permission() {
     );
 }
 
+// Regression for #880: the JSON-RPC id is on the envelope, not ACP params.
+#[test]
+fn map_standard_acp_permission_request_without_an_embedded_request_id() {
+    let params = serde_json::json!({
+        "sessionId": "session-1",
+        "toolCall": {
+            "toolCallId": "call-1",
+            "title": "Run tests"
+        },
+        "options": [
+            { "optionId": "allow-once", "name": "Allow once", "kind": "allow_once" },
+            { "optionId": "reject-once", "name": "Reject", "kind": "reject_once" }
+        ]
+    });
+    assert_eq!(
+        map_acp_client_request("session/request_permission", &params),
+        Some(SessionServerEvent::PermissionRequest {
+            request_id: String::new(),
+            title: Some("Run tests".to_string()),
+            detail: None,
+        })
+    );
+}
+
 #[test]
 fn map_acp_client_request_permission_nested_fields() {
     let params = serde_json::json!({

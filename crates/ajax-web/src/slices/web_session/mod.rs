@@ -309,10 +309,12 @@ pub fn map_acp_client_request(method: &str, params: &Value) -> Option<SessionSer
                 .get("requestId")
                 .or_else(|| params.get("request_id"))
                 .or_else(|| params.get("id"))
-                .and_then(Value::as_str)?
+                .and_then(Value::as_str)
+                .unwrap_or_default()
                 .to_string();
             let title = params
                 .get("title")
+                .or_else(|| params.pointer("/toolCall/title"))
                 .or_else(|| params.pointer("/permission/title"))
                 .and_then(Value::as_str)
                 .map(str::to_string);

@@ -393,18 +393,28 @@ fn answer_permission_records_permission_resolved() {
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire");
-        hub.answer_permission(handle, "42", true, Some("ok"))
-            .expect("answer");
-        let (events, _) = hub.read_from(handle, 0);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            SessionServerEvent::PermissionResolved {
-                request_id,
-                approved: true,
-            } if request_id == "42"
-        )));
+        with_test_acp_extra_args(&["--permission"], || {
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            hub.submit_prompt(handle, "permission".to_string())
+                .expect("prompt");
+            pump_until(&hub, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| matches!(
+                    event,
+                    SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
+                ))
+            });
+            hub.answer_permission(handle, "42", true, Some("ok"))
+                .expect("answer");
+            let (events, _) = hub.read_from(handle, 0);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::PermissionResolved {
+                    request_id,
+                    approved: true,
+                } if request_id == "42"
+            )));
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);

@@ -4,6 +4,7 @@ mod bridge;
 mod catalog;
 mod client;
 mod hub;
+mod sdk_connection;
 mod store;
 
 #[cfg(test)]

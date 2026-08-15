@@ -42,6 +42,13 @@ upgrade is transport-only over `WebSessionHub` (snapshot via cursor replay).
 Session admission policy lives in the `web_session` slice and is stated below.
 Routes and the bridge call hub methods only.
 
+The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
+framing, request correlation, and typed ACP messages. It initializes with stable
+protocol v1 and rejects a peer that selects another version. Session restore
+prefers `session/resume` when advertised, falls back to `session/load`, then
+creates a new session. Permission requests stay host-owned while pending and are
+answered with ACP's standard selected-option or cancelled outcome.
+
 ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
 harness to its ACP entry point and to how it accepts a model:
 

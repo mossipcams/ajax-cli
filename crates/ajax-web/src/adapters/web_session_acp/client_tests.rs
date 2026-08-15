@@ -1,15 +1,16 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
-use super::client::{
-    acp_args_for_program, load_session_advertised, session_new_params, AcpClientEvent,
-    AcpStdioClient,
-};
+use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
+use agent_client_protocol::schema::{
+    v1::{AgentCapabilities, InitializeResponse, NewSessionRequest},
+    ProtocolVersion,
+};
 use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -63,12 +64,20 @@ fn pump_until_pong_or_prompt_finished(client: &AcpStdioClient, timeout: Duration
 
 #[test]
 fn load_session_advertised_from_initialize_result() {
-    let value = json!({ "agentCapabilities": { "loadSession": true } });
-    assert!(load_session_advertised(&value));
-    assert!(!load_session_advertised(&json!({})));
-    assert!(!load_session_advertised(&json!({
-        "agentCapabilities": { "loadSession": false }
-    })));
+    let advertised = InitializeResponse::new(ProtocolVersion::V1)
+        .agent_capabilities(AgentCapabilities::new().load_session(true));
+    assert!(advertised.agent_capabilities.load_session);
+    assert!(
+        !InitializeResponse::new(ProtocolVersion::V1)
+            .agent_capabilities
+            .load_session
+    );
+    assert!(
+        !InitializeResponse::new(ProtocolVersion::V1)
+            .agent_capabilities(AgentCapabilities::new().load_session(false))
+            .agent_capabilities
+            .load_session
+    );
 }
 
 /// Cursor validates `session/new` params and rejects a missing
@@ -76,7 +85,7 @@ fn load_session_advertised_from_initialize_result() {
 /// could never start. Keep the key present and an array.
 #[test]
 fn session_new_params_carry_mcp_servers_array() {
-    let params = session_new_params(Path::new("/repo/worktree"));
+    let params = serde_json::to_value(NewSessionRequest::new("/repo/worktree")).unwrap();
     assert_eq!(
         params.get("cwd").and_then(Value::as_str),
         Some("/repo/worktree")
@@ -250,6 +259,95 @@ fn fake_spawn_reports_load_session_advertised() {
 }
 
 #[test]
+fn fake_spawn_sends_no_nonstandard_initialized_notification() {
+    let dir = scratch_dir("no-initialized-notification");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            if let Some(AcpClientEvent::SessionUpdate(update)) =
+                client.wait_event(Duration::from_millis(50))
+            {
+                assert!(
+                    !session_update_text(&update)
+                        .unwrap_or_default()
+                        .starts_with("notification:"),
+                    "unexpected ACP notification: {update}"
+                );
+            }
+        }
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #880: ACP peers must agree on the initialize protocolVersion.
+#[test]
+fn fake_spawn_rejects_an_unsupported_protocol_version() {
+    let dir = scratch_dir("unsupported-protocol");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--protocol-v2"], || {
+            let error = match AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None) {
+                Ok(_) => panic!("ACP v1 client must reject a v2 response"),
+                Err(error) => error,
+            };
+            assert!(error.contains("protocol version"), "{error}");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn invalid_initialize_response_includes_the_agent_stderr_hint() {
+    let dir = scratch_dir("invalid-initialize-stderr");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--bad-initialize"], || {
+            let error = match AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None) {
+                Ok(_) => panic!("invalid initialize response must fail"),
+                Err(error) => error,
+            };
+            assert!(error.contains("agent login required"), "{error}");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #880: invalid stdout is a protocol error, not ignorable noise.
+#[test]
+fn fake_malformed_stdout_reports_an_error() {
+    let dir = scratch_dir("malformed-stdout");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--malformed"], || {
+            let (client, _) = AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None)
+                .expect("spawn fake ACP");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if matches!(
+                    client.wait_event(Duration::from_millis(100)),
+                    Some(AcpClientEvent::Error(_))
+                ) {
+                    return;
+                }
+            }
+            panic!("malformed ACP stdout was silently ignored");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn fake_begin_prompt_receives_pong_and_turn_end() {
     let dir = scratch_dir("prompt-pong");
     let script = fake_acp_fixture();
@@ -259,6 +357,81 @@ fn fake_begin_prompt_receives_pong_and_turn_end() {
             AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         client.begin_prompt("ping").expect("begin_prompt");
         pump_until_pong_or_prompt_finished(&client, Duration::from_secs(5));
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #880: the browser-facing approval remains a boolean, but the
+// ACP peer must receive the selected standard permission option.
+#[test]
+fn fake_permission_request_returns_a_selected_acp_outcome() {
+    let dir = scratch_dir("permission-selected");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--permission"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client.begin_prompt("permission").expect("begin prompt");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match client.wait_event(Duration::from_millis(100)) {
+                    Some(AcpClientEvent::ClientRequest { id, method, params }) => {
+                        assert_eq!(method, "session/request_permission");
+                        assert_eq!(params.pointer("/toolCall/title"), Some(&json!("Run tests")));
+                        assert_eq!(
+                            params.pointer("/options/0/optionId"),
+                            Some(&json!("allow-once"))
+                        );
+                        client
+                            .respond_client_request(&id, json!({ "approved": true }))
+                            .expect("approve permission");
+                    }
+                    Some(AcpClientEvent::SessionUpdate(update))
+                        if session_update_text(&update)
+                            == Some("permission:selected:allow-once") =>
+                    {
+                        return;
+                    }
+                    Some(_) | None => {}
+                }
+            }
+            panic!("standard ACP permission response was not observed");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_cancel_resolves_a_pending_permission_as_cancelled() {
+    let dir = scratch_dir("permission-cancelled");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--permission"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client.begin_prompt("permission").expect("begin prompt");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match client.wait_event(Duration::from_millis(100)) {
+                    Some(AcpClientEvent::ClientRequest { .. }) => {
+                        client.cancel().expect("cancel");
+                    }
+                    Some(AcpClientEvent::SessionUpdate(update))
+                        if session_update_text(&update) == Some("permission:cancelled:") =>
+                    {
+                        return;
+                    }
+                    Some(_) | None => {}
+                }
+            }
+            panic!("pending ACP permission was not cancelled");
+        });
     });
 
     let _ = fs::remove_dir_all(dir);
@@ -303,6 +476,30 @@ fn fake_resume_drains_replayed_session_updates() {
             client2.poll_event().is_none(),
             "replayed session/update must be drained after session/load"
         );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn failed_session_resume_falls_back_to_session_load() {
+    let dir = scratch_dir("resume-falls-back-to-load");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("first spawn");
+        let session_id = client.session_id().to_string();
+        drop(client);
+
+        with_test_acp_extra_args(&["--resume-fail"], || {
+            let (client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
+                    .expect("restore spawn");
+            assert!(report.resumed, "session/load should follow a failed resume");
+            assert_eq!(client.session_id(), session_id);
+            assert!(client.poll_event().is_none(), "load replay must be drained");
+        });
     });
 
     let _ = fs::remove_dir_all(dir);

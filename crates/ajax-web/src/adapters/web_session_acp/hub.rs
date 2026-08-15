@@ -375,7 +375,7 @@ impl WebSessionHub {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(slot) = sessions.remove(handle) {
             let mut client = slot.client.lock().unwrap();
-            let _ = client.begin_cancel();
+            let _ = client.cancel();
         }
     }
 
@@ -429,7 +429,7 @@ impl WebSessionHub {
         };
         let client = Arc::clone(&slot.client);
         apply_cancel_to_queue(&mut slot.queued, keep_queue);
-        let result = client.lock().unwrap().begin_cancel().map(|_| ());
+        let result = client.lock().unwrap().cancel();
         result
     }
 
@@ -446,18 +446,21 @@ impl WebSessionHub {
         let Some(slot) = sessions.get_mut(handle) else {
             return Err("session slot missing".to_string());
         };
-        let resolved = SessionServerEvent::PermissionResolved {
-            request_id: request_id.to_string(),
-            approved,
-        };
-        slot.append_to_log(&self.state_dir, handle, vec![resolved]);
         let client = Arc::clone(&slot.client);
         let id = parse_json_rpc_id(request_id);
-        let result = client
+        client
             .lock()
             .unwrap()
-            .respond_client_request(&id, permission_response(approved, reason));
-        result
+            .respond_client_request(&id, permission_response(approved, reason))?;
+        slot.append_to_log(
+            &self.state_dir,
+            handle,
+            vec![SessionServerEvent::PermissionResolved {
+                request_id: request_id.to_string(),
+                approved,
+            }],
+        );
+        Ok(())
     }
 
     /// Move whatever the ACP client has produced into the slot's transcript.
@@ -580,7 +583,7 @@ pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> b
 
 fn begin_cancel_slot_client(slot: &SessionSlot) {
     let mut client = slot.client.lock().unwrap();
-    let _ = client.begin_cancel();
+    let _ = client.cancel();
 }
 
 fn replace_resume_id(

@@ -55,6 +55,11 @@ impl FakeAcp {
         self.read_line().expect("response line")
     }
 
+    fn notify(&mut self, method: &str, params: Value) {
+        let payload = json!({ "jsonrpc": "2.0", "method": method, "params": params });
+        write_line(&mut self.stdin, &payload);
+    }
+
     fn write_request(&mut self, id: u64, method: &str, params: Value) {
         let payload = json!({
             "jsonrpc": "2.0",
@@ -217,14 +222,47 @@ fn session_load_with_load_fail_returns_error() {
     assert!(response.get("result").is_none());
 }
 
+// Checked against every installed harness: cancel is a notification. Sent as a
+// request, Cursor, Codex, Claude, and Pi all answer "Method not found" and keep
+// working — which is how Stop stayed a no-op.
 #[test]
-fn session_cancel_returns_result() {
+fn session_cancel_as_a_request_is_rejected() {
     let Some(mut acp) = FakeAcp::spawn(&[]) else {
         return;
     };
     acp.call(1, "initialize", json!({}));
     acp.call(2, "session/new", json!({ "cwd": "/tmp", "mcpServers": [] }));
+
     let response = acp.call(3, "session/cancel", json!({ "sessionId": "fake-sess-1" }));
-    assert!(response.get("result").is_some());
-    assert!(response.get("error").is_none());
+
+    assert!(response.get("result").is_none());
+    assert_eq!(
+        response.pointer("/error/code").and_then(Value::as_i64),
+        Some(-32601)
+    );
+}
+
+#[test]
+fn session_cancel_as_a_notification_ends_the_turn() {
+    let Some(mut acp) = FakeAcp::spawn(&["--hold-prompt"]) else {
+        return;
+    };
+    acp.call(1, "initialize", json!({}));
+    acp.call(2, "session/new", json!({ "cwd": "/tmp", "mcpServers": [] }));
+    acp.write_request(
+        3,
+        "session/prompt",
+        json!({ "sessionId": "fake-sess-1", "prompt": [{ "type": "text", "text": "hold" }] }),
+    );
+
+    acp.notify("session/cancel", json!({ "sessionId": "fake-sess-1" }));
+
+    let response = acp.read_line().expect("held prompt settles");
+    assert_eq!(response.get("id").and_then(Value::as_u64), Some(3));
+    assert_eq!(
+        response
+            .pointer("/result/stopReason")
+            .and_then(Value::as_str),
+        Some("cancelled")
+    );
 }
