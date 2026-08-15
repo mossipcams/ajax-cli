@@ -49,7 +49,6 @@ export function useSessionTransport({
     let reconnectAttempts = 0;
     let reconnecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const connectModel = readSessionModel();
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -123,7 +122,7 @@ export function useSessionTransport({
           },
         },
         undefined,
-        connectModel,
+        readSessionModel(),
       );
       transportRef.current = transport;
     };

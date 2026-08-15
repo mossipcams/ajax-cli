@@ -5,16 +5,17 @@ use agent_client_protocol::{
     on_receive_notification, on_receive_request,
     schema::{
         v1::{
-            CancelNotification, ContentBlock, Implementation, InitializeRequest,
-            LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionKind,
-            PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-            RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
-            SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions,
-            SessionNotification, SetSessionConfigOptionRequest, TextContent,
+            CancelNotification, ClientCapabilities, ContentBlock, Implementation,
+            InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption,
+            PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
+            RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+            SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
+            SessionConfigSelectOptions, SessionNotification, SetSessionConfigOptionRequest,
+            TextContent,
         },
         ProtocolVersion,
     },
-    Agent, Client, ConnectionTo, Lines, Responder,
+    Agent, Client, ConnectionTo, Lines, Responder, UntypedMessage,
 };
 use ajax_core::{
     adapters::{acp_launch_for_agent, parse_model_selection, AcpModelSelection},
@@ -79,6 +80,12 @@ pub(super) struct RunOptions {
     pub resume_session_id: Option<String>,
 }
 
+/// The host currently implements permission replies only. Keep filesystem and
+/// terminal capabilities false until their worktree-scoped handlers exist.
+pub(super) fn client_capabilities() -> ClientCapabilities {
+    ClientCapabilities::default()
+}
+
 pub(super) fn run(options: RunOptions) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -119,10 +126,16 @@ async fn run_async(options: RunOptions) {
         .builder()
         .name("ajax-web")
         .on_receive_notification(
-            async move |notification: SessionNotification, _connection| {
-                let params = serde_json::to_value(notification)
-                    .map_err(agent_client_protocol::Error::into_internal_error)?;
-                let _ = notification_events.send(AcpClientEvent::SessionUpdate(params));
+            async move |notification: UntypedMessage, _connection| {
+                if notification.method() != "session/update" {
+                    return Ok(());
+                }
+                let params = notification.params().clone();
+                let event = match serde_json::from_value::<SessionNotification>(params.clone()) {
+                    Ok(notification) => AcpClientEvent::SessionUpdate(Box::new(notification)),
+                    Err(_) => AcpClientEvent::UnknownSessionUpdate(params),
+                };
+                let _ = notification_events.send(event);
                 Ok(())
             },
             on_receive_notification!(),
@@ -227,6 +240,7 @@ async fn initialize_session(
     resume_session_id: Option<&str>,
 ) -> Result<ConnectionReady, String> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
+        .client_capabilities(client_capabilities())
         .client_info(Implementation::new("ajax-web", env!("CARGO_PKG_VERSION")).title("Ajax Web"));
     let initialized = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,

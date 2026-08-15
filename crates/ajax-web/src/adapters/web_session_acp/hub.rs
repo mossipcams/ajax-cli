@@ -3,8 +3,8 @@
 use super::client::{AcpClientEvent, AcpStdioClient};
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::slices::web_session::{
-    apply_cancel_to_queue, dispatch_prompt, map_acp_client_request, map_acp_session_update,
-    PromptDispatch, SessionServerEvent,
+    apply_cancel_to_queue, dispatch_prompt, map_acp_client_request, map_acp_session_notification,
+    map_acp_session_update, PromptDispatch, SessionServerEvent,
 };
 use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
@@ -12,7 +12,8 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    thread,
+    time::{Duration, Instant},
 };
 
 struct HolderCount(usize);
@@ -144,6 +145,29 @@ impl WebSessionHub {
         Self {
             sessions: Mutex::new(HashMap::new()),
             state_dir,
+        }
+    }
+
+    /// Keep ACP turns alive when every browser socket is temporarily gone.
+    /// The weak reference lets the worker stop with the host state.
+    pub fn start_background_pump(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let _ = thread::Builder::new()
+            .name("ajax-acp-pump".to_string())
+            .spawn(move || loop {
+                let Some(hub) = weak.upgrade() else {
+                    break;
+                };
+                hub.pump_all();
+                drop(hub);
+                thread::sleep(Duration::from_millis(50));
+            });
+    }
+
+    fn pump_all(&self) {
+        let handles: Vec<String> = self.sessions.lock().unwrap().keys().cloned().collect();
+        for handle in handles {
+            self.pump(&handle);
         }
     }
 
@@ -398,10 +422,35 @@ impl WebSessionHub {
     /// Enqueue or start a prompt. Records the operator message after the
     /// prompt is accepted (started or queued) — ACP does not echo user turns.
     pub fn submit_prompt(&self, handle: &str, text: String) -> Result<(), String> {
+        self.submit_prompt_with_id(handle, String::new(), text)
+    }
+
+    pub fn submit_prompt_with_id(
+        &self,
+        handle: &str,
+        client_message_id: String,
+        text: String,
+    ) -> Result<(), String> {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(slot) = sessions.get_mut(handle) else {
             return Err("session slot missing".to_string());
         };
+        if !client_message_id.is_empty()
+            && slot.log.events.iter().any(|event| {
+                matches!(
+                    event,
+                    SessionServerEvent::PromptAccepted { client_message_id: accepted }
+                        if accepted == &client_message_id
+                )
+            })
+        {
+            slot.append_to_log(
+                &self.state_dir,
+                handle,
+                vec![SessionServerEvent::PromptAccepted { client_message_id }],
+            );
+            return Ok(());
+        }
         let user_event = SessionServerEvent::Message {
             role: "user".to_string(),
             text: text.clone(),
@@ -410,12 +459,20 @@ impl WebSessionHub {
         let in_flight = client.lock().unwrap().prompt_in_flight();
         match dispatch_prompt(in_flight, &mut slot.queued, text.clone()) {
             PromptDispatch::Queued => {
-                slot.append_to_log(&self.state_dir, handle, vec![user_event]);
+                let mut events = vec![user_event];
+                if !client_message_id.is_empty() {
+                    events.push(SessionServerEvent::PromptAccepted { client_message_id });
+                }
+                slot.append_to_log(&self.state_dir, handle, events);
                 Ok(())
             }
             PromptDispatch::StartNow => {
                 client.lock().unwrap().begin_prompt(&text).map(|_| ())?;
-                slot.append_to_log(&self.state_dir, handle, vec![user_event]);
+                let mut events = vec![user_event];
+                if !client_message_id.is_empty() {
+                    events.push(SessionServerEvent::PromptAccepted { client_message_id });
+                }
+                slot.append_to_log(&self.state_dir, handle, events);
                 Ok(())
             }
         }
@@ -489,7 +546,7 @@ impl WebSessionHub {
             slot.acp_alive = false;
         }
         if !events.is_empty() {
-            slot.append_to_log(&self.state_dir, handle, events);
+            slot.append_to_log(&self.state_dir, handle, coalesce_session_events(events));
         }
     }
 
@@ -634,6 +691,17 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
     while let Some(event) = client.poll_event() {
         match event {
             AcpClientEvent::SessionUpdate(params) => {
+                let mut mapped = map_acp_session_notification(&params);
+                for event in &mut mapped {
+                    if let SessionServerEvent::Message { role, text } = event {
+                        if role == "agent" && startup_info == Some(text.as_str()) {
+                            *role = "note".to_string();
+                        }
+                    }
+                }
+                events.extend(mapped);
+            }
+            AcpClientEvent::UnknownSessionUpdate(params) => {
                 events.extend(map_acp_session_update_with_startup(&params, startup_info));
             }
             AcpClientEvent::ClientRequest { id, method, params } => {
@@ -671,6 +739,34 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
         }
     }
     (events, host_exited, prompt_finished)
+}
+
+pub(crate) fn coalesce_session_events(events: Vec<SessionServerEvent>) -> Vec<SessionServerEvent> {
+    let mut coalesced = Vec::with_capacity(events.len());
+    for event in events {
+        let can_merge = match (&mut coalesced.last_mut(), &event) {
+            (
+                Some(SessionServerEvent::Message {
+                    role: previous_role,
+                    ..
+                }),
+                SessionServerEvent::Message { role, .. },
+            ) => previous_role == role && matches!(role.as_str(), "agent" | "thought"),
+            _ => false,
+        };
+        if can_merge {
+            if let (
+                Some(SessionServerEvent::Message { text: previous, .. }),
+                SessionServerEvent::Message { text, .. },
+            ) = (coalesced.last_mut(), event)
+            {
+                previous.push_str(&text);
+            }
+        } else {
+            coalesced.push(event);
+        }
+    }
+    coalesced
 }
 
 pub(crate) fn map_acp_session_update_with_startup(

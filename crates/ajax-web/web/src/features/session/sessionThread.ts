@@ -252,6 +252,9 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
       return push(state, { kind: "note", tone: "info", text: event.text });
     }
 
+    case "prompt_accepted":
+      return state;
+
     case "tool_call":
       return mergeToolCall(state, {
         callId: event.callId,

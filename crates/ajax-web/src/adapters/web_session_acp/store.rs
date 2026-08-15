@@ -3,12 +3,15 @@
 use crate::slices::web_session::SessionServerEvent;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
 };
 
 pub const MAX_LOG_EVENTS: usize = 2000;
+// Compact occasionally so append-only writes remain bounded without rewriting
+// the whole transcript for every streamed ACP chunk.
+const MAX_LOG_BYTES: u64 = 64 * 1024;
 
 const WEB_SESSION_DIR: &str = "web-session";
 
@@ -94,14 +97,40 @@ pub fn append_events(state_dir: &Path, handle: &str, new_events: &[SessionServer
     if new_events.is_empty() {
         return;
     }
-    let mut session = load(state_dir, handle);
-    session.events.extend_from_slice(new_events);
-    if session.events.len() > MAX_LOG_EVENTS {
-        let excess = session.events.len() - MAX_LOG_EVENTS;
-        session.events.drain(..excess);
-        session.dropped += excess;
+
+    let path = session_path(state_dir, handle);
+    if !path.is_file() {
+        persist(state_dir, handle, &StoredSession::default());
     }
-    persist(state_dir, handle, &session);
+    let result = (|| -> Result<(), std::io::Error> {
+        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+        for event in new_events {
+            let row = serde_json::json!({
+                "kind": "event",
+                "event": event,
+            });
+            let line = serde_json::to_string(&row).map_err(std::io::Error::other)?;
+            writeln!(file, "{line}")?;
+        }
+        file.flush()
+    })();
+    if let Err(error) = result {
+        tracing::warn!(%error, handle, "failed to append web session transcript");
+        return;
+    }
+
+    let oversized = fs::metadata(&path)
+        .map(|metadata| metadata.len() > MAX_LOG_BYTES)
+        .unwrap_or(false);
+    if oversized {
+        let mut session = load(state_dir, handle);
+        if session.events.len() > MAX_LOG_EVENTS {
+            let excess = session.events.len() - MAX_LOG_EVENTS;
+            session.events.drain(..excess);
+            session.dropped += excess;
+        }
+        persist(state_dir, handle, &session);
+    }
 }
 
 enum ParsedLine {
@@ -253,6 +282,24 @@ mod tests {
             loaded.events[MAX_LOG_EVENTS - 1],
             note(&(MAX_LOG_EVENTS + 4).to_string())
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn incremental_appends_keep_the_transcript_file_identity() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = scratch_dir("append-identity");
+        let handle = "web/fix-login";
+        append_events(&dir, handle, &[note("one")]);
+        let path = session_path(&dir, handle);
+        let first_inode = fs::metadata(&path).unwrap().ino();
+
+        append_events(&dir, handle, &[note("two")]);
+
+        assert_eq!(fs::metadata(&path).unwrap().ino(), first_inode);
+        assert_eq!(load(&dir, handle).events, vec![note("one"), note("two")]);
         let _ = fs::remove_dir_all(dir);
     }
 

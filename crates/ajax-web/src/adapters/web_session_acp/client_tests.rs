@@ -5,8 +5,9 @@ use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
     v1::{
-        AgentCapabilities, InitializeResponse, NewSessionRequest, SessionConfigOption,
-        SessionConfigOptionCategory, SessionConfigSelectOption,
+        AgentCapabilities, ContentBlock, InitializeResponse, NewSessionRequest,
+        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+        SessionNotification, SessionUpdate,
     },
     ProtocolVersion,
 };
@@ -36,10 +37,25 @@ fn scratch_dir(label: &str) -> PathBuf {
     dir
 }
 
-fn session_update_text(params: &Value) -> Option<&str> {
-    params
-        .pointer("/update/content/text")
-        .and_then(Value::as_str)
+fn session_update_text(params: &SessionNotification) -> Option<&str> {
+    let chunk = match &params.update {
+        SessionUpdate::UserMessageChunk(chunk)
+        | SessionUpdate::AgentMessageChunk(chunk)
+        | SessionUpdate::AgentThoughtChunk(chunk) => chunk,
+        _ => return None,
+    };
+    match &chunk.content {
+        ContentBlock::Text(text) => Some(text.text.as_str()),
+        _ => None,
+    }
+}
+
+#[test]
+fn client_capabilities_do_not_claim_unimplemented_filesystem_or_terminal_support() {
+    let capabilities = super::sdk_connection::client_capabilities();
+    assert!(!capabilities.fs.read_text_file);
+    assert!(!capabilities.fs.write_text_file);
+    assert!(!capabilities.terminal);
 }
 
 fn pump_until_pong_or_prompt_finished(client: &AcpStdioClient, timeout: Duration) {
@@ -270,7 +286,7 @@ fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
             while Instant::now() < deadline {
                 match client.wait_event(Duration::from_millis(200)) {
                     Some(AcpClientEvent::SessionUpdate(update)) => {
-                        seen.push(update.to_string());
+                        seen.push(serde_json::to_string(&update).unwrap());
                         if seen.iter().any(|text| text.contains(expected)) {
                             return;
                         }
@@ -301,8 +317,10 @@ fn spawn_does_not_select_in_band_for_cursor() {
                 client.wait_event(Duration::from_millis(100))
             {
                 assert!(
-                    !update.to_string().contains("model:session/"),
-                    "cursor must not select in band: {update}"
+                    !serde_json::to_string(&update)
+                        .unwrap()
+                        .contains("model:session/"),
+                    "cursor must not select in band: {update:?}"
                 );
             }
         }
@@ -342,7 +360,7 @@ fn fake_spawn_sends_no_nonstandard_initialized_notification() {
                     !session_update_text(&update)
                         .unwrap_or_default()
                         .starts_with("notification:"),
-                    "unexpected ACP notification: {update}"
+                    "unexpected ACP notification: {update:?}"
                 );
             }
         }

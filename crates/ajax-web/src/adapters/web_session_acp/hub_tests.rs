@@ -1,14 +1,23 @@
 use super::hub::{
-    already_noted, context_reset_note, map_acp_session_update_with_startup, map_request_finished,
-    permission_response, slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
+    already_noted, coalesce_session_events, context_reset_note,
+    map_acp_session_update_with_startup, map_request_finished, permission_response,
+    slot_must_replace, TranscriptLog, WebSessionHub, MAX_IDLE_SESSIONS,
 };
 use super::store::{self, MAX_LOG_EVENTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
-use crate::slices::web_session::{map_acp_session_update, SessionServerEvent, MAX_QUEUED_PROMPTS};
+use crate::slices::web_session::{
+    map_acp_session_notification, SessionServerEvent, MAX_QUEUED_PROMPTS,
+};
+use agent_client_protocol::schema::v1::{
+    ConfigOptionUpdate, ContentBlock, ContentChunk, CurrentModeUpdate, Plan, PlanEntry,
+    PlanEntryPriority, PlanEntryStatus, SessionInfoUpdate, SessionNotification, SessionUpdate,
+    TextContent, ToolCall, ToolCallLocation, ToolCallUpdate, UsageUpdate,
+};
 use ajax_core::models::AgentClient;
 use serde_json::json;
 use std::{
     path::PathBuf,
+    sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -194,15 +203,116 @@ fn failed_request_reports_error() {
 
 #[test]
 fn drain_maps_session_update_notifications() {
-    let update = json!({
-        "sessionId": "sess",
-        "update": {
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "type": "text", "text": "hello" }
-        }
-    });
-    let events = map_acp_session_update(&update);
-    assert_eq!(events.len(), 1);
+    let update = SessionNotification::new(
+        "sess",
+        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(
+            "hello",
+        )))),
+    );
+    let events = map_acp_session_notification(&update);
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "hello".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn typed_mapper_covers_stable_acp_updates() {
+    let notifications = vec![
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
+                TextContent::new("thinking"),
+            ))),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::ToolCall(
+                ToolCall::new("call-1", "Read file")
+                    .locations(vec![ToolCallLocation::new("/tmp/file")]),
+            ),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new("call-1", Default::default())),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::Plan(Plan::new(vec![PlanEntry::new(
+                "Patch the bug",
+                PlanEntryPriority::Medium,
+                PlanEntryStatus::InProgress,
+            )])),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new("default")),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(Vec::new())),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+        ),
+        SessionNotification::new(
+            "sess",
+            SessionUpdate::UsageUpdate(UsageUpdate::new(10, 100)),
+        ),
+    ];
+    let events: Vec<_> = notifications
+        .iter()
+        .flat_map(map_acp_session_notification)
+        .collect();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::Message { role, text }
+            if role == "thought" && text == "thinking"
+    )));
+    assert!(events.iter().any(
+        |event| matches!(event, SessionServerEvent::ToolCall { call_id, .. } if call_id == "call-1")
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::Plan { entries }
+            if entries.first().map(|entry| entry.status.as_str()) == Some("in_progress")
+    )));
+    for kind in ["config", "session_info", "usage"] {
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SessionServerEvent::Artifact { kind: actual, body: Some(_) , .. } if actual == kind)));
+    }
+}
+
+#[test]
+fn consecutive_agent_chunks_are_coalesced_before_persistence() {
+    let events = coalesce_session_events(vec![
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "hel".to_string(),
+        },
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "lo".to_string(),
+        },
+        SessionServerEvent::TurnEnd { stop_reason: None },
+    ]);
+
+    assert_eq!(
+        events,
+        vec![
+            SessionServerEvent::Message {
+                role: "agent".to_string(),
+                text: "hello".to_string(),
+            },
+            SessionServerEvent::TurnEnd { stop_reason: None },
+        ]
+    );
 }
 
 #[test]
@@ -247,6 +357,80 @@ fn submit_prompt_records_user_message_and_starts_when_idle() {
         });
         let (events, _) = hub.read_from(handle, 0);
         assert!(events.contains(&user_msg("hello")));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn duplicate_client_prompt_id_is_not_dispatched_twice() {
+    let dir = scratch_dir("duplicate-prompt");
+    let handle = "web/duplicate-prompt";
+    let hub = WebSessionHub::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        hub.submit_prompt_with_id(handle, "prompt-1".to_string(), "first".to_string())
+            .expect("first");
+        hub.submit_prompt_with_id(handle, "prompt-1".to_string(), "duplicate".to_string())
+            .expect("duplicate");
+
+        pump_until(&hub, handle, Duration::from_secs(5), |events| {
+            agent_pong_count(events) == 1
+        });
+        let (events, _) = hub.read_from(handle, 0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    SessionServerEvent::Message { role, text }
+                        if role == "user" && text == "first"
+                ))
+                .count(),
+            1
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Message { role, text }
+                if role == "user" && text == "duplicate"
+        )));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn background_pump_advances_queued_prompts_without_a_socket() {
+    let dir = scratch_dir("background-pump");
+    let handle = "web/background-pump";
+    let hub = Arc::new(WebSessionHub::new(dir.clone()));
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        hub.submit_prompt(handle, "first".to_string())
+            .expect("first");
+        hub.submit_prompt(handle, "second".to_string())
+            .expect("second");
+        hub.release(handle);
+        hub.start_background_pump();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let (events, _) = hub.read_from(handle, 0);
+            if agent_pong_count(&events) >= 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "queued prompt stalled: {events:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
     });
 
     let _ = std::fs::remove_dir_all(dir);

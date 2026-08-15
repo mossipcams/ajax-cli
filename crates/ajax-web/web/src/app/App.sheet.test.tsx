@@ -134,7 +134,6 @@ describe("App new-task sheet route coupling", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/session/web%2Fchat-route"));
     localStorage.removeItem("ajax.web.session.orchestrationChat");
   });
-
   it("does not show the new-task sheet after starting a task and navigating back to the dashboard", async () => {
     vi.stubGlobal(
       "fetch",

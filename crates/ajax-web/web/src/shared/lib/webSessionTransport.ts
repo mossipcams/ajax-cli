@@ -27,6 +27,7 @@ export interface WebSessionTransportPlatform {
 export type WebSessionServerEvent =
   | { type: "ready"; model?: string; busy?: boolean }
   | { type: "message"; role: string; text: string }
+  | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
       type: "tool_call";
@@ -55,7 +56,7 @@ export interface WebSessionTransportCallbacks {
 }
 
 export interface WebSessionTransport {
-  sendPrompt(text: string): void;
+  sendPrompt(text: string): string;
   sendCancel(keepQueue?: boolean): void;
   setModel(model: string): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
@@ -69,6 +70,44 @@ function sessionSocketUrl(handle: string, model?: string): string {
   const base = `${protocol}//${host}/api/tasks/${encodeURIComponent(handle)}/session`;
   if (!model) return base;
   return `${base}?model=${encodeURIComponent(model)}`;
+}
+
+type PendingPrompt = { text: string; clientMessageId: string };
+
+function outboxKey(handle: string): string {
+  return `ajax.web.session.outbox.${encodeURIComponent(handle)}`;
+}
+
+function readOutbox(handle: string): PendingPrompt[] {
+  try {
+    const raw = sessionStorage.getItem(outboxKey(handle));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is PendingPrompt =>
+        !!item &&
+        typeof item === "object" &&
+        typeof (item as PendingPrompt).text === "string" &&
+        typeof (item as PendingPrompt).clientMessageId === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeOutbox(handle: string, pending: PendingPrompt[]): void {
+  try {
+    if (pending.length) sessionStorage.setItem(outboxKey(handle), JSON.stringify(pending));
+    else sessionStorage.removeItem(outboxKey(handle));
+  } catch {
+    // Private mode / storage denied: the live socket still works.
+  }
+}
+
+function newPromptId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function wrapNativeSocket(socket: WebSocket): WebSessionSocket {
@@ -148,7 +187,7 @@ export function connectWebSessionTransport(
   let socket: WebSessionSocket | undefined;
   let ready = false;
   let disposed = false;
-  const pendingPrompts: string[] = [];
+  const pendingPrompts = readOutbox(handle);
 
   const messageListener: SocketListener = (event) => {
     const messageEvent = event as MessageEvent;
@@ -162,11 +201,17 @@ export function connectWebSessionTransport(
         typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
       callbacks.onEvent(parsed);
       callbacks.onReady(nextModel);
-      while (pendingPrompts.length > 0) {
-        const text = pendingPrompts.shift();
-        if (text) sendPromptNow(text);
-      }
+      for (const prompt of pendingPrompts) sendPromptNow(prompt);
       return;
+    }
+    if (parsed.type === "prompt_accepted") {
+      const index = pendingPrompts.findIndex(
+        (prompt) => prompt.clientMessageId === parsed.clientMessageId,
+      );
+      if (index >= 0) {
+        pendingPrompts.splice(index, 1);
+        writeOutbox(handle, pendingPrompts);
+      }
     }
     callbacks.onEvent(parsed);
   };
@@ -180,8 +225,8 @@ export function connectWebSessionTransport(
     socket.send(JSON.stringify(payload));
   }
 
-  function sendPromptNow(text: string) {
-    sendJson({ type: "prompt", text });
+  function sendPromptNow(prompt: PendingPrompt) {
+    sendJson({ type: "prompt", text: prompt.text, clientMessageId: prompt.clientMessageId });
   }
 
   socket = platform.openSocket(sessionSocketUrl(handle, model));
@@ -198,19 +243,20 @@ export function connectWebSessionTransport(
   return {
     sendPrompt(text) {
       const trimmed = text.trim();
-      if (!trimmed) return;
-      if (ready) {
-        sendPromptNow(trimmed);
-        return;
-      }
+      if (!trimmed) return "";
+      const prompt = { text: trimmed, clientMessageId: newPromptId() };
       if (pendingPrompts.length >= MAX_QUEUED_PROMPTS) {
         pendingPrompts.shift();
       }
-      pendingPrompts.push(trimmed);
+      pendingPrompts.push(prompt);
+      writeOutbox(handle, pendingPrompts);
+      if (ready) sendPromptNow(prompt);
+      return prompt.clientMessageId;
     },
     sendCancel(keepQueue = false) {
       if (!keepQueue) {
-        pendingPrompts.length = 0;
+        pendingPrompts.splice(0, pendingPrompts.length);
+        writeOutbox(handle, pendingPrompts);
       }
       sendJson(keepQueue ? { type: "cancel", keepQueue: true } : { type: "cancel" });
     },
