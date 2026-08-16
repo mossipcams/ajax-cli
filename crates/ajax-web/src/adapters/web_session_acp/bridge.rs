@@ -5,11 +5,47 @@ use crate::slices::web_session::{
     normalize_session_model, SessionAttachPlan, SessionClientMessage, SessionServerEvent,
 };
 use axum::extract::ws::{Message, WebSocket};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
 const MAX_SESSION_FRAME_BYTES: usize = 4096;
+
+/// Idle keepalive. An idle chat writes nothing for minutes, and the browser
+/// WebSocket API cannot send pings from JS — so if the server does not ping,
+/// nothing on either end notices a half-open socket: the hub keeps the slot
+/// held and the composer keeps accepting sends that go nowhere.
+const SESSION_PING_INTERVAL: Duration = Duration::from_secs(20);
+
+pub(crate) fn should_send_keepalive(since_last_write: Duration) -> bool {
+    since_last_write >= SESSION_PING_INTERVAL
+}
+
+/// Every hub call is synchronous and can block for the length of an ACP
+/// handshake or command timeout (`HANDSHAKE_TIMEOUT`), and several hold the
+/// hub's session lock while they do. Run them all on the blocking pool: inline
+/// on the socket's runtime worker, one wedged harness parks a thread per open
+/// session and the server stops answering everything, health included. Guarded
+/// by `axum_session_socket_does_not_block_health`.
+async fn on_hub<T, F>(hub: &Arc<WebSessionHub>, work: F) -> T
+where
+    F: FnOnce(&WebSessionHub) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let hub = Arc::clone(hub);
+    tokio::task::spawn_blocking(move || work(&hub))
+        .await
+        .expect("web session hub task panicked")
+}
+
+async fn release_slot(hub: &Arc<WebSessionHub>, handle: &str) {
+    let handle = handle.to_string();
+    on_hub(hub, move |hub| hub.release(&handle)).await;
+}
 
 pub async fn bridge_task_session_socket(
     mut socket: WebSocket,
@@ -18,12 +54,17 @@ pub async fn bridge_task_session_socket(
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
-    if let Err(error) = hub.acquire(
-        &plan.qualified_handle,
-        &plan.worktree_path,
-        &model,
-        plan.agent,
-    ) {
+    let acquired = {
+        let handle = plan.qualified_handle.clone();
+        let worktree_path = plan.worktree_path.clone();
+        let model = model.clone();
+        let agent = plan.agent;
+        on_hub(&hub, move |hub| {
+            hub.acquire(&handle, &worktree_path, &model, agent)
+        })
+        .await
+    };
+    if let Err(error) = acquired {
         let _ = send_event(
             &mut socket,
             &SessionServerEvent::Error {
@@ -34,37 +75,46 @@ pub async fn bridge_task_session_socket(
         return;
     }
 
-    let mut generation = hub.generation(&handle);
-    let mut cursor = 0usize;
-
     // Replay first, then `ready`: the transcript has no turn-start marker, so
     // whatever it implies about a live turn must be overruled by the host's own
     // answer — otherwise a note written after the last turn reads as "Working".
-    let (replayed, next) = hub.read_from(&handle, cursor);
-    cursor = next;
+    let (mut generation, replayed, mut cursor, ready) = {
+        let handle = handle.clone();
+        let model = model.clone();
+        on_hub(&hub, move |hub| {
+            let generation = hub.generation(&handle);
+            let (replayed, cursor) = hub.read_from(&handle, 0);
+            let ready = SessionServerEvent::Ready {
+                model: hub.model(&handle).unwrap_or(model),
+                busy: hub.busy(&handle),
+            };
+            (generation, replayed, cursor, ready)
+        })
+        .await
+    };
     for event in replayed {
         if !send_event(&mut socket, &event).await {
-            hub.release(&handle);
+            release_slot(&hub, &handle).await;
             return;
         }
     }
-    if !send_event(
-        &mut socket,
-        &SessionServerEvent::Ready {
-            model: hub.model(&handle).unwrap_or_else(|| model.clone()),
-            busy: hub.busy(&handle),
-        },
-    )
-    .await
-    {
-        hub.release(&handle);
+    if !send_event(&mut socket, &ready).await {
+        release_slot(&hub, &handle).await;
         return;
     }
 
+    let mut last_write = Instant::now();
     loop {
         tokio::select! {
             inbound = socket.recv() => {
                 match inbound {
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                        last_write = Instant::now();
+                    }
+                    Some(Ok(Message::Pong(_))) => {}
                     Some(Ok(Message::Text(text))) => {
                         match handle_inbound_text(
                             &mut socket,
@@ -85,15 +135,16 @@ pub async fn bridge_task_session_socket(
                                     &handle,
                                     &mut cursor,
                                     &mut generation,
+                                    &mut last_write,
                                 )
                                 .await
                                 {
-                                    hub.release(&handle);
+                                    release_slot(&hub, &handle).await;
                                     return;
                                 }
                             }
                             ClientHandleResult::Stop => {
-                                hub.release(&handle);
+                                release_slot(&hub, &handle).await;
                                 return;
                             }
                         }
@@ -110,17 +161,24 @@ pub async fn bridge_task_session_socket(
                     &handle,
                     &mut cursor,
                     &mut generation,
+                    &mut last_write,
                 )
                 .await
                 {
-                    hub.release(&handle);
+                    release_slot(&hub, &handle).await;
                     return;
+                }
+                if should_send_keepalive(last_write.elapsed()) {
+                    if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                    last_write = Instant::now();
                 }
             }
         }
     }
 
-    hub.release(&handle);
+    release_slot(&hub, &handle).await;
 }
 
 enum ClientHandleResult {
@@ -130,7 +188,7 @@ enum ClientHandleResult {
 
 async fn handle_inbound_text(
     socket: &mut WebSocket,
-    hub: &WebSessionHub,
+    hub: &Arc<WebSessionHub>,
     handle: &str,
     worktree_path: &Path,
     text: &str,
@@ -169,7 +227,21 @@ async fn handle_inbound_text(
         }
     };
 
-    match apply_client_message(hub, handle, worktree_path, message, generation) {
+    let applied = {
+        let handle = handle.to_string();
+        let worktree_path = worktree_path.to_path_buf();
+        let mut next_generation = *generation;
+        let (applied, next_generation) = on_hub(hub, move |hub| {
+            let applied =
+                apply_client_message(hub, &handle, &worktree_path, message, &mut next_generation);
+            (applied, next_generation)
+        })
+        .await;
+        *generation = next_generation;
+        applied
+    };
+
+    match applied {
         Ok(ApplyClientMessageOutcome::Applied) => ClientHandleResult::Continue,
         Ok(ApplyClientMessageOutcome::ModelChanged { model }) => {
             // A model swap respawns the child, so nothing is in flight.
@@ -239,31 +311,78 @@ pub(crate) fn apply_client_message(
     }
 }
 
+/// What one flush owes the socket. Collected in a single visit to the hub so a
+/// 50ms tick makes one hop to the blocking pool instead of four.
+pub(crate) struct OutboundBatch {
+    pub(crate) generation: u64,
+    pub(crate) cursor: usize,
+    /// Present when the ACP child was replaced: the socket replays from zero.
+    pub(crate) ready: Option<SessionServerEvent>,
+    pub(crate) events: Vec<SessionServerEvent>,
+}
+
+pub(crate) fn collect_outbound(
+    hub: &WebSessionHub,
+    handle: &str,
+    cursor: usize,
+    generation: u64,
+) -> OutboundBatch {
+    let current_generation = hub.generation(handle);
+    let (cursor, ready) = if current_generation == generation {
+        (cursor, None)
+    } else {
+        (
+            0,
+            Some(SessionServerEvent::Ready {
+                model: hub.model(handle).unwrap_or_else(|| "auto".to_string()),
+                busy: hub.busy(handle),
+            }),
+        )
+    };
+
+    hub.pump(handle);
+    let (events, next) = hub.read_from(handle, cursor);
+    OutboundBatch {
+        generation: current_generation,
+        cursor: next,
+        ready,
+        events,
+    }
+}
+
 async fn flush_outbound(
     socket: &mut WebSocket,
-    hub: &WebSessionHub,
+    hub: &Arc<WebSessionHub>,
     handle: &str,
     cursor: &mut usize,
     generation: &mut u64,
+    last_write: &mut Instant,
 ) -> bool {
-    let current_generation = hub.generation(handle);
-    if current_generation != *generation {
-        *generation = current_generation;
-        *cursor = 0;
-        let model = hub.model(handle).unwrap_or_else(|| "auto".to_string());
-        let busy = hub.busy(handle);
-        if !send_event(socket, &SessionServerEvent::Ready { model, busy }).await {
+    let batch = {
+        let handle = handle.to_string();
+        let cursor = *cursor;
+        let generation = *generation;
+        on_hub(hub, move |hub| {
+            collect_outbound(hub, &handle, cursor, generation)
+        })
+        .await
+    };
+    *generation = batch.generation;
+    *cursor = batch.cursor;
+
+    let wrote = batch.ready.is_some() || !batch.events.is_empty();
+    if let Some(ready) = batch.ready {
+        if !send_event(socket, &ready).await {
             return false;
         }
     }
-
-    hub.pump(handle);
-    let (outbound, next) = hub.read_from(handle, *cursor);
-    *cursor = next;
-    for event in outbound {
+    for event in batch.events {
         if !send_event(socket, &event).await {
             return false;
         }
+    }
+    if wrote {
+        *last_write = Instant::now();
     }
     true
 }
@@ -296,6 +415,16 @@ mod tests {
     #[test]
     fn max_session_frame_bytes_is_4096() {
         assert_eq!(MAX_SESSION_FRAME_BYTES, 4096);
+    }
+
+    #[test]
+    fn keepalive_waits_for_silence_then_pings() {
+        assert!(!should_send_keepalive(Duration::ZERO));
+        assert!(!should_send_keepalive(
+            SESSION_PING_INTERVAL - Duration::from_millis(1)
+        ));
+        assert!(should_send_keepalive(SESSION_PING_INTERVAL));
+        assert!(should_send_keepalive(SESSION_PING_INTERVAL * 3));
     }
 
     #[test]

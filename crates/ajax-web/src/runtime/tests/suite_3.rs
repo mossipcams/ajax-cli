@@ -286,6 +286,172 @@ async fn axum_diff_review_does_not_block_health() {
     );
 }
 
+/// Regression guard for #898.
+///
+/// Every other blocking surface in this crate was moved off the async workers
+/// and locked down by a health-isolation test (`axum_task_start_does_not_block_health`,
+/// `axum_diff_review_does_not_block_health`,
+/// `axum_health_stays_responsive_during_slow_cockpit_refresh`). The ACP session
+/// socket was never in that sweep: `bridge_task_session_socket` calls
+/// `hub.acquire` — an ACP handshake bounded only by `HANDSHAKE_TIMEOUT` (45s) —
+/// inline on the worker that upgraded the socket. A harness that never answers
+/// `initialize` therefore parks one runtime thread per open session and the
+/// whole cockpit stops serving, health included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn axum_session_socket_does_not_block_health() {
+    // A real process that holds its stdio open and never answers `initialize`,
+    // the way a wedged harness does. It exits on its own so the runtime is not
+    // parked for the full 45s handshake timeout after the assertion. (`cat`
+    // cannot play this part: it echoes the handshake back, which fails the
+    // request fast instead of hanging it.)
+    let hanging_acp = std::path::PathBuf::from("/bin/sleep");
+    assert!(
+        hanging_acp.exists(),
+        "test needs a program that never answers on stdout"
+    );
+
+    let worktrees = scratch_dir("axum-session-health-worktrees");
+    let context = context_with_provisioned_cursor_tasks(&worktrees);
+    let state = super::WebAppState::new(
+        context,
+        OkRunner,
+        TestBridge::default(),
+        scratch_dir("axum-session-health"),
+    );
+    let cookie = browser_session_cookie(&state);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, super::axum_app(state)).await.unwrap();
+    });
+
+    crate::adapters::web_session_acp::set_test_acp_command(Some((&hanging_acp, &["2"])));
+
+    // One session socket per runtime worker. Client I/O runs on plain threads,
+    // not the runtime, so the probe still works once every worker is parked.
+    let sockets: Vec<_> = ["web/fix-login", "api/fix-auth"]
+        .into_iter()
+        .map(|handle| {
+            let cookie = cookie.clone();
+            std::thread::spawn(move || {
+                websocket_upgrade_blocking(
+                    address,
+                    &cookie,
+                    &format!("/api/tasks/{handle}/session"),
+                )
+            })
+        })
+        .map(|joined| joined.join().unwrap())
+        .collect();
+
+    // A 101 only proves the upgrade was written; let both socket tasks reach
+    // `hub.acquire` before timing health.
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (health, health_elapsed) = std::thread::spawn(move || {
+        let started = Instant::now();
+        let response = http_get_blocking(address, "/api/health", Duration::from_millis(500));
+        (response, started.elapsed())
+    })
+    .join()
+    .unwrap();
+
+    // Clear the global override before asserting: a panic here must not leave
+    // every later ACP spawn in this process pointed at the hanging program.
+    crate::adapters::web_session_acp::set_test_acp_command(None);
+    server.abort();
+    drop(sockets);
+    let _ = std::fs::remove_dir_all(&worktrees);
+
+    let response = health.expect("health request stalled while session sockets were connecting");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        health_elapsed < Duration::from_millis(150),
+        "health took {health_elapsed:?} while session sockets were mid-ACP-handshake"
+    );
+}
+
+/// Two provisioned Cursor tasks with worktrees on disk, so `prepare_task_session`
+/// admits both session sockets.
+fn context_with_provisioned_cursor_tasks(
+    worktrees: &std::path::Path,
+) -> CommandContext<InMemoryRegistry> {
+    let tasks = [
+        ("web", "fix-login", "Fix login"),
+        ("api", "fix-auth", "Fix auth"),
+    ]
+    .into_iter()
+    .map(|(repo, handle, title)| {
+        let worktree = worktrees.join(format!("{repo}-{handle}"));
+        std::fs::create_dir_all(&worktree).expect("worktree dir");
+        let mut task = crate::test_support::task_in(repo, handle, title);
+        task.selected_agent = ajax_core::models::AgentClient::Cursor;
+        task.set_skip_interactive_agent(true);
+        task.worktree_path = worktree;
+        task
+    })
+    .collect();
+    crate::test_support::context_with_tasks(&["web", "api"], tasks)
+}
+
+/// Raw WebSocket upgrade on a blocking socket. Returns the stream so the caller
+/// keeps the connection (and the server-side socket task) alive.
+fn websocket_upgrade_blocking(
+    address: std::net::SocketAddr,
+    cookie: &str,
+    path: &str,
+) -> std::net::TcpStream {
+    let mut stream = std::net::TcpStream::connect(address).expect("connect");
+    stream
+        .write_all(
+            format!(
+                "GET {path} HTTP/1.1\r\n\
+                 Host: {address}\r\n\
+                 Origin: http://{address}\r\n\
+                 Cookie: {cookie}\r\n\
+                 Connection: Upgrade\r\n\
+                 Upgrade: websocket\r\n\
+                 Sec-WebSocket-Version: 13\r\n\
+                 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .expect("write upgrade");
+    let mut head = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match stream.read(&mut byte) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => head.push(byte[0]),
+        }
+    }
+    let head = String::from_utf8_lossy(&head).into_owned();
+    assert!(
+        head.starts_with("HTTP/1.1 101"),
+        "session upgrade refused: {head}"
+    );
+    stream
+}
+
+/// Plain-HTTP GET on a blocking socket, bounded by a read timeout so a stalled
+/// runtime fails the test instead of hanging it.
+fn http_get_blocking(
+    address: std::net::SocketAddr,
+    path: &str,
+    timeout: Duration,
+) -> std::io::Result<String> {
+    let mut stream = std::net::TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.write_all(
+        format!("GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").as_bytes(),
+    )?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    Ok(String::from_utf8_lossy(&response).into_owned())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn axum_diff_review_returns_ok_when_revision_bumps_during_projection() {
     let entered = Arc::new(Notify::new());

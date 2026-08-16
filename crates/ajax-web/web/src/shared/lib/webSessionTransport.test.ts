@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import {
   connectWebSessionTransport,
+  PROMPT_TOO_LONG,
   type WebSessionTransportCallbacks,
   type WebSessionTransportPlatform,
   type WebSessionSocket,
@@ -237,6 +238,46 @@ describe("connectWebSessionTransport", () => {
     socket.readyState = OPEN_READY_STATE;
     socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
     expect(socket.sent).not.toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
+    transport.dispose();
+  });
+
+  // The host rejects a frame over its ceiling before it can read the frame's
+  // clientMessageId, so the prompt is never acknowledged. Queued, it was resent
+  // on every reconnect and rejected every time — one long paste poisoned the
+  // session permanently, surviving reloads in sessionStorage.
+  it("refuses a prompt too large for the host frame limit instead of queueing it", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+
+    const id = transport.sendPrompt("x".repeat(5000));
+
+    expect(id).toBe("");
+    expect(cbs.onEvent).toHaveBeenCalledWith({ type: "error", message: PROMPT_TOO_LONG });
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(socket.sent.filter((payload) => payload.includes('"type":"prompt"'))).toEqual([]);
+    expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
+    transport.dispose();
+  });
+
+  it("discards an already-poisoned oversized prompt from a stored outbox", () => {
+    sessionStorage.setItem(
+      "ajax.web.session.outbox.web%2Ffix-login",
+      JSON.stringify([
+        { text: "x".repeat(5000), clientMessageId: "poison" },
+        { text: "fine", clientMessageId: "keep" },
+      ]),
+    );
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+
+    const prompts = socket.sent.map((payload) => JSON.parse(payload));
+    expect(prompts).toContainEqual(expect.objectContaining({ clientMessageId: "keep" }));
+    expect(prompts).not.toContainEqual(expect.objectContaining({ clientMessageId: "poison" }));
     transport.dispose();
   });
 });

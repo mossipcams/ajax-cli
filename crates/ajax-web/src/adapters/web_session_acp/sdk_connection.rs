@@ -50,7 +50,9 @@ pub(super) enum ClientCommand {
         result: Sender<Result<(), String>>,
     },
     Cancel {
-        result: Sender<Result<(), String>>,
+        /// Request ids of the permission prompts this cancel answered, so the
+        /// host can record them as resolved.
+        result: Sender<Result<Vec<String>, String>>,
     },
     RespondPermission {
         request_id: String,
@@ -488,11 +490,13 @@ async fn command_loop(
                 }
             }
             ClientCommand::Cancel { result } => {
-                cancel_permissions(&permissions);
-                let sent = connection
-                    .send_notification(CancelNotification::new(session_id.clone()))
-                    .map_err(|error| error.to_string());
-                let _ = result.send(sent);
+                let cancelled = cancel_permissions(&permissions);
+                let sent =
+                    connection.send_notification(CancelNotification::new(session_id.clone()));
+                let _ = result.send(match sent {
+                    Ok(()) => Ok(cancelled),
+                    Err(error) => Err(error.to_string()),
+                });
             }
             ClientCommand::RespondPermission {
                 request_id,
@@ -538,18 +542,19 @@ fn respond_permission(
         .map_err(|error| error.to_string())
 }
 
-fn cancel_permissions(permissions: &PendingPermissions) {
-    let pending: Vec<_> = permissions
-        .lock()
-        .unwrap()
-        .drain()
-        .map(|(_, item)| item)
-        .collect();
-    for item in pending {
-        let _ = item.responder.respond(RequestPermissionResponse::new(
-            RequestPermissionOutcome::Cancelled,
-        ));
-    }
+/// Answer every pending permission request with the cancelled outcome and
+/// report which ones were answered.
+fn cancel_permissions(permissions: &PendingPermissions) -> Vec<String> {
+    let pending: Vec<_> = permissions.lock().unwrap().drain().collect();
+    pending
+        .into_iter()
+        .map(|(request_id, item)| {
+            let _ = item.responder.respond(RequestPermissionResponse::new(
+                RequestPermissionOutcome::Cancelled,
+            ));
+            request_id
+        })
+        .collect()
 }
 
 fn timeout_error(method: &str) -> String {

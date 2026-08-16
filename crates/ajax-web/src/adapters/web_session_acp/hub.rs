@@ -486,8 +486,21 @@ impl WebSessionHub {
         };
         let client = Arc::clone(&slot.client);
         apply_cancel_to_queue(&mut slot.queued, keep_queue);
-        let result = client.lock().unwrap().cancel();
-        result
+        let cancelled = client.lock().unwrap().cancel()?;
+        // Cancel answers every pending ACP permission request with the standard
+        // cancelled outcome, which the browser can never learn on its own: it
+        // clears a decision only on `permission_resolved`. Without this the
+        // prompt stays on the live head, answering it fails with "no longer
+        // pending", and replay resurrects it on the next reconnect.
+        let resolved: Vec<SessionServerEvent> = cancelled
+            .into_iter()
+            .map(|request_id| SessionServerEvent::PermissionResolved {
+                request_id,
+                approved: false,
+            })
+            .collect();
+        slot.append_to_log(&self.state_dir, handle, resolved);
+        Ok(())
     }
 
     /// Answer a permission request and record the decision so reload replay

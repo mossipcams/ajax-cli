@@ -301,7 +301,9 @@ export default function SessionChat({
 
     if (state.busy && followUpQueuedRef.current) {
       if (text && text !== lastQueuedTextRef.current) {
-        transportRef.current?.sendPrompt(text);
+        // Refused before the wire (too long): keep the draft to shorten, and
+        // leave the turn running rather than stopping for a send that failed.
+        if (!transportRef.current?.sendPrompt(text)) return;
         dispatch({ type: "prompt", text });
         lastQueuedTextRef.current = text;
       }
@@ -316,13 +318,15 @@ export default function SessionChat({
 
     if (!text) return;
 
+    // Send before latching the follow-up flags: a refused prompt must not leave
+    // the composer believing something is queued.
+    if (!transportRef.current?.sendPrompt(text)) return;
+
     if (state.busy) {
       followUpQueuedRef.current = true;
       setFollowUpQueued(true);
       lastQueuedTextRef.current = text;
     }
-
-    transportRef.current?.sendPrompt(text);
     if (!state.busy) markActivity();
     dispatch({ type: "prompt", text });
     draftRef.current = "";

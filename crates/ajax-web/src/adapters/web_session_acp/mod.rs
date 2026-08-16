@@ -22,4 +22,4 @@ pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};
 pub use hub::WebSessionHub;
 
 #[cfg(test)]
-pub(crate) use client::{with_test_acp_extra_args, with_test_acp_program};
+pub(crate) use client::{set_test_acp_command, with_test_acp_extra_args, with_test_acp_program};

@@ -5,6 +5,15 @@ const OPEN_READY_STATE = 1;
 /** Match host FIFO cap (`web_session::MAX_QUEUED_PROMPTS`). */
 const MAX_QUEUED_PROMPTS = 8;
 
+/** Match the host's per-frame ceiling (`web_session_acp::MAX_SESSION_FRAME_BYTES`).
+ * The host rejects an oversized frame before it can read the frame's
+ * `clientMessageId`, so such a prompt is never acknowledged. Left in the outbox
+ * it is resent on every reconnect, rejected every time — one long paste poisons
+ * the session for good, across reloads. Refuse it here instead. */
+const MAX_FRAME_BYTES = 4096;
+
+export const PROMPT_TOO_LONG = "That message is too long to send. Shorten it and try again.";
+
 /** Emitted when the upgrade is refused. The browser cannot expose the HTTP
  * status or body of a failed WebSocket handshake, so this string carries no
  * reason — callers recover one from task truth. */
@@ -73,6 +82,19 @@ function sessionSocketUrl(handle: string, model?: string): string {
 }
 
 type PendingPrompt = { text: string; clientMessageId: string };
+
+function promptFrame(prompt: PendingPrompt): string {
+  return JSON.stringify({
+    type: "prompt",
+    text: prompt.text,
+    clientMessageId: prompt.clientMessageId,
+  });
+}
+
+/** The host measures the frame, not the text, so this must too. */
+function frameFits(prompt: PendingPrompt): boolean {
+  return new TextEncoder().encode(promptFrame(prompt)).length <= MAX_FRAME_BYTES;
+}
 
 function outboxKey(handle: string): string {
   return `ajax.web.session.outbox.${encodeURIComponent(handle)}`;
@@ -187,7 +209,11 @@ export function connectWebSessionTransport(
   let socket: WebSessionSocket | undefined;
   let ready = false;
   let disposed = false;
-  const pendingPrompts = readOutbox(handle);
+  const stored = readOutbox(handle);
+  // Self-heal an outbox poisoned before the size check existed: a prompt the
+  // host can only ever reject must not be retried on every reconnect.
+  const pendingPrompts = stored.filter(frameFits);
+  if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
 
   const messageListener: SocketListener = (event) => {
     const messageEvent = event as MessageEvent;
@@ -245,6 +271,10 @@ export function connectWebSessionTransport(
       const trimmed = text.trim();
       if (!trimmed) return "";
       const prompt = { text: trimmed, clientMessageId: newPromptId() };
+      if (!frameFits(prompt)) {
+        callbacks.onEvent({ type: "error", message: PROMPT_TOO_LONG });
+        return "";
+      }
       if (pendingPrompts.length >= MAX_QUEUED_PROMPTS) {
         pendingPrompts.shift();
       }

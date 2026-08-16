@@ -10,7 +10,9 @@ import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
 const transport = {
-  sendPrompt: vi.fn(),
+  // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and
+  // "" when it refuses to send; the composer keys off that.
+  sendPrompt: vi.fn(() => "cmid-1"),
   sendCancel: vi.fn(),
   setModel: vi.fn(),
   respondPermission: vi.fn(),
