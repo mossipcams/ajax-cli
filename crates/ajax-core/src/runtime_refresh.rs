@@ -11,8 +11,8 @@ use crate::{
     config::WorktreePlacement,
     live::{self, LiveObservation, LiveStatusKind},
     models::{
-        AgentClient, GitStatus, LifecycleStatus, LiveStatusClass, RuntimeHealth,
-        RuntimeObservationSource, Task, TaskId, TaskWindowStatus,
+        AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveStatusClass,
+        RuntimeHealth, RuntimeObservationSource, Task, TaskId, TaskWindowStatus,
     },
     registry::{Registry, RegistryError},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
@@ -355,6 +355,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             && process_liveness.is_none()
             && !crate::ui_state::agent_process_is_alive(&task_snapshot)
         {
+            // Zero agent evidence from every source. A leftover running claim
+            // can only be stale here: provisioning sets `AgentRunning` up front,
+            // but the sources that retract it are all silent, so skipping would
+            // leave the operator surfaces reporting "Agent working" forever.
+            clear_stale_agent_running(context, &task_id, &task_snapshot, &mut changed);
             continue;
         }
         let projection =
@@ -804,6 +809,42 @@ fn worktree_allowed_for_runtime(placement: &WorktreePlacement, worktree_path: &s
 
 fn refresh_cached_annotations(task: &mut Task) {
     task.annotations = crate::attention::annotate(task);
+}
+
+/// Retract a running claim that no evidence source backs any more.
+///
+/// Only the caller's zero-evidence branch may use this: it asserts absence, not
+/// death. The task is left with no running claim rather than marked dead, so a
+/// later observation is free to describe what actually happened.
+///
+/// A task that still carries a live status is left alone even here. That is a
+/// newer observation than provisioning, and the live-status machinery owns
+/// retracting it; clearing on top would flap a steady-state running task to
+/// idle on every refresh where the hook source happens to be silent.
+fn clear_stale_agent_running<R: Registry>(
+    context: &mut CommandContext<R>,
+    task_id: &TaskId,
+    task_snapshot: &Task,
+    changed: &mut bool,
+) {
+    if task_snapshot.live_status.is_some() {
+        return;
+    }
+    if !task_snapshot.has_side_flag(crate::models::SideFlag::AgentRunning)
+        && task_snapshot.agent_status != AgentRuntimeStatus::Running
+    {
+        return;
+    }
+    let Some(task) = context.registry.get_task_mut(task_id) else {
+        return;
+    };
+    let previous = task.clone();
+    task.remove_side_flag(crate::models::SideFlag::AgentRunning);
+    if task.agent_status == AgentRuntimeStatus::Running {
+        task.agent_status = AgentRuntimeStatus::Unknown;
+    }
+    refresh_cached_annotations(task);
+    *changed |= *task != previous;
 }
 #[cfg(test)]
 mod tests;
