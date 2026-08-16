@@ -240,3 +240,109 @@ fn rooted_runtime_recovery_ignores_legacy_sibling_worktrees() {
     assert!(context.registry.get_task(&TaskId::new("web/b")).is_none());
     assert!(context.registry.get_task(&TaskId::new("web/c")).is_none());
 }
+
+/// A task provisioned with `AgentRunning` whose agent then went away without
+/// leaving a single trace — no native observation, no wrapper liveness, no
+/// alive-process marker — must not keep reporting "Agent working". Every
+/// source that could retract the claim is silent, so the refresh itself has to
+/// retract it or the operator surfaces lie indefinitely.
+#[test]
+fn refresh_clears_agent_running_claim_with_no_agent_evidence() {
+    let mut context = context_with_active_task();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap();
+    task.add_side_flag(SideFlag::AgentRunning);
+    task.agent_status = AgentRuntimeStatus::NotStarted;
+    task.live_status = None;
+    task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
+    task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
+    task.runtime_projection = RuntimeProjection::new(
+        RuntimeHealth::Healthy,
+        SystemTime::now(),
+        RuntimeObservationSource::TmuxProbe,
+    );
+    assert_eq!(
+        derive_operator_status(context.registry.get_task(&TaskId::new(TASK_ID)).unwrap())
+            .explanation
+            .as_deref(),
+        Some("Agent working"),
+        "precondition: the stale flag alone drives the running status"
+    );
+    let mut runner = HealthyRefreshRunner::default();
+
+    // NoAgentStatusSource: no observations and no process liveness, matching a
+    // pane whose agent exited long ago.
+    refresh_runtime_context_with_tier(
+        &mut context,
+        &mut runner,
+        &NoAgentStatusSource,
+        RefreshTier::Full,
+    )
+    .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        !task.has_side_flag(SideFlag::AgentRunning),
+        "stale running flag must be retracted, got {:?}",
+        task.side_flags().collect::<Vec<_>>()
+    );
+    assert_ne!(
+        derive_operator_status(task).status,
+        TaskStatus::Running,
+        "operator status must stop claiming the agent is working"
+    );
+}
+
+/// The retraction above must not fire while the wrapper still reports the
+/// process alive: that is real evidence, and clearing on it would flap a
+/// live-but-quiet agent back to idle every refresh.
+#[test]
+fn refresh_keeps_agent_running_claim_while_process_is_alive() {
+    let mut context = context_with_active_task();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap();
+    task.add_side_flag(SideFlag::AgentRunning);
+    task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
+    task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
+    let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
+        alive: true,
+        observed_at: SystemTime::now(),
+    });
+    let mut runner = HealthyRefreshRunner::default();
+
+    refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+        .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        task.has_side_flag(SideFlag::AgentRunning),
+        "a live process is real evidence; the claim must stand"
+    );
+    assert!(
+        agent_process_is_alive(task),
+        "fresh liveness must stamp the alive marker"
+    );
+}
+
+/// A live status is a newer observation than provisioning, so the retraction
+/// must defer to the live-status machinery that owns it. Without this the
+/// steady-state running task flaps to idle on every hook-silent refresh.
+#[test]
+fn refresh_keeps_agent_running_claim_backed_by_live_status() {
+    let mut context = context_with_unchanged_running_task();
+    seed_fresh_ci_probe(&mut context);
+    let mut runner = GitSkippingRunner::default();
+
+    refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        task.has_side_flag(SideFlag::AgentRunning),
+        "live status corroborates the claim; it must stand"
+    );
+    assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+}
