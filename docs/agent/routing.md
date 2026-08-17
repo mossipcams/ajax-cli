@@ -28,7 +28,9 @@ Ajax Model Router owns:
 It does not own engineering playbook or architecture decisions.
 
 Delegate dispatch transport is acpx ACP (one client for cursor, codex, and
-pi); install `acpx` and keep it on `PATH`.
+pi); install `acpx` and keep it on `PATH`. Do not substitute native Cursor
+Task or other same-harness subagents for acpx dispatch. A Cursor acpx
+session must not spawn Task children.
 
 If a requested target or model is unavailable, stop and report the constraint.
 Do not silently substitute another provider or model.
