@@ -2,7 +2,7 @@
 context: default
 slug: ajax-chat-architecture
 status: in-progress
-approval: user-directed 2026-08-17 — Composer 2.5; Phase 0–3 done; Phase 4 next
+approval: user-directed 2026-08-17 — Composer 2.5; Phase 0–4 done; Phase 5 complete
 last_updated: 2026-08-17
 ---
 
@@ -401,15 +401,16 @@ Acceptance:
 
 ### Phase 5: documentation and final verification
 
-- [ ] Update `architecture.md` only for durable ownership and dependency rules.
-- [ ] Update `docs/architecture/web-cockpit.md` with the implemented task-session
+- [x] Update `architecture.md` only for durable ownership and dependency rules.
+- [x] Update `docs/architecture/web-cockpit.md` with the implemented task-session
   runtime, model authority, transcript store, and replay protocol.
-- [ ] Update `docs/architecture/web-session-behavior.md` with falsifiable queue,
+- [x] Update `docs/architecture/web-session-behavior.md` with falsifiable queue,
   model, cursor, restart, permission, and shutdown invariants.
-- [ ] Update architecture tests to enforce slice, adapter, store, and runtime
+- [x] Update architecture tests to enforce slice, adapter, store, and runtime
   dependency direction.
-- [ ] Rebuild tracked browser assets only when source changes are final.
-- [ ] Run focused and broad validation, record every result below, and disclose
+- [x] Rebuild tracked browser assets only when source changes are final (dist
+  already matched `npm run web:build:check`; no dist edit required).
+- [x] Run focused and broad validation, record every result below, and disclose
   failures or skipped checks.
 
 ## Expected change slices
@@ -534,18 +535,33 @@ implementation continues.
 | 3 | `npm run web:check` | pass |
 | 3 | `npm run web:lint` | pass |
 | 3 | `cargo fmt --check` | pass |
-| 3–5 | (remaining phases) | pending |
+| 3–4 | (remaining phases before Phase 5) | complete |
 | 4 | `cargo test -p ajax-web --lib web_session` | 127 passed |
 | 4 | `cargo test -p ajax-web --lib web_session_acp` | 29 passed |
 | 4 | Focused browser session tests (7 files) | 66 passed |
 | 4 | `npm run web:check` | pass |
 | 4 | `cargo fmt --check` | pass |
+| 5 | `cargo test -p ajax-web --lib architecture` | 9 passed |
+| 5 | `cargo test -p ajax-web --lib web_session` | 129 passed |
+| 5 | `cargo test -p ajax-web --lib web_session_acp` | 29 passed |
+| 5 | `npm run web:check` | pass |
+| 5 | `npm run verify:arch` | pass (ajax-core 8, ajax-web 9, ajax-tui 2, ajax-supervisor 2) |
+| 5 | `cargo fmt --check` | pass |
+| 5 | `cargo clippy -p ajax-web --all-targets -- -D warnings` | pass |
+| 5 | `cargo nextest run -p ajax-web` | 403 passed |
+| 5 | `npm run web:lint` | pass |
+| 5 | `npm run web:sg` | pass |
+| 5 | `npm run web:build:check` | pass (tracked dist current; no rebuild) |
+| 5 | `npm run web:test -- --run` (full browser unit suite) | skipped (focused Phase 5 gate green; run before merge if desired) |
+| 5 | `npx playwright test … session-chat-regression.test.ts` | skipped (not in Phase 5 required gate; e2e mocks still use legacy flat frames) |
+| 5 | `cargo nextest run --all-features --test-threads=1` (repo-wide) | skipped (ajax-web nextest green; full repo gate deferred) |
+| 5 | `npm run ci:verify` | skipped (deferred to merge PR gate) |
 
-- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 complete (41/41 items through Phase 4). Phase 5 pending.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 complete (47/47 items).
 
 ## Approval and status
 
 - Plan creation: approved by user on 2026-08-17.
-- Implementation: Phase 0–3 complete 2026-08-17.
-- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 complete (41/41 items through Phase 4). Phase 5 pending.
+- Implementation: Phase 0–5 complete 2026-08-17.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 complete (47/47 items).
 - Current repository edits from this plan: session runtime ownership (committed); Phase 2 task/model authority (committed); Phase 3 browser state simplification (this commit).

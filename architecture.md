@@ -162,10 +162,18 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   replacing the raw xterm/tmux-first terminal model as the default path.
   Optional Home Screen install enables Declarative Web Push only.
 - Optional orchestration chat uses ACP over stdio via an `ajax-web` host, not
-  PTY paste. The host uses the official Rust ACP runtime and negotiates stable
-  protocol v1. `ajax-web::slices::web_session` owns per-task session runtimes;
-  `adapters::web_session_acp` owns ACP stdio only; `adapters::web_session_store`
-  owns JSONL transcripts under `state_dir` (`web-session/`), not registry or tmux.
+  PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
+  WebSocket uses protocol v2 snapshot and cursor-bearing event envelopes.
+  `ajax-web::slices::web_session` owns per-task session policy and sequencing
+  (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle,
+  transcript cursor, replay, queue, permissions, and idle retention).
+  `adapters::web_session_acp` owns ACP stdio only and returns typed
+  `AcpClientEvent` values. `adapters::web_session_store` owns JSONL transcripts
+  under `state_dir` (`web-session/`), not registry or tmux. Session adapters must
+  not import slice or browser wire types; the slice may call session adapters but
+  must not import `ajax-web::runtime`. HTTP/WebSocket routes acquire directory
+  handles and delegate through `ws_bridge` without interpreting queue, model,
+  transcript, or permission state.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

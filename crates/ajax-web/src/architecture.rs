@@ -30,6 +30,60 @@ mod tests {
     ];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
+    const SESSION_MECHANISM_ADAPTERS: [&str; 2] = ["web_session_acp", "web_session_store"];
+    const WEB_SESSION_SLICE: &str = "web_session";
+
+    #[test]
+    fn session_mechanism_adapters_do_not_depend_on_web_session_slice() {
+        let forbidden = [
+            format!("ajax-web::slices::{WEB_SESSION_SLICE}"),
+            format!("crate::slices::{WEB_SESSION_SLICE}"),
+        ];
+        for adapter in SESSION_MECHANISM_ADAPTERS {
+            assert_module_does_not_depend_on(
+                &format!("ajax-web::adapters::{adapter}"),
+                &forbidden,
+                "session mechanism adapter",
+                adapter,
+            );
+        }
+    }
+
+    #[test]
+    fn session_mechanism_adapters_do_not_depend_on_each_other() {
+        for adapter in SESSION_MECHANISM_ADAPTERS {
+            let forbidden = SESSION_MECHANISM_ADAPTERS
+                .iter()
+                .filter(|other| **other != adapter)
+                .flat_map(|other| {
+                    [
+                        format!("ajax-web::adapters::{other}"),
+                        format!("crate::adapters::{other}"),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_module_does_not_depend_on(
+                &format!("ajax-web::adapters::{adapter}"),
+                &forbidden,
+                "session mechanism adapter",
+                adapter,
+            );
+        }
+    }
+
+    #[test]
+    fn web_session_slice_may_call_session_mechanism_adapters() {
+        let sources = module_sources(&format!("ajax-web::slices::{WEB_SESSION_SLICE}"));
+        let joined = sources
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("web_session_acp") && joined.contains("web_session_store"),
+            "web_session slice should depend on session mechanism adapters"
+        );
+    }
 
     #[test]
     fn each_web_adapter_does_not_depend_on_slices_or_runtime() {

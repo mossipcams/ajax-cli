@@ -68,9 +68,24 @@ existing paths.
 - The browser keeps only an unacknowledged-prompt outbox for resend; it does not
   maintain a second FIFO queue. Submitting while busy sends one host-queued prompt;
   Stop owns cancellation.
-- A host background pump continues draining ACP slots after the last socket
-  closes, so an in-flight or queued turn does not depend on browser presence.
+- Each live `TaskSession` Tokio task continues draining its ACP child and host
+  queue after the last socket closes, so an in-flight or queued turn does not
+  depend on browser presence.
 - Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
+- The per-task Tokio command loop continues after the last WebSocket subscriber
+  detaches while a turn is in flight or the host queue is non-empty.
+
+## Shutdown and slot retention
+
+- Dropping a task or changing harness shuts down the live `TaskSession` before a
+  new attach creates one for that handle.
+- Idle LRU eviction sends `Shutdown` only to slots with zero subscribers, no
+  in-flight turn, and an empty host queue; evictable slots must not hold pending
+  work.
+- WebSocket detach releases the directory holder count but does not cancel an
+  in-flight turn or clear the host queue.
+- `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
+  children do not survive process exit.
 
 ## Model switching across ACP process replacement
 
