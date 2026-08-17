@@ -8,11 +8,10 @@ transfer responsibility for the result.
 
 ## Model routing
 
-Call the `model-router` skill first whenever a task is one bounded code
-behavior change you would otherwise implement yourself. It emits one
+Call the `model-router` skill for every implementation write. It emits one
 `EXECUTION` decision (agent, model, risk, scope, verify, fallback), then
-execute and verify. Skip it for trivial one-liners, non-code work, or pure
-Q&A/exploration.
+execute and verify. Skip it only for pure Q&A or exploration with no file
+changes. The orchestrator plans and does not implement.
 
 Do not duplicate provider model rankings or exact model IDs in repository
 documentation; the router registry is their source of truth.
@@ -61,5 +60,9 @@ Before accepting delegated work, the active agent must:
 An empty diff with a success claim is a failure. A delegate report is evidence,
 not approval.
 
-Delegates must not commit, push, merge, rebase, create branches, or switch
-branches unless the user explicitly authorizes that behavior.
+When the user asks to create a PR, the selected delegate runs the repository's
+local verification gate, commits, pushes, and runs `gh pr create`; the
+orchestrator reports the PR URL after reviewing the delta. Delegates must not
+merge, rebase, force-push, or switch branches unless the user explicitly
+authorizes that behavior. A commit or pull-request request implies commit,
+push, and `gh pr create`.
