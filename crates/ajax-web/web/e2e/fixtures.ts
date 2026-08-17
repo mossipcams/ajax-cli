@@ -90,6 +90,52 @@ export const LONG_SESSION_MODELS = {
   default: "model-24",
 };
 
+// ---- session protocol v2 mock helpers ------------------------------------
+
+export const SESSION_PROTOCOL_VERSION = 2;
+
+export type SessionServerEvent = Record<string, unknown>;
+
+export function sessionSnapshotJson(
+  overrides: Partial<{
+    cursor: number;
+    model: string;
+    turnState: "idle" | "busy";
+    reset: boolean;
+  }> = {},
+): string {
+  return JSON.stringify({
+    type: "snapshot",
+    protocolVersion: SESSION_PROTOCOL_VERSION,
+    cursor: 0,
+    model: "auto",
+    turnState: "idle",
+    reset: false,
+    ...overrides,
+  });
+}
+
+export function sessionEventJson(cursor: number, event: SessionServerEvent): string {
+  return JSON.stringify({
+    type: "event",
+    protocolVersion: SESSION_PROTOCOL_VERSION,
+    cursor,
+    payload: event,
+  });
+}
+
+/** Resume cursor from an in-page reconnect (`?cursor=`); cold attach omits it. */
+export function sessionResumeCursor(url: string): number {
+  try {
+    const raw = new URL(url).searchParams.get("cursor");
+    if (raw === null) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ---- fetch mock helper ---------------------------------------------------
 
 export async function mockFetch(page: Page, extra: Record<string, unknown> = {}) {
