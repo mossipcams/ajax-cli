@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -315,6 +316,22 @@ describe("NewTaskSheet", () => {
     expect(onOpenTask).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  it("#855 still opens the task after StrictMode remounts the sheet", async () => {
+    vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const onOpenTask = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <StrictMode>
+        <NewTaskSheet repos={repos} onOpenTask={onOpenTask} onClose={onClose} />
+      </StrictMode>,
+    );
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix Login" } });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(onOpenTask).toHaveBeenCalledWith("web/fix-login"));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("opens the new task route on successful start", async () => {

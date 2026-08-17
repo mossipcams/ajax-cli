@@ -90,6 +90,7 @@ export default function NewTaskSheet({
   // background aria-hidden. Focus lands on the container, never the repo <select> —
   // focusing a select pops the iOS picker the moment the sheet opens.
   useEffect(() => {
+    mountedRef.current = true;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     sheetRef.current?.focus();
     return () => {
