@@ -80,8 +80,8 @@ describe("SessionChat smoke", () => {
   it("keeps replayed chat history when the session becomes ready", () => {
     autoReady = false;
     mountChat();
-    send({ type: "message", role: "user", text: "Prior question" });
-    send({ type: "message", role: "agent", text: "Prior answer" });
+    send({ type: "message", role: "user", text: "Prior question", itemId: "u1" });
+    send({ type: "message", role: "agent", text: "Prior answer", itemId: "a1" });
 
     act(() => ready?.("auto"));
 
@@ -102,7 +102,12 @@ describe("SessionChat smoke", () => {
     vi.restoreAllMocks();
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
       (_handle, callbacks) => {
-        callbacks.onEvent({ type: "message", role: "agent", text: "Earlier reply" });
+        callbacks.onEvent({
+          type: "message",
+          role: "agent",
+          text: "Earlier reply",
+          itemId: "a1",
+        });
         callbacks.onReady("auto");
         return transport;
       },
@@ -123,7 +128,7 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-message-user")).toHaveTextContent(
       "Please fix the flaky test",
     );
-    send({ type: "message", role: "user", text: "Please fix the flaky test" });
+    send({ type: "message", role: "user", text: "Please fix the flaky test", itemId: "u1" });
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
@@ -170,7 +175,7 @@ describe("SessionChat smoke", () => {
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
 
-    send({ type: "message", role: "thought", text: "Checking files" });
+    send({ type: "message", role: "thought", text: "Checking files", itemId: "t1" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
     send({ type: "turn_end" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");

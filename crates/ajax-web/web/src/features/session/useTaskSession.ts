@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import {
-  clearSessionOutbox,
+  clearSessionTransportState,
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
 import { useSessionModelPreference } from "./sessionModel";
@@ -43,7 +43,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
   }, []);
 
   const invalidateSession = useCallback(() => {
-    if (handle) clearSessionOutbox(handle);
+    if (handle) clearSessionTransportState(handle);
   }, [handle]);
 
   useSessionTransport({
@@ -102,7 +102,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
   );
 
   const handleMutated = useCallback(() => {
-    if (handle) clearSessionOutbox(handle);
+    if (handle) clearSessionTransportState(handle);
     onMutated?.();
   }, [handle, onMutated]);
 

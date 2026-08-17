@@ -57,6 +57,8 @@ export function useSessionTransport({
     // per connection so a reset clears any text buffered from the previous
     // connection.
     let buffer: MessageBuffer | undefined;
+    /** Survives in-page reconnect; cleared on full reload with the reducer. */
+    let nextToReadCursor: number | undefined;
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -81,11 +83,12 @@ export function useSessionTransport({
       transportRef.current = undefined;
       buffer?.dispose();
       buffer = new MessageBuffer((event) => dispatch({ type: "event", event }));
-      // Clear before the host replays its durable transcript, never after.
-      dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
+          onCursorAdvance: (cursor) => {
+            nextToReadCursor = cursor;
+          },
           onReady: (nextModel) => {
             // The `ready` event already flushes via onEvent; this is a
             // belt-and-suspenders flush for any replayed text that arrived
@@ -141,6 +144,7 @@ export function useSessionTransport({
         },
         undefined,
         undefined,
+        nextToReadCursor,
       );
       transportRef.current = transport;
     };

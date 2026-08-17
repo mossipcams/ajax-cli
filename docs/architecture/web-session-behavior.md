@@ -55,9 +55,13 @@ existing paths.
 - Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
-- After a WebSocket drop and reconnect, the host replays the durable transcript
-  from cursor; queued prompts and in-flight state remain host-owned — reconnect
-  must not duplicate or lose queued work that survived on the host.
+- After a WebSocket drop and reconnect, the browser supplies the last applied
+  cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
+  `snapshot` plus only events after that cursor; invalid or compacted-away
+  cursors trigger a reset snapshot and bounded full replay.
+- The last-applied cursor lives in the page session only (same JS heap as the
+  reducer). A cold load or full reload omits `?cursor=` and receives full replay;
+  only unacknowledged prompts persist in `sessionStorage`.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
@@ -76,8 +80,9 @@ existing paths.
   status/note events.
 - A live `ready` event on an established socket must not reset browser reducer
   state; only reconnect-after-drop may clear and replay.
-- Each attach delivers one `ready` wire event to the browser reducer; transport
-  handshake side effects (outbox flush, model write) stay separate.
+- Each attach delivers one protocol v2 `snapshot` wire frame to the browser
+  reducer (as a synthetic `ready` event for turn state), then cursor-bearing
+  `event` envelopes for replay/live traffic.
 
 ## Restart and transcript recovery
 
@@ -91,8 +96,9 @@ existing paths.
   one agent-visible note states that model context reset; the composer keeps
   working.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
-  compaction preserves absolute replay cursors. Adjacent agent/thought chunks
-  may be coalesced before persistence.
+  compaction preserves absolute replay cursors. Streamed agent/thought text is
+  normalized to full-content `message` updates with stable host `itemId` values
+  before persistence.
 
 ## Reconnect model and ACP capabilities
 

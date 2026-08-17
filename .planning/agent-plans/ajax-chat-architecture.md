@@ -372,25 +372,27 @@ Acceptance:
 
 ### Phase 4: add cursor replay and one stream normalization point
 
-- [ ] Increment the internal session protocol version.
-- [ ] Add snapshot and cursor-bearing event envelopes.
-- [ ] Assign stable host item IDs and normalize ACP streamed text to full item
+- [x] Increment the internal session protocol version.
+- [x] Add snapshot and cursor-bearing event envelopes.
+- [x] Assign stable host item IDs and normalize ACP streamed text to full item
   updates in the session slice.
-- [ ] Persist cursor/item identity needed for restart replay.
-- [ ] Have the browser retain the last applied cursor and request incremental
-  replay.
-- [ ] Fall back to reset plus bounded full replay after compaction or invalid
+- [x] Persist cursor/item identity needed for restart replay.
+- [x] Have the browser retain the last applied cursor in memory and request
+  incremental replay on in-page reconnect; cold load omits `?cursor=` for full
+  replay (outbox only persists in `sessionStorage`).
+- [x] Fall back to reset plus bounded full replay after compaction or invalid
   cursor.
-- [ ] Reduce `MessageBuffer` to render batching only, or delete it if React
+- [x] Reduce `MessageBuffer` to render batching only, or delete it if React
   batching is sufficient.
-- [ ] Delete semantic text merging from the browser reducer after the host owns
+- [x] Delete semantic text merging from the browser reducer after the host owns
   delta-versus-snapshot normalization.
-- [ ] Add cross-language JSON fixtures for every command, snapshot, and event
+- [x] Add cross-language JSON fixtures for every command, snapshot, and event
   variant.
 
 Acceptance:
 
 - Reconnect after one new event transfers only that event plus attach state.
+- Cold load or full reload omits `?cursor=` and replays the full thread.
 - Replay after restart produces the same ordered conversation as the live path.
 - Delta-streaming and cumulative-streaming harnesses render identical text
   without duplicate or missing content.
@@ -533,12 +535,17 @@ implementation continues.
 | 3 | `npm run web:lint` | pass |
 | 3 | `cargo fmt --check` | pass |
 | 3–5 | (remaining phases) | pending |
+| 4 | `cargo test -p ajax-web --lib web_session` | 127 passed |
+| 4 | `cargo test -p ajax-web --lib web_session_acp` | 29 passed |
+| 4 | Focused browser session tests (7 files) | 66 passed |
+| 4 | `npm run web:check` | pass |
+| 4 | `cargo fmt --check` | pass |
 
-- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 complete (32/32 items through Phase 3). Phases 4–5 unchanged.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 complete (41/41 items through Phase 4). Phase 5 pending.
 
 ## Approval and status
 
 - Plan creation: approved by user on 2026-08-17.
 - Implementation: Phase 0–3 complete 2026-08-17.
-- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 complete (32/32 items through Phase 3). Phases 4–5 pending.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 complete (41/41 items through Phase 4). Phase 5 pending.
 - Current repository edits from this plan: session runtime ownership (committed); Phase 2 task/model authority (committed); Phase 3 browser state simplification (this commit).
