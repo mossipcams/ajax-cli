@@ -43,8 +43,11 @@ Every delegated task must state:
 - relevant verification;
 - explicit stop conditions.
 
-Gather enough source and test context to make the order concrete before
-dispatch. Do not delegate a vague request.
+Do not pre-explore the repository to perfect scope or gather implementation
+context. State outcome, acceptance criteria, and a bounded `SCOPE` on
+`EXECUTION`; the delegate investigates inside that scope. If `SCOPE` is wrong,
+the delegate stops and you emit a new `EXECUTION` — do not explore to fix scope
+first. Do not delegate a vague request without outcome and acceptance.
 
 ## Acceptance and review
 

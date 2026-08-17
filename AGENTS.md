@@ -107,9 +107,10 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 The orchestrator writes plans when required, routes through the `model-router`
 skill for executor, model, risk, scope, verification, and fallback decisions,
-and reviews delegate work. It must not implement, commit, push, or open pull
-requests. Call `model-router` for every implementation write. Do not duplicate
-model rankings or exact model IDs in this file.
+and reviews delegate work. It does not explore the tree; it plans and routes.
+It must not implement, commit, push, or open pull requests. Call
+`model-router` for every implementation write. Do not duplicate model rankings
+or exact model IDs in this file.
 
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, commits, pushes, and runs `gh pr create`; the
