@@ -24,6 +24,10 @@ function safeDecode(s: string): string {
   }
 }
 
+function isBlankDecoded(s: string): boolean {
+  return !s || s.trim() === "" || s === "/";
+}
+
 function parsePrQuery(query: string): number | undefined {
   if (!query) return undefined;
   for (const part of query.split("&")) {
@@ -52,21 +56,25 @@ export function parseRoute(hash: string): Route {
   if (value.startsWith(TASK_PREFIX)) {
     const rest = value.slice(TASK_PREFIX.length).replace(/\/diff\/$/, DIFF_SUFFIX);
     if (!rest) return { kind: "dashboard" };
-    if (rest.endsWith(DIFF_SUFFIX)) {
-      const encodedHandle = rest.slice(0, -DIFF_SUFFIX.length);
+    const segments = rest.split("/");
+    if (segments.length === 2 && segments[1] === "diff") {
+      const encodedHandle = segments[0];
       if (!encodedHandle) return { kind: "dashboard" };
       const handle = safeDecode(encodedHandle);
-      if (!handle) return { kind: "dashboard" };
+      if (isBlankDecoded(handle)) return { kind: "dashboard" };
       const pr = parsePrQuery(query);
       return pr !== undefined ? { kind: "diff", handle, pr } : { kind: "diff", handle };
     }
-    const handle = safeDecode(rest);
-    if (!handle) return { kind: "dashboard" };
-    return { kind: "task", handle };
+    if (segments.length === 1) {
+      const handle = safeDecode(segments[0]);
+      if (isBlankDecoded(handle)) return { kind: "dashboard" };
+      return { kind: "task", handle };
+    }
+    return { kind: "dashboard" };
   }
   if (value.startsWith(PROJECT_PREFIX)) {
     const project = safeDecode(value.slice(PROJECT_PREFIX.length));
-    if (!project) return { kind: "dashboard" };
+    if (isBlankDecoded(project)) return { kind: "dashboard" };
     return { kind: "project", project };
   }
   return { kind: "dashboard" };

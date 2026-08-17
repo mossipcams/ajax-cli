@@ -918,8 +918,7 @@ html.terminal-expanded .result-panel {
 }
 
 /* Transcript -------------------------------------------------------------- */
-/* Owns ~80% of the session band. The composer is the last child of this
-   column — full-width paper, not a draft bubble. */
+/* Owns ~80% of the session band and is the only scroll surface in the column. */
 .session-thread {
   flex: 1 1 80%;
   min-height: 0;
@@ -1363,16 +1362,12 @@ html.terminal-expanded .result-panel {
   outline: none;
 }
 
-/* Composer — full-bleed last strip of the thread. Same paper as the chat;
-   Enter sends. No bubble chrome. */
+/* Composer — bottom-docked strip below the transcript scroller. Same paper as
+   the chat; Enter sends. No bubble chrome. */
 .session-composer {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
   flex: none;
   align-self: stretch;
   width: auto;
-  margin: 0 -12px;
   /* At rest, only the home-indicator inset — no extra pad under the field. */
   padding: 4px 12px env(safe-area-inset-bottom, 0px);
   background: var(--paper);

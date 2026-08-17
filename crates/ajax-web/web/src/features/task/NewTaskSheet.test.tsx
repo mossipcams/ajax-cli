@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -280,6 +281,57 @@ describe("NewTaskSheet", () => {
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].repo).toBe("web");
     vi.unstubAllGlobals();
+  });
+
+  it("#855 does not navigate when Start succeeds after the sheet unmounts", async () => {
+    stubCatalog();
+    const cockpit = {
+      backend: { authority: "host-native", control_enabled: true },
+      repos: { repos: [] },
+      cards: [],
+      inbox: { items: [] },
+    };
+    let resolveStart!: (value: Awaited<ReturnType<typeof api.startTask>>) => void;
+    const pending = new Promise<Awaited<ReturnType<typeof api.startTask>>>((resolve) => {
+      resolveStart = resolve;
+    });
+    vi.spyOn(api, "startTask").mockReturnValue(pending as never);
+    const onCockpit = vi.fn();
+    const onOpenTask = vi.fn();
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <NewTaskSheet
+        repos={repos}
+        onCockpit={onCockpit}
+        onOpenTask={onOpenTask}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    unmount();
+    resolveStart({ ok: true, response: { cockpit } });
+    await waitFor(() => expect(onCockpit).toHaveBeenCalledWith(cockpit));
+    expect(onOpenTask).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("#855 still opens the task after StrictMode remounts the sheet", async () => {
+    vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const onOpenTask = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <StrictMode>
+        <NewTaskSheet repos={repos} onOpenTask={onOpenTask} onClose={onClose} />
+      </StrictMode>,
+    );
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix Login" } });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(onOpenTask).toHaveBeenCalledWith("web/fix-login"));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("opens the new task route on successful start", async () => {

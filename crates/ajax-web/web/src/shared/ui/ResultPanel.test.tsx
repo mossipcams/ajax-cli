@@ -59,10 +59,45 @@ describe("ResultPanel", () => {
 
   it("shows an Undo button when onUndo is set and calls it on click", async () => {
     const onUndo = vi.fn();
-    render(<ResultPanel message="Dropping web/x…" onUndo={onUndo} />);
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel message="Dropping web/x…" onUndo={onUndo} onDismiss={onDismiss} />,
+    );
     expect(screen.getByText("Undo")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Undo"));
     expect(onUndo).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("calls onCommit and onDismiss when Dismiss is clicked while undo is armed", () => {
+    const onCommit = vi.fn();
+    const onUndo = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel
+        message="Dropping web/x…"
+        onCommit={onCommit}
+        onUndo={onUndo}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.click(screen.getByText("Dismiss"));
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(onUndo).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("calls only onDismiss when Dismiss is clicked without undo armed", () => {
+    const onCommit = vi.fn();
+    const onUndo = vi.fn();
+    const onDismiss = vi.fn();
+    render(
+      <ResultPanel message="Done" isError={false} onDismiss={onDismiss} />,
+    );
+    fireEvent.click(screen.getByText("Dismiss"));
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onUndo).not.toHaveBeenCalled();
   });
 
   it("keeps the undo commit timer across callback identity changes", () => {
