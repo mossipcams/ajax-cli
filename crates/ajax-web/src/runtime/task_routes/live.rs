@@ -184,6 +184,11 @@ where
         .map(percent_decode_model)
         .unwrap_or_else(|| "auto".to_string());
 
+    let client_cursor = req
+        .uri()
+        .query()
+        .and_then(|query| crate::slices::web_session::parse_client_cursor(Some(query)));
+
     let plan = {
         let guard = state.shared();
         match crate::slices::web_session::prepare_task_session(&guard.context, &handle, &model_raw)
@@ -227,6 +232,7 @@ where
             socket,
             directory,
             plan,
+            client_cursor,
             Some(persist_session_model),
         )
         .await;

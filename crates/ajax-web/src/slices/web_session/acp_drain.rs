@@ -2,7 +2,7 @@
 
 use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
-    SessionServerEvent,
+    normalize::StreamNormalizer, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::AcpClientEvent;
 use crate::adapters::web_session_acp::AcpStdioClient;
@@ -68,39 +68,17 @@ pub(crate) fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEve
     (events, host_exited, prompt_finished)
 }
 
+pub(crate) fn normalize_session_events(
+    normalizer: &mut StreamNormalizer,
+    events: Vec<SessionServerEvent>,
+) -> Vec<SessionServerEvent> {
+    normalizer.normalize_batch(events)
+}
+
+/// Legacy name kept for tests that assert delta coalescing behavior moved to normalize.
+#[cfg(test)]
 pub(crate) fn coalesce_session_events(events: Vec<SessionServerEvent>) -> Vec<SessionServerEvent> {
-    let mut coalesced = Vec::with_capacity(events.len());
-    for event in events {
-        let can_merge = match (&mut coalesced.last_mut(), &event) {
-            (
-                Some(SessionServerEvent::Message {
-                    role: previous_role,
-                    message_id: previous_id,
-                    ..
-                }),
-                SessionServerEvent::Message {
-                    role, message_id, ..
-                },
-            ) => {
-                previous_role == role
-                    && previous_id == message_id
-                    && matches!(role.as_str(), "agent" | "thought")
-            }
-            _ => false,
-        };
-        if can_merge {
-            if let (
-                Some(SessionServerEvent::Message { text: previous, .. }),
-                SessionServerEvent::Message { text, .. },
-            ) = (coalesced.last_mut(), event)
-            {
-                previous.push_str(&text);
-            }
-        } else {
-            coalesced.push(event);
-        }
-    }
-    coalesced
+    normalize_session_events(&mut StreamNormalizer::default(), events)
 }
 
 pub(crate) fn map_acp_session_update_with_startup(

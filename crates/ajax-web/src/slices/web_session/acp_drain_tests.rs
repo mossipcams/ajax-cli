@@ -52,6 +52,7 @@ fn drain_maps_session_update_notifications() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hello".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );
@@ -136,11 +137,13 @@ fn consecutive_agent_chunks_are_coalesced_before_persistence() {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hel".to_string(),
+            item_id: String::new(),
             message_id: None,
         },
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "lo".to_string(),
+            item_id: String::new(),
             message_id: None,
         },
         SessionServerEvent::TurnEnd { stop_reason: None },
@@ -152,6 +155,7 @@ fn consecutive_agent_chunks_are_coalesced_before_persistence() {
             SessionServerEvent::Message {
                 role: "agent".to_string(),
                 text: "hello".to_string(),
+                item_id: "i1".to_string(),
                 message_id: None,
             },
             SessionServerEvent::TurnEnd { stop_reason: None },
@@ -175,6 +179,7 @@ fn pi_startup_info_is_a_note_instead_of_agent_prose() {
         vec![SessionServerEvent::Message {
             role: "note".to_string(),
             text: startup.to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );

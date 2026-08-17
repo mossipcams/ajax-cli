@@ -1,5 +1,6 @@
 //! In-memory transcript cursor and replay filtering.
 
+use super::protocol::SessionEventEnvelope;
 use super::SessionServerEvent;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
 use std::collections::HashSet;
@@ -23,6 +24,10 @@ impl TranscriptLog {
         Self { events, dropped }
     }
 
+    pub(crate) fn absolute_next_cursor(&self) -> usize {
+        self.dropped + self.events.len()
+    }
+
     pub(crate) fn append(&mut self, events: Vec<SessionServerEvent>) {
         self.events.extend(events);
         if self.events.len() > MAX_LOG_EVENTS {
@@ -36,6 +41,7 @@ impl TranscriptLog {
     /// left behind by trimming resumes at the oldest event still held.
     /// Resolved permission requests are omitted so reconnect does not flash
     /// already-answered prompts.
+    #[cfg(test)]
     pub(crate) fn read_from(&self, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         let next = self.dropped + self.events.len();
         let start = cursor.saturating_sub(self.dropped).min(self.events.len());
@@ -62,6 +68,39 @@ impl TranscriptLog {
             .collect();
         (events, next)
     }
+
+    /// Like [`read_from`](Self::read_from), but each row keeps its absolute log
+    /// index even when resolved permission requests are filtered out.
+    pub(crate) fn read_from_enveloped(&self, cursor: usize) -> (Vec<SessionEventEnvelope>, usize) {
+        let next = self.absolute_next_cursor();
+        let start = cursor.saturating_sub(self.dropped).min(self.events.len());
+        let resolved: HashSet<String> = self
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                SessionServerEvent::PermissionResolved { request_id, .. } => {
+                    Some(request_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let envelopes = self.events[start..]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                if matches!(
+                    event,
+                    SessionServerEvent::PermissionRequest { request_id, .. }
+                        if resolved.contains(request_id)
+                ) {
+                    return None;
+                }
+                let absolute_cursor = self.dropped + start + index;
+                Some(SessionEventEnvelope::new(absolute_cursor, event.clone()))
+            })
+            .collect();
+        (envelopes, next)
+    }
 }
 
 /// Host commentary, not agent output: the browser marks an `agent` message as a
@@ -71,6 +110,7 @@ pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),
         text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
+        item_id: "context-reset".to_string(),
         message_id: None,
     }
 }

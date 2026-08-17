@@ -420,6 +420,7 @@ pub(crate) fn message_event(
     vec![SessionServerEvent::Message {
         role: role.to_string(),
         text,
+        item_id: String::new(),
         message_id,
     }]
 }

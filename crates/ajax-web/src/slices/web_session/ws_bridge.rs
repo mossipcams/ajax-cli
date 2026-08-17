@@ -2,7 +2,7 @@
 
 use super::{
     apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, SessionAttachPlan,
-    SessionClientMessage, SessionServerEvent, TaskSessionDirectory,
+    SessionClientMessage, SessionEventEnvelope, SessionSnapshot, TaskSessionDirectory,
 };
 use axum::extract::ws::{Message, WebSocket};
 use std::{
@@ -27,6 +27,7 @@ pub(crate) async fn bridge_task_session_socket(
     mut socket: WebSocket,
     directory: Arc<TaskSessionDirectory>,
     plan: SessionAttachPlan,
+    client_cursor: Option<usize>,
     persist_session_model: Option<PersistSessionModel>,
 ) {
     let handle = plan.qualified_handle.clone();
@@ -35,28 +36,24 @@ pub(crate) async fn bridge_task_session_socket(
         .acquire(&handle, &plan.worktree_path, &model, plan.agent)
         .await
     {
-        let _ = send_event(
-            &mut socket,
-            &SessionServerEvent::Error {
-                message: error.clone(),
-            },
-        )
-        .await;
+        let _ = send_error(&mut socket, &error).await;
         return;
     }
 
-    let snapshot = directory.attach_snapshot(&handle, model).await;
-    let mut generation = snapshot.generation;
-    let mut cursor = snapshot.cursor;
-    for event in snapshot.replayed {
-        if !send_event(&mut socket, &event).await {
+    let attach = directory
+        .attach_snapshot(&handle, model, client_cursor)
+        .await;
+    let mut generation = attach.generation;
+    let mut cursor = attach.snapshot.cursor;
+    if !send_snapshot(&mut socket, &attach.snapshot).await {
+        release_slot(&directory, &handle).await;
+        return;
+    }
+    for envelope in attach.replayed {
+        if !send_envelope(&mut socket, &envelope).await {
             release_slot(&directory, &handle).await;
             return;
         }
-    }
-    if !send_event(&mut socket, &snapshot.ready).await {
-        release_slot(&directory, &handle).await;
-        return;
     }
 
     let mut last_write = Instant::now();
@@ -151,13 +148,7 @@ async fn handle_inbound_text(
     persist_session_model: Option<PersistSessionModel>,
 ) -> ClientHandleResult {
     if text.len() > MAX_SESSION_FRAME_BYTES {
-        let ok = send_event(
-            socket,
-            &SessionServerEvent::Error {
-                message: "input frame too large".to_string(),
-            },
-        )
-        .await;
+        let ok = send_error(socket, "input frame too large").await;
         return if ok {
             ClientHandleResult::Continue
         } else {
@@ -168,13 +159,7 @@ async fn handle_inbound_text(
     let message: SessionClientMessage = match serde_json::from_str(text) {
         Ok(message) => message,
         Err(error) => {
-            let ok = send_event(
-                socket,
-                &SessionServerEvent::Error {
-                    message: format!("invalid session message: {error}"),
-                },
-            )
-            .await;
+            let ok = send_error(socket, &format!("invalid session message: {error}")).await;
             return if ok {
                 ClientHandleResult::Continue
             } else {
@@ -194,16 +179,9 @@ async fn handle_inbound_text(
     .await
     {
         Ok(ApplyClientMessageOutcome::Applied) => ClientHandleResult::Continue,
-        Ok(ApplyClientMessageOutcome::ModelChanged { model }) => {
-            let ok = send_event(socket, &SessionServerEvent::Ready { model, busy: false }).await;
-            if ok {
-                ClientHandleResult::Continue
-            } else {
-                ClientHandleResult::Stop
-            }
-        }
+        Ok(ApplyClientMessageOutcome::ModelChanged) => ClientHandleResult::Continue,
         Err(error) => {
-            let ok = send_event(socket, &SessionServerEvent::Error { message: error }).await;
+            let ok = send_error(socket, &error).await;
             if ok {
                 ClientHandleResult::Continue
             } else {
@@ -227,14 +205,14 @@ async fn flush_outbound(
     *generation = batch.generation;
     *cursor = batch.cursor;
 
-    let wrote = batch.ready.is_some() || !batch.events.is_empty();
-    if let Some(ready) = batch.ready {
-        if !send_event(socket, &ready).await {
+    let wrote = batch.snapshot.is_some() || !batch.events.is_empty();
+    if let Some(snapshot) = batch.snapshot {
+        if !send_snapshot(socket, &snapshot).await {
             return false;
         }
     }
-    for event in batch.events {
-        if !send_event(socket, &event).await {
+    for envelope in batch.events {
+        if !send_envelope(socket, &envelope).await {
             return false;
         }
     }
@@ -244,9 +222,26 @@ async fn flush_outbound(
     true
 }
 
-async fn send_event(socket: &mut WebSocket, event: &SessionServerEvent) -> bool {
-    match serde_json::to_string(event) {
+async fn send_snapshot(socket: &mut WebSocket, snapshot: &SessionSnapshot) -> bool {
+    match serde_json::to_string(snapshot) {
         Ok(payload) => socket.send(Message::Text(payload.into())).await.is_ok(),
         Err(_) => false,
     }
+}
+
+async fn send_envelope(socket: &mut WebSocket, envelope: &SessionEventEnvelope) -> bool {
+    match serde_json::to_string(envelope) {
+        Ok(payload) => socket.send(Message::Text(payload.into())).await.is_ok(),
+        Err(_) => false,
+    }
+}
+
+async fn send_error(socket: &mut WebSocket, message: &str) -> bool {
+    let envelope = SessionEventEnvelope::new(
+        0,
+        super::SessionServerEvent::Error {
+            message: message.to_string(),
+        },
+    );
+    send_envelope(socket, &envelope).await
 }

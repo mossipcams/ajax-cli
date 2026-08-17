@@ -132,16 +132,19 @@ pub(crate) fn note(text: &str) -> super::SessionServerEvent {
     super::SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        item_id: format!("note-{text}"),
         message_id: None,
     }
 }
 
-pub(crate) fn user_msg(text: &str) -> super::SessionServerEvent {
-    super::SessionServerEvent::Message {
-        role: "user".to_string(),
-        text: text.to_string(),
-        message_id: None,
-    }
+pub(crate) fn has_message(events: &[super::SessionServerEvent], role: &str, text: &str) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            super::SessionServerEvent::Message { role: actual_role, text: actual_text, .. }
+                if actual_role == role && actual_text == text
+        )
+    })
 }
 
 pub(crate) fn pump_until<F>(

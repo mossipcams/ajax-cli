@@ -271,6 +271,7 @@ fn map_message_preserves_message_id_when_present() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hi".to_string(),
+            item_id: String::new(),
             message_id: Some("msg_7".to_string()),
         }]
     );
@@ -313,6 +314,7 @@ fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
         vec![SessionServerEvent::Message {
             role: "thought".to_string(),
             text: "Checking the router".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );
@@ -389,6 +391,7 @@ fn map_agent_message_chunk_to_browser_message() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "Working on it".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );
@@ -409,6 +412,7 @@ fn map_agent_message_chunk_preserves_newline_only_delta() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "\n".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );

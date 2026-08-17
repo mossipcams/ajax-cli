@@ -6,6 +6,7 @@ fn note(text: &str) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        item_id: format!("t-{text}"),
         message_id: None,
     }
 }

@@ -475,6 +475,7 @@ fn g1_load_fail_appends_context_reset_note() {
             SessionServerEvent::Message {
                 role: "user".to_string(),
                 text: "seed".to_string(),
+                item_id: "seed-user".to_string(),
                 message_id: None,
             },
         );
@@ -508,6 +509,7 @@ fn g1_successful_load_drains_replay_from_transcript() {
             SessionServerEvent::Message {
                 role: "user".to_string(),
                 text: "seed".to_string(),
+                item_id: "seed-user".to_string(),
                 message_id: None,
             },
         );
@@ -516,6 +518,7 @@ fn g1_successful_load_drains_replay_from_transcript() {
             SessionServerEvent::Message {
                 role: "agent".to_string(),
                 text: "prior".to_string(),
+                item_id: "prior-agent".to_string(),
                 message_id: None,
             },
         );

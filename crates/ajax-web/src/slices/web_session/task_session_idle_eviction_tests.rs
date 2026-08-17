@@ -1,5 +1,5 @@
 use super::test_support::{
-    fake_acp_fixture, pump_until, scratch_dir, user_msg, BlockingSessionDirectory,
+    fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
 };
 use super::transcript::MAX_IDLE_SESSIONS;
 use super::SessionServerEvent;
@@ -43,7 +43,7 @@ fn idle_eviction_preserves_slots_with_in_flight_turn() {
                 .expect("re-acquire a");
             let (events, _) = directory.read_from(handle_a, 0);
             assert!(
-                events.contains(&user_msg("first")),
+                has_message(&events, "user", "first"),
                 "in-flight slot must survive idle eviction"
             );
             directory.cancel(handle_a, true).expect("cancel in-flight");
@@ -103,7 +103,7 @@ fn idle_eviction_preserves_slots_with_queued_prompts() {
                         event,
                         SessionServerEvent::Message { text, .. } if text == "pong"
                     )
-                }) && events.contains(&user_msg("kept"))
+                }) && has_message(events, "user", "kept")
             });
         });
     });
@@ -167,7 +167,7 @@ fn idle_eviction_reclaims_finished_disconnected_sessions() {
         );
         let (events, _) = directory.read_from(handle_a, 0);
         assert!(
-            events.contains(&user_msg("ping")),
+            has_message(&events, "user", "ping"),
             "evicted session transcript reloads from disk on re-acquire"
         );
     });

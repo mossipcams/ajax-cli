@@ -1,0 +1,102 @@
+[
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 0,
+    "payload": {
+      "type": "message",
+      "role": "user",
+      "text": "Fix it",
+      "itemId": "i1"
+    }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 1,
+    "payload": {
+      "type": "message",
+      "role": "agent",
+      "text": "On it",
+      "itemId": "i2"
+    }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 2,
+    "payload": { "type": "prompt_accepted", "clientMessageId": "c1" }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 3,
+    "payload": {
+      "type": "tool_call",
+      "callId": "t1",
+      "title": "Read",
+      "kind": "read",
+      "status": "in_progress",
+      "locations": [],
+      "content": []
+    }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 4,
+    "payload": { "type": "plan", "entries": [{ "content": "step", "status": "in_progress" }] }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 5,
+    "payload": { "type": "usage", "used": 10, "size": 100 }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 6,
+    "payload": {
+      "type": "permission_request",
+      "requestId": "p1",
+      "title": "Run tests?",
+      "detail": null
+    }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 7,
+    "payload": { "type": "permission_resolved", "requestId": "p1", "approved": true }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 8,
+    "payload": { "type": "status", "state": "running", "detail": null }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 9,
+    "payload": { "type": "turn_end", "stopReason": "end_turn" }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 10,
+    "payload": {
+      "type": "artifact",
+      "kind": "config",
+      "title": null,
+      "body": "{}"
+    }
+  },
+  {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 11,
+    "payload": { "type": "error", "message": "boom" }
+  }
+]

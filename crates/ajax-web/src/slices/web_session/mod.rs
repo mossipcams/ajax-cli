@@ -2,6 +2,9 @@
 
 mod acp_drain;
 mod acp_map;
+mod normalize;
+mod protocol;
+mod replay;
 mod task_session;
 mod task_session_directory;
 mod task_session_spawn;
@@ -9,6 +12,9 @@ mod transcript;
 mod ws_bridge;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
+pub use protocol::{
+    parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+};
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
@@ -19,8 +25,6 @@ use ajax_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
-
-pub const SESSION_PROTOCOL_VERSION: u32 = 1;
 
 pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
@@ -67,6 +71,9 @@ pub enum SessionServerEvent {
     Message {
         role: String,
         text: String,
+        /// Stable host-generated identity for replace-by-id replay in the browser.
+        #[serde(rename = "itemId", default)]
+        item_id: String,
         /// ACP v1 message identity. Chunks sharing one id are one message; a
         /// change starts a new one. Optional in the protocol, so the browser
         /// keeps its role-adjacency fallback for harnesses that omit it.
@@ -287,6 +294,15 @@ pub fn prepare_task_session<R: Registry>(
         agent: task.selected_agent,
     })
 }
+
+#[cfg(test)]
+mod normalize_tests;
+
+#[cfg(test)]
+mod protocol_tests;
+
+#[cfg(test)]
+mod replay_tests;
 
 #[cfg(test)]
 mod tests;

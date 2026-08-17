@@ -3,12 +3,13 @@
 use super::{
     normalize_session_model,
     task_session::{
-        disk_read_from, send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot,
-        OutboundBatch, TaskSessionCommand, TaskSessionSender,
+        send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch,
+        TaskSessionCommand, TaskSessionSender,
     },
     transcript::MAX_IDLE_SESSIONS,
     PersistSessionModel, SessionClientMessage, SessionServerEvent,
 };
+use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
     collections::HashMap,
@@ -262,11 +263,17 @@ impl TaskSessionDirectory {
         .await?
     }
 
-    pub async fn attach_snapshot(&self, handle: &str, fallback_model: String) -> AttachSnapshot {
+    pub async fn attach_snapshot(
+        &self,
+        handle: &str,
+        fallback_model: String,
+        client_cursor: Option<usize>,
+    ) -> AttachSnapshot {
         if let Ok(tx) = self.command_tx(handle) {
             let model = fallback_model.clone();
             if let Ok(snapshot) = send_command(&tx, |reply| TaskSessionCommand::AttachSnapshot {
                 model,
+                client_cursor,
                 reply,
             })
             .await
@@ -274,15 +281,14 @@ impl TaskSessionDirectory {
                 return snapshot;
             }
         }
-        let (replayed, cursor) = disk_read_from(&self.state_dir, handle, 0);
+        let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
+        let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+        let (snapshot, replayed) =
+            super::replay::build_attach(&log, fallback_model, false, client_cursor);
         AttachSnapshot {
             generation: 0,
+            snapshot,
             replayed,
-            cursor,
-            ready: SessionServerEvent::Ready {
-                model: fallback_model,
-                busy: false,
-            },
         }
     }
 
@@ -303,11 +309,13 @@ impl TaskSessionDirectory {
                 return batch;
             }
         }
-        let (events, next) = disk_read_from(&self.state_dir, handle, cursor);
+        let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
+        let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+        let (events, next) = log.read_from_enveloped(cursor);
         OutboundBatch {
             generation: 0,
             cursor: next,
-            ready: None,
+            snapshot: None,
             events,
         }
     }
@@ -321,7 +329,7 @@ impl TaskSessionDirectory {
                 return result;
             }
         }
-        disk_read_from(&self.state_dir, handle, cursor)
+        super::task_session::disk_read_from(&self.state_dir, handle, cursor)
     }
 
     #[cfg(test)]
@@ -349,7 +357,7 @@ impl TaskSessionDirectory {
 
     #[cfg(test)]
     pub async fn generation(&self, handle: &str) -> u64 {
-        self.attach_snapshot(handle, "auto".to_string())
+        self.attach_snapshot(handle, "auto".to_string(), None)
             .await
             .generation
     }
@@ -397,7 +405,7 @@ async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, S
 #[derive(Debug)]
 pub(crate) enum ApplyClientMessageOutcome {
     Applied,
-    ModelChanged { model: String },
+    ModelChanged,
 }
 
 pub(crate) async fn apply_client_message(
@@ -432,12 +440,8 @@ pub(crate) async fn apply_client_message(
             }
             let next_generation = directory.respawn(handle, worktree_path, &model).await?;
             *generation = next_generation;
-            let snapshot = directory.attach_snapshot(handle, model.clone()).await;
-            let model = match &snapshot.ready {
-                SessionServerEvent::Ready { model, .. } => model.clone(),
-                _ => model,
-            };
-            Ok(ApplyClientMessageOutcome::ModelChanged { model })
+            let _ = directory.attach_snapshot(handle, model.clone(), None).await;
+            Ok(ApplyClientMessageOutcome::ModelChanged)
         }
         SessionClientMessage::Permission {
             request_id,

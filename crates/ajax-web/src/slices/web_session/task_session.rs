@@ -2,37 +2,35 @@
 
 use super::task_session_spawn;
 
+use super::normalize::StreamNormalizer;
+use super::protocol::{SessionEventEnvelope, SessionSnapshot};
+use super::replay::{build_attach, pending_permission};
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{
-        coalesce_session_events, drain_acp_events, parse_json_rpc_id, permission_response,
+        drain_acp_events, normalize_session_events, parse_json_rpc_id, permission_response,
     },
     apply_cancel_to_queue, dispatch_prompt, PromptDispatch, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::AcpStdioClient;
-use crate::adapters::web_session_store::{self, StoredSession};
+use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
-use std::{
-    collections::VecDeque,
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{collections::VecDeque, path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
 const COMMAND_CAPACITY: usize = 32;
 
 pub(crate) struct AttachSnapshot {
     pub generation: u64,
-    pub replayed: Vec<SessionServerEvent>,
-    pub cursor: usize,
-    pub ready: SessionServerEvent,
+    pub snapshot: SessionSnapshot,
+    pub replayed: Vec<SessionEventEnvelope>,
 }
 
 pub(crate) struct OutboundBatch {
     pub generation: u64,
     pub cursor: usize,
-    pub ready: Option<SessionServerEvent>,
-    pub events: Vec<SessionServerEvent>,
+    pub snapshot: Option<SessionSnapshot>,
+    pub events: Vec<SessionEventEnvelope>,
 }
 
 pub(crate) enum TaskSessionCommand {
@@ -67,6 +65,7 @@ pub(crate) enum TaskSessionCommand {
     },
     AttachSnapshot {
         model: String,
+        client_cursor: Option<usize>,
         reply: oneshot::Sender<AttachSnapshot>,
     },
     #[cfg(test)]
@@ -131,6 +130,7 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
+    pub(super) stream_normalizer: StreamNormalizer,
     pub(super) queued: VecDeque<String>,
     pub(super) last_released: Option<Instant>,
     pub(super) acp_alive: bool,
@@ -185,10 +185,12 @@ impl TaskSessionState {
             self.acp_alive = false;
         }
         if !events.is_empty() {
-            self.append_to_log(coalesce_session_events(events));
+            let normalized = normalize_session_events(&mut self.stream_normalizer, events);
+            self.append_to_log(normalized);
         }
     }
 
+    #[cfg(test)]
     fn read_from(&self, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         self.log.read_from(cursor)
     }
@@ -212,6 +214,7 @@ pub(crate) fn spawn_task_session(
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
+            stream_normalizer: StreamNormalizer::default(),
             queued: VecDeque::new(),
             last_released: None,
             acp_alive: false,
@@ -291,8 +294,12 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let result = task_session_spawn::respawn(state, &worktree_path, &model).await;
             let _ = reply.send(result);
         }
-        TaskSessionCommand::AttachSnapshot { model, reply } => {
-            let snapshot = attach_snapshot(state, model);
+        TaskSessionCommand::AttachSnapshot {
+            model,
+            client_cursor,
+            reply,
+        } => {
+            let snapshot = attach_snapshot(state, model, client_cursor);
             let _ = reply.send(snapshot);
         }
         #[cfg(test)]
@@ -362,6 +369,7 @@ fn submit_prompt(
     let user_event = SessionServerEvent::Message {
         role: "user".to_string(),
         text: text.clone(),
+        item_id: state.stream_normalizer.fresh_item_id(),
         message_id: None,
     };
     let in_flight = client.prompt_in_flight();
@@ -421,46 +429,54 @@ fn answer_permission(
     Ok(())
 }
 
-fn attach_snapshot(state: &mut TaskSessionState, model: String) -> AttachSnapshot {
-    let (replayed, cursor) = state.read_from(0);
+fn attach_snapshot(
+    state: &mut TaskSessionState,
+    model: String,
+    client_cursor: Option<usize>,
+) -> AttachSnapshot {
+    let effective_model = if state.model.is_empty() {
+        model
+    } else {
+        state.model.clone()
+    };
+    let (snapshot, replayed) =
+        build_attach(&state.log, effective_model, state.busy(), client_cursor);
     AttachSnapshot {
         generation: state.generation,
+        snapshot,
         replayed,
-        cursor,
-        ready: SessionServerEvent::Ready {
-            model: if state.model.is_empty() {
-                model
-            } else {
-                state.model.clone()
-            },
-            busy: state.busy(),
-        },
     }
 }
 
 fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64) -> OutboundBatch {
     let current_generation = state.generation;
-    let (cursor, ready) = if current_generation == generation {
-        (cursor, None)
+    let generation_changed = current_generation != generation;
+    let read_from = if generation_changed {
+        state.log.dropped
     } else {
-        (
-            0,
-            Some(SessionServerEvent::Ready {
-                model: if state.model.is_empty() {
-                    "auto".to_string()
-                } else {
-                    state.model.clone()
-                },
-                busy: state.busy(),
-            }),
-        )
+        cursor
+    };
+    let snapshot = if generation_changed {
+        Some(SessionSnapshot::new(
+            state.log.absolute_next_cursor(),
+            if state.model.is_empty() {
+                "auto".to_string()
+            } else {
+                state.model.clone()
+            },
+            state.busy(),
+            true,
+            pending_permission(&state.log),
+        ))
+    } else {
+        None
     };
     state.pump();
-    let (events, next) = state.read_from(cursor);
+    let (events, next) = state.log.read_from_enveloped(read_from);
     OutboundBatch {
         generation: current_generation,
         cursor: next,
-        ready,
+        snapshot,
         events,
     }
 }
@@ -479,12 +495,14 @@ pub(crate) async fn send_command<T>(
         .map_err(|_| "session task dropped reply".to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn disk_read_from(
-    state_dir: &Path,
+    state_dir: &std::path::Path,
     handle: &str,
     cursor: usize,
 ) -> (Vec<SessionServerEvent>, usize) {
-    let stored: StoredSession<SessionServerEvent> = web_session_store::load(state_dir, handle);
+    let stored: crate::adapters::web_session_store::StoredSession<SessionServerEvent> =
+        web_session_store::load(state_dir, handle);
     if stored.events.is_empty() {
         (Vec::new(), cursor)
     } else {
