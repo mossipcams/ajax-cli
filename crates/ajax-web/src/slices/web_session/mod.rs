@@ -1,9 +1,17 @@
-//! Browser orchestration-chat wire protocol. ACP update mapping lives in
-//! `acp_map`; this module owns only the shapes both ends agree on.
+//! Browser orchestration-chat wire protocol and per-task session runtime.
 
+mod acp_drain;
 mod acp_map;
+mod task_session;
+mod task_session_directory;
+mod task_session_spawn;
+mod transcript;
+mod ws_bridge;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
+pub(crate) use task_session_directory::TaskSessionDirectory;
+pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
+pub(crate) use ws_bridge::bridge_task_session_socket;
 
 use ajax_core::{
     adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
@@ -280,3 +288,21 @@ mod tests;
 
 #[cfg(test)]
 mod fake_acp_tests;
+
+#[cfg(test)]
+mod task_session_tests;
+
+#[cfg(test)]
+mod task_session_idle_eviction_tests;
+
+#[cfg(test)]
+mod transcript_tests;
+
+#[cfg(test)]
+mod acp_drain_tests;
+
+#[cfg(test)]
+mod ws_bridge_tests;
+
+#[cfg(test)]
+pub(crate) mod test_support;

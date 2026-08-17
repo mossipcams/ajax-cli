@@ -14,7 +14,7 @@ mod tests {
         "terminal",
         "web_session",
     ];
-    const ADAPTERS: [&str; 11] = [
+    const ADAPTERS: [&str; 12] = [
         "assets",
         "browser_session",
         "cloudflare_access",
@@ -26,6 +26,7 @@ mod tests {
         "terminal_pty",
         "tls",
         "web_session_acp",
+        "web_session_store",
     ];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
@@ -129,13 +130,6 @@ mod tests {
                 .iter()
                 .copied()
                 .filter(|slice| *slice != "stt")
-                .collect::<Vec<_>>();
-            forbidden_paths_for_slices(&siblings)
-        } else if adapter == "web_session_acp" {
-            let siblings = SLICES
-                .iter()
-                .copied()
-                .filter(|slice| *slice != "web_session")
                 .collect::<Vec<_>>();
             forbidden_paths_for_slices(&siblings)
         } else {

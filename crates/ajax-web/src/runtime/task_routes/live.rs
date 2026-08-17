@@ -209,7 +209,7 @@ where
         }
     };
 
-    let hub = Arc::clone(&state.web_session_hub);
+    let directory = Arc::clone(&state.task_session_directory);
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -217,7 +217,7 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::adapters::web_session_acp::bridge_task_session_socket(socket, hub, plan).await;
+        crate::slices::web_session::bridge_task_session_socket(socket, directory, plan).await;
     })
 }
 
@@ -305,7 +305,10 @@ where
         );
     };
     let handle = percent_decode_model(&handle);
-    let hub = Arc::clone(&state.web_session_hub);
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle_for_drop = handle.clone();
+    let drop_session = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let drop_flag = std::sync::Arc::clone(&drop_session);
 
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
@@ -321,8 +324,7 @@ where
                 );
                 match result {
                     Ok(outcome) => {
-                        // The live child belongs to the previous harness.
-                        hub.drop_session(&handle);
+                        drop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                         let _ = bridge.persist_registry_snapshot(context);
                         let response = match operation_success_response(outcome, context) {
                             Ok(response) => response,
@@ -363,6 +365,9 @@ where
             None,
         )
     });
+    if drop_session.load(std::sync::atomic::Ordering::SeqCst) {
+        directory.drop_session(&handle_for_drop).await;
+    }
     response.into_axum_response()
 }
 

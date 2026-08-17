@@ -39,9 +39,9 @@ browser still does not own transcript/queue.
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
 `session_models` slice. Authenticated `GET /api/tasks/{handle}/session` WebSocket
-upgrade is transport-only over `WebSessionHub` (snapshot via cursor replay).
-Session admission policy lives in the `web_session` slice and is stated below.
-Routes and the bridge call hub methods only.
+upgrade is transport-only over the `web_session` task-session directory (snapshot
+via cursor replay). Routes call directory methods only; the authenticated
+WebSocket bridge lives in `slices::web_session::ws_bridge`.
 
 The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
 framing, request correlation, and typed ACP messages. It initializes with stable
@@ -127,9 +127,11 @@ running process. On success the host drops the task's ACP slot so the next attac
 spawns the new harness.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
-(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One
-`WebSessionHub` owns prompt queueing, cancellation, model switching, permission
-answers, and transcript replay cursors; transport layers call hub methods only.
+(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
+`web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
+`TaskSession` command loop): prompt queueing, cancellation, model switching,
+permission answers, and transcript replay cursors. JSONL persistence lives in
+`adapters::web_session_store`. ACP stdio remains in `web_session_acp`.
 
 Prompt frames carry a browser-generated `clientMessageId`. The host records a
 `prompt_accepted` event and ignores duplicate IDs, while the browser keeps

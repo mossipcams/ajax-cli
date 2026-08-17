@@ -163,8 +163,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   Optional Home Screen install enables Declarative Web Push only.
 - Optional orchestration chat uses ACP over stdio via an `ajax-web` host, not
   PTY paste. The host uses the official Rust ACP runtime and negotiates stable
-  protocol v1. Transcripts persist as JSONL under ajax-web `state_dir`
-  (`web-session/`), not registry or tmux.
+  protocol v1. `ajax-web::slices::web_session` owns per-task session runtimes;
+  `adapters::web_session_acp` owns ACP stdio only; `adapters::web_session_store`
+  owns JSONL transcripts under `state_dir` (`web-session/`), not registry or tmux.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

@@ -7,9 +7,9 @@ use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
-        stt_provider::MoonshineProvider, web_session_acp::WebSessionHub,
+        stt_provider::MoonshineProvider,
     },
-    slices::{dev_deploy, push::PushHub},
+    slices::{dev_deploy, push::PushHub, web_session::TaskSessionDirectory},
     WebError,
 };
 use ajax_core::{
@@ -50,7 +50,7 @@ pub struct WebAppState<C, B> {
     pub(crate) stt_phrase_end_silence_ms: u64,
     pub(crate) stt_pause_grace_period_ms: u64,
     pub(crate) stt_language: String,
-    pub(crate) web_session_hub: Arc<WebSessionHub>,
+    pub(crate) task_session_directory: Arc<TaskSessionDirectory>,
 }
 
 pub(crate) struct WebSharedState<C, B> {
@@ -85,7 +85,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             stt_phrase_end_silence_ms: self.stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms: self.stt_pause_grace_period_ms,
             stt_language: self.stt_language.clone(),
-            web_session_hub: Arc::clone(&self.web_session_hub),
+            task_session_directory: Arc::clone(&self.task_session_directory),
         }
     }
 }
@@ -215,8 +215,7 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let state_dir = Arc::new(state_dir.clone());
         let hub_dir = state_dir.as_ref().clone();
-        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
-        web_session_hub.start_background_pump();
+        let task_session_directory = TaskSessionDirectory::new(hub_dir);
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -238,7 +237,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub,
+            task_session_directory,
         }
     }
 
@@ -280,8 +279,7 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let hub_dir = state_dir.clone();
         let state_dir = Arc::new(state_dir);
-        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
-        web_session_hub.start_background_pump();
+        let task_session_directory = TaskSessionDirectory::new(hub_dir);
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -303,7 +301,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub,
+            task_session_directory,
         })
     }
 
