@@ -105,10 +105,9 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-The active harness owns same-harness work and must use its native delegation
-when available. Do not launch another instance of the same harness through Ajax
-Model Router. Use Ajax Model Router only for intentional cross-harness or
-cross-provider delegation.
+Use the `model-router` skill for executor, model, risk, scope, verification,
+and fallback decisions on bounded code changes. Do not duplicate model
+rankings or exact model IDs in this file.
 
 Every delegated task must be bounded by scope, acceptance criteria,
 verification, and stop conditions. The active agent must inspect the actual

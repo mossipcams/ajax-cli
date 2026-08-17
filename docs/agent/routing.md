@@ -6,46 +6,38 @@ The active agent owns investigation, engineering decisions, review, and final
 verification. Delegation changes who performs a bounded task; it does not
 transfer responsibility for the result.
 
-## Same-harness work
+## Model routing
 
-Use the active harness's native delegation for same-harness work: Cursor to
-Cursor, Codex to Codex, and Pi to Pi when native execution is available.
-Do not launch a second instance of the same harness through Ajax Model Router.
+Call the `model-router` skill first whenever a task is one bounded code
+behavior change you would otherwise implement yourself. It emits one
+`EXECUTION` decision (agent, model, risk, scope, verify, fallback), then
+execute and verify. Skip it for trivial one-liners, non-code work, or pure
+Q&A/exploration.
 
-Harness-specific workflows are optional local capabilities. They must not
-override this repository contract or become requirements for other harnesses.
-
-## Cross-harness work
-
-Use the Ajax Model Router skill only when intentionally delegating to a model in
-a different harness or provider subscription. Do not duplicate provider model
-rankings or exact model IDs in repository documentation; the router registry is
-their source of truth.
+Do not duplicate provider model rankings or exact model IDs in repository
+documentation; the router registry is their source of truth.
 
 Ajax Model Router owns:
 
-- target-harness and model validation;
-- exact provider model IDs and cross-harness transport;
+- executor, model, risk, scope, verification expectation, and fallback;
+- exact provider model IDs;
 - timeouts, cancellation, pre-dispatch snapshots, and post-dispatch deltas;
 - write-scope enforcement and structured delegate reports;
 - verification artifacts, parent review bundles, and safe restoration of
   rejected delegate changes.
 
-It does not own:
-
-- engineering playbook or architecture decisions;
-- whether the active agent implements directly;
-- same-harness delegation;
-- risk-based or file-type-based model selection outside its registry.
+It does not own engineering playbook or architecture decisions.
 
 If a requested target or model is unavailable, stop and report the constraint.
 Do not silently substitute another provider or model.
 
+Harness-specific workflows are optional local capabilities. They must not
+override this repository contract or become requirements for other harnesses.
+
 ## Work orders
 
-Every cross-harness delegation must state:
+Every delegated task must state:
 
-- target harness and requested model;
 - one bounded task;
 - allowed files or write scope;
 - observable acceptance criteria;
