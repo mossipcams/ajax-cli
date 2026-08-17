@@ -55,6 +55,18 @@ describe("keyboard band height pin contract", () => {
     expectHeightBandPin(rule);
   });
 
+  it("pins session chat with visualViewport height (not 100lvh bottom)", () => {
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+    const rule =
+      mobileBlock.match(
+        /html\.keyboard-open\s+\.session-page\.session-chat\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expectHeightBandPin(rule);
+  });
+
   it("pins app-viewport with visualViewport height (not 100lvh bottom)", () => {
     const rule =
       stylesSource.match(/html\.keyboard-open\s+\.app-viewport\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -96,6 +108,13 @@ describe("keyboard band height pin contract", () => {
     const distCss = readFileSync(join(here, "../../../dist/app.css"), "utf8");
     expect(distCss).toMatch(
       /html\.keyboard-open\s+\.terminal-panel\.is-expanded[^{]*\.terminal-keys[^{]*\{[^}]*padding-bottom:6px/,
+    );
+  });
+
+  it("ships the session keyboard-open band pin in dist/app.css", () => {
+    const distCss = readFileSync(join(here, "../../../dist/app.css"), "utf8");
+    expect(distCss).toMatch(
+      /html\.keyboard-open[^{]*\.session-page\.session-chat[^{]*\{[^}]*top:var\(--app-top/,
     );
   });
 });

@@ -190,3 +190,19 @@ existing paths.
 - Diff Review opened from a session returns to `#/session/<handle>` (chat-first),
   not the terminal-first task page.
 - Session horizontal gestures must not steal Diff Review panes and vice versa.
+
+## Mobile keyboard band
+
+- On `#/session/<handle>`, while `html.keyboard-open` is set, the session chat
+  column pins to the visual-viewport band (`--app-top` / `--app-height`) the
+  same way inline task detail does. Dismissing the soft keyboard (or clearing
+  `keyboard-open`) must release the pin and reset scroll so the composer
+  returns to the bottom of the viewport ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
+- Tapping the transcript scroller blurs the composer so iOS can dismiss the
+  keyboard without leaving the composer stranded mid-viewport.
+
+## Session composer speech
+
+- The session Mic control reuses the terminal `is-armed` border and
+  `terminal-key-armed-dot` indicator while listening or pause-pending; idle
+  keeps the Mic text label with no dot.
