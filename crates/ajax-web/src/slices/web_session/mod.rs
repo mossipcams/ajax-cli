@@ -1,18 +1,32 @@
-//! Browser orchestration-chat wire protocol. ACP update mapping lives in
-//! `acp_map`; this module owns only the shapes both ends agree on.
+//! Browser orchestration-chat wire protocol and per-task session runtime.
 
+mod acp_drain;
 mod acp_map;
+mod normalize;
+mod protocol;
+mod replay;
+mod task_session;
+mod task_session_directory;
+mod task_session_spawn;
+mod transcript;
+mod ws_bridge;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
+pub use protocol::{
+    parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+};
+pub(crate) use task_session_directory::TaskSessionDirectory;
+pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
+pub(crate) use ws_bridge::bridge_task_session_socket;
 
 use ajax_core::{
     adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
     registry::Registry,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::PathBuf};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
-pub const SESSION_PROTOCOL_VERSION: u32 = 1;
+pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -57,6 +71,9 @@ pub enum SessionServerEvent {
     Message {
         role: String,
         text: String,
+        /// Stable host-generated identity for replace-by-id replay in the browser.
+        #[serde(rename = "itemId", default)]
+        item_id: String,
         /// ACP v1 message identity. Chunks sharing one id are one message; a
         /// change starts a new one. Optional in the protocol, so the browser
         /// keeps its role-adjacency fallback for harnesses that omit it.
@@ -256,16 +273,19 @@ pub fn prepare_task_session<R: Registry>(
         return Err(SessionRouteError::WorktreeMissing);
     }
 
-    // The browser may pin a model per socket; otherwise the task's own choice
-    // (made when it was created) wins, then the harness default.
-    let model = match normalize_session_model(model) {
-        Ok(model) if model != default_session_model() => model,
-        _ => task
-            .session_model()
-            .map(str::to_string)
-            .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
-            .unwrap_or_default(),
-    };
+    // Task metadata wins over a socket ?model= pin (#910). The URL fallback is
+    // only for tasks with no stored model, then the harness default.
+    let url_model = normalize_session_model(model).ok();
+    let model = task
+        .session_model()
+        .map(str::to_string)
+        .or_else(|| {
+            url_model
+                .filter(|model| *model != default_session_model())
+                .map(|model| model.to_string())
+        })
+        .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
+        .unwrap_or_default();
 
     Ok(SessionAttachPlan {
         qualified_handle: qualified_handle.to_string(),
@@ -276,7 +296,34 @@ pub fn prepare_task_session<R: Registry>(
 }
 
 #[cfg(test)]
+mod normalize_tests;
+
+#[cfg(test)]
+mod protocol_tests;
+
+#[cfg(test)]
+mod replay_tests;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod fake_acp_tests;
+
+#[cfg(test)]
+mod task_session_tests;
+
+#[cfg(test)]
+mod task_session_idle_eviction_tests;
+
+#[cfg(test)]
+mod transcript_tests;
+
+#[cfg(test)]
+mod acp_drain_tests;
+
+#[cfg(test)]
+mod ws_bridge_tests;
+
+#[cfg(test)]
+pub(crate) mod test_support;

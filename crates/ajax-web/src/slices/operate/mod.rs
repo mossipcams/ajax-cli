@@ -303,6 +303,34 @@ pub fn swap_task_agent<R: Registry>(
     })
 }
 
+/// Persist the desired session model on a provisioned task before the host
+/// replaces its ACP child.
+pub fn set_task_session_model<R: Registry>(
+    context: &mut CommandContext<R>,
+    handle: &str,
+    model: &str,
+) -> Result<OperateOutcome, OperateError> {
+    let trimmed = model.trim();
+    if !trimmed.is_empty()
+        && trimmed != "auto"
+        && ajax_core::adapters::parse_model_selection(trimmed).is_none()
+    {
+        return Err(OperateError::UnsupportedCapability("unsupported model"));
+    }
+
+    let stored = match trimmed {
+        "" | "auto" => None,
+        other => Some(other),
+    };
+    commands::set_task_session_model(context, handle, stored)
+        .map_err(|error| OperateError::Command(error, false))?;
+
+    Ok(OperateOutcome {
+        state_changed: true,
+        output: format!("updated session model for {handle}"),
+    })
+}
+
 /// True when the harness has an ACP entry point, so a provisioned (no send-keys)
 /// start can be driven from the browser instead of the tmux pane.
 pub fn supports_acp_session(agent: &str) -> bool {

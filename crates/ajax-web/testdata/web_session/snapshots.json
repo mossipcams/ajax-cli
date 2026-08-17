@@ -1,0 +1,23 @@
+[
+  {
+    "type": "snapshot",
+    "protocolVersion": 2,
+    "cursor": 0,
+    "model": "auto",
+    "turnState": "idle",
+    "reset": false
+  },
+  {
+    "type": "snapshot",
+    "protocolVersion": 2,
+    "cursor": 4,
+    "model": "composer-2.5",
+    "turnState": "busy",
+    "reset": false,
+    "pendingPermission": {
+      "requestId": "p1",
+      "title": "Run tests?",
+      "detail": "cargo test -p ajax-web"
+    }
+  }
+]

@@ -53,6 +53,23 @@ fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
 }
 
 #[test]
+fn prepare_task_session_prefers_stored_model_over_url_pin() {
+    // https://github.com/mossipcams/ajax-cli/issues/910
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("gpt-5.6-sol[high]"));
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-url-pin");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    let plan = prepare_task_session(&context, "web/fix-login", "composer-2.5").expect("plan");
+    assert_eq!(plan.model, "gpt-5.6-sol[high]");
+}
+
+#[test]
 fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Codex;
@@ -254,6 +271,7 @@ fn map_message_preserves_message_id_when_present() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hi".to_string(),
+            item_id: String::new(),
             message_id: Some("msg_7".to_string()),
         }]
     );
@@ -296,6 +314,7 @@ fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
         vec![SessionServerEvent::Message {
             role: "thought".to_string(),
             text: "Checking the router".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );
@@ -372,6 +391,7 @@ fn map_agent_message_chunk_to_browser_message() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "Working on it".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );
@@ -392,6 +412,7 @@ fn map_agent_message_chunk_preserves_newline_only_delta() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "\n".to_string(),
+            item_id: String::new(),
             message_id: None,
         }]
     );

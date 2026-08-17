@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { snapshotJson, eventJson } from "./webSessionFixtures";
 import {
   connectWebSessionTransport,
+  parseServerEvent,
+  parseServerFrame,
   PROMPT_TOO_LONG,
+  readSessionCursor,
+  writeSessionCursor,
   type WebSessionTransportCallbacks,
   type WebSessionTransportPlatform,
   type WebSessionSocket,
@@ -77,14 +82,16 @@ describe("connectWebSessionTransport", () => {
     socket.readyState = OPEN_READY_STATE;
     socket.emit("open");
     socket.emit("message", {
-      data: JSON.stringify({ type: "ready", model: "composer-2.5", busy: true }),
+      data: snapshotJson({ model: "composer-2.5", turnState: "busy" }),
     } as MessageEvent);
 
     expect(cbs.onReady).toHaveBeenCalledWith("composer-2.5");
+    expect(cbs.onEvent).toHaveBeenCalledTimes(1);
     expect(cbs.onEvent).toHaveBeenCalledWith({
       type: "ready",
       model: "composer-2.5",
       busy: true,
+      reset: false,
     });
     transport.sendPrompt("Ship it");
     expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
@@ -92,12 +99,13 @@ describe("connectWebSessionTransport", () => {
     );
 
     socket.emit("message", {
-      data: JSON.stringify({ type: "message", role: "agent", text: "On it" }),
+      data: eventJson(0, { type: "message", role: "agent", text: "On it", itemId: "i1" }),
     } as MessageEvent);
     expect(cbs.onEvent).toHaveBeenCalledWith({
       type: "message",
       role: "agent",
       text: "On it",
+      itemId: "i1",
     });
 
     transport.setModel("gpt-5.6-sol-medium");
@@ -109,13 +117,23 @@ describe("connectWebSessionTransport", () => {
     expect(socket.close).toHaveBeenCalled();
   });
 
+  it("omits ?model= from the reconnect URL unless a model is pinned", () => {
+    const socket = fakeSocket();
+    const openSocket = vi.fn(() => socket);
+    connectWebSessionTransport("web/fix-login", callbacks(), { openSocket });
+    expect(openSocket).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/tasks\/web%2Ffix-login\/session$/),
+    );
+    expect(openSocket).not.toHaveBeenCalledWith(expect.stringContaining("?model="));
+  });
+
   it("queues prompts until ready", () => {
     const socket = fakeSocket();
     const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
     transport.sendPrompt("First");
     expect(socket.sent).toHaveLength(0);
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
       expect.objectContaining({ type: "prompt", text: "First" }),
     );
@@ -133,7 +151,7 @@ describe("connectWebSessionTransport", () => {
     );
 
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     transport.sendPrompt("Ship it");
 
     const prompt = JSON.parse(socket.sent.at(-1) ?? "{}") as Record<string, unknown>;
@@ -141,7 +159,10 @@ describe("connectWebSessionTransport", () => {
     expect(typeof prompt.clientMessageId).toBe("string");
 
     socket.emit("message", {
-      data: JSON.stringify({ type: "prompt_accepted", clientMessageId: prompt.clientMessageId }),
+      data: eventJson(1, {
+        type: "prompt_accepted",
+        clientMessageId: prompt.clientMessageId as string,
+      }),
     } as MessageEvent);
     expect(cbs.onEvent).toHaveBeenCalledWith({
       type: "prompt_accepted",
@@ -158,7 +179,7 @@ describe("connectWebSessionTransport", () => {
       platformFor(firstSocket),
     );
     firstSocket.readyState = OPEN_READY_STATE;
-    firstSocket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    firstSocket.emit("message", { data: snapshotJson() } as MessageEvent);
     first.sendPrompt("Retry me");
     const firstPrompt = JSON.parse(firstSocket.sent.at(-1) ?? "{}") as Record<string, string>;
     first.dispose();
@@ -170,7 +191,7 @@ describe("connectWebSessionTransport", () => {
       platformFor(secondSocket),
     );
     secondSocket.readyState = OPEN_READY_STATE;
-    secondSocket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    secondSocket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(JSON.parse(secondSocket.sent.at(-1) ?? "{}")).toEqual({
       type: "prompt",
       text: "Retry me",
@@ -183,7 +204,7 @@ describe("connectWebSessionTransport", () => {
     const socket = fakeSocket();
     socket.readyState = OPEN_READY_STATE;
     const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     transport.sendCancel(true);
     expect(socket.sent).toContainEqual(JSON.stringify({ type: "cancel", keepQueue: true }));
     transport.sendCancel();
@@ -206,7 +227,7 @@ describe("connectWebSessionTransport", () => {
     transport.sendPrompt("Queued");
     transport.sendCancel();
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent).not.toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
     transport.dispose();
   });
@@ -217,7 +238,7 @@ describe("connectWebSessionTransport", () => {
     transport.sendPrompt("Queued");
     transport.sendCancel(true);
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
       expect.objectContaining({ type: "prompt", text: "Queued" }),
     );
@@ -236,7 +257,7 @@ describe("connectWebSessionTransport", () => {
       message: "Session WebSocket failed to open",
     });
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent).not.toContainEqual(JSON.stringify({ type: "prompt", text: "Queued" }));
     transport.dispose();
   });
@@ -255,7 +276,7 @@ describe("connectWebSessionTransport", () => {
     expect(id).toBe("");
     expect(cbs.onEvent).toHaveBeenCalledWith({ type: "error", message: PROMPT_TOO_LONG });
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent.filter((payload) => payload.includes('"type":"prompt"'))).toEqual([]);
     expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
     transport.dispose();
@@ -273,11 +294,170 @@ describe("connectWebSessionTransport", () => {
     const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
 
     socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
 
     const prompts = socket.sent.map((payload) => JSON.parse(payload));
     expect(prompts).toContainEqual(expect.objectContaining({ clientMessageId: "keep" }));
     expect(prompts).not.toContainEqual(expect.objectContaining({ clientMessageId: "poison" }));
+    transport.dispose();
+  });
+
+  it("advances next-to-read cursor via callback, not sessionStorage", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    let nextToRead: number | undefined;
+    const transport = connectWebSessionTransport(
+      "web/fix-login",
+      { ...cbs, onCursorAdvance: (cursor) => { nextToRead = cursor; } },
+      platformFor(socket),
+    );
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: snapshotJson({ cursor: 5 }),
+    } as MessageEvent);
+    expect(nextToRead).toBeUndefined();
+    expect(readSessionCursor("web/fix-login")).toBeUndefined();
+    socket.emit("message", {
+      data: eventJson(3, { type: "message", role: "agent", text: "tail", itemId: "i3" }),
+    } as MessageEvent);
+    expect(nextToRead).toBe(4);
+    expect(readSessionCursor("web/fix-login")).toBeUndefined();
+    transport.dispose();
+  });
+
+  it("cold attach omits cursor even when sessionStorage holds a legacy value", () => {
+    writeSessionCursor("web/fix-login", 2);
+    const socket = fakeSocket();
+    const openSocket = vi.fn(() => socket);
+    connectWebSessionTransport("web/fix-login", callbacks(), { openSocket });
+    expect(openSocket).toHaveBeenCalledWith(
+      expect.not.stringContaining("cursor="),
+    );
+    expect(readSessionCursor("web/fix-login")).toBeUndefined();
+  });
+
+  it("in-page reconnect supplies resume cursor as next-to-read", () => {
+    const socket = fakeSocket();
+    const openSocket = vi.fn(() => socket);
+    connectWebSessionTransport("web/fix-login", callbacks(), { openSocket }, undefined, 2);
+    expect(openSocket).toHaveBeenCalledWith(expect.stringContaining("cursor=2"));
+  });
+
+  it("applies pendingPermission from snapshot", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: snapshotJson({
+        pendingPermission: { requestId: "p1", title: "Run tests?" },
+      }),
+    } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ready", reset: false }),
+    );
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "permission_request",
+      requestId: "p1",
+      title: "Run tests?",
+    });
+    transport.dispose();
+  });
+});
+
+describe("parseServerEvent", () => {
+  it("maps snapshot reset onto ready", () => {
+    expect(parseServerEvent(snapshotJson({ reset: true }))).toEqual({
+      type: "ready",
+      model: "auto",
+      busy: false,
+      reset: true,
+    });
+  });
+});
+
+describe("parseServerFrame", () => {
+  it("accepts well-formed variants", () => {
+    expect(parseServerFrame(snapshotJson({ model: "auto" }))).toEqual({
+      kind: "snapshot",
+      snapshot: expect.objectContaining({ model: "auto", turnState: "idle" }),
+    });
+    expect(
+      parseServerFrame(
+        eventJson(0, {
+          type: "message",
+          role: "agent",
+          text: "Hi",
+          itemId: "i1",
+          messageId: "m1",
+        }),
+      ),
+    ).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: { type: "message", role: "agent", text: "Hi", itemId: "i1", messageId: "m1" },
+    });
+    expect(
+      parseServerFrame(
+        eventJson(0, { type: "prompt_accepted", clientMessageId: "c1" }),
+      ),
+    ).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: { type: "prompt_accepted", clientMessageId: "c1" },
+    });
+    expect(
+      parseServerFrame(
+        eventJson(0, {
+          type: "tool_call",
+          callId: "t1",
+          title: "Read",
+          kind: "read",
+          status: "completed",
+        }),
+      ),
+    ).toMatchObject({
+      kind: "event",
+      event: { type: "tool_call", callId: "t1" },
+    });
+    expect(
+      parseServerFrame(eventJson(0, { type: "permission_request", requestId: "p1" })),
+    ).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: { type: "permission_request", requestId: "p1" },
+    });
+    expect(parseServerFrame(eventJson(0, { type: "error", message: "nope" }))).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: { type: "error", message: "nope" },
+    });
+  });
+
+  it("drops invalid JSON and variants missing required fields", () => {
+    expect(parseServerFrame("not json")).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "message", role: "agent" }))).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "prompt_accepted" }))).toBeNull();
+    expect(
+      parseServerFrame(JSON.stringify({ type: "tool_call", callId: "t1", title: "x" })),
+    ).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "permission_request" }))).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "error" }))).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "unknown" }))).toBeNull();
+    expect(parseServerFrame(JSON.stringify({ type: "snapshot", protocolVersion: 1 }))).toBeNull();
+  });
+
+  it("drops malformed event frames without dispatching them", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: JSON.stringify({ type: "event", protocolVersion: 2, cursor: 0, payload: { type: "message", role: "agent" } }),
+    } as MessageEvent);
+    expect(cbs.onEvent).not.toHaveBeenCalled();
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledTimes(1);
     transport.dispose();
   });
 });

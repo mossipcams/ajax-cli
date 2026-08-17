@@ -5,6 +5,7 @@ use crate::runtime::bridge::{
     MobileActionRequest, RuntimeBridge,
 };
 use crate::runtime::state::{operator_input_sink, GateRejection, WebAppState};
+use crate::slices::web_session::PersistSessionModel;
 use crate::{
     adapters::http::{
         json_value_response, operation_response_with_request_id, response_from_web_error,
@@ -183,6 +184,11 @@ where
         .map(percent_decode_model)
         .unwrap_or_else(|| "auto".to_string());
 
+    let client_cursor = req
+        .uri()
+        .query()
+        .and_then(|query| crate::slices::web_session::parse_client_cursor(Some(query)));
+
     let plan = {
         let guard = state.shared();
         match crate::slices::web_session::prepare_task_session(&guard.context, &handle, &model_raw)
@@ -209,7 +215,12 @@ where
         }
     };
 
-    let hub = Arc::clone(&state.web_session_hub);
+    let directory = Arc::clone(&state.task_session_directory);
+    let state_for_persist = state.clone();
+    let handle_for_persist = plan.qualified_handle.clone();
+    let persist_session_model: PersistSessionModel = Arc::new(move |model: &str| {
+        state_for_persist.persist_task_session_model(&handle_for_persist, model)
+    });
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -217,7 +228,14 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::adapters::web_session_acp::bridge_task_session_socket(socket, hub, plan).await;
+        crate::slices::web_session::bridge_task_session_socket(
+            socket,
+            directory,
+            plan,
+            client_cursor,
+            Some(persist_session_model),
+        )
+        .await;
     })
 }
 
@@ -305,7 +323,10 @@ where
         );
     };
     let handle = percent_decode_model(&handle);
-    let hub = Arc::clone(&state.web_session_hub);
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle_for_drop = handle.clone();
+    let drop_session = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let drop_flag = std::sync::Arc::clone(&drop_session);
 
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
@@ -321,8 +342,7 @@ where
                 );
                 match result {
                     Ok(outcome) => {
-                        // The live child belongs to the previous harness.
-                        hub.drop_session(&handle);
+                        drop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                         let _ = bridge.persist_registry_snapshot(context);
                         let response = match operation_success_response(outcome, context) {
                             Ok(response) => response,
@@ -363,6 +383,9 @@ where
             None,
         )
     });
+    if drop_session.load(std::sync::atomic::Ordering::SeqCst) {
+        directory.drop_session(&handle_for_drop).await;
+    }
     response.into_axum_response()
 }
 

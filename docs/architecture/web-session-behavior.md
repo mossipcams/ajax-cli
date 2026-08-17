@@ -23,13 +23,18 @@ existing paths.
   `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
   entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
   `NotOrchestrationChat`.
-- The model chosen when the task was created is stored on the task and used for
-  its session unless the socket pins a different one. With neither, Cursor runs
-  `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
-- Cursor takes its model on the spawn argv; Codex takes `session/set_model` and
-  Claude and Pi take `session/set_config_option` once the session exists. A
-  harness that refuses the selection keeps its own default and the session
-  continues.
+- The model chosen when the task was created is stored on the task (`session_model`
+  metadata) and used for its session. Reconnect must not send a browser
+  `localStorage` preference on the WebSocket URL to override that metadata
+  ([#910](https://github.com/mossipcams/ajax-cli/issues/910)). With no stored
+  model, Cursor runs `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
+- Cursor takes its model on the spawn argv; Codex, Claude, and Pi take
+  `session/set_config_option` once the session exists (the host applies the model
+  id and any reasoning-level option separately). A harness that refuses the
+  selection keeps its own default and the session continues.
+- Changing the model while connected persists `session_model` on the task through
+  a core-owned operation before the host replaces the ACP child; a persistence
+  failure returns a typed `error` event and leaves the running child unchanged.
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
 - Ajax orchestration sessions are trusted local automation, and the Settings
@@ -50,23 +55,49 @@ existing paths.
 - Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
-- After a WebSocket drop and reconnect, the host replays the durable transcript
-  from cursor; queued prompts and in-flight state remain host-owned — reconnect
-  must not duplicate or lose queued work that survived on the host.
+- After a WebSocket drop and reconnect, the browser supplies the last applied
+  cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
+  `snapshot` plus only events after that cursor; invalid or compacted-away
+  cursors trigger a reset snapshot and bounded full replay.
+- The last-applied cursor lives in the page session only (same JS heap as the
+  reducer). A cold load or full reload omits `?cursor=` and receives full replay;
+  only unacknowledged prompts persist in `sessionStorage`.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
-- A host background pump continues draining ACP slots after the last socket
-  closes, so an in-flight or queued turn does not depend on browser presence.
+- The browser keeps only an unacknowledged-prompt outbox for resend; it does not
+  maintain a second FIFO queue. Submitting while busy sends one host-queued prompt;
+  Stop owns cancellation.
+- Each live `TaskSession` Tokio task continues draining its ACP child and host
+  queue after the last socket closes, so an in-flight or queued turn does not
+  depend on browser presence.
 - Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
+- The per-task Tokio command loop continues after the last WebSocket subscriber
+  detaches while a turn is in flight or the host queue is non-empty.
+
+## Shutdown and slot retention
+
+- Dropping a task or changing harness shuts down the live `TaskSession` before a
+  new attach creates one for that handle.
+- Idle LRU eviction sends `Shutdown` only to slots with zero subscribers, no
+  in-flight turn, and an empty host queue; evictable slots must not hold pending
+  work.
+- WebSocket detach releases the directory holder count but does not cancel an
+  in-flight turn or clear the host queue.
+- `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
+  children do not survive process exit.
 
 ## Model switching across ACP process replacement
 
-- `set_model` while idle respawns the ACP child with the new `--model` pin.
+- `set_model` while idle persists the desired model on the task, then respawns the
+  ACP child with the new model pin.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events.
 - A live `ready` event on an established socket must not reset browser reducer
   state; only reconnect-after-drop may clear and replay.
+- Each attach delivers one protocol v2 `snapshot` wire frame to the browser
+  reducer (as a synthetic `ready` event for turn state), then cursor-bearing
+  `event` envelopes for replay/live traffic.
 
 ## Restart and transcript recovery
 
@@ -80,13 +111,16 @@ existing paths.
   one agent-visible note states that model context reset; the composer keeps
   working.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
-  compaction preserves absolute replay cursors. Adjacent agent/thought chunks
-  may be coalesced before persistence.
+  compaction preserves absolute replay cursors. Streamed agent/thought text is
+  normalized to full-content `message` updates with stable host `itemId` values
+  before persistence.
 
 ## Reconnect model and ACP capabilities
 
-- Every reconnect reads the current browser model preference and sends it in the
-  next session URL; it never reuses a stale hook-captured value.
+- Reconnect does not read the browser `ajax.web.session.model` preference for the
+  WebSocket URL; task `session_model` metadata and the host attach plan decide
+  the model. The preference may still be updated from `ready` so it seeds the
+  New Task picker for the next task only.
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
   Message, thought, tool, plan, mode, configuration, session-info, and usage
   updates have explicit mappings; unsupported capability announcements are

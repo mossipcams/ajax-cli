@@ -1,22 +1,15 @@
 // Authenticated orchestration-chat WebSocket transport (ACP-primary; not PTY).
 
 const OPEN_READY_STATE = 1;
+export const SESSION_PROTOCOL_VERSION = 2;
 
 /** Match host FIFO cap (`web_session::MAX_QUEUED_PROMPTS`). */
 const MAX_QUEUED_PROMPTS = 8;
 
-/** Match the host's per-frame ceiling (`web_session_acp::MAX_SESSION_FRAME_BYTES`).
- * The host rejects an oversized frame before it can read the frame's
- * `clientMessageId`, so such a prompt is never acknowledged. Left in the outbox
- * it is resent on every reconnect, rejected every time — one long paste poisons
- * the session for good, across reloads. Refuse it here instead. */
+/** Match the host's per-frame ceiling (`web_session_acp::MAX_SESSION_FRAME_BYTES`). */
 const MAX_FRAME_BYTES = 4096;
 
 export const PROMPT_TOO_LONG = "That message is too long to send. Shorten it and try again.";
-
-/** Emitted when the upgrade is refused. The browser cannot expose the HTTP
- * status or body of a failed WebSocket handshake, so this string carries no
- * reason — callers recover one from task truth. */
 export const OPEN_FAILURE = "Session WebSocket failed to open";
 
 type SocketListener = (event: Event | MessageEvent) => void;
@@ -33,15 +26,13 @@ export interface WebSessionTransportPlatform {
   openSocket(url: string): WebSessionSocket;
 }
 
-/** Output attached to a tool call. Mirrors the host's `ToolContent`; there is no
- * terminal variant because Ajax advertises no `terminal/*` client capability. */
 export type ToolContent =
   | { type: "text"; text: string }
   | { type: "diff"; path: string; oldText?: string | null; newText: string };
 
 export type WebSessionServerEvent =
-  | { type: "ready"; model?: string; busy?: boolean }
-  | { type: "message"; role: string; text: string; messageId?: string }
+  | { type: "ready"; model?: string; busy?: boolean; reset?: boolean }
+  | { type: "message"; role: string; text: string; itemId?: string; messageId?: string }
   | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
@@ -66,9 +57,29 @@ export type WebSessionServerEvent =
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
 
+export interface SessionSnapshot {
+  type: "snapshot";
+  protocolVersion: number;
+  cursor: number;
+  model: string;
+  turnState: "idle" | "busy";
+  reset: boolean;
+  pendingPermission?: {
+    requestId: string;
+    title?: string | null;
+    detail?: string | null;
+  };
+}
+
+export type ParsedServerFrame =
+  | { kind: "snapshot"; snapshot: SessionSnapshot }
+  | { kind: "event"; cursor: number; event: WebSessionServerEvent };
+
 export interface WebSessionTransportCallbacks {
   onReady: (model: string) => void;
   onEvent: (event: WebSessionServerEvent) => void;
+  /** Next event cursor to request on an in-page reconnect (not persisted). */
+  onCursorAdvance?: (nextToRead: number) => void;
   onClosed: () => void;
 }
 
@@ -80,13 +91,16 @@ export interface WebSessionTransport {
   dispose(): void;
 }
 
-function sessionSocketUrl(handle: string, model?: string): string {
+function sessionSocketUrl(handle: string, model?: string, cursor?: number): string {
   const protocol =
     typeof location !== "undefined" && location.protocol === "https:" ? "wss:" : "ws:";
   const host = typeof location !== "undefined" ? location.host : "localhost";
   const base = `${protocol}//${host}/api/tasks/${encodeURIComponent(handle)}/session`;
-  if (!model) return base;
-  return `${base}?model=${encodeURIComponent(model)}`;
+  const params = new URLSearchParams();
+  if (model) params.set("model", model);
+  if (cursor !== undefined) params.set("cursor", String(cursor));
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
 }
 
 type PendingPrompt = { text: string; clientMessageId: string };
@@ -99,13 +113,16 @@ function promptFrame(prompt: PendingPrompt): string {
   });
 }
 
-/** The host measures the frame, not the text, so this must too. */
 function frameFits(prompt: PendingPrompt): boolean {
   return new TextEncoder().encode(promptFrame(prompt)).length <= MAX_FRAME_BYTES;
 }
 
 function outboxKey(handle: string): string {
   return `ajax.web.session.outbox.${encodeURIComponent(handle)}`;
+}
+
+function cursorKey(handle: string): string {
+  return `ajax.web.session.cursor.${encodeURIComponent(handle)}`;
 }
 
 function readOutbox(handle: string): PendingPrompt[] {
@@ -132,6 +149,33 @@ function writeOutbox(handle: string, pending: PendingPrompt[]): void {
     else sessionStorage.removeItem(outboxKey(handle));
   } catch {
     // Private mode / storage denied: the live socket still works.
+  }
+}
+
+export function readSessionCursor(handle: string): number | undefined {
+  try {
+    const raw = sessionStorage.getItem(cursorKey(handle));
+    if (!raw) return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeSessionCursor(handle: string, cursor: number): void {
+  try {
+    sessionStorage.setItem(cursorKey(handle), String(cursor));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function clearSessionCursor(handle: string): void {
+  try {
+    sessionStorage.removeItem(cursorKey(handle));
+  } catch {
+    // ignore
   }
 }
 
@@ -168,16 +212,214 @@ export function createBrowserWebSessionPlatform(): WebSessionTransportPlatform {
   };
 }
 
-function parseServerEvent(raw: string): WebSessionServerEvent | null {
-  try {
-    const payload = JSON.parse(raw) as WebSessionServerEvent;
-    if (!payload || typeof payload !== "object" || !("type" in payload)) {
-      return null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent | null {
+  if (typeof payload.type !== "string") return null;
+  switch (payload.type) {
+    case "ready":
+      return {
+        type: "ready",
+        ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+        ...(typeof payload.busy === "boolean" ? { busy: payload.busy } : {}),
+      };
+    case "message": {
+      if (typeof payload.role !== "string" || typeof payload.text !== "string") return null;
+      return {
+        type: "message",
+        role: payload.role,
+        text: payload.text,
+        ...(typeof payload.itemId === "string" ? { itemId: payload.itemId } : {}),
+        ...(typeof payload.messageId === "string" ? { messageId: payload.messageId } : {}),
+      };
     }
-    return payload;
+    case "prompt_accepted":
+      if (typeof payload.clientMessageId !== "string") return null;
+      return { type: "prompt_accepted", clientMessageId: payload.clientMessageId };
+    case "artifact":
+      if (typeof payload.kind !== "string") return null;
+      return {
+        type: "artifact",
+        kind: payload.kind,
+        ...(payload.title === null || typeof payload.title === "string"
+          ? { title: payload.title as string | null }
+          : {}),
+        ...(payload.body === null || typeof payload.body === "string"
+          ? { body: payload.body as string | null }
+          : {}),
+      };
+    case "tool_call": {
+      if (
+        typeof payload.callId !== "string" ||
+        typeof payload.title !== "string" ||
+        typeof payload.kind !== "string" ||
+        typeof payload.status !== "string"
+      ) {
+        return null;
+      }
+      return {
+        type: "tool_call",
+        callId: payload.callId,
+        title: payload.title,
+        kind: payload.kind,
+        status: payload.status,
+        ...(Array.isArray(payload.locations)
+          ? { locations: payload.locations.filter((l): l is string => typeof l === "string") }
+          : {}),
+        ...(Array.isArray(payload.content) ? { content: payload.content as ToolContent[] } : {}),
+      };
+    }
+    case "plan": {
+      if (!Array.isArray(payload.entries)) return null;
+      const entries = payload.entries.filter(
+        (entry): entry is { content: string; status: string } =>
+          isRecord(entry) &&
+          typeof entry.content === "string" &&
+          typeof entry.status === "string",
+      );
+      if (entries.length !== payload.entries.length) return null;
+      return { type: "plan", entries };
+    }
+    case "usage":
+      if (typeof payload.used !== "number" || typeof payload.size !== "number") return null;
+      return { type: "usage", used: payload.used, size: payload.size };
+    case "permission_request":
+      if (typeof payload.requestId !== "string") return null;
+      return {
+        type: "permission_request",
+        requestId: payload.requestId,
+        ...(payload.title === null || typeof payload.title === "string"
+          ? { title: payload.title as string | null }
+          : {}),
+        ...(payload.detail === null || typeof payload.detail === "string"
+          ? { detail: payload.detail as string | null }
+          : {}),
+      };
+    case "permission_resolved":
+      if (typeof payload.requestId !== "string" || typeof payload.approved !== "boolean") {
+        return null;
+      }
+      return {
+        type: "permission_resolved",
+        requestId: payload.requestId,
+        approved: payload.approved,
+      };
+    case "status":
+      if (typeof payload.state !== "string") return null;
+      return {
+        type: "status",
+        state: payload.state,
+        ...(payload.detail === null || typeof payload.detail === "string"
+          ? { detail: payload.detail as string | null }
+          : {}),
+      };
+    case "turn_end":
+      return {
+        type: "turn_end",
+        ...(payload.stopReason === null || typeof payload.stopReason === "string"
+          ? { stopReason: payload.stopReason as string | null }
+          : {}),
+      };
+    case "error":
+      if (typeof payload.message !== "string") return null;
+      return { type: "error", message: payload.message };
+    default:
+      return null;
+  }
+}
+
+/** Validate protocol v2 frames at the WebSocket boundary. */
+export function parseServerFrame(raw: string): ParsedServerFrame | null {
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (!isRecord(payload) || typeof payload.type !== "string") return null;
+
+    if (payload.type === "snapshot") {
+      if (
+        payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+        typeof payload.cursor !== "number" ||
+        typeof payload.model !== "string" ||
+        typeof payload.reset !== "boolean" ||
+        (payload.turnState !== "idle" && payload.turnState !== "busy")
+      ) {
+        return null;
+      }
+      const pending =
+        payload.pendingPermission === undefined
+          ? undefined
+          : isRecord(payload.pendingPermission) &&
+              typeof payload.pendingPermission.requestId === "string"
+            ? {
+                requestId: payload.pendingPermission.requestId,
+                ...(payload.pendingPermission.title === null ||
+                typeof payload.pendingPermission.title === "string"
+                  ? { title: payload.pendingPermission.title as string | null }
+                  : {}),
+                ...(payload.pendingPermission.detail === null ||
+                typeof payload.pendingPermission.detail === "string"
+                  ? { detail: payload.pendingPermission.detail as string | null }
+                  : {}),
+              }
+            : null;
+      if (payload.pendingPermission !== undefined && !pending) return null;
+      return {
+        kind: "snapshot",
+        snapshot: {
+          type: "snapshot",
+          protocolVersion: SESSION_PROTOCOL_VERSION,
+          cursor: payload.cursor,
+          model: payload.model,
+          turnState: payload.turnState,
+          reset: payload.reset,
+          ...(pending ? { pendingPermission: pending } : {}),
+        },
+      };
+    }
+
+    if (payload.type === "event") {
+      if (
+        payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+        typeof payload.cursor !== "number" ||
+        !isRecord(payload.payload)
+      ) {
+        return null;
+      }
+      const event = parsePayload(payload.payload);
+      if (!event) return null;
+      return { kind: "event", cursor: payload.cursor, event };
+    }
+
+    const legacy = parsePayload(payload);
+    return legacy ? { kind: "event", cursor: 0, event: legacy } : null;
   } catch {
     return null;
   }
+}
+
+/** @deprecated use parseServerFrame */
+export function parseServerEvent(raw: string): WebSessionServerEvent | null {
+  const frame = parseServerFrame(raw);
+  if (!frame) return null;
+  if (frame.kind === "snapshot") {
+    return {
+      type: "ready",
+      model: frame.snapshot.model,
+      busy: frame.snapshot.turnState === "busy",
+      reset: frame.snapshot.reset,
+    };
+  }
+  return frame.event;
+}
+
+export function clearSessionOutbox(handle: string): void {
+  writeOutbox(handle, []);
+}
+
+export function clearSessionTransportState(handle: string): void {
+  clearSessionOutbox(handle);
+  clearSessionCursor(handle);
 }
 
 function waitForSocketOpen(target: WebSessionSocket): Promise<void> {
@@ -212,32 +454,49 @@ export function connectWebSessionTransport(
   handle: string,
   callbacks: WebSessionTransportCallbacks,
   platform: WebSessionTransportPlatform = createBrowserWebSessionPlatform(),
-  model = "auto",
+  model?: string,
+  resumeCursor?: number,
 ): WebSessionTransport {
   let socket: WebSessionSocket | undefined;
   let ready = false;
   let disposed = false;
   const stored = readOutbox(handle);
-  // Self-heal an outbox poisoned before the size check existed: a prompt the
-  // host can only ever reject must not be retried on every reconnect.
   const pendingPrompts = stored.filter(frameFits);
   if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
+  // ponytail: cursor is in-memory only; drop any legacy sessionStorage value on attach.
+  clearSessionCursor(handle);
 
   const messageListener: SocketListener = (event) => {
     const messageEvent = event as MessageEvent;
     if (typeof messageEvent.data !== "string") return;
-    const parsed = parseServerEvent(messageEvent.data);
-    if (!parsed) return;
-    if (parsed.type === "ready") {
+    const frame = parseServerFrame(messageEvent.data);
+    if (!frame) return;
+
+    if (frame.kind === "snapshot") {
       ready = true;
-      callbacks.onEvent(parsed);
-      const nextModel =
-        typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
-      callbacks.onEvent(parsed);
-      callbacks.onReady(nextModel);
+      const readyEvent: WebSessionServerEvent = {
+        type: "ready",
+        model: frame.snapshot.model,
+        busy: frame.snapshot.turnState === "busy",
+        reset: frame.snapshot.reset,
+      };
+      callbacks.onEvent(readyEvent);
+      if (frame.snapshot.pendingPermission) {
+        const pending = frame.snapshot.pendingPermission;
+        callbacks.onEvent({
+          type: "permission_request",
+          requestId: pending.requestId,
+          ...(pending.title !== undefined ? { title: pending.title } : {}),
+          ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
+        });
+      }
+      callbacks.onReady(frame.snapshot.model.trim() || model?.trim() || "auto");
       for (const prompt of pendingPrompts) sendPromptNow(prompt);
       return;
     }
+
+    callbacks.onCursorAdvance?.(frame.cursor + 1);
+    const parsed = frame.event;
     if (parsed.type === "prompt_accepted") {
       const index = pendingPrompts.findIndex(
         (prompt) => prompt.clientMessageId === parsed.clientMessageId,
@@ -263,10 +522,8 @@ export function connectWebSessionTransport(
     sendJson({ type: "prompt", text: prompt.text, clientMessageId: prompt.clientMessageId });
   }
 
-  socket = platform.openSocket(sessionSocketUrl(handle, model));
+  socket = platform.openSocket(sessionSocketUrl(handle, model, resumeCursor));
   socket.addEventListener("message", messageListener);
-  // An error is followed by close; let the close handler own onClosed so we
-  // never schedule reconnect twice.
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
     if (disposed) return;

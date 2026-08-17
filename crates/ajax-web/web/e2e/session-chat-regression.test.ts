@@ -1,16 +1,47 @@
 import { expect, test, type Page } from "@playwright/test";
-import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch } from "./fixtures";
+import {
+  COCKPIT_FIXTURE,
+  DETAIL_FIXTURE,
+  mockFetch,
+  sessionEventJson,
+  sessionResumeCursor,
+  sessionSnapshotJson,
+  type SessionServerEvent,
+} from "./fixtures";
 
 const HARNESSES = ["Cursor", "Codex", "Claude", "Pi"] as const;
+
+type TranscriptEntry = { cursor: number; event: SessionServerEvent };
 
 async function mockScriptedSession(
   page: Page,
   harness: (typeof HARNESSES)[number],
   options: { errorTurn?: boolean } = {},
 ) {
-  const transcript: Array<Record<string, unknown>> = [];
+  const transcript: TranscriptEntry[] = [];
+  let nextCursor = 0;
   let turn = 0;
+
+  function record(event: SessionServerEvent): TranscriptEntry {
+    const entry = { cursor: nextCursor++, event };
+    transcript.push(entry);
+    return entry;
+  }
+
+  function send(socket: { send: (data: string) => void }, entry: TranscriptEntry) {
+    socket.send(sessionEventJson(entry.cursor, entry.event));
+  }
+
+  function open(socket: { send: (data: string) => void; url: () => string }) {
+    const resumeFrom = sessionResumeCursor(socket.url());
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
+    for (const entry of transcript) {
+      if (entry.cursor >= resumeFrom) send(socket, entry);
+    }
+  }
+
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    open(socket);
     socket.onMessage((message) => {
       if (typeof message !== "string") return;
       const event = JSON.parse(message) as {
@@ -20,34 +51,24 @@ async function mockScriptedSession(
       };
       if (event.type !== "prompt" || !event.text) return;
       if (event.clientMessageId) {
-        socket.send(
-          JSON.stringify({ type: "prompt_accepted", clientMessageId: event.clientMessageId }),
+        send(
+          socket,
+          record({ type: "prompt_accepted", clientMessageId: event.clientMessageId }),
         );
       }
       turn += 1;
+      record({ type: "message", role: "user", text: event.text });
       if (options.errorTurn) {
-        const events = [
-          { type: "message", role: "user", text: event.text },
-          { type: "turn_end", stopReason: "error" },
-        ];
-        transcript.push(...events);
-        socket.send(JSON.stringify(events[1]));
+        send(socket, record({ type: "turn_end", stopReason: "error" }));
         return;
       }
       const reply =
         turn === 1 ? `${harness}-ONE`
         : turn === 2 ? `### ${harness}-TWO\n\n- **bold** and \`code\`\n- second bullet\n\n1. first\n2. second\n\n\`\`\`txt\n${harness}-CODE\n\`\`\``
         : `${harness}-THREE: ${harness}-TWO`;
-      const events = [
-        { type: "message", role: "user", text: event.text },
-        { type: "message", role: "agent", text: reply },
-        { type: "turn_end", stopReason: "end_turn" },
-      ];
-      transcript.push(...events);
-      for (const next of events.slice(1)) socket.send(JSON.stringify(next));
+      send(socket, record({ type: "message", role: "agent", text: reply }));
+      send(socket, record({ type: "turn_end", stopReason: "end_turn" }));
     });
-    for (const event of transcript) socket.send(JSON.stringify(event));
-    socket.send(JSON.stringify({ type: "ready", model: "auto", busy: false }));
   });
 }
 
@@ -130,12 +151,19 @@ for (const harness of HARNESSES) {
  * exactly how a code block starts panning the whole phone surface sideways. */
 async function mockTypedTurn(page: Page) {
   const LONG = "a".repeat(400);
+  let nextCursor = 0;
+
+  function send(socket: { send: (data: string) => void }, event: SessionServerEvent) {
+    socket.send(sessionEventJson(nextCursor++, event));
+  }
+
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
     socket.onMessage((message) => {
       if (typeof message !== "string") return;
       const event = JSON.parse(message) as { type?: string; text?: string };
       if (event.type !== "prompt") return;
-      const events = [
+      const events: SessionServerEvent[] = [
         { type: "message", role: "thought", text: "Deciding where the port is set" },
         {
           type: "plan",
@@ -155,7 +183,10 @@ async function mockTypedTurn(page: Page) {
         {
           type: "tool_call",
           callId: "call-1",
+          title: "Edit config",
+          kind: "edit",
           status: "completed",
+          locations: [],
           content: [
             {
               type: "diff",
@@ -185,9 +216,8 @@ async function mockTypedTurn(page: Page) {
         },
         { type: "turn_end", stopReason: "end_turn" },
       ];
-      for (const next of events) socket.send(JSON.stringify(next));
+      for (const next of events) send(socket, next);
     });
-    socket.send(JSON.stringify({ type: "ready", model: "auto", busy: false }));
   });
 }
 

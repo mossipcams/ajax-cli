@@ -1,0 +1,33 @@
+{
+  "protocolVersion": 2,
+  "commands": [
+    { "type": "prompt", "text": "Ship it", "clientMessageId": "c1" },
+    { "type": "cancel" },
+    { "type": "cancel", "keepQueue": true },
+    { "type": "set_model", "model": "composer-2.5" },
+    { "type": "permission", "requestId": "p1", "approved": true }
+  ],
+  "snapshots": [
+    {
+      "type": "snapshot",
+      "protocolVersion": 2,
+      "cursor": 0,
+      "model": "auto",
+      "turnState": "idle",
+      "reset": false
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "protocolVersion": 2,
+      "cursor": 0,
+      "payload": {
+        "type": "message",
+        "role": "agent",
+        "text": "On it",
+        "itemId": "i1"
+      }
+    }
+  ]
+}

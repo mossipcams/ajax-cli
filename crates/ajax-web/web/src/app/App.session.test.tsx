@@ -115,15 +115,16 @@ describe("App session routing", () => {
     expect(screen.queryByTestId("session-starter")).not.toBeInTheDocument();
   });
 
-  it("shows the session starter when orchestration chat is enabled", async () => {
+  it("opens the New Task sheet when orchestration chat is enabled (#911)", async () => {
     writeOrchestrationChatEnabled(true);
     stubFetch();
     render(<App />);
     await screen.findByText("Fix login");
 
     setHash("#/session");
-    expect(await screen.findByTestId("session-starter")).toBeInTheDocument();
+    expect(await screen.findByTestId("new-task-sheet")).toBeInTheDocument();
     expect(window.location.hash).toBe("#/session");
+    expect(screen.queryByTestId("session-starter")).not.toBeInTheDocument();
   });
 
   // Found in dev: with chat on, every task opened as a session, but a task whose

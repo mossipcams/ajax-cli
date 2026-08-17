@@ -23,9 +23,10 @@ An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **off** (`ajax.web.session.orchestrationChat` in
 localStorage); when off, dashboard and embedded terminal behavior is unchanged.
-The browser `webSessionTransport` client and `sessionReducer` fold host WebSocket
-events into view state; they do not own the transcript, prompt queue, or ACP
-process.
+The browser `webSessionTransport` client, `useTaskSession` hook, and pure
+`sessionReducer` fold validated protocol v2 frames into view state; they retain
+only unacknowledged prompt IDs, the last applied transcript cursor, and
+transient UI state. They do not own the transcript, prompt queue, or ACP process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
 default **off**) gates `#/session`, discloses full tool access without approval
@@ -39,9 +40,11 @@ browser still does not own transcript/queue.
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
 `session_models` slice. Authenticated `GET /api/tasks/{handle}/session` WebSocket
-upgrade is transport-only over `WebSessionHub` (snapshot via cursor replay).
-Session admission policy lives in the `web_session` slice and is stated below.
-Routes and the bridge call hub methods only.
+upgrade is transport-only: runtime routes resolve the core-backed attach plan,
+acquire a `TaskSessionDirectory` handle, and delegate to
+`slices::web_session::ws_bridge`, which forwards typed browser commands and
+protocol v2 envelopes only. Optional `?cursor=` on reconnect requests incremental
+replay; cold load omits it for full replay.
 
 The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
 framing, request correlation, and typed ACP messages. It initializes with stable
@@ -117,7 +120,10 @@ cannot be read is never treated as a cache hit.
 
 The chosen selection is stored on the task (`session_model` metadata) and applied
 when its session starts; `POST /api/tasks` validates its shape and rejects a
-model for an agent with no ACP launch.
+model for an agent with no ACP launch. Bare `#/session` opens the same New Task
+sheet as the dashboard (orchestration chat pre-selected when the flag is on);
+the duplicate Cursor-only Session Starter is removed
+([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
 another harness, exposed as the Harness switch on the Diff Review page. It is
@@ -127,22 +133,42 @@ running process. On success the host drops the task's ACP slot so the next attac
 spawns the new harness.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
-(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. One
-`WebSessionHub` owns prompt queueing, cancellation, model switching, permission
-answers, and transcript replay cursors; transport layers call hub methods only.
+(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
+`web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
+one `TaskSession` Tokio command loop per handle): FIFO prompt queueing,
+one-in-flight turns, cancellation, model switching, permission answers,
+idempotency, subscriber fan-out, idle LRU retention, and transcript cursors.
+JSONL persistence lives in `adapters::web_session_store`. ACP stdio and typed
+request/notification I/O remain in `web_session_acp`; the slice maps
+`AcpClientEvent` values into persisted session events and normalizes streamed
+agent/thought text to full-content updates with stable host `itemId` values
+before persistence.
+
+### Task-session wire protocol (v2)
+
+Each attach sends one protocol v2 `snapshot` frame
+(`protocolVersion`, `cursor`, `model`, `turnState`, `reset`, optional
+`pendingPermission`) followed by cursor-bearing `event` envelopes whose
+`payload` is the existing typed session event union. Every persisted row has a
+monotonically increasing absolute cursor. Reconnect supplies the browser's last
+applied cursor on `?cursor=` and receives only newer envelopes; invalid or
+compacted-away cursors force `reset: true` and bounded full replay from the
+store's retained floor. Cross-language JSON fixtures live under
+`crates/ajax-web/testdata/web_session/` and `crates/ajax-web/web/testdata/web-session/`.
 
 Prompt frames carry a browser-generated `clientMessageId`. The host records a
 `prompt_accepted` event and ignores duplicate IDs, while the browser keeps
 unacknowledged prompts in a session-scoped outbox and retries them after a
-socket drop. A host-owned background pump drains live ACP slots even when no
-browser socket is attached. Transcript events append to JSONL; bounded
-compaction is the only rewrite, and adjacent streamed agent/thought chunks are
-coalesced before persistence.
+socket drop. Each live `TaskSession` continues draining its ACP child and host
+queue after the last browser subscriber detaches until the turn finishes, the
+queue empties, or idle retention evicts the slot.
 
-Reconnects read the current browser model preference for every new socket, so a
-model change cannot be replaced by the value captured by an older effect.
-Incoming ACP v1 notifications remain typed through the host queue. Stable
-message, thought, tool, plan, mode, configuration, session-info, and usage
+Reconnects do not send the browser `ajax.web.session.model` preference on the
+session WebSocket URL; task metadata remains authoritative
+([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
+on the task through a core-owned operation before the host replaces the ACP child.
+Incoming ACP v1 notifications remain typed through the per-task command loop.
+Stable message, thought, tool, plan, mode, configuration, session-info, and usage
 updates are mapped explicitly; unsupported capability announcements are
 dropped, and unknown legacy updates remain generic artifacts. Ajax advertises
 no ACP filesystem or terminal client capabilities until worktree-scoped

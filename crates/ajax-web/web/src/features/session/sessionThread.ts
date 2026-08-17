@@ -27,21 +27,28 @@ export function explainAcpError(message: string): string {
   return message;
 }
 
-/** `prepare_task_session` refuses the upgrade when the task is not a Cursor
- * orchestration task or its worktree is gone. Both facts are already in the
+/** `prepare_task_session` refuses the upgrade when the task cannot host an
+ * orchestration session or its worktree is gone. Both facts are already in the
  * detail payload, so no extra request is needed to say which one it was. */
 export function explainOpenFailure(
-  detail: { agent?: string | null; status_explanation?: string | null } | null,
+  detail: {
+    agent?: string | null;
+    status_explanation?: string | null;
+    session_capable?: boolean;
+  } | null,
 ): string {
-  const agent = detail?.agent?.trim();
-  if (agent && agent.toLowerCase() !== "cursor") {
-    return `Orchestration chat needs a Cursor task — this one runs ${agent}. Open it from the task view instead.`;
+  if (detail?.session_capable === false) {
+    const agent = detail.agent?.trim();
+    if (agent) {
+      return `This task cannot host orchestration chat while ${agent} is running in the terminal. Open the task view instead.`;
+    }
+    return "This task cannot host orchestration chat. Open the task view instead.";
   }
   const explanation = detail?.status_explanation?.trim();
   if (explanation) {
     return `Can't start the session: ${explanation}`;
   }
-  return "Can't start the session. Check the task's worktree still exists.";
+  return "Can't start the session. Check the task still exists and its worktree is present.";
 }
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
@@ -176,53 +183,85 @@ function push(state: SessionState, item: DraftItem): SessionState {
   };
 }
 
-function replaceTail(state: SessionState, item: ConversationItem): SessionState {
-  return { ...state, items: [...state.items.slice(0, -1), item] };
-}
-
 function replaceAt(state: SessionState, index: number, item: ConversationItem): SessionState {
   const items = state.items.slice();
   items[index] = item;
   return { ...state, items };
 }
 
-/** Streamed text arrives one chunk at a time; consecutive chunks are one
- * paragraph, not one bubble per token. Anything else in between — a tool call,
- * a thought — ends the paragraph, so "I'll look" and "the bug is X" stay two
- * turns of speech.
- *
- * `messageId` is the harness's own answer to where a message ends. When it
- * sends one, a change starts a new item even if the role never changed; when it
- * omits one (it is optional in ACP v1), adjacency decides as before. */
-type StreamedItem =
-  | { kind: "prose"; role: "user" | "agent"; text: string; messageId?: string }
-  | { kind: "thought"; text: string; messageId?: string };
-
-/** Chunks continue the tail item only when they belong to the same lane. */
-function laneOf(item: ConversationItem | StreamedItem): string | null {
-  if (item.kind === "prose") return `prose:${item.role}:${item.messageId ?? ""}`;
-  if (item.kind === "thought") return `thought:${item.messageId ?? ""}`;
-  return null;
+/** Streamed items from the host arrive as full-content updates keyed by itemId. */
+function upsertMessage(
+  state: SessionState,
+  item:
+    | { kind: "prose"; role: "user" | "agent"; text: string; itemId: string; messageId?: string }
+    | { kind: "thought"; text: string; itemId: string; messageId?: string },
+): SessionState {
+  const index = state.items.findIndex((row) => row.id === item.itemId);
+  if (index >= 0) {
+    const existing = state.items[index];
+    if (existing.kind === "prose" && item.kind === "prose") {
+      if (existing.text === item.text) return state;
+      return replaceAt(state, index, {
+        ...existing,
+        text: item.text,
+        messageId: item.messageId ?? existing.messageId,
+      });
+    }
+    if (existing.kind === "thought" && item.kind === "thought") {
+      if (existing.text === item.text) return state;
+      return replaceAt(state, index, {
+        ...existing,
+        text: item.text,
+        messageId: item.messageId ?? existing.messageId,
+      });
+    }
+  }
+  if (item.kind === "prose") {
+    return {
+      ...state,
+      items: [
+        ...state.items,
+        {
+          kind: "prose",
+          id: item.itemId,
+          role: item.role,
+          text: item.text,
+          messageId: item.messageId,
+        },
+      ],
+      proseOpen: true,
+    };
+  }
+  return {
+    ...state,
+    items: [
+      ...state.items,
+      {
+        kind: "thought",
+        id: item.itemId,
+        text: item.text,
+        messageId: item.messageId,
+      },
+    ],
+    proseOpen: true,
+  };
 }
 
-function appendStreamed(state: SessionState, item: StreamedItem): SessionState {
-  const tail = state.items[state.items.length - 1];
-  if (
-    tail &&
-    state.proseOpen &&
-    (tail.kind === "prose" || tail.kind === "thought") &&
-    laneOf(tail) === laneOf(item)
-  ) {
-    if (item.text === tail.text) return state;
-    // A harness may stream deltas or resend the whole message so far. Appending
-    // a cumulative snapshot would print the message twice over.
-    const text =
-      item.text.startsWith(tail.text) && item.text.length > tail.text.length
-        ? item.text
-        : tail.text + item.text;
-    return replaceTail(state, { ...tail, text });
+function upsertOrPushUser(state: SessionState, text: string, itemId?: string, messageId?: string) {
+  if (itemId) {
+    const tail = state.items[state.items.length - 1];
+    if (tail?.kind === "prose" && tail.role === "user" && tail.text === text) {
+      return replaceAt(state, state.items.length - 1, {
+        ...tail,
+        id: itemId,
+        messageId: messageId ?? tail.messageId,
+      });
+    }
+    return upsertMessage(state, { kind: "prose", role: "user", text, itemId, messageId });
   }
-  return { ...push(state, item), proseOpen: true };
+  const tail = state.items[state.items.length - 1];
+  if (tail?.kind === "prose" && tail.role === "user" && tail.text === text) return state;
+  return push(state, { kind: "prose", role: "user", text, messageId });
 }
 
 /** `tool_call` opens a call and `tool_call_update` revises it. Merging by
@@ -293,7 +332,7 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     // the durable transcript; an identical user echo is skipped downstream.
     case "prompt":
       return {
-        ...appendStreamed(state, { kind: "prose", role: "user", text: action.text }),
+        ...push(state, { kind: "prose", role: "user", text: action.text }),
         busy: true,
       };
 
@@ -310,35 +349,53 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
     case "message": {
       if (!event.text) return state;
       if (event.role === "thought") {
-        // Reasoning is the agent's own account of the turn. It is kept, and
-        // kept separate: collapsed by default so it never crowds the answer.
+        if (!event.itemId) {
+          return {
+            ...push(state, {
+              kind: "thought",
+              text: event.text,
+              messageId: event.messageId,
+            }),
+            busy: true,
+            proseOpen: true,
+          };
+        }
         return {
-          ...appendStreamed(state, {
+          ...upsertMessage(state, {
             kind: "thought",
             text: event.text,
+            itemId: event.itemId,
             messageId: event.messageId,
           }),
           busy: true,
         };
       }
       if (event.role === "agent") {
+        if (!event.itemId) {
+          return {
+            ...push(state, {
+              kind: "prose",
+              role: "agent",
+              text: event.text,
+              messageId: event.messageId,
+            }),
+            busy: true,
+            proseOpen: true,
+          };
+        }
         return {
-          ...appendStreamed(state, {
+          ...upsertMessage(state, {
             kind: "prose",
             role: "agent",
             text: event.text,
+            itemId: event.itemId,
             messageId: event.messageId,
           }),
           busy: true,
         };
       }
       if (event.role === "user") {
-        return appendStreamed(state, {
-          kind: "prose",
-          role: "user",
-          text: event.text,
-          messageId: event.messageId,
-        });
+        return upsertOrPushUser(state, event.text, event.itemId, event.messageId);
       }
       return push(state, { kind: "note", tone: "info", text: event.text });
     }
@@ -435,6 +492,9 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
     case "ready":
       // The host is the authority on whether a turn is live. Replayed history
       // has no turn-start marker, so trailing events must not decide it.
-      return event.busy === undefined ? state : { ...state, busy: event.busy };
+      {
+        const base = event.reset ? initialSessionState : state;
+        return event.busy === undefined ? base : { ...base, busy: event.busy };
+      }
   }
 }

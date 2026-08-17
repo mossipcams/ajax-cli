@@ -31,16 +31,28 @@ thread_local! {
     static TEST_ACP_EXTRA_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
+#[cfg(test)]
+static TEST_ACP_EXTRA_ARGS_GLOBAL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+static TEST_ACP_LOCK: Mutex<()> = Mutex::new(());
+
 /// Run `f` with ACP spawn redirected to a test program (typically a Node fake agent).
 #[cfg(test)]
 pub(crate) fn with_test_acp_program<F, R>(path: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
+    let _guard = TEST_ACP_LOCK.lock().unwrap();
     TEST_ACP_PROGRAM.with(|slot| {
         *slot.borrow_mut() = Some(path.to_path_buf());
+        *TEST_ACP_COMMAND.lock().unwrap() = Some((
+            PathBuf::from("node"),
+            vec![path.to_string_lossy().into_owned()],
+        ));
         let result = f();
         *slot.borrow_mut() = None;
+        *TEST_ACP_COMMAND.lock().unwrap() = None;
         result
     })
 }
@@ -71,9 +83,13 @@ where
 {
     TEST_ACP_EXTRA_ARGS.with(|slot| {
         let saved = slot.borrow().clone();
-        *slot.borrow_mut() = args.iter().map(|s| (*s).to_string()).collect();
+        let extra: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
+        *slot.borrow_mut() = extra.clone();
+        let saved_global = TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap().clone();
+        *TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap() = extra;
         let result = f();
         *slot.borrow_mut() = saved;
+        *TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap() = saved_global;
         result
     })
 }
@@ -470,7 +486,8 @@ fn spawn_acp_process(
     #[cfg(test)]
     {
         let override_command = TEST_ACP_COMMAND.lock().unwrap().clone();
-        if let Some((program, args)) = override_command {
+        if let Some((program, mut args)) = override_command {
+            args.extend(TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap().iter().cloned());
             let mut command = std::process::Command::new(program);
             command
                 .args(args)

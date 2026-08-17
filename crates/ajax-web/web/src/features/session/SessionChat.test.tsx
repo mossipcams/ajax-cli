@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent, screen, act } from "@testing-library/react";
-import SessionChat, {
-  formatSessionBrief,
-  sessionSeededStorageKey,
-} from "./SessionChat";
+import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -83,8 +80,8 @@ describe("SessionChat smoke", () => {
   it("keeps replayed chat history when the session becomes ready", () => {
     autoReady = false;
     mountChat();
-    send({ type: "message", role: "user", text: "Prior question" });
-    send({ type: "message", role: "agent", text: "Prior answer" });
+    send({ type: "message", role: "user", text: "Prior question", itemId: "u1" });
+    send({ type: "message", role: "agent", text: "Prior answer", itemId: "a1" });
 
     act(() => ready?.("auto"));
 
@@ -116,7 +113,12 @@ describe("SessionChat smoke", () => {
     vi.restoreAllMocks();
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
       (_handle, callbacks) => {
-        callbacks.onEvent({ type: "message", role: "agent", text: "Earlier reply" });
+        callbacks.onEvent({
+          type: "message",
+          role: "agent",
+          text: "Earlier reply",
+          itemId: "a1",
+        });
         callbacks.onReady("auto");
         return transport;
       },
@@ -137,7 +139,7 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-message-user")).toHaveTextContent(
       "Please fix the flaky test",
     );
-    send({ type: "message", role: "user", text: "Please fix the flaky test" });
+    send({ type: "message", role: "user", text: "Please fix the flaky test", itemId: "u1" });
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
@@ -184,7 +186,7 @@ describe("SessionChat smoke", () => {
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
 
-    send({ type: "message", role: "thought", text: "Checking files" });
+    send({ type: "message", role: "thought", text: "Checking files", itemId: "t1" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
     send({ type: "turn_end" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");
@@ -192,30 +194,22 @@ describe("SessionChat smoke", () => {
     vi.useRealTimers();
   });
 
-  it("seeds the session brief after transport is ready", () => {
-    const starterContext = {
-      title: "Fix the flaky test",
-      constraints: "",
-      expectedOutcome: "",
-    };
-    mountChat({ starterContext });
-    const brief = formatSessionBrief(starterContext);
-    expect(transport.sendPrompt).toHaveBeenCalledWith(brief);
-    expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBe("1");
-  });
+  it("sends one host-queued prompt while busy without a browser follow-up latch", () => {
+    mountChat();
 
-  it("does not mark the session seeded when sendPrompt throws", () => {
-    transport.sendPrompt.mockImplementation(() => {
-      throw new Error("send failed");
-    });
-    mountChat({
-      starterContext: {
-        title: "Fix the flaky test",
-        constraints: "",
-        expectedOutcome: "",
-      },
-    });
-    expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBeNull();
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "First" } });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    transport.sendPrompt.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Next" } });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Message")).toHaveAttribute(
+      "placeholder",
+      "Sends after this turn…",
+    );
   });
 
   it("opens Diff Review on a left swipe", async () => {

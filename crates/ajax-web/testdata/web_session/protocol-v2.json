@@ -1,0 +1,22 @@
+{
+  "protocolVersion": 2,
+  "snapshot": {
+    "type": "snapshot",
+    "protocolVersion": 2,
+    "cursor": 2,
+    "model": "composer-2.5",
+    "turnState": "idle",
+    "reset": false
+  },
+  "event": {
+    "type": "event",
+    "protocolVersion": 2,
+    "cursor": 1,
+    "payload": {
+      "type": "message",
+      "role": "agent",
+      "text": "Hello",
+      "itemId": "i1"
+    }
+  }
+}

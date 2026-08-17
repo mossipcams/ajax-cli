@@ -8,6 +8,10 @@ import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import ModelPicker from "@/features/session/ModelPicker";
 import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import {
+  DEFAULT_SESSION_MODEL,
+  readSessionModel,
+} from "@/features/session/sessionModel";
 import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
@@ -230,7 +234,12 @@ export default function NewTaskSheet({
                 onCatalog={(catalog) =>
                   setModel(
                     (current) =>
-                      current || readPref(`${LAST_MODEL_KEY_PREFIX}${agent}`) || catalog.default,
+                      current ||
+                      readPref(`${LAST_MODEL_KEY_PREFIX}${agent}`) ||
+                      (readSessionModel() !== DEFAULT_SESSION_MODEL
+                        ? readSessionModel()
+                        : "") ||
+                      catalog.default,
                   )
                 }
               />

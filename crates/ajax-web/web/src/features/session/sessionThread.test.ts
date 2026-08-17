@@ -22,6 +22,17 @@ function run(events: (WebSessionServerEvent | { prompt: string })[]): SessionSta
   );
 }
 
+const agentMsg = (
+  text: string,
+  itemId = "i-agent",
+  messageId?: string,
+): WebSessionServerEvent => ({
+  type: "message",
+  role: "agent",
+  text,
+  itemId,
+  ...(messageId ? { messageId } : {}),
+});
 const toolCall = (
   callId: string,
   overrides: Partial<Extract<WebSessionServerEvent, { type: "tool_call" }>> = {},
@@ -39,13 +50,13 @@ describe("ready settles the turn state", () => {
   it("clears a busy thread that replayed history left set", () => {
     const busy = sessionReducer(initialSessionState, {
       type: "event",
-      event: { type: "message", role: "agent", text: "working" },
+      event: agentMsg("working"),
     });
     expect(busy.busy).toBe(true);
 
     const settled = sessionReducer(busy, {
       type: "event",
-      event: { type: "ready", model: "gpt-5.6-sol", busy: false },
+      event: { type: "ready", model: "gpt-5.6-sol", busy: false, reset: false },
     });
 
     expect(settled.busy).toBe(false);
@@ -54,10 +65,42 @@ describe("ready settles the turn state", () => {
   it("leaves state alone when the host says nothing about it", () => {
     const busy = sessionReducer(initialSessionState, {
       type: "event",
-      event: { type: "message", role: "agent", text: "working" },
+      event: agentMsg("working"),
     });
 
     expect(sessionReducer(busy, { type: "event", event: { type: "ready" } }).busy).toBe(true);
+  });
+
+  it("preserves items on incremental reconnect when reset is false", () => {
+    const prior = run([agentMsg("one", "i1"), agentMsg("two", "i2")]);
+    const reconnected = sessionReducer(prior, {
+      type: "event",
+      event: { type: "ready", busy: false, reset: false },
+    });
+    const afterTail = sessionReducer(reconnected, {
+      type: "event",
+      event: agentMsg("three", "i3"),
+    });
+    expect(afterTail.items).toHaveLength(3);
+    expect(afterTail.items.map((item) => (item.kind === "prose" ? item.text : null))).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+  });
+
+  it("clears reducer when snapshot reset is true before replay tail", () => {
+    const prior = run([agentMsg("one", "i1")]);
+    const reset = sessionReducer(prior, {
+      type: "event",
+      event: { type: "ready", busy: false, reset: true },
+    });
+    const afterTail = sessionReducer(reset, {
+      type: "event",
+      event: agentMsg("two", "i2"),
+    });
+    expect(afterTail.items).toHaveLength(1);
+    expect(afterTail.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "two", id: "i2" });
   });
 });
 
@@ -80,28 +123,31 @@ describe("host notes", () => {
 });
 
 describe("sessionReducer", () => {
-  it("coalesces consecutive agent chunks into one paragraph", () => {
+  it("renders legacy agent messages without itemId", () => {
+    const state = run([{ type: "message", role: "agent", text: "Hello from v1" }]);
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello from v1" });
+  });
+
+  it("replaces host item updates by itemId", () => {
     const state = run([
-      { type: "message", role: "agent", text: "Hello " },
-      { type: "message", role: "agent", text: "world" },
+      agentMsg("Hello ", "i1"),
+      agentMsg("Hello world", "i1"),
     ]);
     expect(state.items).toHaveLength(1);
-    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello world" });
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello world", id: "i1" });
   });
 
   it("replaces a cumulative snapshot instead of concatenating it", () => {
-    const state = run([
-      { type: "message", role: "agent", text: "Hel" },
-      { type: "message", role: "agent", text: "Hello" },
-    ]);
+    const state = run([agentMsg("Hel", "i1"), agentMsg("Hello", "i1")]);
     expect(state.items).toHaveLength(1);
-    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello" });
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello", id: "i1" });
   });
 
   it("skips an exact duplicate user echo", () => {
     const state = run([
-      { type: "message", role: "user", text: "Fix it" },
-      { type: "message", role: "user", text: "Fix it" },
+      { type: "message", role: "user", text: "Fix it", itemId: "u1" },
+      { type: "message", role: "user", text: "Fix it", itemId: "u1" },
     ]);
     expect(state.items).toHaveLength(1);
     expect(state.items[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix it" });
@@ -109,9 +155,9 @@ describe("sessionReducer", () => {
 
   it("starts a new paragraph when a tool run interrupts agent prose", () => {
     const state = run([
-      { type: "message", role: "agent", text: "Reading" },
+      agentMsg("Reading", "i-read"),
       toolCall("c1"),
-      { type: "message", role: "agent", text: "Done" },
+      agentMsg("Done", "i-done"),
     ]);
     expect(state.items.map((item) => item.kind)).toEqual(["prose", "tool", "prose"]);
     expect(state.items[0]).toMatchObject({ text: "Reading" });
@@ -120,21 +166,18 @@ describe("sessionReducer", () => {
 
   it("splits one role's stream when the harness changes messageId", () => {
     const state = run([
-      { type: "message", role: "agent", text: "First answer", messageId: "m1" },
-      { type: "message", role: "agent", text: "Second answer", messageId: "m2" },
+      agentMsg("First answer", "i-m1", "m1"),
+      agentMsg("Second answer", "i-m2", "m2"),
     ]);
     expect(state.items).toHaveLength(2);
     expect(state.items[0]).toMatchObject({ text: "First answer" });
     expect(state.items[1]).toMatchObject({ text: "Second answer" });
   });
 
-  it("still joins by adjacency when the harness sends no messageId", () => {
-    const state = run([
-      { type: "message", role: "agent", text: "Hello ", messageId: "m1" },
-      { type: "message", role: "agent", text: "again", messageId: "m1" },
-    ]);
+  it("updates the same item when messageId lane is unchanged", () => {
+    const state = run([agentMsg("Hello again", "i-m1", "m1")]);
     expect(state.items).toHaveLength(1);
-    expect(state.items[0]).toMatchObject({ text: "Hello again" });
+    expect(state.items[0]).toMatchObject({ text: "Hello again", id: "i-m1" });
   });
 
   it("merges tool_call_update into the open call instead of appending a row", () => {
@@ -158,7 +201,7 @@ describe("sessionReducer", () => {
     // a finished edit below prose that was written after it.
     const state = run([
       toolCall("c1"),
-      { type: "message", role: "agent", text: "thinking out loud" },
+      agentMsg("thinking out loud", "i-thought"),
       toolCall("c1", { status: "completed" }),
     ]);
     expect(state.items.map((item) => item.kind)).toEqual(["tool", "prose"]);
@@ -202,16 +245,15 @@ describe("sessionReducer", () => {
 
   it("keeps reasoning as its own item rather than folding it into prose", () => {
     const thinking = run([
-      { type: "message", role: "thought", text: "Checking " },
-      { type: "message", role: "thought", text: "the router" },
+      { type: "message", role: "thought", text: "the router", itemId: "i-thought" },
     ]);
     expect(thinking.busy).toBe(true);
     expect(thinking.items).toHaveLength(1);
-    expect(thinking.items[0]).toMatchObject({ kind: "thought", text: "Checking the router" });
+    expect(thinking.items[0]).toMatchObject({ kind: "thought", text: "the router" });
 
     const answered = sessionReducer(thinking, {
       type: "event",
-      event: { type: "message", role: "agent", text: "Found it" },
+      event: agentMsg("Found it", "i-found"),
     });
     expect(answered.items.map((item) => item.kind)).toEqual(["thought", "prose"]);
   });
@@ -338,9 +380,9 @@ describe("sessionReducer", () => {
 
   it("starts a new paragraph after a turn boundary", () => {
     const state = run([
-      { type: "message", role: "agent", text: "first turn" },
+      agentMsg("first turn", "i-1"),
       { type: "turn_end" },
-      { type: "message", role: "agent", text: "second turn" },
+      agentMsg("second turn", "i-2"),
     ]);
     expect(state.items.map((item) => item.kind)).toEqual(["prose", "prose"]);
   });
@@ -377,15 +419,24 @@ describe("explainAcpError", () => {
 });
 
 describe("explainOpenFailure", () => {
-  it("names the agent when the task cannot host an orchestration session", () => {
-    const message = explainOpenFailure({ agent: "Claude", status_explanation: "Running" });
-    expect(message).toContain("Cursor");
+  it("explains when the task is not session-capable", () => {
+    const message = explainOpenFailure({
+      agent: "Claude",
+      status_explanation: "Running",
+      session_capable: false,
+    });
+    expect(message).toContain("orchestration chat");
     expect(message).toContain("Claude");
+    expect(message).not.toContain("Cursor");
   });
 
-  it("passes through the server's own explanation for a Cursor task", () => {
+  it("passes through the server's own explanation for a capable task", () => {
     expect(
-      explainOpenFailure({ agent: "Cursor", status_explanation: "Worktree missing" }),
+      explainOpenFailure({
+        agent: "Cursor",
+        status_explanation: "Worktree missing",
+        session_capable: true,
+      }),
     ).toContain("Worktree missing");
   });
 

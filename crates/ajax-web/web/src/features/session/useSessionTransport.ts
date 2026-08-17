@@ -10,7 +10,7 @@ import {
   OPEN_FAILURE,
   type SessionAction,
 } from "./sessionThread";
-import { readSessionModel, writeSessionModel } from "./sessionModel";
+import { writeSessionModel } from "./sessionModel";
 import {
   MAX_HANDSHAKE_ATTEMPTS,
   RECONNECT_BASE_MS,
@@ -29,6 +29,7 @@ interface Options {
   onActivity: () => void;
   setConnected: (connected: boolean) => void;
   setEverOpened: (everOpened: boolean) => void;
+  onSessionInvalidated?: () => void;
 }
 
 /** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
@@ -42,6 +43,7 @@ export function useSessionTransport({
   onActivity,
   setConnected,
   setEverOpened,
+  onSessionInvalidated,
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
@@ -55,6 +57,8 @@ export function useSessionTransport({
     // per connection so a reset clears any text buffered from the previous
     // connection.
     let buffer: MessageBuffer | undefined;
+    /** Survives in-page reconnect; cleared on full reload with the reducer. */
+    let nextToReadCursor: number | undefined;
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -79,11 +83,12 @@ export function useSessionTransport({
       transportRef.current = undefined;
       buffer?.dispose();
       buffer = new MessageBuffer((event) => dispatch({ type: "event", event }));
-      // Clear before the host replays its durable transcript, never after.
-      dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
+          onCursorAdvance: (cursor) => {
+            nextToReadCursor = cursor;
+          },
           onReady: (nextModel) => {
             // The `ready` event already flushes via onEvent; this is a
             // belt-and-suspenders flush for any replayed text that arrived
@@ -123,6 +128,7 @@ export function useSessionTransport({
               handshakeAttempts += 1;
               if (handshakeAttempts > MAX_HANDSHAKE_ATTEMPTS) {
                 reconnecting = false;
+                onSessionInvalidated?.();
                 dispatch({
                   type: "event",
                   event: {
@@ -137,7 +143,8 @@ export function useSessionTransport({
           },
         },
         undefined,
-        readSessionModel(),
+        undefined,
+        nextToReadCursor,
       );
       transportRef.current = transport;
     };

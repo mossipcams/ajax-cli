@@ -7,9 +7,9 @@ use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
-        stt_provider::MoonshineProvider, web_session_acp::WebSessionHub,
+        stt_provider::MoonshineProvider,
     },
-    slices::{dev_deploy, push::PushHub},
+    slices::{dev_deploy, push::PushHub, web_session::TaskSessionDirectory},
     WebError,
 };
 use ajax_core::{
@@ -50,7 +50,7 @@ pub struct WebAppState<C, B> {
     pub(crate) stt_phrase_end_silence_ms: u64,
     pub(crate) stt_pause_grace_period_ms: u64,
     pub(crate) stt_language: String,
-    pub(crate) web_session_hub: Arc<WebSessionHub>,
+    pub(crate) task_session_directory: Arc<TaskSessionDirectory>,
 }
 
 pub(crate) struct WebSharedState<C, B> {
@@ -85,7 +85,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             stt_phrase_end_silence_ms: self.stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms: self.stt_pause_grace_period_ms,
             stt_language: self.stt_language.clone(),
-            web_session_hub: Arc::clone(&self.web_session_hub),
+            task_session_directory: Arc::clone(&self.task_session_directory),
         }
     }
 }
@@ -187,6 +187,39 @@ where
         }
         response
     }
+
+    /// Persist desired session model metadata before the host replaces an ACP child.
+    pub(crate) fn persist_task_session_model(
+        &self,
+        handle: &str,
+        model: &str,
+    ) -> Result<(), String> {
+        let _lane = self.control_lane.blocking_lock();
+        let (mut context, runner, bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        crate::slices::operate::set_task_session_model(&mut context, handle, model)
+            .map_err(|error| crate::slices::operate::format_operate_error(&error))?;
+        let mut guard = self.shared();
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            let mut persisted_bridge = guard.bridge.clone();
+            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+            Ok(())
+        } else {
+            Err("cockpit state changed while updating session model".to_string())
+        }
+    }
 }
 
 impl<C, B> WebAppState<C, B> {
@@ -215,8 +248,7 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let state_dir = Arc::new(state_dir.clone());
         let hub_dir = state_dir.as_ref().clone();
-        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
-        web_session_hub.start_background_pump();
+        let task_session_directory = TaskSessionDirectory::new(hub_dir);
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -238,7 +270,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub,
+            task_session_directory,
         }
     }
 
@@ -280,8 +312,7 @@ impl<C, B> WebAppState<C, B> {
         let stt_language = context.config.stt.language.clone();
         let hub_dir = state_dir.clone();
         let state_dir = Arc::new(state_dir);
-        let web_session_hub = Arc::new(WebSessionHub::new(hub_dir));
-        web_session_hub.start_background_pump();
+        let task_session_directory = TaskSessionDirectory::new(hub_dir);
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -303,7 +334,7 @@ impl<C, B> WebAppState<C, B> {
             stt_phrase_end_silence_ms,
             stt_pause_grace_period_ms,
             stt_language,
-            web_session_hub,
+            task_session_directory,
         })
     }
 
