@@ -49,6 +49,17 @@ export function isKeyboardOpen(): boolean {
  * container that owns task-page vertical scroll. Safe in jsdom where
  * `scrollTo` is unimplemented.
  */
+/** Blur the session composer when it owns focus — not the task terminal. */
+export function blurSessionComposerIfFocused(): void {
+  if (typeof document === "undefined") return;
+  const composer = document.querySelector<HTMLTextAreaElement>(
+    '[data-testid="session-composer"] textarea',
+  );
+  if (composer && document.activeElement === composer) {
+    composer.blur();
+  }
+}
+
 export function resetDocumentScroll(): void {
   try {
     window.scrollTo(0, 0);
@@ -128,6 +139,14 @@ export function initViewport(): () => void {
     }
   };
 
+  const dismissKeyboardOpen = () => {
+    if (!keyboardOpen) return;
+    keyboardOpen = false;
+    root.classList.remove(KEYBOARD_OPEN_CLASS);
+    blurSessionComposerIfFocused();
+    resetDocumentScroll();
+  };
+
   const onViewportResize = () => {
     const current = vv.height;
     const currentWidth = window.innerWidth;
@@ -145,8 +164,7 @@ export function initViewport(): () => void {
     if (currentWidth !== baselineWidth) {
       // Rotation: a real geometry change, close immediately.
       cancelCloseSettle();
-      keyboardOpen = false;
-      root.classList.remove(KEYBOARD_OPEN_CLASS);
+      dismissKeyboardOpen();
       syncViewportGeometry();
       baselineHeight = current;
       baselineWidth = currentWidth;
@@ -167,9 +185,7 @@ export function initViewport(): () => void {
           if (!keyboardOpen) return;
           const settledDelta = baselineHeight - vv.height;
           if (settledDelta < KEYBOARD_CLOSE_DELTA_PX) {
-            keyboardOpen = false;
-            root.classList.remove(KEYBOARD_OPEN_CLASS);
-            resetDocumentScroll();
+            dismissKeyboardOpen();
             syncViewportGeometry();
             baselineHeight = vv.height;
             baselineWidth = window.innerWidth;
@@ -185,8 +201,7 @@ export function initViewport(): () => void {
     // Rebase without treating the expansion as keyboard dismissal/opening.
     if (!isUsableHeight(baselineHeight) && isUsableHeight(current)) {
       cancelCloseSettle();
-      keyboardOpen = false;
-      root.classList.remove(KEYBOARD_OPEN_CLASS);
+      dismissKeyboardOpen();
       syncViewportGeometry();
       rebaseBaselineFromResolved();
       return;
@@ -226,8 +241,8 @@ export function initViewport(): () => void {
   // latched, CSS hides .bottom-nav and pins the band short (#836).
   const onForegroundResync = () => {
     cancelCloseSettle();
-    keyboardOpen = false;
-    root.classList.remove(KEYBOARD_OPEN_CLASS);
+    const wasKeyboardOpen = keyboardOpen;
+    dismissKeyboardOpen();
 
     const visualHeight = vv.height;
     const layoutHeight = window.innerHeight;
@@ -241,17 +256,16 @@ export function initViewport(): () => void {
       rebaseBaselineFromResolved();
     }
     baselineWidth = window.innerWidth;
-    resetDocumentScroll();
+    if (!wasKeyboardOpen) {
+      resetDocumentScroll();
+    }
   };
 
   const onVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
       // Keyboard is gone once backgrounded; do not wait for visualViewport.
       cancelCloseSettle();
-      if (keyboardOpen) {
-        keyboardOpen = false;
-        root.classList.remove(KEYBOARD_OPEN_CLASS);
-      }
+      dismissKeyboardOpen();
       return;
     }
     if (document.visibilityState === "visible") {

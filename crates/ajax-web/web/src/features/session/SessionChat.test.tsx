@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
+import { render, fireEvent, screen, act, waitFor } from "@testing-library/react";
 import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import * as useTaskTerminalSpeechModule from "@/features/task/useTaskTerminalSpeech";
@@ -7,6 +10,9 @@ import * as api from "@/shared/lib/api";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
 
 const transport = {
   // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and
@@ -133,7 +139,42 @@ describe("SessionChat smoke", () => {
     expect(composer).not.toHaveFocus();
   });
 
-  it("shows terminal is-armed grammar on the mic while listening", () => {
+  it("blurs the composer when tapping dead space on the session page below the thread", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    fireEvent.pointerDown(screen.getByTestId("session-chat"));
+    expect(composer).not.toHaveFocus();
+  });
+
+  it("does not blur the composer when tapping Mic or Send", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Send" }));
+    expect(composer).toHaveFocus();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Start voice input" }));
+    expect(composer).toHaveFocus();
+  });
+
+  it("styles the idle mic as a square-corner accent chip, not a pill", () => {
+    const micCss =
+      stylesSource.match(/\.session-composer-mic\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(micCss).toMatch(/border-radius:\s*var\(--radius-sm\)/);
+    expect(micCss).not.toMatch(/border-radius:\s*999px/);
+    expect(micCss).toMatch(/background:\s*var\(--accent\)/);
+    expect(micCss).toMatch(/border-color:\s*var\(--accent\)/);
+    expect(micCss).toMatch(/color:\s*var\(--paper\)/);
+
+    const sendCss =
+      stylesSource.match(/\.session-composer-send\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(sendCss).toMatch(/background:\s*var\(--accent\)/);
+    expect(stylesSource).toMatch(
+      /\.session-composer-button\s*\{[\s\S]*?border-radius:\s*999px/,
+    );
+  });
+
+  it("fills the mic with warn while listening", () => {
     vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
       speechModel: {
         state: "listening",
@@ -154,7 +195,32 @@ describe("SessionChat smoke", () => {
     mountChat();
     const mic = screen.getByRole("button", { name: "Stop voice input" });
     expect(mic).toHaveClass("is-armed");
-    expect(within(mic).getByTestId("session-mic-armed-dot")).toBeInTheDocument();
+    expect(mic).toHaveTextContent("Mic");
+  });
+
+  it("fills the mic with warn while connecting without looking disabled-dead", () => {
+    vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
+      speechModel: {
+        state: "connecting",
+        sessionId: "speech-session-test",
+        errorMessage: null,
+        finalTranscript: "",
+        partialTranscript: "",
+        pauseDeadlineMs: undefined,
+        pauseTimerToken: undefined,
+      },
+      pauseCountdownSeconds: undefined,
+      micAriaLabel: "Start voice input",
+      micArmed: false,
+      toggleMic: vi.fn(),
+      cancelSpeechInput: vi.fn(),
+      cancelSpeechTransport: vi.fn(),
+    });
+    mountChat();
+    const mic = screen.getByRole("button", { name: "Start voice input" });
+    expect(mic).toHaveClass("is-connecting");
+    expect(mic).toBeDisabled();
+    expect(mic).toHaveTextContent("Mic");
   });
 
   it("keeps transcript events replayed before ready", () => {
