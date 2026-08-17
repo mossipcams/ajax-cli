@@ -471,7 +471,7 @@ mod tests {
             assert!(events.iter().any(|event| {
                 matches!(
                     event,
-                    SessionServerEvent::Message { role, text }
+                    SessionServerEvent::Message { role, text, .. }
                         if role == "user" && text == "hello"
                 )
             }));

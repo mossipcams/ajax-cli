@@ -43,6 +43,7 @@ fn note(text: &str) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        message_id: None,
     }
 }
 
@@ -50,6 +51,7 @@ fn user_msg(text: &str) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "user".to_string(),
         text: text.to_string(),
+        message_id: None,
     }
 }
 
@@ -215,6 +217,7 @@ fn drain_maps_session_update_notifications() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hello".to_string(),
+            message_id: None,
         }]
     );
 }
@@ -271,7 +274,7 @@ fn typed_mapper_covers_stable_acp_updates() {
 
     assert!(events.iter().any(|event| matches!(
         event,
-        SessionServerEvent::Message { role, text }
+        SessionServerEvent::Message { role, text, .. }
             if role == "thought" && text == "thinking"
     )));
     assert!(events.iter().any(
@@ -282,7 +285,12 @@ fn typed_mapper_covers_stable_acp_updates() {
         SessionServerEvent::Plan { entries }
             if entries.first().map(|entry| entry.status.as_str()) == Some("in_progress")
     )));
-    for kind in ["config", "session_info", "usage"] {
+    // Context pressure is the one number an operator steers by, so it leaves the
+    // mapper typed rather than as a JSON artifact nothing can render.
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Usage { used, size } if *used == 10 && *size == 100)));
+    for kind in ["config", "session_info"] {
         assert!(events
             .iter()
             .any(|event| matches!(event, SessionServerEvent::Artifact { kind: actual, body: Some(_) , .. } if actual == kind)));
@@ -295,10 +303,12 @@ fn consecutive_agent_chunks_are_coalesced_before_persistence() {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hel".to_string(),
+            message_id: None,
         },
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "lo".to_string(),
+            message_id: None,
         },
         SessionServerEvent::TurnEnd { stop_reason: None },
     ]);
@@ -309,6 +319,7 @@ fn consecutive_agent_chunks_are_coalesced_before_persistence() {
             SessionServerEvent::Message {
                 role: "agent".to_string(),
                 text: "hello".to_string(),
+                message_id: None,
             },
             SessionServerEvent::TurnEnd { stop_reason: None },
         ]
@@ -331,6 +342,7 @@ fn pi_startup_info_is_a_note_instead_of_agent_prose() {
         vec![SessionServerEvent::Message {
             role: "note".to_string(),
             text: startup.to_string(),
+            message_id: None,
         }]
     );
 }
@@ -386,7 +398,7 @@ fn duplicate_client_prompt_id_is_not_dispatched_twice() {
                 .iter()
                 .filter(|event| matches!(
                     event,
-                    SessionServerEvent::Message { role, text }
+                    SessionServerEvent::Message { role, text, .. }
                         if role == "user" && text == "first"
                 ))
                 .count(),
@@ -394,7 +406,7 @@ fn duplicate_client_prompt_id_is_not_dispatched_twice() {
         );
         assert!(!events.iter().any(|event| matches!(
             event,
-            SessionServerEvent::Message { role, text }
+            SessionServerEvent::Message { role, text, .. }
                 if role == "user" && text == "duplicate"
         )));
     });

@@ -454,6 +454,7 @@ impl WebSessionHub {
         let user_event = SessionServerEvent::Message {
             role: "user".to_string(),
             text: text.clone(),
+            message_id: None,
         };
         let client = Arc::clone(&slot.client);
         let in_flight = client.lock().unwrap().prompt_in_flight();
@@ -642,6 +643,7 @@ pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),
         text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
+        message_id: None,
     }
 }
 
@@ -706,7 +708,7 @@ pub fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bo
             AcpClientEvent::SessionUpdate(params) => {
                 let mut mapped = map_acp_session_notification(&params);
                 for event in &mut mapped {
-                    if let SessionServerEvent::Message { role, text } = event {
+                    if let SessionServerEvent::Message { role, text, .. } = event {
                         if role == "agent" && startup_info == Some(text.as_str()) {
                             *role = "note".to_string();
                         }
@@ -761,10 +763,20 @@ pub(crate) fn coalesce_session_events(events: Vec<SessionServerEvent>) -> Vec<Se
             (
                 Some(SessionServerEvent::Message {
                     role: previous_role,
+                    message_id: previous_id,
                     ..
                 }),
-                SessionServerEvent::Message { role, .. },
-            ) => previous_role == role && matches!(role.as_str(), "agent" | "thought"),
+                SessionServerEvent::Message {
+                    role, message_id, ..
+                },
+                // A differing `messageId` means the harness started a new
+                // message, so concatenating the two would splice unrelated
+                // prose. Absent on both sides, role adjacency decides as before.
+            ) => {
+                previous_role == role
+                    && previous_id == message_id
+                    && matches!(role.as_str(), "agent" | "thought")
+            }
             _ => false,
         };
         if can_merge {
@@ -788,7 +800,7 @@ pub(crate) fn map_acp_session_update_with_startup(
 ) -> Vec<SessionServerEvent> {
     let mut events = map_acp_session_update(params);
     for event in &mut events {
-        if let SessionServerEvent::Message { role, text } = event {
+        if let SessionServerEvent::Message { role, text, .. } = event {
             if role == "agent" && startup_info == Some(text.as_str()) {
                 *role = "note".to_string();
             }
