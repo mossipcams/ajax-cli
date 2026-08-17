@@ -1,0 +1,6 @@
+---
+description: pstack slash-command only
+alwaysApply: true
+---
+Pstack is manual. Do not read or run pstack skills (how, why, architect, swarm, arena, interrogate, reflect, figure-it-out, blast-radius, teach, poteto-mode) unless the user explicitly invoked that slash command (`/how`, `/why`, `/architect`, …).
+Do not spawn pstack explorer, investigator, critic, or swarm Tasks on your own.
