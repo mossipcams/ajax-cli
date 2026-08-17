@@ -118,6 +118,11 @@ describe("TaskMetaDetails", () => {
     expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
   });
 
+  it("does not render the harness switch inside task details", () => {
+    render(<TaskMetaDetails detail={detail({ agent: "cursor" })} />);
+    expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
+  });
+
   it("uses sentence-case field labels without uppercase dt styling", () => {
     const dtBlock = stylesSource.match(/\.detail-grid dt\s*\{([\s\S]*?)\}/);
     expect(dtBlock).not.toBeNull();

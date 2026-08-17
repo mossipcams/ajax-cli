@@ -126,7 +126,8 @@ the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
-another harness, exposed as the Harness switch on the Diff Review page. It is
+another harness, exposed as the Harness switch on the task details page and in
+the Ajax chat (SessionChat) task-details modal. It is
 refused for a task that was launched interactively, because that task's agent is
 live in its tmux pane and the registry must not name a harness that is not the
 running process. On success the host drops the task's ACP slot so the next attach

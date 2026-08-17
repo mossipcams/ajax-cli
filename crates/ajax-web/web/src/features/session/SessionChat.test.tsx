@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent, screen, act } from "@testing-library/react";
+import { render, fireEvent, screen, act, waitFor } from "@testing-library/react";
 import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import * as api from "@/shared/lib/api";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -226,5 +227,39 @@ describe("SessionChat smoke", () => {
     });
     expect(onOpenDiff).toHaveBeenCalledOnce();
     vi.useRealTimers();
+  });
+
+  it("shows the harness switch in the task details modal when the task has an agent", () => {
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-swap")).toBeInTheDocument();
+    expect(screen.queryByText("Agent")).not.toBeInTheDocument();
+  });
+
+  it("hides the harness switch in the task details modal when the task has no agent", () => {
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "" } });
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
+  });
+
+  it("calls onSwappedAgent and onMutated once after a successful harness swap in the details modal", async () => {
+    vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    const onSwappedAgent = vi.fn();
+    const onMutated = vi.fn();
+    mountChat({
+      detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" },
+      onSwappedAgent,
+      onMutated,
+    });
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(onSwappedAgent).toHaveBeenCalledOnce());
+    expect(onMutated).toHaveBeenCalledOnce();
   });
 });

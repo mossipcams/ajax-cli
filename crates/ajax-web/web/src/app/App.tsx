@@ -619,11 +619,6 @@ export default function App() {
                   handle={route.handle}
                   title={detail.data.title}
                   selectedPr={route.pr}
-                  agent={detail.data.agent}
-                  onSwappedAgent={() => {
-                    if (route.kind === "diff" && route.handle) clearSessionOutbox(route.handle);
-                    reload();
-                  }}
                   onBack={() => {
                     if (route.kind === "diff" && route.handle) {
                       go(
@@ -665,6 +660,9 @@ export default function App() {
                   onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
                   onCockpit={applyCockpit}
                   onResult={showResult}
+                  onSwappedAgent={() => {
+                    if (route.kind === "session" && route.handle) clearSessionOutbox(route.handle);
+                  }}
                   onMutated={() => route.kind === "session" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                   onRetry={reload}
@@ -697,6 +695,9 @@ export default function App() {
                   onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
                   onCockpit={applyCockpit}
                   onResult={showResult}
+                  onSwappedAgent={() => {
+                    if (route.kind === "task" && route.handle) clearSessionOutbox(route.handle);
+                  }}
                   onMutated={() => route.kind === "task" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                   pendingConfirmAction={pendingConfirm?.action.action ?? null}
