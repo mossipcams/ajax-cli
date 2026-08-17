@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, fireEvent, screen, act } from "@testing-library/react";
+import { render, fireEvent, screen, act, waitFor } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
@@ -10,6 +10,7 @@ import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { readFileSync } from "node:fs";
+import * as api from "@/shared/lib/api";
 
 vi.mock("@/shared/lib/swipeEnter", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
@@ -110,6 +111,53 @@ describe("TaskDetail", () => {
     expect(screen.getByTestId("mobile-chrome-header")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-chrome-actions")).toBeInTheDocument();
     expect(screen.getByTestId("task-detail")).toBeInTheDocument();
+  });
+
+  it("shows the harness switch on the page when the task has an agent", () => {
+    render(<TaskDetail detail={detail({ agent: "cursor" })} />);
+    expect(screen.getByTestId("harness-swap")).toHaveTextContent("Harness — Cursor");
+  });
+
+  it("hides the harness switch when the task has no agent", () => {
+    render(<TaskDetail detail={detail({ agent: "" })} />);
+    expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
+  });
+
+  it("keeps the harness switch outside the collapsed task details disclosure", () => {
+    render(<TaskDetail detail={detail({ agent: "cursor" })} />);
+    const harness = screen.getByTestId("harness-swap");
+    const detailsGroup = screen.getByRole("group");
+    expect(detailsGroup).not.toContainElement(harness);
+  });
+
+  it("calls onSwappedAgent and onMutated once after a successful harness swap", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ id: "gpt-5.6-sol[low]", label: "GPT-5.6-Sol (low)" }],
+          default: "gpt-5.6-sol[low]",
+        }),
+      }),
+    );
+    vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    const onSwappedAgent = vi.fn();
+    const onMutated = vi.fn();
+    render(
+      <TaskDetail
+        detail={detail({ agent: "cursor" })}
+        onSwappedAgent={onSwappedAgent}
+        onMutated={onMutated}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(onSwappedAgent).toHaveBeenCalledOnce());
+    expect(onMutated).toHaveBeenCalledOnce();
   });
 
   it("renders the task outlet hook the scroll lock targets", () => {

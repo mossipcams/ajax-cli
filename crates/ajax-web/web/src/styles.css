@@ -2563,8 +2563,7 @@ html.keyboard-open .session-composer textarea {
 }
 
 /* Segmented agent picker — all choices visible, one tap, no dropdown scroll. */
-/* Harness switch on the Diff page: collapsed to one row until opened, so the
-   diff stays the focus. */
+/* Harness switch on the task details page: collapsed to one row until opened. */
 .harness-swap {
   display: flex;
   align-items: center;

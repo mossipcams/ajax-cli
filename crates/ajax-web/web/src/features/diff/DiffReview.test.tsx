@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import DiffReview from "./DiffReview";
+import diffReviewSource from "./DiffReview?raw";
 import * as api from "@/shared/lib/api";
 import type { DiffFileView, DiffJudgmentView, TaskDiffView } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
@@ -121,6 +122,18 @@ beforeEach(() => {
 });
 
 describe("DiffReview", () => {
+  it("does not implement harness swap props or UI", () => {
+    expect(diffReviewSource).not.toMatch(/HarnessSwap/);
+    expect(diffReviewSource).not.toMatch(/onSwappedAgent/);
+    expect(diffReviewSource).not.toMatch(/\bagent\?:/);
+  });
+
+  it("does not render the harness switch", async () => {
+    render(<DiffReview handle="web/fix-login" title="Fix login" />);
+    expect(await screen.findByTestId("diff-pr-strip")).toBeInTheDocument();
+    expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
+  });
+
   it("renders PR chips, auto-opens top signal file, and shows hunks", async () => {
     render(<DiffReview handle="web/fix-login" title="Fix login" />);
 

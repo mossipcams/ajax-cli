@@ -50,6 +50,7 @@ import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/
 import type { TerminalConnection } from "@/shared/lib/terminalConnection";
 import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
+import HarnessSwap from "@/features/task/HarnessSwap";
 import TaskLoadError from "@/features/task/TaskLoadError";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -93,6 +94,8 @@ interface Props {
     },
   ) => void;
   onMutated?: () => void;
+  /** Swap-only hook — e.g. clear the orchestration session outbox before reload. */
+  onSwappedAgent?: () => void;
   onDismiss?: () => void;
   onRetry?: () => void;
 }
@@ -107,6 +110,7 @@ export default function SessionChat({
   onCockpit,
   onResult,
   onMutated,
+  onSwappedAgent,
   onDismiss,
   onRetry,
 }: Props) {
@@ -244,6 +248,11 @@ export default function SessionChat({
 
   function respondDecision(approved: boolean) {
     respondPermission(approved);
+  }
+
+  function handleHarnessSwapped() {
+    onSwappedAgent?.();
+    onMutated?.();
   }
 
   if (!handle) return null;
@@ -457,13 +466,19 @@ export default function SessionChat({
                         <>
                           <dt>Lifecycle</dt>
                           <dd>{detail.lifecycle}</dd>
-                          <dt>Agent</dt>
-                          <dd>{detail.agent}</dd>
                           <dt>Branch</dt>
                           <dd className="session-meta-mono">{detail.branch}</dd>
                         </>
                       ) : null}
                     </dl>
+
+                    {detail?.agent ? (
+                      <HarnessSwap
+                        handle={detail.qualified_handle ?? handle}
+                        currentAgent={detail.agent}
+                        onSwapped={handleHarnessSwapped}
+                      />
+                    ) : null}
 
                     <SessionModelSelect
                       id={`${composerId}-model`}
