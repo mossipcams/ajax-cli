@@ -4,6 +4,7 @@ import {
   connectWebSessionTransport,
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
+import { MessageBuffer } from "./messageBuffer";
 import {
   explainOpenFailure,
   OPEN_FAILURE,
@@ -49,6 +50,11 @@ export function useSessionTransport({
     let reconnectAttempts = 0;
     let reconnecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // Coalesces ACP message chunks so the assistant response renders as
+    // paragraphs, not a token stream (issue #904, typewriter-free). Recreated
+    // per connection so a reset clears any text buffered from the previous
+    // connection.
+    let buffer: MessageBuffer | undefined;
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -71,12 +77,18 @@ export function useSessionTransport({
     const open = () => {
       transportRef.current?.dispose();
       transportRef.current = undefined;
+      buffer?.dispose();
+      buffer = new MessageBuffer((event) => dispatch({ type: "event", event }));
       // Clear before the host replays its durable transcript, never after.
       dispatch({ type: "reset" });
       const transport = connectWebSessionTransport(
         handle,
         {
           onReady: (nextModel) => {
+            // The `ready` event already flushes via onEvent; this is a
+            // belt-and-suspenders flush for any replayed text that arrived
+            // before the handshake completed, so history renders promptly.
+            buffer?.flushAll();
             handshakeAttempts = 0;
             reconnectAttempts = 0;
             everOpenedRef.current = true;
@@ -91,13 +103,16 @@ export function useSessionTransport({
             // The socket cannot report why an upgrade was refused, so swap its
             // blank failure for the reason the task detail already carries.
             if (event.type === "error" && event.message === OPEN_FAILURE) {
-              dispatch({
-                type: "event",
-                event: { type: "error", message: explainOpenFailure(detailRef.current) },
+              buffer?.push({
+                type: "error",
+                message: explainOpenFailure(detailRef.current),
               });
               return;
             }
-            dispatch({ type: "event", event });
+            // Streamed text is held for the turn and flushed as paragraphs at a
+            // boundary (turn_end, a tool call, ready); everything else flushes
+            // pending text first so ordering is preserved.
+            buffer?.push(event);
           },
           onClosed: () => {
             connectedRef.current = false;
@@ -145,6 +160,8 @@ export function useSessionTransport({
       reconnecting = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (retryTimer) clearTimeout(retryTimer);
+      buffer?.dispose();
+      buffer = undefined;
       transportRef.current?.dispose();
       transportRef.current = undefined;
       connectedRef.current = false;
