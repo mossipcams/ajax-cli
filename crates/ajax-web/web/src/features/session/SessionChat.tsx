@@ -319,71 +319,71 @@ export default function SessionChat({
         ) : (
           <Transcript items={state.items} busy={state.busy} />
         )}
-
-        <form
-          className="session-composer"
-          data-testid="session-composer"
-          aria-label="Session composer"
-          onSubmit={submitComposer}
-        >
-          <div className="session-composer-row">
-            <textarea
-              id={composerId}
-              rows={1}
-              enterKeyHint="send"
-              placeholder={
-                !connected
-                  ? everOpened
-                    ? "Reconnecting…"
-                    : "Starting…"
-                  : state.busy
-                    ? "Sends after this turn…"
-                    : "Message…"
-              }
-              aria-label="Message"
-              ref={composerRef}
-              value={draft}
-              onChange={(e) => {
-                const next = e.target.value;
-                draftRef.current = next;
-                autoGrow(e.currentTarget, next.length < draft.length);
-                setDraft(next);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendDraft();
-                }
-              }}
-            />
-            <div className="session-composer-actions">
-              <button
-                type="button"
-                className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}`}
-                aria-label={micArmed ? "Stop voice input" : micAriaLabel}
-                title={micArmed ? "Stop voice input" : micAriaLabel}
-                disabled={!connected || speechModel.state === "connecting" || speechModel.state === "finalizing"}
-                onClick={toggleMic}
-              >
-                Mic
-              </button>
-              <button
-                type="submit"
-                className="session-composer-button session-composer-send"
-                aria-label="Send"
-                disabled={!connected || !draft.trim()}
-              >
-                Send
-              </button>
-            </div>
-          </div>
-          {speechModel.errorMessage || speechModel.state === "listening" ? (
-            <p className="session-speech-status" role="status" aria-live="polite">
-              {speechModel.errorMessage ?? "Listening…"}
-            </p>
-          ) : null}
-        </form>
       </div>
+
+      <form
+        className="session-composer"
+        data-testid="session-composer"
+        aria-label="Session composer"
+        onSubmit={submitComposer}
+      >
+        <div className="session-composer-row">
+          <textarea
+            id={composerId}
+            rows={1}
+            enterKeyHint="send"
+            placeholder={
+              !connected
+                ? everOpened
+                  ? "Reconnecting…"
+                  : "Starting…"
+                : state.busy
+                  ? "Sends after this turn…"
+                  : "Message…"
+            }
+            aria-label="Message"
+            ref={composerRef}
+            value={draft}
+            onChange={(e) => {
+              const next = e.target.value;
+              draftRef.current = next;
+              autoGrow(e.currentTarget, next.length < draft.length);
+              setDraft(next);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendDraft();
+              }
+            }}
+          />
+          <div className="session-composer-actions">
+            <button
+              type="button"
+              className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}`}
+              aria-label={micArmed ? "Stop voice input" : micAriaLabel}
+              title={micArmed ? "Stop voice input" : micAriaLabel}
+              disabled={!connected || speechModel.state === "connecting" || speechModel.state === "finalizing"}
+              onClick={toggleMic}
+            >
+              Mic
+            </button>
+            <button
+              type="submit"
+              className="session-composer-button session-composer-send"
+              aria-label="Send"
+              disabled={!connected || !draft.trim()}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+        {speechModel.errorMessage || speechModel.state === "listening" ? (
+          <p className="session-speech-status" role="status" aria-live="polite">
+            {speechModel.errorMessage ?? "Listening…"}
+          </p>
+        ) : null}
+      </form>
 
       {behind ? (
         <button

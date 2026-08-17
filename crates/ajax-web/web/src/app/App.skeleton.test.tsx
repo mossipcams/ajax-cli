@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 
@@ -78,5 +78,105 @@ describe("App shell skeletons", () => {
     setHash("#/t/web%2Ffix-login");
     await screen.findByTestId("outlet-task");
     expect(screen.getByTestId("task-skeleton")).toBeInTheDocument();
+  });
+
+  it("#908: cold start on a missing task keeps main on skeleton until detail 404s", async () => {
+    window.location.hash = "#/t/web%2Fmissing";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (
+          path.startsWith("/api/tasks/") &&
+          !path.includes("/pull-requests") &&
+          !path.includes("/diff")
+        ) {
+          return Promise.resolve(jsonResponse({}, 404));
+        }
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: false }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    render(<App />);
+    const main = screen.getByTestId("app-main");
+    expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
+    expect(main).toContainElement(screen.getByTestId("task-skeleton"));
+    expect(screen.queryByTestId("task-load-error")).not.toBeInTheDocument();
+    await screen.findByTestId("task-load-error");
+    expect(screen.getByText(/Could not load this task/)).toBeInTheDocument();
+    expect(screen.queryByTestId("task-skeleton")).not.toBeInTheDocument();
+  });
+
+  it("#908: navigating from dashboard before detail settles paints task skeleton in main", async () => {
+    let resolveDetail!: (value: ReturnType<typeof jsonResponse>) => void;
+    const detailPending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      resolveDetail = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (
+          path.startsWith("/api/tasks/") &&
+          !path.includes("/pull-requests") &&
+          !path.includes("/diff")
+        ) {
+          return detailPending;
+        }
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: false }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    render(<App />);
+    await screen.findByTestId("outlet-dashboard");
+    setHash("#/t/web%2Fmissing");
+    const main = screen.getByTestId("app-main");
+    await screen.findByTestId("outlet-task");
+    expect(main).toContainElement(screen.getByTestId("task-skeleton"));
+    expect(screen.queryByTestId("dashboard-skeleton")).not.toBeInTheDocument();
+    await act(async () => {
+      resolveDetail(jsonResponse({}, 404));
+    });
+    await screen.findByTestId("task-load-error");
+  });
+
+  it("#860: missing-task diff shows skeleton then error without DiffReview chrome", async () => {
+    let resolveDetail!: (value: ReturnType<typeof jsonResponse>) => void;
+    const detailPending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      resolveDetail = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+      if (path.includes("/pull-requests") || path.includes("/diff")) {
+        return Promise.reject(new Error(`unexpected diff fetch: ${path}`));
+      }
+      if (path.startsWith("/api/tasks/")) return detailPending;
+      if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: false }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    setHash("#/t/web%2Fmissing/diff/");
+    await screen.findByTestId("outlet-diff");
+    expect(screen.getByTestId("task-skeleton")).toBeInTheDocument();
+    expect(screen.queryByTestId("diff-review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading pull requests…")).not.toBeInTheDocument();
+    await act(async () => {
+      resolveDetail(jsonResponse({}, 404));
+    });
+    await screen.findByTestId("task-load-error");
+    expect(screen.queryByTestId("diff-review")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/pull-requests")),
+    ).toHaveLength(0);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/diff")),
+    ).toHaveLength(0);
   });
 });

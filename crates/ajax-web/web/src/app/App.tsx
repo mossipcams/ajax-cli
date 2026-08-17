@@ -612,30 +612,39 @@ export default function App() {
               data-handle={route.handle}
               aria-live="polite"
             >
-              <DiffReview
-                handle={route.handle}
-                title={detail.data?.title}
-                selectedPr={route.pr}
-                agent={detail.data?.agent}
-                onSwappedAgent={() => {
-                  if (route.kind === "diff" && route.handle) clearSessionOutbox(route.handle);
-                  reload();
-                }}
-                onBack={() => {
-                  if (route.kind === "diff" && route.handle) {
-                    go(
-                      orchestrationChat
-                        ? sessionHash(route.handle)
-                        : taskHash(route.handle),
-                    );
-                  }
-                }}
-                onSelectPr={(pr) => {
-                  if (route.kind === "diff" && route.handle) {
-                    go(taskDiffHash(route.handle, pr));
-                  }
-                }}
-              />
+              {detail.status === "loading" ? (
+                <Skeleton testid="task-skeleton" rows={6} />
+              ) : detail.data ? (
+                <DiffReview
+                  handle={route.handle}
+                  title={detail.data.title}
+                  selectedPr={route.pr}
+                  agent={detail.data.agent}
+                  onSwappedAgent={() => {
+                    if (route.kind === "diff" && route.handle) clearSessionOutbox(route.handle);
+                    reload();
+                  }}
+                  onBack={() => {
+                    if (route.kind === "diff" && route.handle) {
+                      go(
+                        orchestrationChat
+                          ? sessionHash(route.handle)
+                          : taskHash(route.handle),
+                      );
+                    }
+                  }}
+                  onSelectPr={(pr) => {
+                    if (route.kind === "diff" && route.handle) {
+                      go(taskDiffHash(route.handle, pr));
+                    }
+                  }}
+                />
+              ) : (
+                <TaskLoadError
+                  message={detail.error?.message ?? "Request failed"}
+                  onRetry={reload}
+                />
+              )}
             </section>
           ) : route.kind === "session" && orchestrationChat ? (
             <section
@@ -694,7 +703,10 @@ export default function App() {
                   onCancelPendingConfirm={cancelPendingConfirm}
                 />
               ) : (
-                <TaskLoadError message={detail.error.message} onRetry={reload} />
+                <TaskLoadError
+                  message={detail.error?.message ?? "Request failed"}
+                  onRetry={reload}
+                />
               )}
             </section>
           ) : (

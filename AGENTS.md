@@ -105,16 +105,23 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-The active harness owns same-harness work and must use its native delegation
-when available. Do not launch another instance of the same harness through Ajax
-Model Router. Use Ajax Model Router only for intentional cross-harness or
-cross-provider delegation.
+The orchestrator writes plans when required, routes through the `model-router`
+skill for executor, model, risk, scope, verification, and fallback decisions,
+and reviews delegate work. It does not explore the tree; it plans and routes.
+It must not implement, commit, push, or open pull requests. Call
+`model-router` for every implementation write. Do not duplicate model rankings
+or exact model IDs in this file.
+
+When the user asks to create a PR, the selected delegate runs the repository's
+local verification gate, commits, pushes, and runs `gh pr create`; the
+orchestrator reports the PR URL after reviewing the delta. Delegates must not
+merge, rebase, force-push, or switch branches unless the user explicitly
+authorizes that behavior.
 
 Every delegated task must be bounded by scope, acceptance criteria,
 verification, and stop conditions. The active agent must inspect the actual
 delta, confirm scope, and independently accept or reject the result. A delegate
-report is evidence, not approval. Delegates must not commit, push, merge,
-rebase, create branches, or switch branches without explicit user authority.
+report is evidence, not approval.
 
 Harness-specific workflows are optional. They cannot override repository
 requirements or become dependencies for other harnesses. Detailed routing,

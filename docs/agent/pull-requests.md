@@ -78,6 +78,11 @@ CodeQL uses GitHub default setup and cannot exclude the release branch. The
 duplicate release-PR scan is accepted; excluding it would require a manually
 maintained advanced-setup workflow.
 
+## Who opens the PR
+
+The model-router-selected delegate runs `gh pr create`, not the orchestrator.
+The orchestrator reviews the delta and reports the PR URL.
+
 ## Local verification gate before a PR
 
 Do not create a pull request until local tests have passed in the worktree.

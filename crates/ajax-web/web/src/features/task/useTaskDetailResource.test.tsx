@@ -102,6 +102,17 @@ describe("useTaskDetailResource", () => {
     expect(deps.applyConnectionError).toHaveBeenCalled();
   });
 
+  it("maps missing task (HTTP 404) to error without applying connection error", async () => {
+    fetchDetail.mockRejectedValue(new ApiError("http", "HTTP 404", 404));
+    const deps = stableDeps();
+    const { result } = renderHook(() => useTaskDetailResource("web/missing", deps));
+
+    await waitFor(() => expect(result.current.detail.status).toBe("error"));
+    expect(result.current.detail.data).toBeNull();
+    expect(result.current.detail.error).toMatchObject({ kind: "http", message: "HTTP 404", status: 404 });
+    expect(deps.applyConnectionError).not.toHaveBeenCalled();
+  });
+
   it("maps incompatible detail responses to a recoverable error", async () => {
     fetchDetail.mockRejectedValue(new IncompatibleResponseError("detail.actions is invalid"));
     const deps = stableDeps();

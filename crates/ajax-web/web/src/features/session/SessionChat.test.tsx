@@ -98,6 +98,17 @@ describe("SessionChat smoke", () => {
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument();
   });
 
+  // Regression for #877: sticky inside the masked overflow scroller left the
+  // composer stranded mid-viewport after the iOS keyboard dismissed.
+  it("docks the composer below the transcript scroller, not inside it", () => {
+    mountChat();
+    const chat = screen.getByTestId("session-chat");
+    const thread = screen.getByTestId("session-thread");
+    const composer = screen.getByTestId("session-composer");
+    expect(thread).not.toContainElement(composer);
+    expect(chat).toContainElement(composer);
+  });
+
   it("keeps transcript events replayed before ready", () => {
     vi.restoreAllMocks();
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(

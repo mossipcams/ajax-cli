@@ -43,7 +43,10 @@ export function useTaskDetailResource(
         error instanceof ApiError
           ? error
           : new ApiError("incompatible", error instanceof Error ? error.message : String(error));
-      if (error instanceof ApiError) depsRef.current.applyConnectionError(error);
+      // #861: missing task is a detail error, not a cockpit disconnect
+      if (error instanceof ApiError && error.status !== 404) {
+        depsRef.current.applyConnectionError(error);
+      }
       setDetail((prev) => {
         if (prev.status === "ready" || prev.status === "stale") {
           return { status: "stale", data: prev.data, error: detailError };

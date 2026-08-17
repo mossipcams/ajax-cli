@@ -6,54 +6,51 @@ The active agent owns investigation, engineering decisions, review, and final
 verification. Delegation changes who performs a bounded task; it does not
 transfer responsibility for the result.
 
-## Same-harness work
+## Model routing
 
-Use the active harness's native delegation for same-harness work: Cursor to
-Cursor, Codex to Codex, and Pi to Pi when native execution is available.
-Do not launch a second instance of the same harness through Ajax Model Router.
+Call the `model-router` skill for every implementation write. It emits one
+`EXECUTION` decision (agent, model, risk, scope, verify, fallback), then
+execute and verify. Skip it only for pure Q&A or exploration with no file
+changes. The orchestrator plans and does not implement.
 
-Harness-specific workflows are optional local capabilities. They must not
-override this repository contract or become requirements for other harnesses.
-
-## Cross-harness work
-
-Use the Ajax Model Router skill only when intentionally delegating to a model in
-a different harness or provider subscription. Do not duplicate provider model
-rankings or exact model IDs in repository documentation; the router registry is
-their source of truth.
+Do not duplicate provider model rankings or exact model IDs in repository
+documentation; the router registry is their source of truth.
 
 Ajax Model Router owns:
 
-- target-harness and model validation;
-- exact provider model IDs and cross-harness transport;
+- executor, model, risk, scope, verification expectation, and fallback;
+- exact provider model IDs;
 - timeouts, cancellation, pre-dispatch snapshots, and post-dispatch deltas;
 - write-scope enforcement and structured delegate reports;
 - verification artifacts, parent review bundles, and safe restoration of
   rejected delegate changes.
 
-It does not own:
+It does not own engineering playbook or architecture decisions.
 
-- engineering playbook or architecture decisions;
-- whether the active agent implements directly;
-- same-harness delegation;
-- risk-based or file-type-based model selection outside its registry.
+Delegate dispatch transport is acpx ACP (one client for cursor, codex, and
+pi); install `acpx` and keep it on `PATH`.
 
 If a requested target or model is unavailable, stop and report the constraint.
 Do not silently substitute another provider or model.
 
+Harness-specific workflows are optional local capabilities. They must not
+override this repository contract or become requirements for other harnesses.
+
 ## Work orders
 
-Every cross-harness delegation must state:
+Every delegated task must state:
 
-- target harness and requested model;
 - one bounded task;
 - allowed files or write scope;
 - observable acceptance criteria;
 - relevant verification;
 - explicit stop conditions.
 
-Gather enough source and test context to make the order concrete before
-dispatch. Do not delegate a vague request.
+Do not pre-explore the repository to perfect scope or gather implementation
+context. State outcome, acceptance criteria, and a bounded `SCOPE` on
+`EXECUTION`; the delegate investigates inside that scope. If `SCOPE` is wrong,
+the delegate stops and you emit a new `EXECUTION` — do not explore to fix scope
+first. Do not delegate a vague request without outcome and acceptance.
 
 ## Acceptance and review
 
@@ -69,5 +66,9 @@ Before accepting delegated work, the active agent must:
 An empty diff with a success claim is a failure. A delegate report is evidence,
 not approval.
 
-Delegates must not commit, push, merge, rebase, create branches, or switch
-branches unless the user explicitly authorizes that behavior.
+When the user asks to create a PR, the selected delegate runs the repository's
+local verification gate, commits, pushes, and runs `gh pr create`; the
+orchestrator reports the PR URL after reviewing the delta. Delegates must not
+merge, rebase, force-push, or switch branches unless the user explicitly
+authorizes that behavior. A commit or pull-request request implies commit,
+push, and `gh pr create`.
