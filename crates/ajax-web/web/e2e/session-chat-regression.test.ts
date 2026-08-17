@@ -174,7 +174,15 @@ async function mockTypedTurn(page: Page) {
           content: [{ type: "text", text: `error: assertion failed ${LONG}` }],
         },
         { type: "usage", used: 92, size: 100 },
-        { type: "message", role: "agent", text: "Changed the port to 2." },
+        {
+          type: "message",
+          role: "agent",
+          // Long enough that the thread overflows its band. The flex-shrink bug
+          // this guards only appears once the column has to give up height.
+          text: `Changed the port to 2.\n\n${"The config module reads it once at startup and hands it to the listener. ".repeat(
+            12,
+          )}`,
+        },
         { type: "turn_end", stopReason: "end_turn" },
       ];
       for (const next of events) socket.send(JSON.stringify(next));
@@ -229,6 +237,18 @@ test("a turn renders its tool calls, diff, plan and reasoning in place", async (
   });
   expect(overflow.page).toBe(0);
   expect(overflow.thread).toBe(0);
+
+  // The thread is a flex column and a card sets `overflow: hidden`, which zeroes
+  // a flex item's automatic minimum size. Without `flex: none` a full thread
+  // crushed these to a sliver of clipped text — vertical, so the horizontal
+  // checks above sailed past it. Assert each card still fits its own header.
+  const crushed = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="session-tool-card"]')).filter((card) => {
+      const head = card.querySelector("button") as HTMLElement;
+      return card.getBoundingClientRect().height + 0.5 < head.scrollHeight;
+    }).length,
+  );
+  expect(crushed).toBe(0);
 });
 
 test("an error turn ends visibly with recovery guidance", async ({ page }) => {

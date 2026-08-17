@@ -101,6 +101,15 @@ into prose or dropped.
 | `npm run web:test -- --run` | pass (868 passed, 9 skipped) |
 | `npm run web:smoke` (mobile-webkit) | pass (121 passed, 3 skipped, 1 flaky) |
 
-The flaky test is `terminal-behavior.test.ts › phone fullscreen keeps background
-controls inert until exit` — a `page.goto` timeout on a route this change does
-not touch; it passed on retry.
+The one flaky test each run is in `terminal-behavior.test.ts` (a `page.goto`
+timeout, a different test on each run) — a route this change does not touch; it
+passes on retry.
+
+## Defect found and fixed during the build
+
+Screenshotting the real surface caught what the assertions missed: the thread is
+a flex column, and `overflow: hidden` on `.session-toolcard` zeroes a flex
+item's automatic minimum size, so a full thread crushed every completed tool
+card to a sliver of clipped text. Fixed with `flex: none`. The e2e turn fixture
+now produces enough prose to overflow the band — without it the thread never has
+to give up height and the regression is invisible to the suite.

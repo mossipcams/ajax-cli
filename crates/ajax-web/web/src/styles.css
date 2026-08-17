@@ -1109,6 +1109,10 @@ html.terminal-expanded .result-panel {
    answer is bad. */
 .session-toolcard {
   align-self: stretch;
+  /* The thread is a flex column, and `overflow: hidden` zeroes a flex item's
+     automatic minimum size — without `flex: none` a full thread crushes these
+     cards to a sliver of clipped text. */
+  flex: none;
   min-width: 0;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
