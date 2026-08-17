@@ -167,6 +167,25 @@ export function activePlanStep(plan: PlanEntry[]): string | null {
   return plan.find((entry) => entry.status === "in_progress")?.content ?? null;
 }
 
+/** Latest reasoning text in arrival order, for the live head while a turn runs. */
+export function latestThought(items: ConversationItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item.kind === "thought") {
+      const text = item.text.trim();
+      return text || null;
+    }
+  }
+  return null;
+}
+
+/** One quiet line for the head: collapse whitespace and trim length. */
+export function thoughtSnippet(text: string, maxLen = 120): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  if (line.length <= maxLen) return line;
+  return `${line.slice(0, maxLen - 1)}…`;
+}
+
 /** Omit over a union collapses to its shared keys, so distribute it. */
 type DraftItem = ConversationItem extends infer T
   ? T extends ConversationItem

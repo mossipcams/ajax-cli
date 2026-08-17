@@ -801,6 +801,12 @@ html.terminal-expanded .result-panel {
   color: var(--ink-muted);
 }
 
+.session-head-thought {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --ink-faint is CLI-locked (xterm 244) and measures 4.27:1 on this surface,
    below WCAG AA for body text, so reading text in this route sits one rung up
    at --ink-muted (7.09:1). Decorative marks keep the fainter rung. */

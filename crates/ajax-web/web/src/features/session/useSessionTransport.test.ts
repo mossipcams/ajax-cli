@@ -55,10 +55,17 @@ describe("useSessionTransport", () => {
   });
 
   // Regression for issue #904: streamed ACP message chunks must be coalesced
-  // into phrase-sized bursts before reaching the reducer, not dispatched one
-  // per token. Unbuffered, four chunks produce four `event` dispatches.
+  // with requestAnimationFrame before reaching the reducer, not dispatched one
+  // per token or held until turn_end.
   it("coalesces streamed message chunks before dispatching", () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const frameQueue: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frameQueue.push(callback);
+      return frameQueue.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
     const dispatched: SessionAction[] = [];
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
@@ -104,8 +111,19 @@ describe("useSessionTransport", () => {
     const messageDispatches = dispatched.filter(
       (a) => a.type === "event" && a.event.type === "message",
     );
-    // Still buffered — no per-token dispatch has reached the reducer.
     expect(messageDispatches).toHaveLength(0);
+
+    act(() => {
+      for (const callback of frameQueue.splice(0)) callback(0);
+    });
+    expect(
+      dispatched.filter((a) => a.type === "event" && a.event.type === "message"),
+    ).toEqual([
+      {
+        type: "event",
+        event: { type: "message", role: "agent", text: "The bug is here", itemId: "i1" },
+      },
+    ]);
 
     // turn_end flushes the remaining buffer first, then the turn_end event.
     act(() => onEvent!({ type: "turn_end", stopReason: "end_turn" }));

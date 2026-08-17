@@ -19,6 +19,13 @@ const transport = {
 let emit: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
 let ready: ((model: string) => void) | undefined;
 let autoReady = true;
+let frameQueue: FrameRequestCallback[] = [];
+
+function flushRaf() {
+  act(() => {
+    for (const callback of frameQueue.splice(0)) callback(0);
+  });
+}
 
 function stubSessionTransport() {
   vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
@@ -44,6 +51,7 @@ function mountChat(overrides: Partial<React.ComponentProps<typeof SessionChat>> 
 
 function send(event: webSessionTransport.WebSessionServerEvent) {
   act(() => emit?.(event));
+  flushRaf();
 }
 
 afterEach(() => {
@@ -58,6 +66,12 @@ describe("SessionChat smoke", () => {
     emit = undefined;
     ready = undefined;
     autoReady = true;
+    frameQueue = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frameQueue.push(callback);
+      return frameQueue.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     transport.sendPrompt.mockClear();
     transport.respondPermission.mockClear();
     localStorage.clear();
@@ -163,7 +177,9 @@ describe("SessionChat smoke", () => {
   // Regression for #889: stable ACP v1 has no stalled signal, so expose event
   // freshness without changing the host-owned in-flight state.
   it("shows when a busy turn has stopped producing ACP activity", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
     vi.setSystemTime(new Date("2026-08-15T12:00:00Z"));
     mountChat({
       detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
@@ -188,6 +204,7 @@ describe("SessionChat smoke", () => {
 
     send({ type: "message", role: "thought", text: "Checking files", itemId: "t1" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
+    expect(screen.getByTestId("session-head-thought")).toHaveTextContent("Checking files");
     send({ type: "turn_end" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");
     expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();

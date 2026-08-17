@@ -113,7 +113,10 @@ existing paths.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
   compaction preserves absolute replay cursors. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values
-  before persistence.
+  before persistence. The browser `MessageBuffer` rAF-coalesces those updates to
+  the latest full text per `itemId` during the turn instead of holding them until
+  `turn_end`; boundary events still flush pending lanes first so ordering is
+  preserved.
 
 ## Reconnect model and ACP capabilities
 
@@ -163,7 +166,12 @@ existing paths.
   shows the elapsed minutes while preserving Stop. A later event resets the
   indicator, and turn completion removes it.
 - This is a freshness warning, not a claim that the agent is stalled: stable
-  ACP v1 has no portable stalled-state signal.
+  ACP v1 has no portable stalled-state signal. The head must not invent
+  thinking content from that timer — it shows the latest ACP `thought` text (one
+  quiet line) while working with no tool or plan step, and `Thinking…` only
+  before the first thought, tool, or plan arrives. Reasoning in the transcript
+  auto-expands while it is the live tail of a busy turn and collapses when a
+  later item arrives or the turn settles.
 
 ## Duplicate process and prompt prevention
 
