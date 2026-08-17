@@ -27,6 +27,9 @@ Ajax Model Router owns:
 
 It does not own engineering playbook or architecture decisions.
 
+Delegate dispatch transport is acpx ACP (one client for cursor, codex, and
+pi); install `acpx` and keep it on `PATH`.
+
 If a requested target or model is unavailable, stop and report the constraint.
 Do not silently substitute another provider or model.
 
