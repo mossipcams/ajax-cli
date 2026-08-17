@@ -1,5 +1,5 @@
 //! Browser orchestration-chat wire protocol. ACP update mapping lives in
-//! [`acp_map`]; this module owns only the shapes both ends agree on.
+//! `acp_map`; this module owns only the shapes both ends agree on.
 
 mod acp_map;
 
