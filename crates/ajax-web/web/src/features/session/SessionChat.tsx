@@ -52,6 +52,7 @@ import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 import HarnessSwap from "@/features/task/HarnessSwap";
 import TaskLoadError from "@/features/task/TaskLoadError";
+import TestInDevPanel from "@/features/task/TestInDevPanel";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
@@ -498,6 +499,13 @@ export default function SessionChat({
                           <li key={line}>{line}</li>
                         ))}
                       </ul>
+                    ) : null}
+
+                    {detail?.repo === "ajax-cli" ? (
+                      <TestInDevPanel
+                        taskHandle={detail.qualified_handle ?? handle}
+                        onResult={onResult}
+                      />
                     ) : null}
 
                     <div className="session-sheet-actions" data-testid="session-quick-actions">
