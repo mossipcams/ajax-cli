@@ -179,9 +179,9 @@ describe("App polling cadence", () => {
     await act(async () => {
       setHash(taskHash("web/missing"));
     });
-    await vi.waitFor(() =>
-      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "disconnected"),
-    );
+    // #861: a missing-task 404 is a detail error, not a cockpit disconnect.
+    await vi.waitFor(() => expect(screen.getByTestId("task-load-error")).toBeInTheDocument());
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
 
     const beforeReturn = cockpitCalls;
     await act(async () => {
