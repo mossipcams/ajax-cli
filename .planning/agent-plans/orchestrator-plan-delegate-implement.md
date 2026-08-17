@@ -104,8 +104,9 @@ Ajax-cli: Husky on the agent-doc commit when a PR is requested.
 
 ## Remaining risk
 
-- `composer-first-delegation.mdc` still pushes native Task writes; it will
-  fight this split until changed separately.
-- `cursor-delegate` still uses Cursor `cursor-agent` / Composer, so
-  implementation tokens stay on the Cursor plan. This change only stops the
-  **orchestrator** from doing the writes and PRs.
+- Native Cursor `Task` is forbidden in `composer-first-delegation.mdc`,
+  the router dispatch prompt, and `cursor-delegate`. acpx still has no
+  `--disallowed-tools`, so a model that ignores the prompt can still fan out.
+- `cursor-delegate` still uses Cursor Composer via acpx, so implementation
+  tokens stay on the Cursor plan. This change only stops extra Task hops
+  and the orchestrator doing the writes.

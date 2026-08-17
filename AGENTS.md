@@ -110,7 +110,9 @@ skill for executor, model, risk, scope, verification, and fallback decisions,
 and reviews delegate work. It does not explore the tree; it plans and routes.
 It must not implement, commit, push, or open pull requests. Call
 `model-router` for every implementation write. Do not duplicate model rankings
-or exact model IDs in this file.
+or exact model IDs in this file. A Cursor delegate must implement in-process.
+Native Cursor Task, best-of-n, and other same-harness subagent fan-out are a
+contract violation. Missing `acpx` is stop, not a substitute.
 
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, commits, pushes, and runs `gh pr create`; the
