@@ -9,17 +9,13 @@ import type {
 } from "@/shared/lib/types";
 import { isDiffPanGestureTarget } from "@/shared/gestures/navigateSwipe";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
-import HarnessSwap from "@/features/task/HarnessSwap";
 
 interface Props {
   handle: string;
   title?: string | null;
   selectedPr?: number;
-  /** Harness the task runs on now; enables the harness switch when known. */
-  agent?: string | null;
   onBack?: () => void;
   onSelectPr?: (pr: number | undefined) => void;
-  onSwappedAgent?: () => void;
 }
 
 type LoadState =
@@ -194,10 +190,8 @@ export default function DiffReview({
   handle,
   title,
   selectedPr,
-  agent,
   onBack,
   onSelectPr,
-  onSwappedAgent,
 }: Props) {
   const [state, setState] = useState<LoadState>({
     status: "loading",
@@ -317,10 +311,6 @@ export default function DiffReview({
           <span className="interact-pill tone-idle">Diff</span>
         )}
       </div>
-
-      {agent ? (
-        <HarnessSwap handle={handle} currentAgent={agent} onSwapped={onSwappedAgent} />
-      ) : null}
 
       {state.status === "loading" ? (
         <p className="diff-status" data-testid="diff-loading">
