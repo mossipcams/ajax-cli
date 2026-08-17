@@ -117,7 +117,10 @@ cannot be read is never treated as a cache hit.
 
 The chosen selection is stored on the task (`session_model` metadata) and applied
 when its session starts; `POST /api/tasks` validates its shape and rejects a
-model for an agent with no ACP launch.
+model for an agent with no ACP launch. Bare `#/session` opens the same New Task
+sheet as the dashboard (orchestration chat pre-selected when the flag is on);
+the duplicate Cursor-only Session Starter is removed
+([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
 another harness, exposed as the Harness switch on the Diff Review page. It is
@@ -141,8 +144,10 @@ browser socket is attached. Transcript events append to JSONL; bounded
 compaction is the only rewrite, and adjacent streamed agent/thought chunks are
 coalesced before persistence.
 
-Reconnects read the current browser model preference for every new socket, so a
-model change cannot be replaced by the value captured by an older effect.
+Reconnects do not send the browser `ajax.web.session.model` preference on the
+session WebSocket URL; task metadata remains authoritative
+([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
+on the task before the host replaces the ACP child.
 Incoming ACP v1 notifications remain typed through the host queue. Stable
 message, thought, tool, plan, mode, configuration, session-info, and usage
 updates are mapped explicitly; unsupported capability announcements are

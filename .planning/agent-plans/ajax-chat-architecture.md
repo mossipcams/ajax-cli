@@ -2,7 +2,7 @@
 context: default
 slug: ajax-chat-architecture
 status: in-progress
-approval: user-directed 2026-08-17 — Composer 2.5; Phase 0+1 done; Phase 2 started 2026-08-17
+approval: user-directed 2026-08-17 — Composer 2.5; Phase 0–2 done; Phase 3 started 2026-08-17
 last_updated: 2026-08-17
 ---
 
@@ -17,8 +17,8 @@ The target removes the current split ownership across `WebSessionHub`, the
 `web_session` slice, the WebSocket bridge, browser outbox, reducer, and
 `SessionChat`. It does not redesign the UI or introduce a new service.
 
-Planning is approved by the user's 2026-08-17 request. Phase 0 and Phase 1
-were implemented on 2026-08-17. Phase 2 was approved the same day after Phase 1
+Planning is approved by the user's 2026-08-17 request. Phases 0–2 were
+implemented on 2026-08-17. Phase 3 was approved the same day after Phase 2
 was accepted.
 
 ## Evidence and prior work
@@ -319,21 +319,21 @@ Acceptance:
 
 ### Phase 2: unify task and model configuration
 
-- [ ] Add or reuse one core-owned operation for changing desired session model.
-- [ ] Make model change persist before replacing the ACP child; report a typed
+- [x] Add or reuse one core-owned operation for changing desired session model.
+- [x] Make model change persist before replacing the ACP child; report a typed
   failure if persistence or replacement fails.
-- [ ] Stop putting the global browser model preference in every reconnect URL
+- [x] Stop putting the global browser model preference in every reconnect URL
   ([#910](https://github.com/mossipcams/ajax-cli/issues/910)).
-- [ ] Use the global preference only as the default for new-task model choice.
-- [ ] Remove the duplicate `SessionStarter` creation implementation. Route
+- [x] Use the global preference only as the default for new-task model choice.
+- [x] Remove the duplicate `SessionStarter` creation implementation. Route
   bare `#/session` through the existing New Task flow with orchestration chat
   selected ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
-- [ ] Do not carry Session Starter's optional constraints/outcome fields into
+- [x] Do not carry Session Starter's optional constraints/outcome fields into
   the unified sheet unless product evidence requires them. The first composer
   prompt covers that use case.
-- [ ] Replace Cursor-specific open-failure copy with capability/task-evidence
+- [x] Replace Cursor-specific open-failure copy with capability/task-evidence
   based copy.
-- [ ] Align `web-session-behavior.md` with the implemented
+- [x] Align `web-session-behavior.md` with the implemented
   `session/set_config_option` model contract.
 
 Acceptance:
@@ -522,13 +522,19 @@ implementation continues.
 | 1 | `cargo test -p ajax-web --lib architecture` | 6 passed |
 | 1 | `cargo nextest run -p ajax-web` | 386 passed |
 | 1 | `npm run verify:arch` | pass |
-| 2–5 | (not started) | pending |
+| 2 | `cargo test -p ajax-core --lib set_session_model` | 3 passed |
+| 2 | `cargo test -p ajax-web --lib web_session` | 117 passed |
+| 2 | `cargo test -p ajax-web --lib architecture` | 6 passed |
+| 2 | `cargo clippy -p ajax-web --all-targets -- -D warnings` | pass |
+| 2 | `cargo fmt --check` | pass |
+| 2 | Focused browser session tests (6 files) | 91 passed |
+| 3–5 | (remaining phases) | pending |
 
-- Checklist: Phase 0 + Phase 1 complete (18/18 items). Phases 2–5 unchanged.
+- Checklist: Phase 0 + Phase 1 + Phase 2 complete (25/25 items through Phase 2). Phases 3–5 unchanged.
 
 ## Approval and status
 
 - Plan creation: approved by user on 2026-08-17.
-- Implementation: Phase 0 + Phase 1 complete 2026-08-17. Phase 2 approved 2026-08-17.
-- Checklist: Phase 0 + Phase 1 complete (18/18 items). Phase 2 in progress.
-- Current repository edits from this plan: session runtime ownership migration (committed); Phase 2 task/model authority.
+- Implementation: Phase 0–2 complete 2026-08-17. Phase 3 approved 2026-08-17.
+- Checklist: Phase 0 + Phase 1 + Phase 2 complete (25/25 items through Phase 2). Phase 3–5 pending.
+- Current repository edits from this plan: session runtime ownership (committed); Phase 2 task/model authority (this commit); Phase 3 in progress.

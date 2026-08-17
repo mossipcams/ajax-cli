@@ -23,13 +23,18 @@ existing paths.
   `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
   entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
   `NotOrchestrationChat`.
-- The model chosen when the task was created is stored on the task and used for
-  its session unless the socket pins a different one. With neither, Cursor runs
-  `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
-- Cursor takes its model on the spawn argv; Codex takes `session/set_model` and
-  Claude and Pi take `session/set_config_option` once the session exists. A
-  harness that refuses the selection keeps its own default and the session
-  continues.
+- The model chosen when the task was created is stored on the task (`session_model`
+  metadata) and used for its session. Reconnect must not send a browser
+  `localStorage` preference on the WebSocket URL to override that metadata
+  ([#910](https://github.com/mossipcams/ajax-cli/issues/910)). With no stored
+  model, Cursor runs `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
+- Cursor takes its model on the spawn argv; Codex, Claude, and Pi take
+  `session/set_config_option` once the session exists (the host applies the model
+  id and any reasoning-level option separately). A harness that refuses the
+  selection keeps its own default and the session continues.
+- Changing the model while connected persists `session_model` on the task through
+  a core-owned operation before the host replaces the ACP child; a persistence
+  failure returns a typed `error` event and leaves the running child unchanged.
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
 - Ajax orchestration sessions are trusted local automation, and the Settings
@@ -62,7 +67,8 @@ existing paths.
 
 ## Model switching across ACP process replacement
 
-- `set_model` while idle respawns the ACP child with the new `--model` pin.
+- `set_model` while idle persists the desired model on the task, then respawns the
+  ACP child with the new model pin.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events.
 - A live `ready` event on an established socket must not reset browser reducer
@@ -85,8 +91,10 @@ existing paths.
 
 ## Reconnect model and ACP capabilities
 
-- Every reconnect reads the current browser model preference and sends it in the
-  next session URL; it never reuses a stale hook-captured value.
+- Reconnect does not read the browser `ajax.web.session.model` preference for the
+  WebSocket URL; task `session_model` metadata and the host attach plan decide
+  the model. The preference may still be updated from `ready` so it seeds the
+  New Task picker for the next task only.
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
   Message, thought, tool, plan, mode, configuration, session-info, and usage
   updates have explicit mappings; unsupported capability announcements are

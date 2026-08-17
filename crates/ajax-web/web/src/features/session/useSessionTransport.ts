@@ -10,7 +10,7 @@ import {
   OPEN_FAILURE,
   type SessionAction,
 } from "./sessionThread";
-import { readSessionModel, writeSessionModel } from "./sessionModel";
+import { writeSessionModel } from "./sessionModel";
 import {
   MAX_HANDSHAKE_ATTEMPTS,
   RECONNECT_BASE_MS,
@@ -137,7 +137,7 @@ export function useSessionTransport({
           },
         },
         undefined,
-        readSessionModel(),
+        undefined,
       );
       transportRef.current = transport;
     };

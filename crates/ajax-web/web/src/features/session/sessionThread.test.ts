@@ -377,15 +377,24 @@ describe("explainAcpError", () => {
 });
 
 describe("explainOpenFailure", () => {
-  it("names the agent when the task cannot host an orchestration session", () => {
-    const message = explainOpenFailure({ agent: "Claude", status_explanation: "Running" });
-    expect(message).toContain("Cursor");
+  it("explains when the task is not session-capable", () => {
+    const message = explainOpenFailure({
+      agent: "Claude",
+      status_explanation: "Running",
+      session_capable: false,
+    });
+    expect(message).toContain("orchestration chat");
     expect(message).toContain("Claude");
+    expect(message).not.toContain("Cursor");
   });
 
-  it("passes through the server's own explanation for a Cursor task", () => {
+  it("passes through the server's own explanation for a capable task", () => {
     expect(
-      explainOpenFailure({ agent: "Cursor", status_explanation: "Worktree missing" }),
+      explainOpenFailure({
+        agent: "Cursor",
+        status_explanation: "Worktree missing",
+        session_capable: true,
+      }),
     ).toContain("Worktree missing");
   });
 

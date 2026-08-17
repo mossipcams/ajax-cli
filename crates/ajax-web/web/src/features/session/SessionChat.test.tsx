@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent, screen, act } from "@testing-library/react";
-import SessionChat, {
-  formatSessionBrief,
-  sessionSeededStorageKey,
-} from "./SessionChat";
+import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -179,32 +176,6 @@ describe("SessionChat smoke", () => {
     expect(screen.getByTestId("session-head")).toHaveTextContent("Ready");
     expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();
     vi.useRealTimers();
-  });
-
-  it("seeds the session brief after transport is ready", () => {
-    const starterContext = {
-      title: "Fix the flaky test",
-      constraints: "",
-      expectedOutcome: "",
-    };
-    mountChat({ starterContext });
-    const brief = formatSessionBrief(starterContext);
-    expect(transport.sendPrompt).toHaveBeenCalledWith(brief);
-    expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBe("1");
-  });
-
-  it("does not mark the session seeded when sendPrompt throws", () => {
-    transport.sendPrompt.mockImplementation(() => {
-      throw new Error("send failed");
-    });
-    mountChat({
-      starterContext: {
-        title: "Fix the flaky test",
-        constraints: "",
-        expectedOutcome: "",
-      },
-    });
-    expect(sessionStorage.getItem(sessionSeededStorageKey("web/fix-login"))).toBeNull();
   });
 
   it("opens Diff Review on a left swipe", async () => {

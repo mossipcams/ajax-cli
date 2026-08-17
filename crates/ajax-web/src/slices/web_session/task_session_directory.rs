@@ -7,7 +7,7 @@ use super::{
         OutboundBatch, TaskSessionCommand, TaskSessionSender,
     },
     transcript::MAX_IDLE_SESSIONS,
-    SessionClientMessage, SessionServerEvent,
+    PersistSessionModel, SessionClientMessage, SessionServerEvent,
 };
 use ajax_core::models::AgentClient;
 use std::{
@@ -406,6 +406,7 @@ pub(crate) async fn apply_client_message(
     worktree_path: &Path,
     message: SessionClientMessage,
     generation: &mut u64,
+    persist_session_model: Option<PersistSessionModel>,
 ) -> Result<ApplyClientMessageOutcome, String> {
     match message {
         SessionClientMessage::Prompt {
@@ -426,6 +427,9 @@ pub(crate) async fn apply_client_message(
         }
         SessionClientMessage::SetModel { model } => {
             let model = normalize_session_model(&model)?;
+            if let Some(persist) = persist_session_model {
+                persist(&model)?;
+            }
             let next_generation = directory.respawn(handle, worktree_path, &model).await?;
             *generation = next_generation;
             let snapshot = directory.attach_snapshot(handle, model.clone()).await;

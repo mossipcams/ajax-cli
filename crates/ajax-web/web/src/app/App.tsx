@@ -21,7 +21,6 @@ import TaskDetail from "@/features/task/TaskDetail";
 import TaskLoadError from "@/features/task/TaskLoadError";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
-import SessionStarter, { type SessionStarterContext } from "@/features/session/SessionStarter";
 import SessionChat from "@/features/session/SessionChat";
 import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
@@ -99,9 +98,6 @@ export default function App() {
   });
   const { updateAvailable, checkVersion } = useVersionMonitor();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [sessionStarterContext, setSessionStarterContext] = useState<SessionStarterContext | null>(
-    null,
-  );
   const [result, setResult] = useState<ResultState | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -430,12 +426,6 @@ export default function App() {
   }, [route]);
 
   useEffect(() => {
-    if (route.kind !== "session" || !route.handle) {
-      setSessionStarterContext(null);
-    }
-  }, [route.kind, route.handle]);
-
-  useEffect(() => {
     if (route.kind === "session" && !orchestrationChat) {
       go(route.handle ? taskHash(route.handle) : dashboardHash());
     }
@@ -658,7 +648,6 @@ export default function App() {
                   detail={detail.data}
                   detailStatus={detail.status}
                   detailError={detail.error?.message}
-                  starterContext={sessionStarterContext}
                   onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
                   onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
                   onCockpit={applyCockpit}
@@ -668,15 +657,12 @@ export default function App() {
                   onRetry={reload}
                 />
               ) : (
-                <SessionStarter
+                <NewTaskSheet
                   repos={cockpit.data?.repos?.repos ?? []}
                   selectedProject={selectedProject}
-                  onBack={() => go(dashboardHash())}
+                  onClose={() => go(dashboardHash())}
                   onCockpit={applyCockpit}
-                  onStarted={(handle, starter) => {
-                    setSessionStarterContext(starter);
-                    go(sessionHash(handle));
-                  }}
+                  onOpenTask={(handle, latestCockpit) => openTask(handle, latestCockpit)}
                 />
               )}
             </section>

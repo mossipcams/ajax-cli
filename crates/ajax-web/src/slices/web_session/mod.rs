@@ -18,9 +18,11 @@ use ajax_core::{
     registry::Registry,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::PathBuf};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
+
+pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -264,16 +266,19 @@ pub fn prepare_task_session<R: Registry>(
         return Err(SessionRouteError::WorktreeMissing);
     }
 
-    // The browser may pin a model per socket; otherwise the task's own choice
-    // (made when it was created) wins, then the harness default.
-    let model = match normalize_session_model(model) {
-        Ok(model) if model != default_session_model() => model,
-        _ => task
-            .session_model()
-            .map(str::to_string)
-            .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
-            .unwrap_or_default(),
-    };
+    // Task metadata wins over a socket ?model= pin (#910). The URL fallback is
+    // only for tasks with no stored model, then the harness default.
+    let url_model = normalize_session_model(model).ok();
+    let model = task
+        .session_model()
+        .map(str::to_string)
+        .or_else(|| {
+            url_model
+                .filter(|model| *model != default_session_model())
+                .map(|model| model.to_string())
+        })
+        .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
+        .unwrap_or_default();
 
     Ok(SessionAttachPlan {
         qualified_handle: qualified_handle.to_string(),

@@ -5,6 +5,7 @@ use crate::runtime::bridge::{
     MobileActionRequest, RuntimeBridge,
 };
 use crate::runtime::state::{operator_input_sink, GateRejection, WebAppState};
+use crate::slices::web_session::PersistSessionModel;
 use crate::{
     adapters::http::{
         json_value_response, operation_response_with_request_id, response_from_web_error,
@@ -210,6 +211,11 @@ where
     };
 
     let directory = Arc::clone(&state.task_session_directory);
+    let state_for_persist = state.clone();
+    let handle_for_persist = plan.qualified_handle.clone();
+    let persist_session_model: PersistSessionModel = Arc::new(move |model: &str| {
+        state_for_persist.persist_task_session_model(&handle_for_persist, model)
+    });
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -217,7 +223,13 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::slices::web_session::bridge_task_session_socket(socket, directory, plan).await;
+        crate::slices::web_session::bridge_task_session_socket(
+            socket,
+            directory,
+            plan,
+            Some(persist_session_model),
+        )
+        .await;
     })
 }
 

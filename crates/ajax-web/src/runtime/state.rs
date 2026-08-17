@@ -187,6 +187,39 @@ where
         }
         response
     }
+
+    /// Persist desired session model metadata before the host replaces an ACP child.
+    pub(crate) fn persist_task_session_model(
+        &self,
+        handle: &str,
+        model: &str,
+    ) -> Result<(), String> {
+        let _lane = self.control_lane.blocking_lock();
+        let (mut context, runner, bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        crate::slices::operate::set_task_session_model(&mut context, handle, model)
+            .map_err(|error| crate::slices::operate::format_operate_error(&error))?;
+        let mut guard = self.shared();
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            let mut persisted_bridge = guard.bridge.clone();
+            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+            Ok(())
+        } else {
+            Err("cockpit state changed while updating session model".to_string())
+        }
+    }
 }
 
 impl<C, B> WebAppState<C, B> {

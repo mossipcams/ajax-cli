@@ -56,7 +56,6 @@ import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
 import type { WebSessionTransport } from "@/shared/lib/webSessionTransport";
-import type { SessionStarterContext } from "./SessionStarter";
 import {
   activePlanStep,
   activeTool,
@@ -71,7 +70,7 @@ import Transcript from "./Transcript";
 import SessionModelSelect from "./SessionModelSelect";
 import { useSessionModelPreference } from "./sessionModel";
 import { autoGrow } from "./sessionChatChrome";
-import { formatSessionBrief, PIN_THRESHOLD_PX, sessionSeededStorageKey } from "./sessionChatSeed";
+import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
 import { useSessionTransport } from "./useSessionTransport";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
@@ -83,7 +82,6 @@ interface Props {
   detail: BrowserTaskDetail | null;
   detailStatus: "loading" | "ready" | "stale" | "error";
   detailError?: string;
-  starterContext?: SessionStarterContext | null;
   onBack?: () => void;
   onOpenDiff?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
@@ -102,14 +100,11 @@ interface Props {
   onRetry?: () => void;
 }
 
-export { formatSessionBrief, sessionSeededStorageKey } from "./sessionChatSeed";
-
 export default function SessionChat({
   handle,
   detail,
   detailStatus,
   detailError,
-  starterContext,
   onBack,
   onOpenDiff,
   onCockpit,
@@ -138,11 +133,6 @@ export default function SessionChat({
   const draftRef = useRef("");
   const followUpQueuedRef = useRef(false);
   const lastQueuedTextRef = useRef<string | null>(null);
-  // The starter brief seeds the ACP session exactly once. Holding it in a ref
-  // keeps it out of the transport effect's deps — when it was a dependency, a
-  // new object identity tore down the socket and killed the ACP child process
-  // mid-turn.
-  const starterRef = useRef(starterContext);
   // Read inside the transport effect without making it a dependency.
   const detailRef = useRef(detail);
   // What the operator had already seen when they last held the live edge.
@@ -189,7 +179,6 @@ export default function SessionChat({
     pasteThroughTerm: insertSpeechText,
   });
 
-  starterRef.current = starterContext;
   detailRef.current = detail;
   pinnedRef.current = pinned;
   connectedRef.current = connected;
@@ -222,28 +211,6 @@ export default function SessionChat({
     );
     return () => window.clearInterval(timer);
   }, [state.busy]);
-
-  // Seeded from an effect rather than from onReady: a transport that reports
-  // ready synchronously does so before transportRef is assigned, which silently
-  // dropped the brief. sessionStorage survives remounts so reconnect does not
-  // send a second in-flight session/prompt.
-  useEffect(() => {
-    if (!connected || !handle) return;
-    if (sessionStorage.getItem(sessionSeededStorageKey(handle))) return;
-    const starter = starterRef.current;
-    if (!starter) return;
-    const transport = transportRef.current;
-    if (!transport) return;
-    const brief = formatSessionBrief(starter);
-    try {
-      markActivity();
-      transport.sendPrompt(brief);
-    } catch {
-      return;
-    }
-    dispatch({ type: "prompt", text: brief });
-    sessionStorage.setItem(sessionSeededStorageKey(handle), "1");
-  }, [connected, handle, markActivity]);
 
   // Follow the live edge only while the operator is already at it. Yanking the
   // viewport back mid-read is what made a streaming turn impossible to follow.

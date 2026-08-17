@@ -12,7 +12,7 @@ describe("useSessionTransport", () => {
     localStorage.clear();
   });
 
-  it("uses the current model preference after reconnecting", () => {
+  it("does not pass the localStorage model preference on reconnect (#910)", () => {
     vi.useFakeTimers();
     const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
     const models: (string | undefined)[] = [];
@@ -40,6 +40,7 @@ describe("useSessionTransport", () => {
         transportRef: { current: undefined },
         connectedRef: { current: false },
         everOpenedRef: { current: false },
+        onActivity: vi.fn(),
         setConnected: vi.fn(),
         setEverOpened: vi.fn(),
       }),
@@ -49,7 +50,7 @@ describe("useSessionTransport", () => {
     act(() => callbacks[0]?.onClosed());
     act(() => vi.advanceTimersByTime(0));
 
-    expect(models).toEqual(["auto", "composer-2.5"]);
+    expect(models).toEqual([undefined, undefined]);
     unmount();
   });
 

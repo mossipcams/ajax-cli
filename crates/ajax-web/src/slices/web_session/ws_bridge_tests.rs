@@ -42,6 +42,7 @@ async fn apply_client_message_rejects_invalid_model() {
             model: "bad model".to_string(),
         },
         &mut generation,
+        None,
     )
     .await
     .unwrap_err();
@@ -70,6 +71,7 @@ fn apply_client_message_prompt_records_user_message_immediately() {
                 client_message_id: "prompt-1".to_string(),
             },
             &mut generation,
+            None,
         ))
         .expect("prompt");
 

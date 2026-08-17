@@ -1,8 +1,8 @@
 //! Authenticated orchestration-chat WebSocket bridge over the task-session directory.
 
 use super::{
-    apply_client_message, ApplyClientMessageOutcome, SessionAttachPlan, SessionClientMessage,
-    SessionServerEvent, TaskSessionDirectory,
+    apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, SessionAttachPlan,
+    SessionClientMessage, SessionServerEvent, TaskSessionDirectory,
 };
 use axum::extract::ws::{Message, WebSocket};
 use std::{
@@ -27,6 +27,7 @@ pub(crate) async fn bridge_task_session_socket(
     mut socket: WebSocket,
     directory: Arc<TaskSessionDirectory>,
     plan: SessionAttachPlan,
+    persist_session_model: Option<PersistSessionModel>,
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
@@ -78,6 +79,7 @@ pub(crate) async fn bridge_task_session_socket(
                             &plan.worktree_path,
                             &text,
                             &mut generation,
+                            persist_session_model.clone(),
                         )
                         .await
                         {
@@ -146,6 +148,7 @@ async fn handle_inbound_text(
     worktree_path: &std::path::Path,
     text: &str,
     generation: &mut u64,
+    persist_session_model: Option<PersistSessionModel>,
 ) -> ClientHandleResult {
     if text.len() > MAX_SESSION_FRAME_BYTES {
         let ok = send_event(
@@ -180,7 +183,16 @@ async fn handle_inbound_text(
         }
     };
 
-    match apply_client_message(directory, handle, worktree_path, message, generation).await {
+    match apply_client_message(
+        directory,
+        handle,
+        worktree_path,
+        message,
+        generation,
+        persist_session_model,
+    )
+    .await
+    {
         Ok(ApplyClientMessageOutcome::Applied) => ClientHandleResult::Continue,
         Ok(ApplyClientMessageOutcome::ModelChanged { model }) => {
             let ok = send_event(socket, &SessionServerEvent::Ready { model, busy: false }).await;

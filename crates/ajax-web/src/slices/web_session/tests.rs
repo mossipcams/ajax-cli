@@ -53,6 +53,23 @@ fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
 }
 
 #[test]
+fn prepare_task_session_prefers_stored_model_over_url_pin() {
+    // https://github.com/mossipcams/ajax-cli/issues/910
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("gpt-5.6-sol[high]"));
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-url-pin");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    let plan = prepare_task_session(&context, "web/fix-login", "composer-2.5").expect("plan");
+    assert_eq!(plan.model, "gpt-5.6-sol[high]");
+}
+
+#[test]
 fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Codex;
