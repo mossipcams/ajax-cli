@@ -78,8 +78,13 @@ export default function ResultPanel({
     return () => clearTimeout(timer);
   }, [message, confirmMode, undoArmed, isError, confirmTimeoutMs]);
 
+  function undo() {
+    onUndoRef.current?.();
+    onDismissRef.current?.();
+  }
+
   function dismiss() {
-    if (undoArmed) onUndoRef.current?.();
+    if (undoArmed) onCommitRef.current?.();
     onDismissRef.current?.();
   }
 
@@ -117,7 +122,7 @@ export default function ResultPanel({
             </Button>
           </>
         ) : undoArmed ? (
-          <Button type="button" variant="default" onClick={dismiss}>
+          <Button type="button" variant="default" onClick={undo}>
             Undo
           </Button>
         ) : null}
