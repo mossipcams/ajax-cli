@@ -9,7 +9,10 @@
 import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
-import type { Decision, ToolCall } from "./sessionThread";
+import type { Decision, ToolCall, Usage } from "./sessionThread";
+import { shortPath, TOOL_TONES } from "./toolPresentation";
+
+export { shortPath } from "./toolPresentation";
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
@@ -18,17 +21,6 @@ const STATE_LABELS: Record<HeadState, string> = {
   working: "Working",
   attention: "Needs you",
   idle: "Ready",
-};
-
-const TOOL_TONES: Record<string, string> = {
-  read: "muted",
-  edit: "running",
-  delete: "error",
-  move: "running",
-  search: "muted",
-  execute: "running",
-  think: "muted",
-  fetch: "muted",
 };
 
 export function headState(
@@ -49,12 +41,22 @@ export function headTone(state: HeadState, detail: BrowserTaskDetail | null): st
   return "idle";
 }
 
-/** Paths are long and their tail is the informative end, so keep the last two
- * segments rather than ellipsizing the filename away. */
-export function shortPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length <= 2) return parts.join("/");
-  return `…/${parts.slice(-2).join("/")}`;
+/** Context pressure only becomes information near the ceiling: below it, a
+ * percentage is a number the operator can do nothing with. Shown from 70% up,
+ * where the answer ("wrap up, or start a fresh session") is still available. */
+const USAGE_VISIBLE_AT = 0.7;
+
+function UsageMeter({ usage }: { usage: Usage }) {
+  const ratio = Math.min(1, usage.used / usage.size);
+  if (ratio < USAGE_VISIBLE_AT) return null;
+  return (
+    <p
+      className={`session-head-quiet session-usage${ratio >= 0.9 ? " is-tight" : ""}`}
+      data-testid="session-usage"
+    >
+      Context {Math.round(ratio * 100)}% full
+    </p>
+  );
 }
 
 function ToolRow({ call }: { call: ToolCall }) {
@@ -81,6 +83,8 @@ interface Props {
   /** In-progress ACP plan step, if any. Not the whole checklist. */
   planStep: string | null;
   status: string | null;
+  /** Latest context pressure, or null when the harness does not report it. */
+  usage: Usage | null;
   activityAgeMs: number;
   connected: boolean;
   /** The task's own actions, rendered by the caller so the head stays free of
@@ -102,6 +106,7 @@ export default function LiveHead({
   tool,
   planStep,
   status,
+  usage,
   activityAgeMs,
   connected,
   actions,
@@ -195,6 +200,7 @@ export default function LiveHead({
               Last update {Math.max(1, Math.floor(activityAgeMs / 60_000))}m ago
             </p>
           ) : null}
+          {usage ? <UsageMeter usage={usage} /> : null}
         </div>
       ) : null}
 

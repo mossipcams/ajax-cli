@@ -52,9 +52,10 @@ import {
   activePlanStep,
   activeTool,
   initialSessionState,
+  latestPlan,
   sessionReducer,
-  toolCallCount,
-  type ThreadEntry,
+  toolCount,
+  type ConversationItem,
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
@@ -136,10 +137,7 @@ export default function SessionChat({
   // Read inside the transport effect without making it a dependency.
   const detailRef = useRef(detail);
   // What the operator had already seen when they last held the live edge.
-  const seenRef = useRef<{ entries: ThreadEntry[]; tools: number }>({
-    entries: [],
-    tools: 0,
-  });
+  const seenRef = useRef<{ items: ConversationItem[] }>({ items: [] });
   // Read inside the resize observer without resubscribing on every pin flip.
   const pinnedRef = useRef(true);
   const lastActivityAtRef = useRef(Date.now());
@@ -242,23 +240,20 @@ export default function SessionChat({
   // viewport back mid-read is what made a streaming turn impossible to follow.
   //
   // `behind` tracks output that arrived *since* the operator left the edge, so
-  // it keys off the entries changing — not off the unpin itself, which would
-  // announce "behind" on any upward scroll with nothing new to see.
+  // it keys off the items changing — not off the unpin itself, which would
+  // announce "behind" on any upward scroll with nothing new to see. A tool call
+  // revising itself replaces its item, so this one identity check now covers
+  // the tool activity that used to need a separate count.
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
     if (pinned) {
       node.scrollTop = node.scrollHeight;
-      seenRef.current = { entries: state.entries, tools: toolCallCount(state) };
+      seenRef.current = { items: state.items };
       return;
     }
-    if (
-      state.entries !== seenRef.current.entries ||
-      toolCallCount(state) !== seenRef.current.tools
-    ) {
-      setBehind(true);
-    }
-  }, [state.entries, pinned, state]);
+    if (state.items !== seenRef.current.items) setBehind(true);
+  }, [state.items, pinned]);
 
   // The effect above re-pins when *entries* change, which leaves every other
   // way the transcript loses height unhandled — the composer growing under a
@@ -362,7 +357,10 @@ export default function SessionChat({
   const safeActions = actions.filter((action) => !action.destructive);
   const state_ = headState(state.decision, state.busy, detail);
   const tone = headTone(state_, detail);
-  const unseenTools = Math.max(0, toolCallCount(state) - seenRef.current.tools);
+  const unseenTools = Math.max(
+    0,
+    toolCount(state.items) - toolCount(seenRef.current.items),
+  );
   const activity = detail?.agent_activity ?? detail?.live_status_summary ?? null;
   const title = detail?.title || detail?.qualified_handle || handle;
 
@@ -381,8 +379,9 @@ export default function SessionChat({
         detail={detail}
         decision={state.decision}
         tool={activeTool(state)}
-        planStep={activePlanStep(state.plan)}
+        planStep={activePlanStep(latestPlan(state.items))}
         status={state.status}
+        usage={state.usage}
         activityAgeMs={state.busy ? activityAgeMs : 0}
         connected={connected}
         actions={
@@ -417,12 +416,12 @@ export default function SessionChat({
         data-testid="session-thread"
         onScroll={onThreadScroll}
       >
-        {state.entries.length === 0 ? (
+        {state.items.length === 0 ? (
           <p className="session-thread-empty" data-testid="session-thread-empty">
             Message the agent to steer this task.
           </p>
         ) : (
-          <Transcript entries={state.entries} busy={state.busy} />
+          <Transcript items={state.items} busy={state.busy} />
         )}
 
         <form

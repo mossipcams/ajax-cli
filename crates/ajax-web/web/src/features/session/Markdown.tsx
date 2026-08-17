@@ -6,7 +6,7 @@
 // reachable from a chat turn, and a parser that never touches innerHTML cannot
 // inject agent output into the DOM as markup.
 
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type Block =
   | { kind: "code"; lang: string; text: string }
@@ -91,10 +91,46 @@ export function renderInline(text: string, keyPrefix: string): ReactNode[] {
   });
 }
 
-export default function Markdown({ source }: { source: string }) {
+/** A streaming turn delivers a chunk per token, and each one would otherwise
+ * re-parse and re-render the whole message. 50ms is under the ~100ms at which a
+ * redraw stops reading as continuous, so the text still streams; it just stops
+ * costing a full parse per token on a phone.
+ *
+ * Leading edge plus trailing timer: the first chunk paints immediately, and the
+ * last one is never stranded waiting for a chunk that will not come. */
+const THROTTLE_MS = 50;
+
+function useThrottledSource(source: string, live: boolean): string {
+  const [shown, setShown] = useState(source);
+  const lastAtRef = useRef(0);
+
+  useEffect(() => {
+    if (!live) {
+      setShown(source);
+      return;
+    }
+    const elapsed = Date.now() - lastAtRef.current;
+    if (elapsed >= THROTTLE_MS) {
+      lastAtRef.current = Date.now();
+      setShown(source);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      lastAtRef.current = Date.now();
+      setShown(source);
+    }, THROTTLE_MS - elapsed);
+    return () => window.clearTimeout(timer);
+  }, [source, live]);
+
+  return shown;
+}
+
+export default function Markdown({ source, live = false }: { source: string; live?: boolean }) {
+  const shown = useThrottledSource(source, live);
+  const blocks = useMemo(() => parseBlocks(shown), [shown]);
   return (
     <div className="md">
-      {parseBlocks(source).map((block, index) => {
+      {blocks.map((block, index) => {
         const key = `b${index}`;
         if (block.kind === "code") {
           return (
