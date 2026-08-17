@@ -12,7 +12,7 @@ Follow instructions in this order:
 3. Root `architecture.md`, then the focused document for the subsystem being
    changed.
 4. Existing source and tests.
-5. Generated summaries, code maps, Graphify output, or prior plans.
+5. Generated summaries, code maps, or prior plans.
 
 When instructions conflict, preserve the safest behavior and identify the
 conflict. The active agent remains responsible for investigation, engineering
