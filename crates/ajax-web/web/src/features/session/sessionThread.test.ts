@@ -7,7 +7,9 @@ import {
   explainOpenFailure,
   initialSessionState,
   latestPlan,
+  latestThought,
   sessionReducer,
+  thoughtSnippet,
   toolCount,
   type SessionState,
 } from "./sessionThread";
@@ -284,6 +286,20 @@ describe("sessionReducer", () => {
       { content: "Patch", status: "in_progress" },
     ]);
     expect(activePlanStep(latestPlan(state.items))).toBe("Patch");
+  });
+
+  it("reads the latest reasoning text for the live head", () => {
+    const state = run([
+      { type: "message", role: "thought", text: "first", itemId: "t1" },
+      { type: "message", role: "thought", text: "second pass", itemId: "t2" },
+    ]);
+    expect(latestThought(state.items)).toBe("second pass");
+  });
+
+  it("formats a one-line thought snippet for the head", () => {
+    expect(thoughtSnippet("Checking\n  the router")).toBe("Checking the router");
+    expect(thoughtSnippet("x".repeat(130))).toHaveLength(120);
+    expect(thoughtSnippet("x".repeat(130)).endsWith("…")).toBe(true);
   });
 
   it("tracks context pressure as one current value, not a row per update", () => {

@@ -67,6 +67,23 @@ describe("Transcript", () => {
     expect(screen.getByTestId("session-thinking-body")).toHaveTextContent("Checking the router");
   });
 
+  it("auto-expands the live thought tail while a turn is in flight", () => {
+    const items: ConversationItem[] = [{ kind: "thought", id: "e1", text: "Checking the router" }];
+    render(<Transcript items={items} busy />);
+
+    expect(screen.getByTestId("session-thinking-body")).toHaveTextContent("Checking the router");
+  });
+
+  it("collapses a thought when a later item arrives during the turn", () => {
+    const items: ConversationItem[] = [
+      { kind: "thought", id: "e1", text: "Checking the router" },
+      { kind: "tool", id: "e2", call: call({ status: "in_progress" }) },
+    ];
+    render(<Transcript items={items} busy />);
+
+    expect(screen.queryByTestId("session-thinking-body")).not.toBeInTheDocument();
+  });
+
   it("renders a tool call's diff as a diff, not as prose", () => {
     const items: ConversationItem[] = [
       {

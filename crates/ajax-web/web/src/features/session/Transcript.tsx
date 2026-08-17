@@ -11,23 +11,25 @@ import ToolCard from "./ToolCard";
 import type { ConversationItem, PlanEntry } from "./sessionThread";
 
 /** Reasoning is the agent's account of its own turn: worth keeping, never worth
- * outranking the answer. Collapsed to one line until asked for. */
-function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+ * outranking the answer. Collapsed to one line until asked for, except while it
+ * is the live tail of a busy turn. */
+function Thinking({ text, live }: { text: string; live: boolean }) {
+  const [manualOpen, setManualOpen] = useState(false);
+  const expanded = live || manualOpen;
   return (
     <div className="session-thinking" data-testid="session-thinking">
       <button
         type="button"
         className="session-thinking-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        aria-expanded={expanded}
+        onClick={() => setManualOpen(!manualOpen)}
       >
         <span className="session-thinking-mark" aria-hidden="true">
           ∴
         </span>
         Thinking
       </button>
-      {open ? (
+      {expanded ? (
         <p className="session-thinking-body" data-testid="session-thinking-body">
           {text}
         </p>
@@ -79,7 +81,7 @@ const Row = memo(function Row({ item, live }: { item: ConversationItem; live: bo
       );
 
     case "thought":
-      return <Thinking text={item.text} />;
+      return <Thinking text={item.text} live={live} />;
 
     case "tool":
       return <ToolCard call={item.call} />;
@@ -130,11 +132,21 @@ export default function Transcript({
     }
     return null;
   })();
+  const liveThoughtId =
+    busy && items[items.length - 1]?.kind === "thought" ? items[items.length - 1].id : null;
 
   return (
     <>
       {items.map((item) => (
-        <Row key={item.id} item={item} live={busy && item.id === lastAgentProseId} />
+        <Row
+          key={item.id}
+          item={item}
+          live={
+            item.kind === "thought"
+              ? item.id === liveThoughtId
+              : busy && item.id === lastAgentProseId
+          }
+        />
       ))}
     </>
   );

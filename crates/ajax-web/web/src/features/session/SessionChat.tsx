@@ -59,6 +59,8 @@ import {
   activePlanStep,
   activeTool,
   latestPlan,
+  latestThought,
+  thoughtSnippet,
   toolCount,
   type ConversationItem,
 } from "./sessionThread";
@@ -267,6 +269,16 @@ export default function SessionChat({
   const safeActions = actions.filter((action) => !action.destructive);
   const state_ = headState(state.decision, state.busy, detail);
   const tone = headTone(state_, detail);
+  const plan = latestPlan(state.items);
+  const headTool = activeTool(state);
+  const headPlanStep = activePlanStep(plan);
+  const headThought =
+    state.busy && !headTool && !headPlanStep
+      ? (() => {
+          const text = latestThought(state.items);
+          return text ? thoughtSnippet(text) : null;
+        })()
+      : null;
   const unseenTools = Math.max(
     0,
     toolCount(state.items) - toolCount(seenRef.current.items),
@@ -288,8 +300,9 @@ export default function SessionChat({
         tone={tone}
         detail={detail}
         decision={state.decision}
-        tool={activeTool(state)}
-        planStep={activePlanStep(latestPlan(state.items))}
+        tool={headTool}
+        planStep={headPlanStep}
+        thoughtSnippet={headThought}
         status={state.status}
         usage={state.usage}
         activityAgeMs={state.busy ? activityAgeMs : 0}
