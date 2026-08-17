@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import {
   connectWebSessionTransport,
+  parseServerEvent,
   PROMPT_TOO_LONG,
   type WebSessionTransportCallbacks,
   type WebSessionTransportPlatform,
@@ -81,6 +82,7 @@ describe("connectWebSessionTransport", () => {
     } as MessageEvent);
 
     expect(cbs.onReady).toHaveBeenCalledWith("composer-2.5");
+    expect(cbs.onEvent).toHaveBeenCalledTimes(1);
     expect(cbs.onEvent).toHaveBeenCalledWith({
       type: "ready",
       model: "composer-2.5",
@@ -107,6 +109,16 @@ describe("connectWebSessionTransport", () => {
 
     transport.dispose();
     expect(socket.close).toHaveBeenCalled();
+  });
+
+  it("omits ?model= from the reconnect URL unless a model is pinned", () => {
+    const socket = fakeSocket();
+    const openSocket = vi.fn(() => socket);
+    connectWebSessionTransport("web/fix-login", callbacks(), { openSocket });
+    expect(openSocket).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/tasks\/web%2Ffix-login\/session$/),
+    );
+    expect(openSocket).not.toHaveBeenCalledWith(expect.stringContaining("?model="));
   });
 
   it("queues prompts until ready", () => {
@@ -278,6 +290,65 @@ describe("connectWebSessionTransport", () => {
     const prompts = socket.sent.map((payload) => JSON.parse(payload));
     expect(prompts).toContainEqual(expect.objectContaining({ clientMessageId: "keep" }));
     expect(prompts).not.toContainEqual(expect.objectContaining({ clientMessageId: "poison" }));
+    transport.dispose();
+  });
+});
+
+describe("parseServerEvent", () => {
+  it("accepts well-formed variants", () => {
+    expect(parseServerEvent(JSON.stringify({ type: "ready", model: "auto" }))).toEqual({
+      type: "ready",
+      model: "auto",
+    });
+    expect(
+      parseServerEvent(
+        JSON.stringify({ type: "message", role: "agent", text: "Hi", messageId: "m1" }),
+      ),
+    ).toEqual({ type: "message", role: "agent", text: "Hi", messageId: "m1" });
+    expect(
+      parseServerEvent(JSON.stringify({ type: "prompt_accepted", clientMessageId: "c1" })),
+    ).toEqual({ type: "prompt_accepted", clientMessageId: "c1" });
+    expect(
+      parseServerEvent(
+        JSON.stringify({
+          type: "tool_call",
+          callId: "t1",
+          title: "Read",
+          kind: "read",
+          status: "completed",
+        }),
+      ),
+    ).toMatchObject({ type: "tool_call", callId: "t1" });
+    expect(
+      parseServerEvent(JSON.stringify({ type: "permission_request", requestId: "p1" })),
+    ).toEqual({ type: "permission_request", requestId: "p1" });
+    expect(parseServerEvent(JSON.stringify({ type: "error", message: "nope" }))).toEqual({
+      type: "error",
+      message: "nope",
+    });
+  });
+
+  it("drops invalid JSON and variants missing required fields", () => {
+    expect(parseServerEvent("not json")).toBeNull();
+    expect(parseServerEvent(JSON.stringify({ type: "message", role: "agent" }))).toBeNull();
+    expect(parseServerEvent(JSON.stringify({ type: "prompt_accepted" }))).toBeNull();
+    expect(
+      parseServerEvent(JSON.stringify({ type: "tool_call", callId: "t1", title: "x" })),
+    ).toBeNull();
+    expect(parseServerEvent(JSON.stringify({ type: "permission_request" }))).toBeNull();
+    expect(parseServerEvent(JSON.stringify({ type: "error" }))).toBeNull();
+    expect(parseServerEvent(JSON.stringify({ type: "unknown" }))).toBeNull();
+  });
+
+  it("drops malformed ready frames without dispatching them", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: JSON.stringify({ type: "message", role: "agent" }) } as MessageEvent);
+    expect(cbs.onEvent).not.toHaveBeenCalled();
+    socket.emit("message", { data: JSON.stringify({ type: "ready" }) } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledTimes(1);
     transport.dispose();
   });
 });

@@ -2,7 +2,7 @@
 context: default
 slug: ajax-chat-architecture
 status: in-progress
-approval: user-directed 2026-08-17 — Composer 2.5; Phase 0–2 done; Phase 3 started 2026-08-17
+approval: user-directed 2026-08-17 — Composer 2.5; Phase 0–3 done; Phase 4 next
 last_updated: 2026-08-17
 ---
 
@@ -346,19 +346,19 @@ Acceptance:
 
 ### Phase 3: simplify browser state
 
-- [ ] Keep `webSessionTransport` responsible only for wire validation, socket
+- [x] Keep `webSessionTransport` responsible only for wire validation, socket
   lifecycle, and unacknowledged prompt resend.
-- [ ] Remove duplicate `ready` delivery.
-- [ ] Remove `followUpQueuedRef`, `lastQueuedTextRef`, and the second browser
+- [x] Remove duplicate `ready` delivery (defect issue pending GitHub 503).
+- [x] Remove `followUpQueuedRef`, `lastQueuedTextRef`, and the second browser
   queue behavior. Submitting while busy sends one host-queued prompt; Stop owns
   cancellation.
-- [ ] Extract one concrete `useTaskSession` hook that owns connection callbacks,
+- [x] Extract one concrete `useTaskSession` hook that owns connection callbacks,
   reducer wiring, and activity state. Keep layout, sheets, scroll, speech, and
   gestures in `SessionChat`.
-- [ ] Keep `sessionReducer` pure and exhaustive over the wire union.
-- [ ] Make every `parseServerEvent` variant validate its required fields before
+- [x] Keep `sessionReducer` pure and exhaustive over the wire union.
+- [x] Make every `parseServerEvent` variant validate its required fields before
   entering the reducer.
-- [ ] Clear obsolete outbox and starter-seed records when the host reports task
+- [x] Clear obsolete outbox and starter-seed records when the host reports task
   removal, harness replacement, or invalid session identity.
 
 Acceptance:
@@ -528,13 +528,17 @@ implementation continues.
 | 2 | `cargo clippy -p ajax-web --all-targets -- -D warnings` | pass |
 | 2 | `cargo fmt --check` | pass |
 | 2 | Focused browser session tests (6 files) | 91 passed |
+| 3 | Focused browser session tests (7 files) | 65 passed |
+| 3 | `npm run web:check` | pass |
+| 3 | `npm run web:lint` | pass |
+| 3 | `cargo fmt --check` | pass |
 | 3–5 | (remaining phases) | pending |
 
-- Checklist: Phase 0 + Phase 1 + Phase 2 complete (25/25 items through Phase 2). Phases 3–5 unchanged.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 complete (32/32 items through Phase 3). Phases 4–5 unchanged.
 
 ## Approval and status
 
 - Plan creation: approved by user on 2026-08-17.
-- Implementation: Phase 0–2 complete 2026-08-17. Phase 3 approved 2026-08-17.
-- Checklist: Phase 0 + Phase 1 + Phase 2 complete (25/25 items through Phase 2). Phase 3–5 pending.
-- Current repository edits from this plan: session runtime ownership (committed); Phase 2 task/model authority (this commit); Phase 3 in progress.
+- Implementation: Phase 0–3 complete 2026-08-17.
+- Checklist: Phase 0 + Phase 1 + Phase 2 + Phase 3 complete (32/32 items through Phase 3). Phases 4–5 pending.
+- Current repository edits from this plan: session runtime ownership (committed); Phase 2 task/model authority (committed); Phase 3 browser state simplification (this commit).

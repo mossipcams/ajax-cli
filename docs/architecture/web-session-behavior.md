@@ -61,6 +61,9 @@ existing paths.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
+- The browser keeps only an unacknowledged-prompt outbox for resend; it does not
+  maintain a second FIFO queue. Submitting while busy sends one host-queued prompt;
+  Stop owns cancellation.
 - A host background pump continues draining ACP slots after the last socket
   closes, so an in-flight or queued turn does not depend on browser presence.
 - Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
@@ -73,6 +76,8 @@ existing paths.
   status/note events.
 - A live `ready` event on an established socket must not reset browser reducer
   state; only reconnect-after-drop may clear and replay.
+- Each attach delivers one `ready` wire event to the browser reducer; transport
+  handshake side effects (outbox flush, model write) stay separate.
 
 ## Restart and transcript recovery
 

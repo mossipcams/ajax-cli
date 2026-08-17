@@ -56,6 +56,7 @@ import {
   type DropUndoHandles,
 } from "@/features/task/taskMutations";
 import { checkHealth } from "@/shared/lib/api";
+import { clearSessionOutbox } from "@/shared/lib/webSessionTransport";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -616,7 +617,10 @@ export default function App() {
                 title={detail.data?.title}
                 selectedPr={route.pr}
                 agent={detail.data?.agent}
-                onSwappedAgent={reload}
+                onSwappedAgent={() => {
+                  if (route.kind === "diff" && route.handle) clearSessionOutbox(route.handle);
+                  reload();
+                }}
                 onBack={() => {
                   if (route.kind === "diff" && route.handle) {
                     go(

@@ -40,7 +40,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useReducer,
   useRef,
   useState,
   type FormEvent,
@@ -55,23 +54,19 @@ import TaskLoadError from "@/features/task/TaskLoadError";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
-import type { WebSessionTransport } from "@/shared/lib/webSessionTransport";
 import {
   activePlanStep,
   activeTool,
-  initialSessionState,
   latestPlan,
-  sessionReducer,
   toolCount,
   type ConversationItem,
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
 import SessionModelSelect from "./SessionModelSelect";
-import { useSessionModelPreference } from "./sessionModel";
 import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
-import { useSessionTransport } from "./useSessionTransport";
+import { useTaskSession } from "./useTaskSession";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
 
@@ -125,38 +120,32 @@ export default function SessionChat({
   });
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const transportRef = useRef<WebSessionTransport | undefined>(undefined);
   const speechTermRef = useRef<Terminal | undefined>(undefined);
   const speechConnectionRef = useRef<TerminalConnection | undefined>(undefined);
-  const connectedRef = useRef(false);
-  const everOpenedRef = useRef(false);
   const draftRef = useRef("");
-  const followUpQueuedRef = useRef(false);
-  const lastQueuedTextRef = useRef<string | null>(null);
-  // Read inside the transport effect without making it a dependency.
-  const detailRef = useRef(detail);
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ items: ConversationItem[] }>({ items: [] });
   // Read inside the resize observer without resubscribing on every pin flip.
   const pinnedRef = useRef(true);
-  const lastActivityAtRef = useRef(Date.now());
 
-  const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [draft, setDraft] = useState("");
-  const [connected, setConnected] = useState(false);
-  const [everOpened, setEverOpened] = useState(false);
-  const [sessionModel, setSessionModel] = useSessionModelPreference();
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [followUpQueued, setFollowUpQueued] = useState(false);
-  const [activityAgeMs, setActivityAgeMs] = useState(0);
 
-  const markActivity = useCallback(() => {
-    lastActivityAtRef.current = Date.now();
-    setActivityAgeMs(0);
-  }, []);
+  const {
+    state,
+    connected,
+    everOpened,
+    activityAgeMs,
+    sessionModel,
+    sendPrompt,
+    sendCancel,
+    setModel,
+    respondPermission,
+    onMutated: onSessionMutated,
+  } = useTaskSession({ handle, detail, onMutated });
 
   const insertSpeechText = useCallback((text: string) => {
     const current = draftRef.current;
@@ -179,9 +168,7 @@ export default function SessionChat({
     pasteThroughTerm: insertSpeechText,
   });
 
-  detailRef.current = detail;
   pinnedRef.current = pinned;
-  connectedRef.current = connected;
 
   const scrollToLive = useCallback(() => {
     const node = threadRef.current;
@@ -190,27 +177,6 @@ export default function SessionChat({
     setPinned(true);
     setBehind(false);
   }, []);
-
-  useSessionTransport({
-    handle,
-    dispatch,
-    detailRef,
-    transportRef,
-    connectedRef,
-    everOpenedRef,
-    onActivity: markActivity,
-    setConnected,
-    setEverOpened,
-  });
-
-  useEffect(() => {
-    if (!state.busy) return;
-    const timer = window.setInterval(
-      () => setActivityAgeMs(Date.now() - lastActivityAtRef.current),
-      30_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [state.busy]);
 
   // Follow the live edge only while the operator is already at it. Yanking the
   // viewport back mid-read is what made a streaming turn impossible to follow.
@@ -258,53 +224,14 @@ export default function SessionChat({
     if (atLive) setBehind(false);
   }
 
-  useEffect(() => {
-    if (!state.busy) {
-      followUpQueuedRef.current = false;
-      setFollowUpQueued(false);
-      lastQueuedTextRef.current = null;
-    }
-  }, [state.busy]);
-
   function sendDraft() {
     if (!connected) return;
     const text = draftRef.current.trim();
-
-    if (state.busy && followUpQueuedRef.current) {
-      if (text && text !== lastQueuedTextRef.current) {
-        // Refused before the wire (too long): keep the draft to shorten, and
-        // leave the turn running rather than stopping for a send that failed.
-        if (!transportRef.current?.sendPrompt(text)) return;
-        dispatch({ type: "prompt", text });
-        lastQueuedTextRef.current = text;
-      }
-      transportRef.current?.sendCancel(true);
-      followUpQueuedRef.current = false;
-      setFollowUpQueued(false);
-      draftRef.current = "";
-      setDraft("");
-      if (composerRef.current) composerRef.current.style.height = "";
-      return;
-    }
-
     if (!text) return;
-
-    // Send before latching the follow-up flags: a refused prompt must not leave
-    // the composer believing something is queued.
-    if (!transportRef.current?.sendPrompt(text)) return;
-
-    if (state.busy) {
-      followUpQueuedRef.current = true;
-      setFollowUpQueued(true);
-      lastQueuedTextRef.current = text;
-    }
-    if (!state.busy) markActivity();
-    dispatch({ type: "prompt", text });
+    if (!sendPrompt(text)) return;
     draftRef.current = "";
     setDraft("");
-    if (composerRef.current) {
-      composerRef.current.style.height = "";
-    }
+    if (composerRef.current) composerRef.current.style.height = "";
     scrollToLive();
   }
 
@@ -314,9 +241,7 @@ export default function SessionChat({
   }
 
   function respondDecision(approved: boolean) {
-    const decision = state.decision;
-    if (!decision || !connected) return;
-    transportRef.current?.respondPermission(decision.requestId, approved);
+    respondPermission(approved);
   }
 
   if (!handle) return null;
@@ -368,7 +293,7 @@ export default function SessionChat({
                 handle={detail?.qualified_handle ?? handle}
                 onCockpit={onCockpit}
                 onResult={onResult}
-                onMutated={onMutated}
+                onMutated={onSessionMutated}
                 onDismiss={onDismiss}
               />
             </div>
@@ -377,12 +302,7 @@ export default function SessionChat({
         onBack={onBack ?? (() => {})}
         onApprove={() => respondDecision(true)}
         onReject={() => respondDecision(false)}
-        onStop={() => {
-          transportRef.current?.sendCancel();
-          followUpQueuedRef.current = false;
-          setFollowUpQueued(false);
-          lastQueuedTextRef.current = null;
-        }}
+        onStop={sendCancel}
         onOpenDetails={() => setDetailsOpen(true)}
       />
 
@@ -416,11 +336,9 @@ export default function SessionChat({
                   ? everOpened
                     ? "Reconnecting…"
                     : "Starting…"
-                  : state.busy && followUpQueued
-                    ? "Enter again to stop and send"
-                    : state.busy
-                      ? "Sends after this turn…"
-                      : "Message…"
+                  : state.busy
+                    ? "Sends after this turn…"
+                    : "Message…"
               }
               aria-label="Message"
               ref={composerRef}
@@ -539,10 +457,7 @@ export default function SessionChat({
                       agent={detail?.agent}
                       value={sessionModel}
                       disabled={state.busy || !connected}
-                      onChange={(id) => {
-                        setSessionModel(id);
-                        transportRef.current?.setModel(id);
-                      }}
+                      onChange={(id) => setModel(id)}
                     />
 
                     {detail?.runtime_observation_error ? (
@@ -564,7 +479,7 @@ export default function SessionChat({
                           handle={detail?.qualified_handle ?? handle}
                           onCockpit={onCockpit}
                           onResult={onResult}
-                          onMutated={onMutated}
+                          onMutated={onSessionMutated}
                           onDismiss={onDismiss}
                         />
                       ) : null}

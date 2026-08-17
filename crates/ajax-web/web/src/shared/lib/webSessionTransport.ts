@@ -168,16 +168,133 @@ export function createBrowserWebSessionPlatform(): WebSessionTransportPlatform {
   };
 }
 
-function parseServerEvent(raw: string): WebSessionServerEvent | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+/** Validate wire JSON at the socket boundary before the reducer sees it. */
+export function parseServerEvent(raw: string): WebSessionServerEvent | null {
   try {
-    const payload = JSON.parse(raw) as WebSessionServerEvent;
-    if (!payload || typeof payload !== "object" || !("type" in payload)) {
-      return null;
+    const payload = JSON.parse(raw) as unknown;
+    if (!isRecord(payload) || typeof payload.type !== "string") return null;
+
+    switch (payload.type) {
+      case "ready":
+        return {
+          type: "ready",
+          ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+          ...(typeof payload.busy === "boolean" ? { busy: payload.busy } : {}),
+        };
+      case "message": {
+        if (typeof payload.role !== "string" || typeof payload.text !== "string") return null;
+        return {
+          type: "message",
+          role: payload.role,
+          text: payload.text,
+          ...(typeof payload.messageId === "string" ? { messageId: payload.messageId } : {}),
+        };
+      }
+      case "prompt_accepted":
+        if (typeof payload.clientMessageId !== "string") return null;
+        return { type: "prompt_accepted", clientMessageId: payload.clientMessageId };
+      case "artifact":
+        if (typeof payload.kind !== "string") return null;
+        return {
+          type: "artifact",
+          kind: payload.kind,
+          ...(payload.title === null || typeof payload.title === "string"
+            ? { title: payload.title as string | null }
+            : {}),
+          ...(payload.body === null || typeof payload.body === "string"
+            ? { body: payload.body as string | null }
+            : {}),
+        };
+      case "tool_call": {
+        if (
+          typeof payload.callId !== "string" ||
+          typeof payload.title !== "string" ||
+          typeof payload.kind !== "string" ||
+          typeof payload.status !== "string"
+        ) {
+          return null;
+        }
+        return {
+          type: "tool_call",
+          callId: payload.callId,
+          title: payload.title,
+          kind: payload.kind,
+          status: payload.status,
+          ...(Array.isArray(payload.locations)
+            ? { locations: payload.locations.filter((l): l is string => typeof l === "string") }
+            : {}),
+          ...(Array.isArray(payload.content) ? { content: payload.content as ToolContent[] } : {}),
+        };
+      }
+      case "plan": {
+        if (!Array.isArray(payload.entries)) return null;
+        const entries = payload.entries.filter(
+          (entry): entry is { content: string; status: string } =>
+            isRecord(entry) &&
+            typeof entry.content === "string" &&
+            typeof entry.status === "string",
+        );
+        if (entries.length !== payload.entries.length) return null;
+        return { type: "plan", entries };
+      }
+      case "usage":
+        if (typeof payload.used !== "number" || typeof payload.size !== "number") return null;
+        return { type: "usage", used: payload.used, size: payload.size };
+      case "permission_request":
+        if (typeof payload.requestId !== "string") return null;
+        return {
+          type: "permission_request",
+          requestId: payload.requestId,
+          ...(payload.title === null || typeof payload.title === "string"
+            ? { title: payload.title as string | null }
+            : {}),
+          ...(payload.detail === null || typeof payload.detail === "string"
+            ? { detail: payload.detail as string | null }
+            : {}),
+        };
+      case "permission_resolved":
+        if (typeof payload.requestId !== "string" || typeof payload.approved !== "boolean") {
+          return null;
+        }
+        return {
+          type: "permission_resolved",
+          requestId: payload.requestId,
+          approved: payload.approved,
+        };
+      case "status":
+        if (typeof payload.state !== "string") return null;
+        return {
+          type: "status",
+          state: payload.state,
+          ...(payload.detail === null || typeof payload.detail === "string"
+            ? { detail: payload.detail as string | null }
+            : {}),
+        };
+      case "turn_end":
+        return {
+          type: "turn_end",
+          ...(payload.stopReason === null || typeof payload.stopReason === "string"
+            ? { stopReason: payload.stopReason as string | null }
+            : {}),
+        };
+      case "error":
+        if (typeof payload.message !== "string") return null;
+        return { type: "error", message: payload.message };
+      default:
+        return null;
     }
-    return payload;
   } catch {
     return null;
   }
+}
+
+/** Drop unacknowledged prompts when the host invalidates this task session. */
+export function clearSessionOutbox(handle: string): void {
+  writeOutbox(handle, []);
 }
 
 function waitForSocketOpen(target: WebSessionSocket): Promise<void> {
@@ -212,7 +329,7 @@ export function connectWebSessionTransport(
   handle: string,
   callbacks: WebSessionTransportCallbacks,
   platform: WebSessionTransportPlatform = createBrowserWebSessionPlatform(),
-  model = "auto",
+  model?: string,
 ): WebSessionTransport {
   let socket: WebSessionSocket | undefined;
   let ready = false;
@@ -232,8 +349,9 @@ export function connectWebSessionTransport(
       ready = true;
       callbacks.onEvent(parsed);
       const nextModel =
-        typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : model;
-      callbacks.onEvent(parsed);
+        typeof parsed.model === "string" && parsed.model.trim()
+          ? parsed.model.trim()
+          : model?.trim() || "auto";
       callbacks.onReady(nextModel);
       for (const prompt of pendingPrompts) sendPromptNow(prompt);
       return;

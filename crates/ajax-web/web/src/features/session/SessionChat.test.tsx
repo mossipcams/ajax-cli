@@ -178,6 +178,24 @@ describe("SessionChat smoke", () => {
     vi.useRealTimers();
   });
 
+  it("sends one host-queued prompt while busy without a browser follow-up latch", () => {
+    mountChat();
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "First" } });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    transport.sendPrompt.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Next" } });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Message")).toHaveAttribute(
+      "placeholder",
+      "Sends after this turn…",
+    );
+  });
+
   it("opens Diff Review on a left swipe", async () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();

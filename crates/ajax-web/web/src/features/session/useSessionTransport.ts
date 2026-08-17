@@ -29,6 +29,7 @@ interface Options {
   onActivity: () => void;
   setConnected: (connected: boolean) => void;
   setEverOpened: (everOpened: boolean) => void;
+  onSessionInvalidated?: () => void;
 }
 
 /** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
@@ -42,6 +43,7 @@ export function useSessionTransport({
   onActivity,
   setConnected,
   setEverOpened,
+  onSessionInvalidated,
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
@@ -123,6 +125,7 @@ export function useSessionTransport({
               handshakeAttempts += 1;
               if (handshakeAttempts > MAX_HANDSHAKE_ATTEMPTS) {
                 reconnecting = false;
+                onSessionInvalidated?.();
                 dispatch({
                   type: "event",
                   event: {
