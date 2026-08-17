@@ -43,6 +43,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type PointerEvent,
   type UIEvent,
 } from "react";
 import type { Terminal } from "@xterm/xterm";
@@ -231,6 +232,12 @@ export default function SessionChat({
     if (atLive) setBehind(false);
   }
 
+  function onThreadPointerDown(event: PointerEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, textarea, select, [role='button'], summary")) return;
+    composerRef.current?.blur();
+  }
+
   function sendDraft() {
     if (!connected) return;
     const text = draftRef.current.trim();
@@ -334,6 +341,7 @@ export default function SessionChat({
         ref={threadRef}
         data-testid="session-thread"
         onScroll={onThreadScroll}
+        onPointerDown={onThreadPointerDown}
       >
         {state.items.length === 0 ? (
           <p className="session-thread-empty" data-testid="session-thread-empty">
@@ -390,6 +398,13 @@ export default function SessionChat({
               onClick={toggleMic}
             >
               Mic
+              {micArmed ? (
+                <span
+                  className="terminal-key-armed-dot"
+                  data-testid="session-mic-armed-dot"
+                  aria-hidden="true"
+                ></span>
+              ) : null}
             </button>
             <button
               type="submit"

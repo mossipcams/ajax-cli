@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent, screen, act, waitFor } from "@testing-library/react";
+import { render, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
 import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import * as useTaskTerminalSpeechModule from "@/features/task/useTaskTerminalSpeech";
 import * as api from "@/shared/lib/api";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -122,6 +123,38 @@ describe("SessionChat smoke", () => {
     const composer = screen.getByTestId("session-composer");
     expect(thread).not.toContainElement(composer);
     expect(chat).toContainElement(composer);
+  });
+
+  it("blurs the composer when tapping the transcript scroller", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    fireEvent.pointerDown(screen.getByTestId("session-thread"));
+    expect(composer).not.toHaveFocus();
+  });
+
+  it("shows terminal is-armed grammar on the mic while listening", () => {
+    vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
+      speechModel: {
+        state: "listening",
+        sessionId: "speech-session-test",
+        errorMessage: null,
+        finalTranscript: "",
+        partialTranscript: "",
+        pauseDeadlineMs: undefined,
+        pauseTimerToken: undefined,
+      },
+      pauseCountdownSeconds: undefined,
+      micAriaLabel: "Stop voice input",
+      micArmed: true,
+      toggleMic: vi.fn(),
+      cancelSpeechInput: vi.fn(),
+      cancelSpeechTransport: vi.fn(),
+    });
+    mountChat();
+    const mic = screen.getByRole("button", { name: "Stop voice input" });
+    expect(mic).toHaveClass("is-armed");
+    expect(within(mic).getByTestId("session-mic-armed-dot")).toBeInTheDocument();
   });
 
   it("keeps transcript events replayed before ready", () => {
