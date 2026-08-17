@@ -73,6 +73,7 @@ export default function NewTaskSheet({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const mountedRef = useRef(true);
   const [dragOffset, setDragOffset] = useState(0);
   const sheetRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<HTMLDivElement>(null);
@@ -92,6 +93,7 @@ export default function NewTaskSheet({
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     sheetRef.current?.focus();
     return () => {
+      mountedRef.current = false;
       opener?.focus();
     };
   }, []);
@@ -140,6 +142,10 @@ export default function NewTaskSheet({
         ...(orchestrationChat ? { orchestration_chat: true } : {}),
         request_id: requestId(),
       });
+      if (!mountedRef.current) {
+        if (result.ok && result.response.cockpit) onCockpit?.(result.response.cockpit);
+        return;
+      }
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (!result.ok) {
         const message = result.error?.message ?? "Action failed";

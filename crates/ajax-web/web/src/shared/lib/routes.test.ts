@@ -78,6 +78,29 @@ describe("parseRoute", () => {
   it("falls back to dashboard for unknown hashes", () => {
     expect(parseRoute("#/garbage")).toEqual({ kind: "dashboard" });
   });
+
+  // #810: slash-only or empty task handles must not fetch bogus API paths
+  it("#810 rejects slash-only and empty task handles", () => {
+    expect(parseRoute("#/t//")).toEqual({ kind: "dashboard" });
+    expect(parseRoute("#/t/%2F")).toEqual({ kind: "dashboard" });
+    expect(parseRoute("#/t/%20")).toEqual({ kind: "dashboard" });
+  });
+
+  // #821: whitespace-only project names are not valid routes
+  it("#821 rejects whitespace-only project names", () => {
+    expect(parseRoute("#/p/%20")).toEqual({ kind: "dashboard" });
+    expect(parseRoute("#/p/%20%20")).toEqual({ kind: "dashboard" });
+  });
+
+  // #811: diff suffix only valid after a single encoded handle segment
+  it("#811 rejects extra path segments before /diff", () => {
+    expect(parseRoute("#/t/web%2Ffix-login/extra/diff")).toEqual({ kind: "dashboard" });
+  });
+
+  // #859: path after /diff is not part of the task handle
+  it("#859 rejects extra path segments after /diff", () => {
+    expect(parseRoute("#/t/web%2Ffix-login/diff/extra")).toEqual({ kind: "dashboard" });
+  });
 });
 
 describe("route formatters", () => {
