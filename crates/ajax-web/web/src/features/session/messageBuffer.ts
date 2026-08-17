@@ -1,6 +1,7 @@
-// Render batching only: hold streamed assistant/thought updates until a boundary
-// (turn_end, tool call, plan, permission, ready). The host normalizes ACP text
-// into full-content item updates; this layer does not merge deltas.
+// Render batching only: rAF-coalesce streamed assistant/thought updates to the
+// latest full-content text per itemId. The host normalizes ACP text into full
+// updates; this layer does not merge deltas. Boundary events still flush any
+// pending lane before they reach the reducer.
 
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 
@@ -11,6 +12,8 @@ interface LaneState {
   itemId: string;
   messageId?: string;
   text: string;
+  /** Last text dispatched for this lane; skips redundant reducer work. */
+  sentText?: string;
 }
 
 function isStreamedLane(
@@ -32,6 +35,7 @@ function isStreamedLane(
 export class MessageBuffer {
   private lanes = new Map<string, LaneState>();
   private readonly dispatch: Dispatch;
+  private rafId: number | null = null;
 
   constructor(dispatch: Dispatch) {
     this.dispatch = dispatch;
@@ -39,21 +43,56 @@ export class MessageBuffer {
 
   push(event: WebSessionServerEvent): void {
     if (isStreamedLane(event)) {
-      this.lanes.set(event.itemId, {
-        role: event.role,
-        itemId: event.itemId,
-        messageId: event.messageId,
-        text: event.text,
-      });
+      const lane = this.lanes.get(event.itemId);
+      if (lane) {
+        lane.role = event.role;
+        lane.messageId = event.messageId ?? lane.messageId;
+        lane.text = event.text;
+      } else {
+        this.lanes.set(event.itemId, {
+          role: event.role,
+          itemId: event.itemId,
+          messageId: event.messageId,
+          text: event.text,
+        });
+      }
+      this.scheduleFlush();
       return;
     }
+    this.cancelScheduledFlush();
     this.flushAll();
     this.dispatch(event);
   }
 
   flushAll(): void {
+    this.cancelScheduledFlush();
+    this.flushPending();
+    this.lanes.clear();
+  }
+
+  dispose(): void {
+    this.cancelScheduledFlush();
+    this.lanes.clear();
+  }
+
+  private scheduleFlush(): void {
+    if (this.rafId !== null) return;
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      this.flushPending();
+    });
+  }
+
+  private cancelScheduledFlush(): void {
+    if (this.rafId === null) return;
+    cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+  }
+
+  private flushPending(): void {
     for (const lane of this.lanes.values()) {
-      if (!lane.text) continue;
+      if (!lane.text || lane.text === lane.sentText) continue;
+      lane.sentText = lane.text;
       this.dispatch({
         type: "message",
         role: lane.role,
@@ -62,10 +101,5 @@ export class MessageBuffer {
         ...(lane.messageId ? { messageId: lane.messageId } : {}),
       });
     }
-    this.lanes.clear();
-  }
-
-  dispose(): void {
-    this.lanes.clear();
   }
 }

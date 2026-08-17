@@ -82,6 +82,8 @@ interface Props {
   tool: ToolCall | null;
   /** In-progress ACP plan step, if any. Not the whole checklist. */
   planStep: string | null;
+  /** One-line latest ACP thought while working with no tool or plan step. */
+  thoughtSnippet: string | null;
   status: string | null;
   /** Latest context pressure, or null when the harness does not report it. */
   usage: Usage | null;
@@ -105,6 +107,7 @@ export default function LiveHead({
   decision,
   tool,
   planStep,
+  thoughtSnippet,
   status,
   usage,
   activityAgeMs,
@@ -193,7 +196,9 @@ export default function LiveHead({
             </p>
           ) : null}
           {!tool && !planStep ? (
-            <p className="session-head-quiet">{status ?? "Thinking…"}</p>
+            <p className="session-head-quiet" data-testid="session-head-thought">
+              {thoughtSnippet ?? status ?? "Thinking…"}
+            </p>
           ) : null}
           {quiet ? (
             <p className="session-head-quiet" data-testid="session-head-activity-age">

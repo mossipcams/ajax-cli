@@ -52,10 +52,8 @@ export function useSessionTransport({
     let reconnectAttempts = 0;
     let reconnecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    // Coalesces ACP message chunks so the assistant response renders as
-    // paragraphs, not a token stream (issue #904, typewriter-free). Recreated
-    // per connection so a reset clears any text buffered from the previous
-    // connection.
+    // Coalesces streamed ACP text with requestAnimationFrame so the reducer sees
+    // full-content updates during the turn without one dispatch per token.
     let buffer: MessageBuffer | undefined;
     /** Survives in-page reconnect; cleared on full reload with the reducer. */
     let nextToReadCursor: number | undefined;
@@ -114,9 +112,9 @@ export function useSessionTransport({
               });
               return;
             }
-            // Streamed text is held for the turn and flushed as paragraphs at a
-            // boundary (turn_end, a tool call, ready); everything else flushes
-            // pending text first so ordering is preserved.
+            // Streamed text is rAF-coalesced to the latest full content per
+            // itemId; boundary events flush any pending lane first so ordering
+            // is preserved.
             buffer?.push(event);
           },
           onClosed: () => {
