@@ -624,6 +624,55 @@ fn answer_permission_records_permission_resolved() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Stop answers every pending ACP permission request with the cancelled
+/// outcome, but recorded nothing — so the browser (which clears a decision only
+/// on `permission_resolved`) kept the prompt on the live head, answering it
+/// failed with "no longer pending", and reconnect replay resurrected it.
+#[test]
+fn cancel_records_permission_resolved_for_prompts_it_answered() {
+    let dir = scratch_dir("cancel-permission");
+    let handle = "web/cancel-permission";
+    let hub = WebSessionHub::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--permission"], || {
+            hub.acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            hub.submit_prompt(handle, "permission".to_string())
+                .expect("prompt");
+            pump_until(&hub, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| matches!(
+                    event,
+                    SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
+                ))
+            });
+
+            hub.cancel(handle, false).expect("cancel");
+
+            let (events, _) = hub.read_from(handle, 0);
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    SessionServerEvent::PermissionResolved {
+                        request_id,
+                        approved: false,
+                    } if request_id == "42"
+                )),
+                "cancel left the permission request unresolved: {events:?}"
+            );
+            // `read_from` drops requests that carry a matching resolution, so a
+            // reconnecting socket no longer replays the dead prompt.
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
+            )));
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn permission_response_matches_779_shape() {
     assert_eq!(

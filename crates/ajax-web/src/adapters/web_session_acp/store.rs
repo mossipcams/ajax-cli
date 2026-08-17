@@ -122,15 +122,21 @@ pub fn append_events(state_dir: &Path, handle: &str, new_events: &[SessionServer
     let oversized = fs::metadata(&path)
         .map(|metadata| metadata.len() > MAX_LOG_BYTES)
         .unwrap_or(false);
-    if oversized {
-        let mut session = load(state_dir, handle);
-        if session.events.len() > MAX_LOG_EVENTS {
-            let excess = session.events.len() - MAX_LOG_EVENTS;
-            session.events.drain(..excess);
-            session.dropped += excess;
-        }
-        persist(state_dir, handle, &session);
+    if !oversized {
+        return;
     }
+    let mut session = load(state_dir, handle);
+    let excess = session.events.len().saturating_sub(MAX_LOG_EVENTS);
+    if excess == 0 {
+        // Over the byte cap but inside the event cap: there is nothing to trim,
+        // so rewriting would produce a byte-identical file and leave it just as
+        // oversized — which is what turned every later append into another full
+        // rewrite + fsync, once per streamed ACP chunk.
+        return;
+    }
+    session.events.drain(..excess);
+    session.dropped += excess;
+    persist(state_dir, handle, &session);
 }
 
 enum ParsedLine {
@@ -300,6 +306,45 @@ mod tests {
 
         assert_eq!(fs::metadata(&path).unwrap().ino(), first_inode);
         assert_eq!(load(&dir, handle).events, vec![note("one"), note("two")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A transcript passes `MAX_LOG_BYTES` long before it reaches
+    /// `MAX_LOG_EVENTS`, and in that window there is nothing to trim. Rewriting
+    /// anyway produced a byte-identical, still-oversized file, so every later
+    /// append reloaded, reparsed, rewrote and fsynced the whole transcript —
+    /// once per streamed ACP chunk, under the hub's session lock. The behavior
+    /// contract is explicit: "Transcript events append to JSONL without a
+    /// per-event full rewrite" (`docs/architecture/web-session-behavior.md`).
+    #[cfg(unix)]
+    #[test]
+    fn append_past_the_byte_cap_does_not_rewrite_the_whole_transcript() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = scratch_dir("oversized-append");
+        let handle = "web/fix-login";
+        let chunk = "x".repeat(1024);
+        let events: Vec<_> = (0..200).map(|_| note(&chunk)).collect();
+        assert!(events.len() < MAX_LOG_EVENTS, "count cap must not fire");
+
+        append_events(&dir, handle, &events);
+
+        let path = session_path(&dir, handle);
+        assert!(
+            fs::metadata(&path).unwrap().len() > MAX_LOG_BYTES,
+            "fixture must leave the transcript over the byte cap"
+        );
+
+        let inode = fs::metadata(&path).unwrap().ino();
+        append_events(&dir, handle, &[note("after")]);
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().ino(),
+            inode,
+            "append over the byte cap rewrote the whole transcript"
+        );
+        assert_eq!(load(&dir, handle).events.len(), events.len() + 1);
+
         let _ = fs::remove_dir_all(dir);
     }
 

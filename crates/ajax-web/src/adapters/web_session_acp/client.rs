@@ -45,6 +45,24 @@ where
     })
 }
 
+/// Process-global ACP spawn override, consulted only when the thread-local one
+/// is unset. A test that drives the real session socket cannot reach the
+/// spawning thread any other way: the child is spawned on whichever runtime
+/// worker upgraded the WebSocket. The program runs directly, with no `node`
+/// wrapper, so a test can point ACP at any hanging or failing binary.
+#[cfg(test)]
+static TEST_ACP_COMMAND: Mutex<Option<(PathBuf, Vec<String>)>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_test_acp_command(command: Option<(&Path, &[&str])>) {
+    *TEST_ACP_COMMAND.lock().unwrap() = command.map(|(program, args)| {
+        (
+            program.to_path_buf(),
+            args.iter().map(|arg| (*arg).to_string()).collect(),
+        )
+    });
+}
+
 /// Add argv tokens for the next test ACP spawns inside `f` (e.g. `--load-fail`).
 #[cfg(test)]
 pub(crate) fn with_test_acp_extra_args<F, R>(args: &[&str], f: F) -> R
@@ -257,14 +275,20 @@ impl AcpStdioClient {
         }
     }
 
-    /// Cancel the in-flight turn.
+    /// Cancel the in-flight turn, returning the permission requests it answered.
     ///
     /// ACP cancellation is a notification. Sent as a request, every installed
     /// harness answers `Method not found` and keeps working — Stop did nothing.
     /// The agent ends the turn with `stopReason: "cancelled"`, which settles the
     /// prompt already in flight.
-    pub fn cancel(&mut self) -> Result<(), String> {
-        self.command_result(|result| ClientCommand::Cancel { result })
+    pub fn cancel(&mut self) -> Result<Vec<String>, String> {
+        let (result_tx, result_rx) = mpsc::channel();
+        self.commands
+            .send(ClientCommand::Cancel { result: result_tx })
+            .map_err(|_| "ACP connection is closed".to_string())?;
+        result_rx
+            .recv_timeout(HANDSHAKE_TIMEOUT)
+            .map_err(|_| "ACP command timed out".to_string())?
     }
 
     pub(crate) fn prompt_in_flight(&self) -> bool {
@@ -441,6 +465,23 @@ fn spawn_acp_process(
         return command
             .spawn()
             .map_err(|error| format!("failed to spawn test acp program: {error}"));
+    }
+
+    #[cfg(test)]
+    {
+        let override_command = TEST_ACP_COMMAND.lock().unwrap().clone();
+        if let Some((program, args)) = override_command {
+            let mut command = std::process::Command::new(program);
+            command
+                .args(args)
+                .current_dir(worktree_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            return command
+                .spawn()
+                .map_err(|error| format!("failed to spawn test acp command: {error}"));
+        }
     }
 
     let Some(launch) = acp_launch_for_agent(agent) else {
