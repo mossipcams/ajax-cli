@@ -1,12 +1,21 @@
 // DIRECTION CONTRACT — orchestration session (Operate)
 //
-// THESIS: this surface is an instrument with a live head, not a message list.
+// THESIS: this surface is an instrument with a live head over a work record.
 //   What the agent is doing right now — the tool it is in, the file it touches,
 //   the decision it needs — holds one fixed panel that never scrolls away.
-//   Settled turns fall into a transcript as conversation plus one work summary,
-//   not a tool trace. It refuses the messenger arrangement the category ships,
-//   where streaming output, reasoning noise and the one approval you owe all
-//   compete inside a single auto-scrolling column.
+//   Below it, the turn is kept as the work it did: ACP separates message,
+//   reasoning, tool call, tool content, plan and permission, and so does this
+//   column. It refuses the messenger arrangement the category ships, where
+//   streaming output, reasoning noise and the one approval you owe all compete
+//   as undifferentiated prose in a single auto-scrolling column — but it
+//   refuses equally the summary that replaces a turn's diff with "1 edit".
+// REVISION (ACP-typed conversation): an earlier contract here settled a turn as
+//   "conversation plus one work summary, not a tool trace". That threw away the
+//   substance — the diff, the command output — that the operator opened the
+//   surface for. Tool calls are now first-class items that revise in place;
+//   noise is controlled by collapse (success collapsed, failure open, reasoning
+//   one line) rather than by discarding. Permission BUTTONS stay in the head:
+//   a control inside a scrolling column can leave the screen mid-decision.
 // OWN-WORLD: Ajax Cockpit, unchanged. Soft Charcoal paper steps, hairline
 //   rules, Soft Steel Blue as the running signal, --tone for status, mono only
 //   where the CLI speaks (tool kinds, paths, code), uppercase tracked micro
@@ -14,10 +23,10 @@
 // STORY: the operator opens a session on a phone, sees one panel saying what
 //   the agent is doing and whether it needs them, answers if asked, scrolls the
 //   transcript for history, types to steer.
-// FIRST VIEWPORT: live head (back / title / state + running tool / decision)
-//   -> settled transcript (~80% of the band) with a full-width in-thread
-//   composer (Enter sends; no Send chrome). The primary action is whatever the
-//   head asks for; with nothing asked, the composer is primary.
+// FIRST VIEWPORT: live head (back / title / state + running tool / decision /
+//   context pressure) -> conversation (~80% of the band) with a full-width
+//   in-thread composer (Enter sends; no Send chrome). The primary action is
+//   whatever the head asks for; with nothing asked, the composer is primary.
 // FORM: candidate 6 of 7 ("instrument stack: live head over settled
 //   transcript"), staging fused from the wound-medium challenger — live head
 //   distinct from settled tape, honest position readout, jump-to-live. Seed key

@@ -66,21 +66,41 @@ into prose or dropped.
 
 ## Tasks
 
-- [ ] T1 Rust: `acp_map.rs` split + tool `content`, `messageId`, `usage` event
-- [ ] T2 TS: transport event types match the new wire
-- [ ] T3 TS: reducer → `ConversationItem[]`
-- [ ] T4 TS: presentation components + CSS
-- [ ] T5 Markdown streaming throttle
-- [ ] T6 Tests: Rust mapping, reducer, component, e2e/visual
-- [ ] T7 Docs: direction contract, DESIGN.md, web-session-behavior.md
+- [x] T1 Rust: `acp_map.rs` split + tool `content`, `messageId`, `usage` event
+- [x] T2 TS: transport event types match the new wire
+- [x] T3 TS: reducer → `ConversationItem[]`
+- [x] T4 TS: presentation components + CSS
+- [x] T5 Markdown streaming throttle
+- [x] T6 Tests: Rust mapping, reducer, component, e2e/visual
+- [x] T7 Docs: direction contract, DESIGN.md, web-session-behavior.md
+
+## Deviations from the scope above
+
+- **Usage is state, not a `ConversationItem`.** The scope listed usage among the
+  item kinds. Context pressure is one current value, and a row per
+  `usage_update` would bury the conversation under its own telemetry. It lands
+  in `SessionState.usage` and renders in the head from 70% up, where the
+  operator can still act on it.
+- **`summarizeTurn` is deleted, and the tests that specified it are rewritten.**
+  `sessionThread.test.ts` "folds a turn's tools into one summary note" and the
+  `summarizeTurn` suite encoded the direction this change reverses; they now
+  assert that a settled turn keeps its calls. Same for the reducer tests that
+  asserted reasoning, plan and permission were kept *out* of the thread.
+- **Diff rendering is single-hunk** (common prefix/suffix trim, 2 lines of
+  context) rather than a full LCS diff. Marked `ponytail:` in
+  `toolPresentation.ts` with the upgrade path.
 
 ## Validation
 
-Nothing verified yet.
-
 | Command | Result |
 | --- | --- |
-| `cargo clippy --all-targets --all-features -- -D warnings` | not run |
-| `cargo nextest run -p ajax-web` | not run |
-| `npm --prefix crates/ajax-web/web run test` | not run |
-| `npm run web:smoke` (mobile-webkit) | not run |
+| `cargo fmt --all -- --check` | pass |
+| `cargo clippy --all-targets --all-features -- -D warnings` | pass |
+| `cargo nextest run -p ajax-web` | pass (382 tests) |
+| `npm run web:check` / `web:lint` / `web:sg` | pass |
+| `npm run web:test -- --run` | pass (868 passed, 9 skipped) |
+| `npm run web:smoke` (mobile-webkit) | pass (121 passed, 3 skipped, 1 flaky) |
+
+The flaky test is `terminal-behavior.test.ts › phone fullscreen keeps background
+controls inert until exit` — a `page.goto` timeout on a route this change does
+not touch; it passed on retry.

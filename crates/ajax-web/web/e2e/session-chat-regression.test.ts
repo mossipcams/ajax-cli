@@ -124,6 +124,113 @@ for (const harness of HARNESSES) {
   });
 }
 
+/** One turn carrying everything ACP separates: reasoning, a plan, a tool call
+ * with a diff, and a tool call with command output. The long diff line is the
+ * point of the width assertions — `white-space: pre` inside a flex column is
+ * exactly how a code block starts panning the whole phone surface sideways. */
+async function mockTypedTurn(page: Page) {
+  const LONG = "a".repeat(400);
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.onMessage((message) => {
+      if (typeof message !== "string") return;
+      const event = JSON.parse(message) as { type?: string; text?: string };
+      if (event.type !== "prompt") return;
+      const events = [
+        { type: "message", role: "thought", text: "Deciding where the port is set" },
+        {
+          type: "plan",
+          entries: [
+            { content: "Find the port", status: "completed" },
+            { content: "Change it", status: "in_progress" },
+          ],
+        },
+        {
+          type: "tool_call",
+          callId: "call-1",
+          title: "Edit config",
+          kind: "edit",
+          status: "in_progress",
+          locations: ["/repo/crates/ajax-web/src/config.ts"],
+        },
+        {
+          type: "tool_call",
+          callId: "call-1",
+          status: "completed",
+          content: [
+            {
+              type: "diff",
+              path: "/repo/crates/ajax-web/src/config.ts",
+              oldText: `const port = 1;\n// ${LONG}\n`,
+              newText: `const port = 2;\n// ${LONG}\n`,
+            },
+          ],
+        },
+        {
+          type: "tool_call",
+          callId: "call-2",
+          title: "cargo test",
+          kind: "execute",
+          status: "failed",
+          content: [{ type: "text", text: `error: assertion failed ${LONG}` }],
+        },
+        { type: "usage", used: 92, size: 100 },
+        { type: "message", role: "agent", text: "Changed the port to 2." },
+        { type: "turn_end", stopReason: "end_turn" },
+      ];
+      for (const next of events) socket.send(JSON.stringify(next));
+    });
+    socket.send(JSON.stringify({ type: "ready", model: "auto", busy: false }));
+  });
+}
+
+test("a turn renders its tool calls, diff, plan and reasoning in place", async ({ page }) => {
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+  await mockTypedTurn(page);
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible();
+  await page.getByLabel("Message").fill("Change the port");
+  await page.getByLabel("Message").press("Enter");
+
+  await expect(page.getByTestId("session-message-agent")).toContainText("Changed the port to 2.");
+
+  // Two calls, merged by id — the update revised the edit rather than adding a row.
+  await expect(page.getByTestId("session-tool-card")).toHaveCount(2);
+  const edit = page.getByTestId("session-tool-card").first();
+  await expect(edit).toHaveAttribute("data-status", "completed");
+
+  // The failure opens itself; the success stays quiet until asked.
+  await expect(page.getByTestId("session-tool-output")).toContainText("assertion failed");
+  await expect(page.getByTestId("session-tool-diff")).toHaveCount(0);
+  await edit.getByRole("button").click();
+  await expect(page.getByTestId("session-tool-diff")).toContainText("-const port = 1;");
+  await expect(page.getByTestId("session-tool-diff")).toContainText("+const port = 2;");
+
+  await expect(page.getByTestId("session-plan").getByRole("listitem")).toHaveCount(2);
+
+  await expect(page.getByTestId("session-thinking-body")).toHaveCount(0);
+  await page.getByTestId("session-thinking").getByRole("button").click();
+  await expect(page.getByTestId("session-thinking-body")).toContainText("Deciding where the port");
+
+  // A 400-character diff line must scroll inside its own block, never widen the
+  // surface: a phone that pans sideways loses the composer off-screen.
+  const overflow = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
+    return {
+      page: doc.scrollWidth - doc.clientWidth,
+      thread: thread.scrollWidth - thread.clientWidth,
+    };
+  });
+  expect(overflow.page).toBe(0);
+  expect(overflow.thread).toBe(0);
+});
+
 test("an error turn ends visibly with recovery guidance", async ({ page }) => {
   await mockFetch(page, {
     __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
