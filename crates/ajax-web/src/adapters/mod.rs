@@ -11,3 +11,4 @@ pub mod stt_provider;
 pub mod terminal_pty;
 pub mod tls;
 pub mod web_session_acp;
+pub mod web_session_store;
