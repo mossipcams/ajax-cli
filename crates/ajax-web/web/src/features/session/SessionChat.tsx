@@ -232,7 +232,7 @@ export default function SessionChat({
     if (atLive) setBehind(false);
   }
 
-  function onThreadPointerDown(event: PointerEvent<HTMLDivElement>) {
+  function onPagePointerDown(event: PointerEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
     if (target.closest("button, a, input, textarea, select, [role='button'], summary")) return;
     composerRef.current?.blur();
@@ -301,6 +301,7 @@ export default function SessionChat({
       data-testid="session-chat"
       data-handle={handle}
       style={style}
+      onPointerDown={onPagePointerDown}
     >
       <LiveHead
         title={title}
@@ -341,7 +342,6 @@ export default function SessionChat({
         ref={threadRef}
         data-testid="session-thread"
         onScroll={onThreadScroll}
-        onPointerDown={onThreadPointerDown}
       >
         {state.items.length === 0 ? (
           <p className="session-thread-empty" data-testid="session-thread-empty">
@@ -391,20 +391,13 @@ export default function SessionChat({
           <div className="session-composer-actions">
             <button
               type="button"
-              className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}`}
+              className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}${speechModel.state === "connecting" ? " is-connecting" : ""}`}
               aria-label={micArmed ? "Stop voice input" : micAriaLabel}
               title={micArmed ? "Stop voice input" : micAriaLabel}
               disabled={!connected || speechModel.state === "connecting" || speechModel.state === "finalizing"}
               onClick={toggleMic}
             >
               Mic
-              {micArmed ? (
-                <span
-                  className="terminal-key-armed-dot"
-                  data-testid="session-mic-armed-dot"
-                  aria-hidden="true"
-                ></span>
-              ) : null}
             </button>
             <button
               type="submit"

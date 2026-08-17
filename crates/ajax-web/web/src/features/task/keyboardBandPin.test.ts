@@ -55,16 +55,23 @@ describe("keyboard band height pin contract", () => {
     expectHeightBandPin(rule);
   });
 
-  it("pins session chat with visualViewport height (not 100lvh bottom)", () => {
+  it("forbids a nested session-page keyboard-open position:fixed pin (#877)", () => {
     const mobileBlock =
       stylesSource.match(
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
       )?.[1] ?? "";
+    expect(mobileBlock).not.toMatch(
+      /html\.keyboard-open\s+\.session-page\.session-chat\s*\{[^}]*position:\s*fixed/,
+    );
+  });
+
+  it("shrinks session-thread with flex 1 1 0% so the column stays inside app-viewport", () => {
     const rule =
-      mobileBlock.match(
-        /html\.keyboard-open\s+\.session-page\.session-chat\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-    expectHeightBandPin(rule);
+      stylesSource.match(/\.session-thread\s*\{([^}]*)\}/)?.[1] ?? "";
+    const body = stripCssComments(rule);
+    expect(body).toMatch(/flex:\s*1\s+1\s+0%/);
+    expect(body).toMatch(/min-height:\s*0/);
+    expect(body).not.toMatch(/flex:\s*1\s+1\s+80%/);
   });
 
   it("pins app-viewport with visualViewport height (not 100lvh bottom)", () => {
@@ -111,10 +118,10 @@ describe("keyboard band height pin contract", () => {
     );
   });
 
-  it("ships the session keyboard-open band pin in dist/app.css", () => {
+  it("does not ship a nested session keyboard-open position:fixed pin in dist/app.css", () => {
     const distCss = readFileSync(join(here, "../../../dist/app.css"), "utf8");
-    expect(distCss).toMatch(
-      /html\.keyboard-open[^{]*\.session-page\.session-chat[^{]*\{[^}]*top:var\(--app-top/,
+    expect(distCss).not.toMatch(
+      /html\.keyboard-open[^{]*\.session-page\.session-chat[^{]*\{[^}]*position:fixed/,
     );
   });
 });

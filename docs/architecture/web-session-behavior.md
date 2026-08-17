@@ -193,16 +193,28 @@ existing paths.
 
 ## Mobile keyboard band
 
-- On `#/session/<handle>`, while `html.keyboard-open` is set, the session chat
-  column pins to the visual-viewport band (`--app-top` / `--app-height`) the
-  same way inline task detail does. Dismissing the soft keyboard (or clearing
-  `keyboard-open`) must release the pin and reset scroll so the composer
-  returns to the bottom of the viewport ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
-- Tapping the transcript scroller blurs the composer so iOS can dismiss the
-  keyboard without leaving the composer stranded mid-viewport.
+- On `#/session/<handle>`, while `html.keyboard-open` is set, **only**
+  `.app-viewport` pins to the visual-viewport band (`--app-top` /
+  `--app-height`). The session chat column must **not** add a nested
+  `position: fixed` pin on `.session-page.session-chat` inside that band —
+  double-applying `--app-top` strands the composer on iOS Safari ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
+- The session column fills the pinned band through a bounded flex chain
+  (`overflow: hidden`, `min-height: 0`); `.session-thread` uses
+  `flex: 1 1 0%` so it shrinks above the composer instead of overflowing.
+- Tapping anywhere on the session page outside the composer controls (textarea,
+  Mic, Send, and other interactive targets) blurs the composer so iOS can
+  dismiss the keyboard without leaving it stranded mid-viewport.
+- Clearing `keyboard-open` blurs a focused session composer textarea and resets
+  document scroll so iOS does not keep `visualViewport.offsetTop` on a
+  still-focused input.
 
 ## Session composer speech
 
-- The session Mic control reuses the terminal `is-armed` border and
-  `terminal-key-armed-dot` indicator while listening or pause-pending; idle
-  keeps the Mic text label with no dot.
+- The session Mic control keeps the **Mic** text label. At rest it is a
+  square-corner chip (`--radius-sm`, same family as terminal keys), not a pill:
+  filled with Soft Steel Blue (`--accent` / `--soft-steel-blue`, `#87afd7`) and
+  charcoal text (`--paper`). Send remains the accent-filled pill CTA
+  (`border-radius: 999px`).
+- While listening or pause-pending (`is-armed`) and while connecting
+  (`is-connecting`), Mic fills with `--warn` so the state change is obvious;
+  connecting must not look like a disabled no-op at reduced opacity.

@@ -178,6 +178,47 @@ describe("initViewport", () => {
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
+  it("blurs the session composer when keyboard-open clears", () => {
+    const composer = document.createElement("textarea");
+    composer.setAttribute("aria-label", "Message");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    document.body.appendChild(shell);
+    composer.focus();
+
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(composer).toHaveFocus();
+
+    vvHeight = 800;
+    dispatchVV("resize");
+    settleClose();
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(composer).not.toHaveFocus();
+    shell.remove();
+  });
+
+  it("does not blur the task terminal when keyboard-open clears", () => {
+    const termInput = document.createElement("textarea");
+    termInput.className = "xterm-helper-textarea";
+    document.body.appendChild(termInput);
+    termInput.focus();
+
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    vvHeight = 800;
+    dispatchVV("resize");
+    settleClose();
+
+    expect(termInput).toHaveFocus();
+    termInput.remove();
+  });
+
   it("suppresses pinch-zoom gestures", () => {
     start();
     const event = new Event("gesturestart", { cancelable: true });

@@ -559,8 +559,9 @@ html.terminal-expanded .result-panel {
 .session-page.session-chat {
   position: relative;
   padding: 0;
-  overflow-x: hidden;
+  overflow: hidden;
   min-width: 0;
+  min-height: 0;
 }
 
 /* Starter keeps a dedicated header; the chat route folds back/title into the
@@ -924,9 +925,9 @@ html.terminal-expanded .result-panel {
 }
 
 /* Transcript -------------------------------------------------------------- */
-/* Owns ~80% of the session band and is the only scroll surface in the column. */
+/* Fills the remaining column above the composer and is the only scroll surface. */
 .session-thread {
-  flex: 1 1 80%;
+  flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
   display: flex;
@@ -1446,13 +1447,23 @@ html.keyboard-open .session-composer {
   opacity: 0.4;
 }
 
-.session-composer-mic.is-armed {
-  border-color: var(--warn);
-  color: var(--warn);
+.session-composer-mic {
+  border-radius: var(--radius-sm);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--paper);
 }
 
-.session-composer-mic .terminal-key-armed-dot {
-  margin-left: 4px;
+.session-composer-mic.is-armed,
+.session-composer-mic.is-connecting {
+  border-color: var(--warn);
+  background: var(--warn);
+  color: var(--paper);
+}
+
+.session-composer-mic.is-connecting:disabled {
+  opacity: 1;
+  cursor: wait;
 }
 
 .session-composer-send {
@@ -1949,38 +1960,6 @@ html.keyboard-open .session-composer textarea {
     min-height: 0;
     overflow: hidden;
     padding-bottom: 0;
-  }
-
-  /* Pin the session chat column to the visual-viewport band so the composer
-     lands flush above the iOS keyboard (#877), matching task-detail geometry. */
-  html.keyboard-open .session-page.session-chat {
-    position: fixed;
-    /* Height from --app-top / --app-height (visualViewport). */
-    top: var(--app-top, var(--app-band-top, 0px));
-    left: 0;
-    right: 0;
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-    height: var(--app-height, var(--app-band-height, 100dvh));
-    max-height: var(--app-height, var(--app-band-height, 100dvh));
-    min-height: 0;
-    max-width: none;
-    width: 100%;
-    margin: 0;
-    box-sizing: border-box;
-    overflow: hidden;
-    background: var(--paper);
-  }
-
-  html.keyboard-open .session-page.session-chat .session-head,
-  html.keyboard-open .session-page.session-chat .session-composer {
-    flex: none;
-  }
-
-  html.keyboard-open .session-page.session-chat .session-thread {
-    flex: 1 1 0%;
-    min-height: 0;
   }
 }
 
