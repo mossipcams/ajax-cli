@@ -262,6 +262,43 @@ describe("SessionChat smoke", () => {
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
   });
 
+  it("shows Test in Dev in the task details modal for ajax-cli tasks", async () => {
+    vi.spyOn(api, "fetchDevDeploy").mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "ready_to_deploy",
+        phase_label: "Ready to deploy",
+        shared_slot: true,
+        active: false,
+        error: null,
+        occupant: null,
+      },
+    });
+    mountChat({
+      detail: {
+        ...(taskDetail as BrowserTaskDetail),
+        repo: "ajax-cli",
+        qualified_handle: "ajax-cli/demo",
+      },
+    });
+    expect(screen.queryByTestId("test-in-dev")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    await waitFor(() => {
+      expect(screen.getByTestId("test-in-dev")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("session-task-panel")).toContainElement(
+      screen.getByTestId("test-in-dev"),
+    );
+  });
+
+  it("hides Test in Dev in the task details modal for non-ajax-cli tasks", () => {
+    mountChat();
+    expect(screen.queryByTestId("test-in-dev")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("test-in-dev")).not.toBeInTheDocument();
+  });
+
   it("calls onSwappedAgent and onMutated once after a successful harness swap in the details modal", async () => {
     vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
     const onSwappedAgent = vi.fn();
