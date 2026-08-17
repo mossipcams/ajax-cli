@@ -1009,6 +1009,274 @@ html.terminal-expanded .result-panel {
   overflow-wrap: anywhere;
 }
 
+/* Reasoning --------------------------------------------------------------- */
+/* One quiet line by default. Reasoning is the agent's account of the turn, not
+   the answer to it, so it never competes with prose for the first read. */
+.session-thinking {
+  align-self: stretch;
+  min-width: 0;
+}
+
+.session-thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.session-thinking-toggle:hover,
+.session-thinking-toggle:focus-visible {
+  color: var(--ink-soft);
+  outline: none;
+}
+
+.session-thinking-mark {
+  color: var(--ink-faint);
+}
+
+.session-thinking-body {
+  margin: 4px 0 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--rule);
+  color: var(--ink-muted);
+  font-size: var(--text-body-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Plan -------------------------------------------------------------------- */
+.session-plan {
+  align-self: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper-tint);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-plan-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.session-plan-step[data-status="in_progress"] {
+  color: var(--ink);
+}
+
+.session-plan-step[data-status="completed"] .session-plan-text {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+.session-plan-mark {
+  flex: none;
+  width: 1em;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+}
+
+.session-plan-step[data-status="completed"] .session-plan-mark {
+  color: var(--ok);
+}
+
+.session-plan-step[data-status="in_progress"] .session-plan-mark {
+  color: var(--accent);
+}
+
+/* Tool cards -------------------------------------------------------------- */
+/* A tool call is history, so it keeps its place in the column. The header alone
+   answers "what ran and how did it end"; the body is opt-in except when the
+   answer is bad. */
+.session-toolcard {
+  align-self: stretch;
+  /* The thread is a flex column, and `overflow: hidden` zeroes a flex item's
+     automatic minimum size — without `flex: none` a full thread crushes these
+     cards to a sliver of clipped text. */
+  flex: none;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper-tint);
+  overflow: hidden;
+}
+
+.session-toolcard[data-status="failed"] {
+  border-color: var(--danger);
+}
+
+.session-toolcard-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.session-toolcard-head:disabled {
+  cursor: default;
+}
+
+.session-toolcard-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.session-toolcard-status {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.session-toolcard[data-status="failed"] .session-toolcard-status {
+  color: var(--danger);
+}
+
+.session-toolcard[data-status="completed"] .session-toolcard-status {
+  color: var(--ok);
+}
+
+.session-toolcard[data-status="in_progress"] .session-toolcard-status {
+  color: var(--accent);
+}
+
+/* The path has the header's remaining width to itself only when there is any;
+   on a phone the title wins and the path wraps under it. */
+.session-toolcard-head .session-tool-path {
+  margin-left: 0;
+  max-width: 40%;
+}
+
+.session-toolcard-body {
+  border-top: 1px solid var(--rule);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-tool-output {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 40vh;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  color: var(--ink-soft);
+  white-space: pre;
+}
+
+/* Diff -------------------------------------------------------------------- */
+/* Sign-first lines, coloured by tone. The sign carries the meaning without the
+   colour, so a red/green-blind reader loses nothing. */
+.session-diff {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.session-diff-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  color: var(--ink-muted);
+}
+
+.session-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.session-diff-stat {
+  flex: none;
+  margin-left: auto;
+}
+
+.session-diff-added {
+  color: var(--ok);
+}
+
+.session-diff-removed {
+  color: var(--danger);
+}
+
+.session-diff-body {
+  margin: 0;
+  max-height: 40vh;
+  padding: 6px 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.session-diff-line {
+  display: block;
+  padding: 0 10px;
+  color: var(--ink-muted);
+}
+
+.session-diff-line.sign-add {
+  color: var(--ok-bright);
+  background: rgba(135, 175, 135, 0.12);
+}
+
+.session-diff-line.sign-del {
+  color: var(--fault-rose-bright);
+  background: rgba(215, 135, 135, 0.12);
+}
+
+/* Context pressure -------------------------------------------------------- */
+.session-usage.is-tight {
+  color: var(--warn);
+}
+
 /* Markdown inside agent prose --------------------------------------------- */
 .md > :first-child {
   margin-top: 0;

@@ -110,6 +110,7 @@ fn g1_load_fail_appends_context_reset_note() {
             SessionServerEvent::Message {
                 role: "user".to_string(),
                 text: "seed".to_string(),
+                message_id: None,
             },
         );
         hub.kill_host_for_test(handle);
@@ -140,6 +141,7 @@ fn g1_successful_load_drains_replay_from_transcript() {
             SessionServerEvent::Message {
                 role: "user".to_string(),
                 text: "seed".to_string(),
+                message_id: None,
             },
         );
         hub.record(
@@ -147,6 +149,7 @@ fn g1_successful_load_drains_replay_from_transcript() {
             SessionServerEvent::Message {
                 role: "agent".to_string(),
                 text: "prior".to_string(),
+                message_id: None,
             },
         );
         let (_, cursor) = hub.read_from(handle, 0);

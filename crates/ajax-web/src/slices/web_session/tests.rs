@@ -135,6 +135,7 @@ fn map_tool_call_to_structured_event_not_raw_json() {
             kind: "read".to_string(),
             status: "pending".to_string(),
             locations: vec!["/repo/config.json".to_string()],
+            content: Vec::new(),
         }]
     );
 }
@@ -171,6 +172,117 @@ fn map_tool_call_without_id_is_dropped() {
     assert!(map_acp_session_update(&update).is_empty());
 }
 
+/// The diff a tool wrote is the substance of an edit turn. Dropping `content`
+/// left the browser able to say only that an unnamed edit happened.
+#[test]
+fn map_tool_call_carries_diff_content_to_the_browser() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_002",
+            "title": "Edit config",
+            "kind": "edit",
+            "status": "completed",
+            "content": [
+                {
+                    "type": "diff",
+                    "path": "/repo/config.json",
+                    "oldText": "a\n",
+                    "newText": "b\n"
+                },
+                { "type": "content", "content": { "type": "text", "text": "wrote 1 line" } }
+            ]
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::ToolCall { content, .. } = &events[0] else {
+        panic!("expected tool call, got {events:?}");
+    };
+    assert_eq!(
+        content,
+        &vec![
+            ToolContent::Diff {
+                path: "/repo/config.json".to_string(),
+                old_text: Some("a\n".to_string()),
+                new_text: "b\n".to_string(),
+            },
+            ToolContent::Text {
+                text: "wrote 1 line".to_string()
+            },
+        ]
+    );
+}
+
+/// A new file has no `oldText`; the diff view has to show it as pure addition
+/// rather than dropping the block for want of a left side.
+#[test]
+fn map_tool_call_diff_without_old_text_is_kept() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_003",
+            "content": [{ "type": "diff", "path": "/repo/new.rs", "newText": "fn main() {}" }]
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::ToolCall { content, .. } = &events[0] else {
+        panic!("expected tool call, got {events:?}");
+    };
+    assert_eq!(
+        content,
+        &vec![ToolContent::Diff {
+            path: "/repo/new.rs".to_string(),
+            old_text: None,
+            new_text: "fn main() {}".to_string(),
+        }]
+    );
+}
+
+/// `messageId` is optional in ACP v1, so it must survive when a harness sends
+/// it — that is what lets the browser split two messages the role alone joins.
+#[test]
+fn map_message_preserves_message_id_when_present() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "msg_7",
+            "content": { "type": "text", "text": "hi" }
+        }
+    });
+    assert_eq!(
+        map_acp_session_update(&update),
+        vec![SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "hi".to_string(),
+            message_id: Some("msg_7".to_string()),
+        }]
+    );
+}
+
+#[test]
+fn map_usage_update_is_typed_not_an_artifact() {
+    let update = serde_json::json!({
+        "update": { "sessionUpdate": "usage_update", "used": 4200, "size": 200000 }
+    });
+    assert_eq!(
+        map_acp_session_update(&update),
+        vec![SessionServerEvent::Usage {
+            used: 4200,
+            size: 200000,
+        }]
+    );
+}
+
+/// A zero window is a harness that does not report context, not a full one. It
+/// must not render as 0% used.
+#[test]
+fn map_usage_update_without_a_window_is_dropped() {
+    let update = serde_json::json!({
+        "update": { "sessionUpdate": "usage_update", "used": 0, "size": 0 }
+    });
+    assert!(map_acp_session_update(&update).is_empty());
+}
+
 #[test]
 fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
     let update = serde_json::json!({
@@ -184,6 +296,7 @@ fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
         vec![SessionServerEvent::Message {
             role: "thought".to_string(),
             text: "Checking the router".to_string(),
+            message_id: None,
         }]
     );
 }
@@ -259,6 +372,7 @@ fn map_agent_message_chunk_to_browser_message() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "Working on it".to_string(),
+            message_id: None,
         }]
     );
 }
@@ -278,6 +392,7 @@ fn map_agent_message_chunk_preserves_newline_only_delta() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "\n".to_string(),
+            message_id: None,
         }]
     );
 }

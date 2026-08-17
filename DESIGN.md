@@ -300,8 +300,17 @@ hatch behind Task details. It is a separate presentation mode, not a change to
 the default: with the flag off, task detail is still raw xterm/tmux-first, and
 the agent conversation runs over ACP rather than PTY paste. That route uses the
 same instrument grammar — a live head carrying state, running tool and any
-pending decision, over a settled transcript. Everything else in this document
+pending decision, over the conversation. Everything else in this document
 binds it unchanged.
+
+Below the head, the conversation keeps the kinds ACP distinguishes distinct
+rather than flattening them into prose: agent answers as Markdown, reasoning as
+one collapsed line, tool calls as cards that revise in place and open on
+failure, the plan as a checklist, and a marker row where permission was asked.
+A tool call's output — a command's text, a file diff — is the substance of a
+turn and stays in the record; a summary line in its place threw it away.
+Permission *buttons* stay in the head, never inline: a control in a scrolling
+column can leave the screen mid-decision on a phone.
 
 ## 6. Do's and Don'ts
 

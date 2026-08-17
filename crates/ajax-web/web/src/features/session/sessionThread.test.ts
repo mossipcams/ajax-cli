@@ -6,11 +6,10 @@ import {
   explainAcpError,
   explainOpenFailure,
   initialSessionState,
+  latestPlan,
   sessionReducer,
-  summarizeTurn,
-  toolCallCount,
+  toolCount,
   type SessionState,
-  type ToolCall,
 } from "./sessionThread";
 
 function run(events: (WebSessionServerEvent | { prompt: string })[]): SessionState {
@@ -76,9 +75,7 @@ describe("host notes", () => {
     });
 
     expect(state.busy).toBe(false);
-    expect(state.entries.at(-1)).toEqual(
-      expect.objectContaining({ kind: "note", tone: "info" }),
-    );
+    expect(state.items.at(-1)).toEqual(expect.objectContaining({ kind: "note", tone: "info" }));
   });
 });
 
@@ -88,8 +85,8 @@ describe("sessionReducer", () => {
       { type: "message", role: "agent", text: "Hello " },
       { type: "message", role: "agent", text: "world" },
     ]);
-    expect(state.entries).toHaveLength(1);
-    expect(state.entries[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello world" });
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello world" });
   });
 
   it("replaces a cumulative snapshot instead of concatenating it", () => {
@@ -97,8 +94,8 @@ describe("sessionReducer", () => {
       { type: "message", role: "agent", text: "Hel" },
       { type: "message", role: "agent", text: "Hello" },
     ]);
-    expect(state.entries).toHaveLength(1);
-    expect(state.entries[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello" });
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "agent", text: "Hello" });
   });
 
   it("skips an exact duplicate user echo", () => {
@@ -106,8 +103,8 @@ describe("sessionReducer", () => {
       { type: "message", role: "user", text: "Fix it" },
       { type: "message", role: "user", text: "Fix it" },
     ]);
-    expect(state.entries).toHaveLength(1);
-    expect(state.entries[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix it" });
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix it" });
   });
 
   it("starts a new paragraph when a tool run interrupts agent prose", () => {
@@ -116,10 +113,28 @@ describe("sessionReducer", () => {
       toolCall("c1"),
       { type: "message", role: "agent", text: "Done" },
     ]);
-    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose", "prose"]);
-    expect(state.entries[0]).toMatchObject({ text: "Reading" });
-    expect(state.entries[1]).toMatchObject({ text: "Done" });
-    expect(toolCallCount(state)).toBe(1);
+    expect(state.items.map((item) => item.kind)).toEqual(["prose", "tool", "prose"]);
+    expect(state.items[0]).toMatchObject({ text: "Reading" });
+    expect(state.items[2]).toMatchObject({ text: "Done" });
+  });
+
+  it("splits one role's stream when the harness changes messageId", () => {
+    const state = run([
+      { type: "message", role: "agent", text: "First answer", messageId: "m1" },
+      { type: "message", role: "agent", text: "Second answer", messageId: "m2" },
+    ]);
+    expect(state.items).toHaveLength(2);
+    expect(state.items[0]).toMatchObject({ text: "First answer" });
+    expect(state.items[1]).toMatchObject({ text: "Second answer" });
+  });
+
+  it("still joins by adjacency when the harness sends no messageId", () => {
+    const state = run([
+      { type: "message", role: "agent", text: "Hello ", messageId: "m1" },
+      { type: "message", role: "agent", text: "again", messageId: "m1" },
+    ]);
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ text: "Hello again" });
   });
 
   it("merges tool_call_update into the open call instead of appending a row", () => {
@@ -127,7 +142,8 @@ describe("sessionReducer", () => {
       toolCall("c1"),
       toolCall("c1", { status: "completed", title: "", kind: "", locations: [] }),
     ]);
-    expect(toolCallCount(state)).toBe(1);
+    expect(toolCount(state.items)).toBe(1);
+    expect(state.items).toHaveLength(1);
     expect(activeTool(state)).toMatchObject({
       callId: "c1",
       status: "completed",
@@ -135,49 +151,81 @@ describe("sessionReducer", () => {
       kind: "read",
       locations: ["/repo/src/config.ts"],
     });
-    expect(state.entries).toHaveLength(0);
   });
 
-  it("revises a tool call after prose has already arrived", () => {
+  it("revises a tool call in place after prose has already arrived", () => {
+    // The call belongs where the agent made it. Re-appending on completion put
+    // a finished edit below prose that was written after it.
     const state = run([
       toolCall("c1"),
       { type: "message", role: "agent", text: "thinking out loud" },
       toolCall("c1", { status: "completed" }),
     ]);
-    expect(toolCallCount(state)).toBe(1);
-    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose"]);
+    expect(state.items.map((item) => item.kind)).toEqual(["tool", "prose"]);
+    expect(state.items[0]).toMatchObject({ kind: "tool", call: { status: "completed" } });
+  });
+
+  it("carries tool content through to the item", () => {
+    const state = run([
+      toolCall("c1", {
+        kind: "edit",
+        status: "completed",
+        content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }],
+      }),
+    ]);
+    expect(state.items[0]).toMatchObject({
+      kind: "tool",
+      call: { content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }] },
+    });
+  });
+
+  it("keeps content an update omits rather than clearing it", () => {
+    // A status-only tool_call_update carries no content array. Treating that as
+    // an empty one erased the diff the moment the edit finished.
+    const state = run([
+      toolCall("c1", { content: [{ type: "text", text: "output" }] }),
+      toolCall("c1", { status: "completed" }),
+    ]);
+    expect(state.items[0]).toMatchObject({
+      kind: "tool",
+      call: { status: "completed", content: [{ type: "text", text: "output" }] },
+    });
   });
 
   it("prefers a still-running tool over a finished one in the head", () => {
-    const state = run([toolCall("c1", { status: "completed" }), toolCall("c2", { status: "in_progress" })]);
+    const state = run([
+      toolCall("c1", { status: "completed" }),
+      toolCall("c2", { status: "in_progress" }),
+    ]);
     expect(activeTool(state)?.callId).toBe("c2");
   });
 
-  it("keeps reasoning out of the transcript and the head", () => {
+  it("keeps reasoning as its own item rather than folding it into prose", () => {
     const thinking = run([
       { type: "message", role: "thought", text: "Checking " },
       { type: "message", role: "thought", text: "the router" },
     ]);
     expect(thinking.busy).toBe(true);
-    expect(thinking.entries).toHaveLength(0);
+    expect(thinking.items).toHaveLength(1);
+    expect(thinking.items[0]).toMatchObject({ kind: "thought", text: "Checking the router" });
 
     const answered = sessionReducer(thinking, {
       type: "event",
       event: { type: "message", role: "agent", text: "Found it" },
     });
-    expect(answered.entries).toHaveLength(1);
+    expect(answered.items.map((item) => item.kind)).toEqual(["thought", "prose"]);
   });
 
-  it("replaces run status in the head rather than appending it to the transcript", () => {
+  it("replaces run status in the head rather than appending it to the conversation", () => {
     const state = run([
       { type: "status", state: "running" },
       { type: "status", state: "waiting" },
     ]);
-    expect(state.entries).toHaveLength(0);
+    expect(state.items).toHaveLength(0);
     expect(state.status).toBe("waiting");
   });
 
-  it("revises a plan in place and never puts it in the transcript", () => {
+  it("revises the plan in place instead of stacking a copy per update", () => {
     const state = run([
       { type: "plan", entries: [{ content: "Read", status: "pending" }] },
       {
@@ -188,21 +236,39 @@ describe("sessionReducer", () => {
         ],
       },
     ]);
-    expect(state.entries).toHaveLength(0);
-    expect(state.plan).toEqual([
+    expect(state.items.filter((item) => item.kind === "plan")).toHaveLength(1);
+    expect(latestPlan(state.items)).toEqual([
       { content: "Read", status: "completed" },
       { content: "Patch", status: "in_progress" },
     ]);
-    expect(activePlanStep(state.plan)).toBe("Patch");
+    expect(activePlanStep(latestPlan(state.items))).toBe("Patch");
   });
 
-  it("puts a permission request in the decision slot only, never the transcript", () => {
+  it("tracks context pressure as one current value, not a row per update", () => {
+    const state = run([
+      { type: "usage", used: 10, size: 100 },
+      { type: "usage", used: 40, size: 100 },
+    ]);
+    expect(state.items).toHaveLength(0);
+    expect(state.usage).toEqual({ used: 40, size: 100 });
+  });
+
+  it("ignores a usage update with no window to be a fraction of", () => {
+    expect(run([{ type: "usage", used: 0, size: 0 }]).usage).toBeNull();
+  });
+
+  it("puts a permission request in the head and leaves a marker in the conversation", () => {
     const state = run([
       { type: "permission_request", requestId: "7", title: "Run tests?", detail: "cargo test" },
     ]);
     expect(state.decision).toEqual({ requestId: "7", title: "Run tests?", detail: "cargo test" });
-    expect(state.entries).toHaveLength(0);
-    expect(sessionReducer(state, { type: "decided" }).decision).toBeNull();
+    expect(state.items).toEqual([
+      expect.objectContaining({ kind: "permission", requestId: "7", resolved: false }),
+    ]);
+
+    const decided = sessionReducer(state, { type: "decided" });
+    expect(decided.decision).toBeNull();
+    expect(decided.items[0]).toMatchObject({ kind: "permission", resolved: true });
   });
 
   it("clears a resurrected decision when permission_resolved replays", () => {
@@ -211,6 +277,7 @@ describe("sessionReducer", () => {
       { type: "permission_resolved", requestId: "7", approved: true },
     ]);
     expect(state.decision).toBeNull();
+    expect(state.items[0]).toMatchObject({ kind: "permission", resolved: true });
   });
 
   it("ignores a duplicate permission request after it was answered", () => {
@@ -223,19 +290,21 @@ describe("sessionReducer", () => {
       event: { type: "permission_request", requestId: "7", title: "Run tests?" },
     });
     expect(replayed.decision).toBeNull();
+    // Replay must not stack a second marker for the same ask.
+    expect(replayed.items.filter((item) => item.kind === "permission")).toHaveLength(1);
   });
 
   it("tracks the turn: busy on prompt, settled on turn_end", () => {
     const busy = run([{ prompt: "Fix the test" }]);
     expect(busy.busy).toBe(true);
-    expect(busy.entries).toHaveLength(1);
-    expect(busy.entries[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix the test" });
+    expect(busy.items).toHaveLength(1);
+    expect(busy.items[0]).toMatchObject({ kind: "prose", role: "user", text: "Fix the test" });
 
     const echoed = sessionReducer(busy, {
       type: "event",
       event: { type: "message", role: "user", text: "Fix the test" },
     });
-    expect(echoed.entries).toHaveLength(1);
+    expect(echoed.items).toHaveLength(1);
 
     const settled = sessionReducer(busy, { type: "event", event: { type: "turn_end" } });
     expect(settled.busy).toBe(false);
@@ -245,14 +314,16 @@ describe("sessionReducer", () => {
     const state = run([{ prompt: "go" }, { type: "turn_end", stopReason: "error" }]);
 
     expect(state.busy).toBe(false);
-    expect(state.entries[1]).toMatchObject({
+    expect(state.items[1]).toMatchObject({
       kind: "note",
       tone: "error",
       text: "The agent stopped without a response. Check the selected model or try again.",
     });
   });
 
-  it("folds a turn's tools into one summary note on settle", () => {
+  it("keeps a settled turn's tool calls instead of collapsing them to a summary", () => {
+    // The work a turn did is the record of the turn. Folding four calls into
+    // "2 read · 1 edit" threw away the diff that made the turn worth reading.
     const state = run([
       toolCall("c1", { kind: "read", status: "completed" }),
       toolCall("c2", { kind: "read", status: "completed" }),
@@ -261,22 +332,23 @@ describe("sessionReducer", () => {
       { type: "turn_end" },
     ]);
     expect(state.busy).toBe(false);
-    expect(state.tools).toHaveLength(0);
-    expect(state.entries).toEqual([
-      expect.objectContaining({ kind: "note", tone: "info", text: "2 read · 1 edit · 1 search · 1 failed" }),
+    expect(toolCount(state.items)).toBe(4);
+    expect(state.items.map((item) => item.kind)).toEqual(["tool", "tool", "tool", "tool"]);
+  });
+
+  it("starts a new paragraph after a turn boundary", () => {
+    const state = run([
+      { type: "message", role: "agent", text: "first turn" },
+      { type: "turn_end" },
+      { type: "message", role: "agent", text: "second turn" },
     ]);
+    expect(state.items.map((item) => item.kind)).toEqual(["prose", "prose"]);
   });
 
-  it("does not invent a summary when the turn used no tools", () => {
-    const state = run([{ prompt: "hi" }, { type: "message", role: "agent", text: "ok" }, { type: "turn_end" }]);
-    expect(state.entries.map((entry) => entry.kind)).toEqual(["prose", "prose"]);
-    expect(state.entries[1]).toMatchObject({ role: "agent", text: "ok" });
-  });
-
-  it("ends the turn on error and records it as a transcript note", () => {
+  it("ends the turn on error and records it as a conversation note", () => {
     const state = run([{ prompt: "go" }, { type: "error", message: "ACP process exited" }]);
     expect(state.busy).toBe(false);
-    expect(state.entries[1]).toMatchObject({
+    expect(state.items[1]).toMatchObject({
       kind: "note",
       tone: "error",
       text: "The agent stopped. It will restart when you reconnect.",
@@ -285,9 +357,9 @@ describe("sessionReducer", () => {
 
   it("drops unknown artifacts instead of pretty-printing them", () => {
     const empty = run([{ type: "artifact", kind: "x", title: "", body: "" }]);
-    expect(empty.entries).toHaveLength(0);
+    expect(empty.items).toHaveLength(0);
     const dumped = run([{ type: "artifact", kind: "x", title: "Modes", body: "{}" }]);
-    expect(dumped.entries).toHaveLength(0);
+    expect(dumped.items).toHaveLength(0);
   });
 });
 
@@ -319,23 +391,5 @@ describe("explainOpenFailure", () => {
 
   it("still says something actionable with no detail at all", () => {
     expect(explainOpenFailure(null)).toMatch(/worktree/i);
-  });
-});
-
-describe("summarizeTurn", () => {
-  const call = (kind: string, status: ToolCall["status"] = "completed"): ToolCall => ({
-    callId: kind,
-    title: kind,
-    kind,
-    status,
-    locations: [],
-  });
-
-  it("returns null for an empty turn", () => {
-    expect(summarizeTurn([])).toBeNull();
-  });
-
-  it("keeps first-seen kind order", () => {
-    expect(summarizeTurn([call("edit"), call("read"), call("edit")])).toBe("2 edit · 1 read");
   });
 });

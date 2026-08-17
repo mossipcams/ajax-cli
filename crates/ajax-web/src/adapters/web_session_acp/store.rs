@@ -220,6 +220,7 @@ mod tests {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: text.to_string(),
+            message_id: None,
         }
     }
 

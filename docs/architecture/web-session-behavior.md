@@ -91,9 +91,21 @@ existing paths.
   Message, thought, tool, plan, mode, configuration, session-info, and usage
   updates have explicit mappings; unsupported capability announcements are
   ignored by the chat projection.
+- Tool calls carry their ACP `content` array to the browser as `text` and `diff`
+  entries. Dropping it left the browser able to say only that an unnamed edit
+  happened. A `tool_call_update` without `content` revises the other fields and
+  keeps the content already received.
+- `usage_update` is a first-class `usage` event, not an `artifact`. A zero
+  window means the harness does not report context and is dropped, so it never
+  renders as 0% used.
+- `messageId` is optional in ACP v1. It is carried when present and refines both
+  host-side coalescing and browser-side grouping; with it absent, role adjacency
+  decides message boundaries as before.
 - Ajax advertises neither `fs/*` nor `terminal/*` client capabilities. Agents
   must not depend on those requests until Ajax adds worktree-scoped handlers;
-  the ACP protocol's unsupported-method response remains the boundary.
+  the ACP protocol's unsupported-method response remains the boundary. This is
+  also why `ToolCallContent::Terminal` has no mapping: no agent can create a
+  terminal to embed, and execute output arrives as text.
 
 ## Permission persistence
 

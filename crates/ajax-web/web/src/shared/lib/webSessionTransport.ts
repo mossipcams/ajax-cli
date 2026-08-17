@@ -33,9 +33,15 @@ export interface WebSessionTransportPlatform {
   openSocket(url: string): WebSessionSocket;
 }
 
+/** Output attached to a tool call. Mirrors the host's `ToolContent`; there is no
+ * terminal variant because Ajax advertises no `terminal/*` client capability. */
+export type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "diff"; path: string; oldText?: string | null; newText: string };
+
 export type WebSessionServerEvent =
   | { type: "ready"; model?: string; busy?: boolean }
-  | { type: "message"; role: string; text: string }
+  | { type: "message"; role: string; text: string; messageId?: string }
   | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
@@ -45,8 +51,10 @@ export type WebSessionServerEvent =
       kind: string;
       status: string;
       locations?: string[];
+      content?: ToolContent[];
     }
   | { type: "plan"; entries: { content: string; status: string }[] }
+  | { type: "usage"; used: number; size: number }
   | {
       type: "permission_request";
       requestId: string;
