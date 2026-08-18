@@ -262,8 +262,16 @@ fn run_ajax_cockpit_ctrl_q_flow_with_env(
                 "cockpit task list",
             );
             master
-                .write_all(b"\x1b[B\r\r")
-                .expect("failed to open task from cockpit PTY");
+                .write_all(b"\x1b[B\r")
+                .expect("failed to select resume action from cockpit PTY");
+            wait_for_pty_resume_confirmation(
+                &mut master,
+                &mut stdout,
+                "resume confirmation prompt",
+            );
+            master
+                .write_all(b"\r")
+                .expect("failed to confirm resume action from cockpit PTY");
             wait_for_pty_output(
                 &mut master,
                 &mut stdout,
@@ -296,6 +304,30 @@ fn wait_for_pty_output(master: &mut fs::File, stdout: &mut Vec<u8>, expected: &s
     wait_until_pty(context, master, stdout, |stdout| {
         String::from_utf8_lossy(stdout).contains(expected)
     });
+}
+
+fn wait_for_pty_resume_confirmation(master: &mut fs::File, stdout: &mut Vec<u8>, context: &str) {
+    wait_until_pty(context, master, stdout, |stdout| {
+        strip_ansi_escapes(&String::from_utf8_lossy(stdout)).contains(">> resume")
+    });
+}
+
+fn strip_ansi_escapes(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            while let Some(next) = chars.next() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        stripped.push(ch);
+    }
+    stripped
 }
 
 fn wait_for_pty_output_after(
