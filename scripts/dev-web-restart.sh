@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Sync/install ajax-cli and restart web in tmux.
 #
-# Default (no --worktree): force-sync local main to origin/main, install from
-# main into ~/.cargo/bin, restart the selected profile.
+# Default (no --worktree, Test in Stable): fetch origin/main from the host
+# clone (REPO_ROOT), reset/build only a dedicated detached main worktree
+# (AJAX_STABLE_MAIN_WORKTREE, default ~/.ajax-dev/worktrees/<repo>-main),
+# install into ~/.cargo/bin, then cut over the selected profile. Never resets
+# the Settings-host checkout. pid/logs stay under REPO_ROOT/.ajax-dev-web.
 #
 # --worktree PATH (Test in Dev): build that worktree as-is (including dirty
 # files), install into .ajax-dev-web/bin so stable's cargo bin is untouched,
@@ -11,18 +14,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-main_worktree() {
-  git -C "$REPO_ROOT" for-each-ref --format='%(worktreepath)' refs/heads/main
-}
-
-ROOT="$(main_worktree)"
-if [[ -z "$ROOT" ]]; then
-  echo "local main worktree not found for repository: $REPO_ROOT" >&2
-  exit 1
-fi
-GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)"
-RUN_DIR="$ROOT/.ajax-dev-web"
+RUN_DIR="$REPO_ROOT/.ajax-dev-web"
+REPO_BASENAME="$(basename "$REPO_ROOT")"
+MAIN_WORKTREE="${AJAX_STABLE_MAIN_WORKTREE:-$HOME/.ajax-dev/worktrees/${REPO_BASENAME}-main}"
 
 PROFILE="dev"
 HOST="0.0.0.0"
@@ -35,11 +29,12 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
-Default: fetch and force-sync the local main worktree to origin/main (branch
-tip, not a release tag), run npm web:build from that tree, install ajax-cli
+Default (Test in Stable): fetch origin/main from the host clone, force-sync a
+dedicated detached main worktree to origin/main (branch tip, not a release
+tag), run npm web:build from that tree, install ajax-cli into ~/.cargo/bin
 (unless --no-install), reinstall client agent hooks when agent_hooks.rs
 changed, stop the previous managed web server for the selected profile, and
-start ajax-cli web in a durable tmux session.
+start ajax-cli web in a durable tmux session. Never resets the host checkout.
 
 With --worktree PATH: skip git sync, build/install from PATH (uncommitted
 changes included), install into .ajax-dev-web/bin, and restart only the
@@ -54,8 +49,12 @@ Options:
   --profile NAME     Ajax profile (default: dev)
   -h, --help         Show this help
 
+Environment:
+  AJAX_STABLE_MAIN_WORKTREE  Dedicated main worktree for Test in Stable
+                             (default: ~/.ajax-dev/worktrees/<repo-basename>-main)
+
 Background mode uses tmux session ajax-web-<profile>.
-Logs: .ajax-dev-web/<profile>-web.log
+Logs: <host-clone>/.ajax-dev-web/<profile>-web.log
 EOF
 }
 
@@ -121,14 +120,26 @@ TMUX_SESSION="ajax-web-${PROFILE}"
 SLOT_BIN_DIR="$RUN_DIR/bin"
 SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
+CARGO_BIN_DIR="$RUN_DIR/cargo-bin"
+CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/ajax-cli"
+CARGO_BIN_PREV="$CARGO_BIN_DIR/ajax-cli.prev"
+
+ensure_main_worktree() {
+  echo "Fetching origin/main from $REPO_ROOT ..."
+  git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
+  if [[ ! -e "$MAIN_WORKTREE/.git" ]]; then
+    mkdir -p "$(dirname "$MAIN_WORKTREE")"
+    echo "Creating dedicated main worktree at $MAIN_WORKTREE ..."
+    git -C "$REPO_ROOT" worktree add --detach "$MAIN_WORKTREE" origin/main
+  fi
+}
 
 sync_main() {
-  echo "Fetching origin/main (branch tip, not release tags) ..."
-  git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
-  echo "Force-syncing local main worktree to origin/main ..."
-  git --git-dir="$GIT_DIR" --work-tree="$ROOT" reset --hard origin/main
-  git --git-dir="$GIT_DIR" --work-tree="$ROOT" clean -fd
-  echo "main tip: $(git -C "$ROOT" log -1 --oneline)"
+  ensure_main_worktree
+  echo "Force-syncing dedicated main worktree to origin/main ..."
+  git -C "$MAIN_WORKTREE" reset --hard origin/main
+  git -C "$MAIN_WORKTREE" clean -fd
+  echo "main tip: $(git -C "$MAIN_WORKTREE" log -1 --oneline)"
 }
 
 # ponytail: git clean removes untracked ajax-model-router script symlinks.
@@ -151,8 +162,8 @@ restore_model_router_symlinks() {
   if [[ -z "$installer" || ! -x "$installer" ]]; then
     return 0
   fi
-  echo "Restoring ajax-model-router symlinks in $ROOT ..."
-  "$installer" --target "$ROOT" --force
+  echo "Restoring ajax-model-router symlinks in $MAIN_WORKTREE ..."
+  "$installer" --target "$MAIN_WORKTREE" --force
 }
 
 # ponytail: only rewrite ~/.claude|codex|cursor|pi hooks when definitions moved.
@@ -171,7 +182,7 @@ agent_hooks_differs() {
   return 1
 }
 
-SOURCE_ROOT="$ROOT"
+SOURCE_ROOT="$MAIN_WORKTREE"
 if [[ -n "$WORKTREE" ]]; then
   if [[ ! -d "$WORKTREE" ]]; then
     echo "worktree path does not exist: $WORKTREE" >&2
@@ -185,9 +196,11 @@ if [[ -n "$WORKTREE" ]]; then
     HOOKS_CHANGED=1
   fi
 else
-  PREV_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+  PREV_HEAD="$(git -C "$MAIN_WORKTREE" rev-parse HEAD 2>/dev/null || true)"
   sync_main
-  if agent_hooks_differs "$ROOT" "$PREV_HEAD" HEAD; then
+  if [[ -z "$PREV_HEAD" ]]; then
+    HOOKS_CHANGED=1
+  elif agent_hooks_differs "$MAIN_WORKTREE" "$PREV_HEAD" HEAD; then
     HOOKS_CHANGED=1
   fi
   restore_model_router_symlinks
@@ -245,9 +258,13 @@ if [[ "$INSTALL" -eq 1 ]]; then
     # Test in Stable (and any non-worktree restart): always rebuild the web
     # embed then force-reinstall. Without --force, same-version cargo install
     # can leave ~/.cargo/bin/ajax-cli on a stale embed after web:build.
-    rebuild_web "$ROOT"
-    echo "Installing ajax-cli from $ROOT ..."
-    cargo install --path "$ROOT/crates/ajax-cli" --locked --force
+    rebuild_web "$SOURCE_ROOT"
+    mkdir -p "$CARGO_BIN_DIR"
+    if [[ -x "$CARGO_BIN" ]]; then
+      cp -f "$CARGO_BIN" "$CARGO_BIN_PREV"
+    fi
+    echo "Installing ajax-cli from $SOURCE_ROOT ..."
+    cargo install --path "$SOURCE_ROOT/crates/ajax-cli" --locked --force
   fi
 elif [[ -n "$WORKTREE" && -x "$SLOT_BIN" ]]; then
   BIN_CMD=("$SLOT_BIN")
@@ -287,18 +304,27 @@ stop_pid_file() {
   local old_pid
   local old_command
   old_pid="$(cat "$PID_FILE")"
-  if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-    old_command="$(ps -p "$old_pid" -o command= 2>/dev/null || true)"
-    if [[ "$old_command" != *ajax-cli* || "$old_command" != *web* ]]; then
-      echo "refusing to stop pid-file process $old_pid; not an ajax-cli web process" >&2
-      exit 1
-    fi
-    echo "Stopping previous ${PROFILE} web (pid $old_pid) ..."
-    kill "$old_pid" 2>/dev/null || true
-    sleep 1
-    if kill -0 "$old_pid" 2>/dev/null; then
-      kill -9 "$old_pid" 2>/dev/null || true
-    fi
+  if [[ -z "$old_pid" ]]; then
+    echo "warning: stale empty pid file $PID_FILE; removing" >&2
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  if ! kill -0 "$old_pid" 2>/dev/null; then
+    echo "warning: stale pid file $PID_FILE (pid $old_pid not running); removing" >&2
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  old_command="$(ps -p "$old_pid" -o command= 2>/dev/null || true)"
+  if [[ "$old_command" != *ajax-cli* || "$old_command" != *web* ]]; then
+    echo "warning: pid file $PID_FILE points at non-web process $old_pid; removing" >&2
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  echo "Stopping previous ${PROFILE} web (pid $old_pid) ..."
+  kill "$old_pid" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$old_pid" 2>/dev/null; then
+    kill -9 "$old_pid" 2>/dev/null || true
   fi
   rm -f "$PID_FILE"
 }
@@ -332,7 +358,7 @@ start_web() {
   : >"$LOG_FILE"
   # ponytail: tmux keeps the server alive; nohup from agent/CI shells still dies.
   # Ceiling: requires tmux. Upgrade: launchd plist if we need login-boot without tmux.
-  if ! tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT" \
+  if ! tmux new-session -d -s "$TMUX_SESSION" -c "$REPO_ROOT" \
     "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"; then
     echo "tmux new-session failed for $TMUX_SESSION" >&2
     return 1
@@ -347,10 +373,28 @@ start_web() {
   return 0
 }
 
-restore_previous_slot_bin() {
+restore_previous_binary() {
   if [[ "$USE_SLOT_BIN" -eq 1 && -x "$SLOT_BIN_PREV" ]]; then
     echo "Restoring previous dev slot binary ..."
     mv -f "$SLOT_BIN_PREV" "$SLOT_BIN"
+    RESTORE_BIN="$SLOT_BIN"
+    return 0
+  fi
+  if [[ "$USE_SLOT_BIN" -eq 0 && -x "$CARGO_BIN_PREV" ]]; then
+    local cargo_bin
+    cargo_bin="$(command -v ajax-cli 2>/dev/null || echo "$HOME/.cargo/bin/ajax-cli")"
+    echo "Restoring previous cargo-installed ajax-cli binary ..."
+    cp -f "$CARGO_BIN_PREV" "$cargo_bin"
+    RESTORE_BIN="$cargo_bin"
+    return 0
+  fi
+  return 1
+}
+
+restore_previous_cargo_bin() {
+  if [[ "$USE_SLOT_BIN" -eq 0 && -x "$CARGO_BIN_PREV" ]]; then
+    echo "Restoring previous ~/.cargo/bin/ajax-cli ..."
+    cp -f "$CARGO_BIN_PREV" "$CARGO_BIN"
     return 0
   fi
   return 1
@@ -361,7 +405,7 @@ if [[ "$USE_SLOT_BIN" -eq 0 ]] && ! command -v ajax-cli >/dev/null 2>&1; then
   exit 1
 fi
 
-RESTART_SCRIPT="$ROOT/scripts/dev-web-restart.sh"
+RESTART_SCRIPT="$REPO_ROOT/scripts/dev-web-restart.sh"
 export AJAX_WEB_RESTART_SCRIPT="$RESTART_SCRIPT"
 export AJAX_WEB_RESTART_PROFILE="$PROFILE"
 export AJAX_WEB_RESTART_PORT="$PORT"
@@ -390,11 +434,21 @@ if ! start_web "$BIN_PATH"; then
   echo "${PROFILE} web failed to start; see $LOG_FILE" >&2
   tail -20 "$LOG_FILE" >&2 || true
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  if restore_previous_slot_bin; then
+  if restore_previous_binary; then
     echo "Retrying previous ${PROFILE} web binary ..."
     stop_tmux_session
     stop_pid_file
-    if start_web "$SLOT_BIN"; then
+    if start_web "$RESTORE_BIN"; then
+      echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
+      echo "  URL:  https://127.0.0.1:$PORT"
+      echo "  Log:  $LOG_FILE"
+      exit 1
+    fi
+  elif restore_previous_cargo_bin; then
+    echo "Retrying previous ${PROFILE} web binary ..."
+    stop_tmux_session
+    stop_pid_file
+    if start_web "$CARGO_BIN"; then
       echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
       echo "  URL:  https://127.0.0.1:$PORT"
       echo "  Log:  $LOG_FILE"
@@ -415,10 +469,14 @@ if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "${PROFILE} web started but /api/health failed; see $LOG_FILE" >&2
     tail -20 "$LOG_FILE" >&2 || true
-    if restore_previous_slot_bin; then
+    if restore_previous_binary; then
       stop_tmux_session
       stop_pid_file
-      start_web "$SLOT_BIN" || true
+      start_web "$RESTORE_BIN" || true
+    elif restore_previous_cargo_bin; then
+      stop_tmux_session
+      stop_pid_file
+      start_web "$CARGO_BIN" || true
     fi
     exit 1
   fi
