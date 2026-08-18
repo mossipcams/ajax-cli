@@ -159,6 +159,13 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.61.1-noble
       options: --ipc=host
     timeout-minutes: 20
+    # Container jobs run as root against a runner-owned checkout. checkout's
+    # safe.directory lives in a temporary HOME and is invisible once a step
+    # sets HOME=/root, so mark the workspace for every git invocation here.
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${{ github.workspace }}
 
     steps:
       - name: Checkout
