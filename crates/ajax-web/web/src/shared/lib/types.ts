@@ -218,6 +218,7 @@ export interface OperationResponse {
 export interface VersionResponse {
   version: string;
   test_in_stable?: boolean;
+  profile?: string | null;
 }
 
 export interface PushVapidResponse {
