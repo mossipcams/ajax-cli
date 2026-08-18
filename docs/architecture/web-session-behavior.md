@@ -38,10 +38,14 @@ existing paths.
   ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - Cursor takes its model on the spawn argv when the harness pins at spawn; every
   harness (including Cursor) also applies an operator pin in-band when
-  `configOptions` or `models.availableModels` advertises a model control. A
-  refused or unprovable pin keeps the session, emits a typed `error` event, and
-  leaves `snapshot.model` on the harness-reported id (or empty), not the
-  rejected pin.
+  `configOptions` or `models.availableModels` advertises a model control **and**
+  the pin is an exact advertised handshake value (not an Ajax catalog id in a
+  different id space ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
+  When Cursor pins at spawn and the desired catalog id is not advertised,
+  in-band apply is skipped and no refusal is emitted. A refused or unprovable
+  pin on a ConfigOption-only harness keeps the session, emits a typed `error`
+  event, and leaves `snapshot.model` on the harness-reported id (or empty), not
+  the rejected pin.
 - Changing the model while connected persists `session_model` on the task through
   a core-owned operation before the host replaces the ACP child; a persistence
   failure returns a typed `error` event and leaves the running child unchanged.

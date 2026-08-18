@@ -312,6 +312,64 @@ fn cursor_applies_in_band_when_model_is_advertised_issue_952() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression for #954: Cursor spawn catalog ids must not be sent as handshake values.
+#[test]
+fn cursor_spawn_catalog_id_skips_in_band_when_not_advertised_issue_954() {
+    let dir = scratch_dir("model-cursor-catalog-954");
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+
+    with_test_acp_program(&script, || {
+        let (client, report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
+                .expect("spawn");
+        assert!(
+            report.model_apply_error.is_none(),
+            "catalog id in a different id space must not refuse: {:?}",
+            report.model_apply_error
+        );
+        assert_eq!(report.applied_model, "harness-default");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if let Some(AcpClientEvent::SessionUpdate(update)) =
+                client.wait_event(Duration::from_millis(100))
+            {
+                let text = serde_json::to_string(&update).unwrap();
+                assert!(
+                    !text.contains("model:session/set_config_option:cursor-grok-4.6-high"),
+                    "must not send catalog id as handshake value: {text}"
+                );
+            }
+        }
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #954: ConfigOption-only harnesses still refuse unadvertised pins.
+#[test]
+fn bridge_errors_when_pin_not_advertised_issue_954() {
+    let dir = scratch_dir("model-bridge-not-advertised-954");
+    let script = fake_acp_fixture();
+    let not_advertised = "cursor-grok-4.6-high";
+
+    with_test_acp_program(&script, || {
+        let (_client, report) =
+            AcpStdioClient::spawn(AgentClient::Codex, &dir, Some(not_advertised), None)
+                .expect("spawn");
+        assert!(
+            report.model_apply_error.is_some(),
+            "ConfigOption harness must error when pin is not advertised"
+        );
+        assert!(report
+            .model_apply_error
+            .as_deref()
+            .is_some_and(|error| error.contains(not_advertised)));
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn fake_spawn_reports_load_session_advertised() {
     let dir = scratch_dir("spawn-advertised");
