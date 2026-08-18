@@ -646,10 +646,9 @@ html.terminal-expanded .result-panel {
 
 .session-model-picker {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  flex: 1;
 }
 
 /* In the New task sheet the Model label sits with the sheet's own field labels. */
@@ -666,11 +665,11 @@ html.terminal-expanded .result-panel {
   color: var(--ink-muted);
 }
 
-.session-model-picker select {
-  min-width: 0;
-  flex: 1;
-  min-height: 44px;
-  max-width: 100%;
+.session-details-sheet .model-picker {
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .session-model-switching {
