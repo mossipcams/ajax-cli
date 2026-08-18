@@ -350,6 +350,7 @@ async fn axum_version() -> AxumResponse {
         serde_json::json!({
             "version": install::app_version(),
             "test_in_stable": server::test_in_stable_enabled_from_env(),
+            "profile": server::resolved_web_profile_from_env(),
         }),
     )
 }
@@ -514,11 +515,17 @@ fn handle_server_test_in_stable() -> Response {
             body: br#"{"ok":false,"error":"test in stable is not available"}"#.to_vec(),
         };
     }
+    let restarting = server::test_in_stable_restarts_current_instance();
     server::schedule_test_in_stable();
+    let body = if restarting {
+        br#"{"ok":true,"restarting":true}"#.to_vec()
+    } else {
+        br#"{"ok":true,"restarting":false}"#.to_vec()
+    };
     Response {
         status_code: 200,
         content_type: "application/json; charset=utf-8",
-        body: br#"{"ok":true,"restarting":true}"#.to_vec(),
+        body,
     }
 }
 
