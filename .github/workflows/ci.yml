@@ -189,15 +189,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
-      # Cache hit restores browsers; skip apt --with-deps to avoid hung apt on
-      # ubuntu runners when archive mirrors stall after a restore.
-      - name: Install Playwright browsers (cache hit)
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install webkit
+      # Fresh ubuntu-latest VMs lack Playwright system libraries; install-deps
+      # runs every time. Browser binaries may restore from cache above.
+      - name: Install Playwright OS dependencies
+        run: npx playwright install-deps webkit
 
-      - name: Install Playwright browsers (cache miss)
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps webkit
+      - name: Install Playwright browsers
+        run: npx playwright install webkit
 
       - name: Smoke and visual-regression tests
         run: npm run web:smoke -- --project=mobile-webkit

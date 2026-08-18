@@ -194,15 +194,15 @@ function verifyCi(ci, fail) {
     fail("ci.yml web job Playwright cache step must have id: playwright-cache.");
   }
 
-  if (
-    !webSteps.includes("steps.playwright-cache.outputs.cache-hit") ||
-    !webSteps.includes("npx playwright install webkit") ||
-    !webSteps.includes("npx playwright install --with-deps webkit")
-  ) {
+  if (!webSteps.includes("npx playwright install-deps webkit")) {
     fail(
-      "ci.yml web job must install webkit without --with-deps on cache hit and " +
-        "with --with-deps on cache miss.",
+      "ci.yml web job must install Playwright OS dependencies on every run " +
+        "(npx playwright install-deps webkit).",
     );
+  }
+
+  if (!webSteps.includes("npx playwright install webkit")) {
+    fail("ci.yml web job must install webkit browsers (npx playwright install webkit).");
   }
 
   for (const job of HEAVY_JOBS) {
