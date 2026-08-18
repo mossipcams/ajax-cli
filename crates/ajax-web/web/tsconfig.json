@@ -2,7 +2,10 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@testing-library/react-original": [
+        "../../../node_modules/@testing-library/react"
+      ]
     },
     "target": "ES2022",
     "module": "ESNext",

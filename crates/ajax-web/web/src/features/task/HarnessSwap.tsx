@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { swapTaskAgent } from "@/shared/lib/api";
 import { Button } from "@/shared/ui/button";
 import ModelPicker from "@/features/session/ModelPicker";
+import { useSwapTaskAgentMutation } from "./useSwapTaskAgentMutation";
 import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
@@ -21,23 +21,23 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped }: Props) 
   const [agent, setAgent] = useState(currentAgent);
   const [model, setModel] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const swapMutation = useSwapTaskAgentMutation(handle, () => {
+    setOpen(false);
+    onSwapped?.();
+  });
 
   async function apply() {
-    setSaving(true);
     setError(null);
     try {
-      const result = await swapTaskAgent(handle, agent, model || undefined);
+      const result = await swapMutation.mutateAsync({
+        agent,
+        model: model || undefined,
+      });
       if (!result.ok) {
         setError(result.error?.message ?? "Could not switch harness");
-        return;
       }
-      setOpen(false);
-      onSwapped?.();
     } catch {
       setError("Could not switch harness — network error");
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -108,11 +108,11 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped }: Props) 
         <Button
           type="button"
           variant="default"
-          disabled={saving}
+          disabled={swapMutation.isPending}
           onClick={() => void apply()}
           data-testid="harness-swap-apply"
         >
-          {saving ? "Switching…" : "Switch"}
+          {swapMutation.isPending ? "Switching…" : "Switch"}
         </Button>
       </div>
     </div>

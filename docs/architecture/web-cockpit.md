@@ -224,6 +224,19 @@ endpoints. It does not own task lifecycle, action policy, registry truth, or
 substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
+## Client state ownership
+
+TanStack Query owns transient in-memory HTTP read state for ordinary Cockpit
+reads: task detail, diff review (pull requests and selected/local diff), per-harness
+session model catalogs, version metadata, and Test-in-Dev deployment status.
+Selected mutation lifecycles (`startTask`, harness swap, and `/api/operations`)
+also run through Query mutations with retries disabled.
+
+Query does **not** own Cockpit polling or projection ordering (`useCockpitResource`),
+hash navigation (`useHashRoute`), ACP/WebSocket session reducers (`useTaskSession`),
+or terminal/PTY state. Mutation responses that include a Cockpit projection still
+call `applyCockpit` directly; the custom poll gate remains authoritative.
+
 ## Speech Input Architecture
 
 Speech input is a host-side dictation capability for Web Cockpit. The iPhone

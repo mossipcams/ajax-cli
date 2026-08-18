@@ -517,6 +517,7 @@ describe("NewTaskSheet remembered defaults", () => {
   });
 
   it("posts startTask only once under rapid double submit", async () => {
+    stubCatalog();
     let resolveFirst!: (value: { ok: boolean; response: object }) => void;
     const pending = new Promise<{ ok: boolean; response: object }>((resolve) => {
       resolveFirst = resolve;
@@ -526,10 +527,11 @@ describe("NewTaskSheet remembered defaults", () => {
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Chaos duplicate" },
     });
-    const form = screen.getByRole("form", { name: "New task" });
+    await goToModelStep();
+    const form = taskForm();
     fireEvent.submit(form);
     fireEvent.submit(form);
-    expect(spy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     resolveFirst({ ok: true, response: {} });
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
   });
