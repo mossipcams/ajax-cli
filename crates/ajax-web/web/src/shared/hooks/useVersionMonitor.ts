@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { fetchVersion } from "@/shared/lib/api";
+import { useFetchVersion } from "./useVersionQuery";
 
 export type VersionMonitor = {
   updateAvailable: boolean;
@@ -9,6 +9,7 @@ export type VersionMonitor = {
 export function useVersionMonitor(): VersionMonitor {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const bootVersionRef = useRef<string | null>(null);
+  const fetchVersion = useFetchVersion();
 
   const checkVersion = useCallback(async () => {
     try {
@@ -19,7 +20,7 @@ export function useVersionMonitor(): VersionMonitor {
     } catch {
       // Offline: keep the pinned version and retry later.
     }
-  }, []);
+  }, [fetchVersion]);
 
   return { updateAvailable, checkVersion };
 }

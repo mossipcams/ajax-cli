@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/shared/ui/button";
-import { ApiError, fetchDevDeploy, startDevDeploy } from "@/shared/lib/api";
-import type { DevDeployStatus } from "@/shared/lib/types";
+import { ApiError, startDevDeploy } from "@/shared/lib/api";
+import { queryKeys } from "@/shared/lib/queryClient";
+import { useDevDeployQuery } from "./useDevDeployQuery";
 
 interface Props {
   taskHandle: string;
@@ -9,30 +11,11 @@ interface Props {
 }
 
 export default function TestInDevPanel({ taskHandle, onResult }: Props) {
-  const [status, setStatus] = useState<DevDeployStatus | null>(null);
+  const { data } = useDevDeployQuery();
+  const queryClient = useQueryClient();
+  const status = data?.deploy ?? null;
   const [busy, setBusy] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const busyRef = useRef(false);
-
-  async function refresh() {
-    try {
-      const response = await fetchDevDeploy();
-      setStatus(response.deploy);
-      if (!response.deploy.active && pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
-    } catch {
-      // Keep last known status; transient network blips during restart are expected.
-    }
-  }
-
-  function startPolling() {
-    if (pollTimerRef.current) return;
-    pollTimerRef.current = setInterval(() => {
-      void refresh();
-    }, 1500);
-  }
 
   async function deploy() {
     if (busyRef.current || busy || status?.active) return;
@@ -40,25 +23,17 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
     setBusy(true);
     try {
       const response = await startDevDeploy(taskHandle);
-      setStatus(response.deploy);
-      startPolling();
+      queryClient.setQueryData(queryKeys.devDeploy(), response);
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : "Test in Dev failed to start";
       onResult?.(message, null, true);
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.devDeploy() });
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
   }
-
-  useEffect(() => {
-    void refresh();
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, []);
 
   const phaseLabel = status?.phase_label ?? "Ready to deploy";
   const disabled = busy || !!status?.active;

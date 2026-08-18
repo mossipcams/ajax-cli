@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  fetchVersion,
   startTestInStable,
   TEST_IN_STABLE_TIMEOUT_MS,
   waitForServerRestart,
 } from "@/shared/lib/api";
+import { useFetchVersion, useVersionQuery } from "@/shared/hooks/useVersionQuery";
 import { buildDiagnosticsReport } from "./diagnostics";
 import { copyText } from "@/shared/lib/clipboard";
 import { CONFIRM_TIMEOUT_MS } from "@/shared/lib/polling";
@@ -51,6 +51,8 @@ export default function SettingsView({
   const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatEnabled);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diagnosticsLatchRef = useRef(false);
+  const { data: versionInfo } = useVersionQuery();
+  const fetchVersion = useFetchVersion();
 
   async function refreshPushSubscriptionStatus() {
     setPushSubscriptionStatus(await getPushSubscriptionStatus());
@@ -69,22 +71,8 @@ export default function SettingsView({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void fetchVersion()
-      .then((version) => {
-        if (!cancelled) {
-          setTestInStableAvailable(version.test_in_stable === true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTestInStableAvailable(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    setTestInStableAvailable(versionInfo?.test_in_stable === true);
+  }, [versionInfo]);
 
   async function testInStable() {
     if (!confirmingTestInStable) {
