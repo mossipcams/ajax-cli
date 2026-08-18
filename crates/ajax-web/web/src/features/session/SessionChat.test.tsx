@@ -122,6 +122,21 @@ describe("SessionChat smoke", () => {
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument();
   });
 
+  it("shows ACP context usage in the head while idle and below 70%", () => {
+    mountChat({
+      detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
+    });
+    send({ type: "usage", used: 30, size: 100 });
+    expect(screen.getByTestId("session-head")).toHaveAttribute("data-state", "idle");
+    expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 30% full");
+  });
+
+  it("does not render context usage for a zero-size update", () => {
+    mountChat();
+    send({ type: "usage", used: 0, size: 0 });
+    expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
+  });
+
   // Regression for #877: sticky inside the masked overflow scroller left the
   // composer stranded mid-viewport after the iOS keyboard dismissed.
   it("docks the composer below the transcript scroller, not inside it", () => {

@@ -41,14 +41,10 @@ export function headTone(state: HeadState, detail: BrowserTaskDetail | null): st
   return "idle";
 }
 
-/** Context pressure only becomes information near the ceiling: below it, a
- * percentage is a number the operator can do nothing with. Shown from 70% up,
- * where the answer ("wrap up, or start a fresh session") is still available. */
-const USAGE_VISIBLE_AT = 0.7;
-
+/** Context pressure from ACP `usage_update`. Shown whenever the harness reports
+ * a non-zero window; high pressure gets a warning tone at 90%+. */
 function UsageMeter({ usage }: { usage: Usage }) {
   const ratio = Math.min(1, usage.used / usage.size);
-  if (ratio < USAGE_VISIBLE_AT) return null;
   return (
     <p
       className={`session-head-quiet session-usage${ratio >= 0.9 ? " is-tight" : ""}`}
@@ -205,7 +201,6 @@ export default function LiveHead({
               Last update {Math.max(1, Math.floor(activityAgeMs / 60_000))}m ago
             </p>
           ) : null}
-          {usage ? <UsageMeter usage={usage} /> : null}
         </div>
       ) : null}
 
@@ -221,6 +216,8 @@ export default function LiveHead({
           {actions}
         </div>
       ) : null}
+
+      {usage ? <UsageMeter usage={usage} /> : null}
     </section>
   );
 }
