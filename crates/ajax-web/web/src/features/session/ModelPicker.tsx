@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import {
   decodeModelSelection,
   encodeModelSelection,
+  DEFAULT_SESSION_MODEL,
   type SessionModelCatalog,
 } from "./sessionModel";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
@@ -73,7 +74,11 @@ export default function ModelPicker({
 
   const reasoning = catalog.reasoning;
   const catalogIds = new Set(catalog.models.map((option) => option.id));
-  const unknownModel = model && !catalogIds.has(model);
+  const isKnownSelection =
+    !model ||
+    model === DEFAULT_SESSION_MODEL ||
+    catalogIds.has(model);
+  const unknownModel = model && !isKnownSelection;
 
   return (
     <>

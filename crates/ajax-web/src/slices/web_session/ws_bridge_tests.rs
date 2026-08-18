@@ -164,3 +164,72 @@ fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// Regression for issue #942: set_model must replace the ACP child, publish the
+// new slot model on attach, and keep it after the next prompt.
+#[test]
+fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
+    let dir = scratch_dir("set-model-prompt-942");
+    let handle = "web/set-model-prompt";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let before = directory.child_id(handle).expect("child");
+        let mut generation = directory.generation(handle);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::SetModel {
+                model: "composer-2.5".to_string(),
+            },
+            &mut generation,
+            None,
+        ))
+        .expect("set model");
+
+        assert_ne!(directory.child_id(handle), Some(before));
+        let attach = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "composer-2.5".to_string(),
+            None,
+        ));
+        assert_eq!(attach.snapshot.model, "composer-2.5");
+        assert!(attach.generation > 0);
+
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::Prompt {
+                text: "hello".to_string(),
+                client_message_id: "prompt-942".to_string(),
+            },
+            &mut generation,
+            None,
+        ))
+        .expect("prompt");
+
+        super::test_support::pump_until(&directory, handle, Duration::from_secs(5), |events| {
+            events.iter().any(|event| match event {
+                SessionServerEvent::TurnEnd { .. } => true,
+                SessionServerEvent::Message { text, .. } => text == "pong",
+                _ => false,
+            })
+        });
+
+        let after_prompt = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "composer-2.5".to_string(),
+            None,
+        ));
+        assert_eq!(after_prompt.snapshot.model, "composer-2.5");
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

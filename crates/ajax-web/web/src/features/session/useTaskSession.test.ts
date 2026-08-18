@@ -157,6 +157,40 @@ describe("useTaskSession", () => {
     unmount();
   });
 
+  // Regression for issue #942: unrelated prompt errors must not snap the picker
+  // back after the host confirms the new model on a generation-changed snapshot.
+  it("keeps a confirmed model change when the first prompt emits an unrelated error (#942)", () => {
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        callbacks.push(nextCallbacks);
+        nextCallbacks.onReady("gpt-5.6-sol-medium");
+        return transport;
+      },
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => result.current.setModel("claude-opus-5"));
+    act(() => callbacks[0]?.onReady("claude-opus-5"));
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+
+    act(() =>
+      callbacks[0]?.onEvent({ type: "error", message: "ACP process exited" }),
+    );
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+    unmount();
+  });
+
   it("does not seed the in-session picker from localStorage (#931)", () => {
     writeSessionModel("composer-2.5");
     const transport: webSessionTransport.WebSessionTransport = {

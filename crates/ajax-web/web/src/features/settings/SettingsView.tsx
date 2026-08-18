@@ -74,6 +74,8 @@ export default function SettingsView({
     setTestInStableAvailable(versionInfo?.test_in_stable === true);
   }, [versionInfo]);
 
+  const testInStableRestartsThisInstance = versionInfo?.profile === "stable";
+
   async function testInStable() {
     if (!confirmingTestInStable) {
       setConfirmingTestInStable(true);
@@ -85,6 +87,29 @@ export default function SettingsView({
     }
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     setConfirmingTestInStable(false);
+    setTestingInStable(true);
+    setTestInStableStatus(
+      testInStableRestartsThisInstance
+        ? "Pulling main and rebuilding…"
+        : "Pulling main and rebuilding stable Cockpit…",
+    );
+    try {
+      const response = await startTestInStable();
+      if (!response.restarting) {
+        setTestingInStable(false);
+        setTestInStableStatus(null);
+        onResult?.("Test in Stable started on stable Cockpit", null, false);
+        return;
+      }
+    } catch {
+      if (!testInStableRestartsThisInstance) {
+        setTestingInStable(false);
+        setTestInStableStatus(null);
+        onResult?.("Test in Stable failed", null, true);
+        return;
+      }
+      // Stable exits mid-request; connection drop is expected (#850).
+    }
     const resumeOrigin = window.location.origin;
     const resumeHash = window.location.hash;
     const resumeOriginOk =
@@ -95,13 +120,6 @@ export default function SettingsView({
       previousVersion = version.version;
     } catch {
       // Continue without a version baseline.
-    }
-    setTestingInStable(true);
-    setTestInStableStatus("Pulling main and rebuilding…");
-    try {
-      await startTestInStable();
-    } catch {
-      // A connection drop during restart is expected.
     }
     const online = await waitForServerRestart({
       timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,
@@ -321,7 +339,9 @@ export default function SettingsView({
         {testInStableAvailable ? (
           <>
             <p className="settings-note">
-              Pulls origin/main, rebuilds, and restarts this stable Cockpit.
+              {testInStableRestartsThisInstance
+                ? "Pulls origin/main, rebuilds, and restarts this stable Cockpit."
+                : "Pulls origin/main, rebuilds, and restarts stable Cockpit on port 8787."}
             </p>
             <Button
               type="button"
