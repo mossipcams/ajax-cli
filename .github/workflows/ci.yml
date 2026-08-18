@@ -155,6 +155,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: pr-title
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    timeout-minutes: 20
+    # Container jobs run as root against a runner-owned checkout. checkout's
+    # safe.directory lives in a temporary HOME and is invisible once a step
+    # sets HOME=/root, so mark the workspace for every git invocation here.
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${{ github.workspace }}
 
     steps:
       - name: Checkout
@@ -174,23 +185,14 @@ jobs:
       - name: Verify CI and release pipeline invariants
         run: npm run ci:verify
 
-      # Husky only rebuilds dist when web sources are staged. CI must still
-      # reject a stale embedded bundle (#593), including --no-verify commits.
-      - name: Check embedded web dist is current
+      - name: Verify committed web dist matches build output
         run: |
           npm run web:build
           git diff --exit-code crates/ajax-web/web/dist
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps webkit
-
       - name: Smoke and visual-regression tests
+        env:
+          HOME: /root
         run: npm run web:smoke -- --project=mobile-webkit
 
   check:
