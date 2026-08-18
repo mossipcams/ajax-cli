@@ -10,7 +10,6 @@ import {
   OPEN_FAILURE,
   type SessionAction,
 } from "./sessionThread";
-import { writeSessionModel } from "./sessionModel";
 import {
   MAX_HANDSHAKE_ATTEMPTS,
   RECONNECT_BASE_MS,
@@ -30,6 +29,10 @@ interface Options {
   setConnected: (connected: boolean) => void;
   setEverOpened: (everOpened: boolean) => void;
   onSessionInvalidated?: () => void;
+  /** Host snapshot model for the live session (task metadata, not localStorage). */
+  onSessionModel?: (model: string) => void;
+  /** Revert an optimistic in-session model change after a host error. */
+  onSessionModelRejected?: () => void;
 }
 
 /** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
@@ -44,6 +47,8 @@ export function useSessionTransport({
   setConnected,
   setEverOpened,
   onSessionInvalidated,
+  onSessionModel,
+  onSessionModelRejected,
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
@@ -97,12 +102,15 @@ export function useSessionTransport({
             everOpenedRef.current = true;
             setEverOpened(true);
             reconnecting = false;
-            writeSessionModel(nextModel);
+            onSessionModel?.(nextModel);
             connectedRef.current = true;
             setConnected(true);
           },
           onEvent: (event) => {
             onActivity();
+            if (event.type === "error") {
+              onSessionModelRejected?.();
+            }
             // The socket cannot report why an upgrade was refused, so swap its
             // blank failure for the reason the task detail already carries.
             if (event.type === "error" && event.message === OPEN_FAILURE) {
