@@ -154,7 +154,9 @@ before persistence.
 Each attach sends one protocol v2 `snapshot` frame
 (`protocolVersion`, `cursor`, `model`, `turnState`, `reset`, optional
 `pendingPermission`) followed by cursor-bearing `event` envelopes whose
-`payload` is the existing typed session event union. Every persisted row has a
+`payload` is the existing typed session event union. The `model` field is the
+harness-reported applied id after handshake apply, not the task desired pin
+([#952](https://github.com/mossipcams/ajax-cli/issues/952)). Every persisted row has a
 monotonically increasing absolute cursor. Reconnect supplies the browser's last
 applied cursor on `?cursor=` and receives only newer envelopes; invalid or
 compacted-away cursors force `reset: true` and bounded full replay from the

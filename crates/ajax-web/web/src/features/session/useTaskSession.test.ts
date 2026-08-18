@@ -215,4 +215,33 @@ describe("useTaskSession", () => {
     expect(result.current.sessionModel).not.toBe("composer-2.5");
     unmount();
   });
+
+  // Regression for #952: the in-session picker tracks the host snapshot applied model,
+  // not task metadata or localStorage, when the harness reports a different id.
+  it("binds the in-session picker to the host snapshot applied model (#952)", () => {
+    writeSessionModel("composer-2.5");
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        callbacks.push(nextCallbacks);
+        return transport;
+      },
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => callbacks[0]?.onReady("harness-default"));
+    expect(result.current.sessionModel).toBe("harness-default");
+    expect(result.current.sessionModel).not.toBe("composer-2.5");
+    unmount();
+  });
 });

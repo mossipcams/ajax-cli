@@ -10,6 +10,7 @@ import * as api from "@/shared/lib/api";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
+import { writeSessionModel } from "./sessionModel";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
@@ -611,5 +612,34 @@ describe("SessionChat smoke", () => {
       "aria-checked",
       "true",
     );
+  });
+
+  // Regression for #952: the in-session picker must reflect snapshot applied model,
+  // not task metadata or localStorage, when the host reports a different harness id.
+  it("shows the host snapshot applied model in task details (#952)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "harness-default", label: "Harness default" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+          ],
+          default: "harness-default",
+        }),
+      }),
+    );
+    writeSessionModel("composer-2.5");
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    act(() => ready?.("harness-default"));
+
+    fireEvent.click(screen.getByTestId("session-details"));
+    const current = await screen.findByRole("radio", { name: /Harness default/i });
+    expect(current).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.queryByRole("radio", { name: /Composer 2\.5/i, checked: true }),
+    ).toBeNull();
   });
 });

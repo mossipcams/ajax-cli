@@ -200,7 +200,7 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        None => None,
+        None | Some("auto") => None,
         Some(raw) => {
             if !supports_acp_session(&request.agent) {
                 return Err(OperateError::UnsupportedCapability(

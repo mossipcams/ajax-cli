@@ -85,6 +85,23 @@ fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
     assert_eq!(plan.model, "gpt-5.6-sol[high]");
 }
 
+// Regression for #952: legacy stored `auto` must attach like unspecified.
+#[test]
+fn prepare_task_session_treats_stored_auto_like_unspecified() {
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Cursor;
+    task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("auto"));
+    let worktree = std::env::temp_dir().join("ajax-web-session-test-stored-auto");
+    let _ = std::fs::remove_dir_all(&worktree);
+    std::fs::create_dir_all(&worktree).expect("worktree dir");
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    assert_eq!(plan.model, ajax_core::adapters::CURSOR_DEFAULT_MODEL);
+}
+
 #[test]
 fn prepare_task_session_admits_every_provisioned_acp_harness() {
     for (agent, label) in [

@@ -3,6 +3,16 @@
 use super::{CommandContext, CommandError};
 use crate::{adapters::acp_launch_for_agent, models::TaskId, registry::Registry};
 
+/// Normalize operator model input before persisting on task metadata.
+///
+/// Auto and empty mean unspecified ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+pub fn normalize_persisted_session_model(model: Option<&str>) -> Option<&str> {
+    match model.map(str::trim).filter(|model| !model.is_empty()) {
+        Some("auto") => None,
+        other => other,
+    }
+}
+
 /// Write `session_model` on `handle` before the host replaces its ACP child.
 pub fn set_task_session_model<R: Registry>(
     context: &mut CommandContext<R>,
@@ -24,7 +34,7 @@ pub fn set_task_session_model<R: Registry>(
         ]));
     }
 
-    task.set_session_model(model);
+    task.set_session_model(normalize_persisted_session_model(model));
     Ok(())
 }
 
@@ -86,10 +96,28 @@ mod tests {
     }
 
     #[test]
-    fn set_session_model_reports_a_missing_task() {
+    fn set_session_model_clears_auto_to_unspecified() {
         let mut context = context_with_task(true);
-        let error = set_task_session_model(&mut context, "web/missing", Some("gpt-5.6-sol[high]"))
-            .unwrap_err();
-        assert!(matches!(error, CommandError::TaskNotFound(_)));
+        set_task_session_model(&mut context, "web/fix-login", Some("gpt-5.6-sol[high]")).unwrap();
+        set_task_session_model(&mut context, "web/fix-login", None).unwrap();
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task.session_model(), None);
+    }
+
+    // Regression for #952: never persist the literal `auto` sentinel.
+    #[test]
+    fn set_session_model_persists_none_for_auto_string() {
+        let mut context = context_with_task(true);
+        set_task_session_model(&mut context, "web/fix-login", Some("auto")).unwrap();
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task.session_model(), None);
     }
 }

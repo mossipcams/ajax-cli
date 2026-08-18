@@ -490,7 +490,7 @@ export function connectWebSessionTransport(
           ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
         });
       }
-      callbacks.onReady(frame.snapshot.model.trim() || model?.trim() || "auto");
+      callbacks.onReady(frame.snapshot.model.trim() || "auto");
       for (const prompt of pendingPrompts) sendPromptNow(prompt);
       return;
     }

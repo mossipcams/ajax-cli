@@ -71,6 +71,23 @@ fn skip_interactive_agent_plan_still_sends_keys_without_acp() {
 }
 
 #[test]
+fn task_from_new_request_persists_none_for_auto_model() {
+    let context = context();
+    let task = task_from_new_request(
+        &context,
+        &NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            skip_interactive_agent: true,
+            model: Some("auto".to_string()),
+        },
+    )
+    .unwrap();
+    assert_eq!(task.session_model(), None);
+}
+
+#[test]
 fn task_from_new_request_sets_skip_interactive_agent_for_cursor() {
     let context = context();
     let task = task_from_new_request(

@@ -1,7 +1,7 @@
 use super::test_support::BlockingSessionDirectory;
 use super::ws_bridge::{should_send_keepalive, MAX_SESSION_FRAME_BYTES, SESSION_PING_INTERVAL};
 use super::{apply_client_message, SessionClientMessage, SessionServerEvent, TaskSessionDirectory};
-use crate::adapters::web_session_acp::with_test_acp_program;
+use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Duration};
 
@@ -229,6 +229,40 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
             None,
         ));
         assert_eq!(after_prompt.snapshot.model, "composer-2.5");
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression for #952: snapshot.model is harness-reported applied state, not the
+// attach-plan pin when the harness refuses the operator selection.
+#[test]
+fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
+    let dir = scratch_dir("snapshot-applied-952");
+    let handle = "web/snapshot-applied";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--model-refuse"], || {
+            directory
+                .acquire(handle, &dir, "composer-2.5", AgentClient::Cursor)
+                .expect("acquire");
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let attach = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                "composer-2.5".to_string(),
+                None,
+            ));
+            assert_eq!(attach.snapshot.model, "harness-default");
+            assert_ne!(attach.snapshot.model, "composer-2.5");
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::Error { message }
+                    if message.contains("session model") && message.contains("composer-2.5")
+            )));
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
