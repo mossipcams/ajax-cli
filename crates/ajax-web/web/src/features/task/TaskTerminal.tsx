@@ -100,6 +100,9 @@ export default function TaskTerminal({ handle }: Props) {
           next.push(child);
         }
       }
+      for (const meta of taskDetail.querySelectorAll<HTMLElement>(".meta-details")) {
+        next.push(meta);
+      }
     }
 
     for (const el of document.querySelectorAll<HTMLElement>(
