@@ -5,6 +5,7 @@ import {
   parseServerEvent,
   parseServerFrame,
   PROMPT_TOO_LONG,
+  MAX_FRAME_BYTES,
   readSessionCursor,
   writeSessionCursor,
   type WebSessionTransportCallbacks,
@@ -262,6 +263,24 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
+  // #929: ordinary pastes above the old 4096-byte ceiling must send.
+  it("accepts a prompt larger than the former 4096-byte frame limit", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+
+    const id = transport.sendPrompt("x".repeat(5000));
+
+    expect(id).not.toBe("");
+    expect(cbs.onEvent).not.toHaveBeenCalledWith({ type: "error", message: PROMPT_TOO_LONG });
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "x".repeat(5000) }),
+    );
+    transport.dispose();
+  });
+
   // The host rejects a frame over its ceiling before it can read the frame's
   // clientMessageId, so the prompt is never acknowledged. Queued, it was resent
   // on every reconnect and rejected every time — one long paste poisoned the
@@ -271,7 +290,7 @@ describe("connectWebSessionTransport", () => {
     const cbs = callbacks();
     const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
 
-    const id = transport.sendPrompt("x".repeat(5000));
+    const id = transport.sendPrompt("x".repeat(MAX_FRAME_BYTES));
 
     expect(id).toBe("");
     expect(cbs.onEvent).toHaveBeenCalledWith({ type: "error", message: PROMPT_TOO_LONG });
@@ -286,7 +305,7 @@ describe("connectWebSessionTransport", () => {
     sessionStorage.setItem(
       "ajax.web.session.outbox.web%2Ffix-login",
       JSON.stringify([
-        { text: "x".repeat(5000), clientMessageId: "poison" },
+        { text: "x".repeat(MAX_FRAME_BYTES), clientMessageId: "poison" },
         { text: "fine", clientMessageId: "keep" },
       ]),
     );

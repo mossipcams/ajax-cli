@@ -169,12 +169,17 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.surfacePaddingBottom).toBeGreaterThanOrEqual(250);
   });
 
-  test("keyboard close while pinned clears blank region and repins live edge", async ({ page }) => {
+  test("keyboard close while pinned clears blank region and repins live edge (#930)", async ({ page }) => {
     await openSessionChat(page);
     await seedTranscript(page, 30);
-    await page.evaluate(() => {
+    const beforeOpen = await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
       thread.scrollTop = thread.scrollHeight;
+      return {
+        scrollTop: thread.scrollTop,
+        scrollHeight: thread.scrollHeight,
+        clientHeight: thread.clientHeight,
+      };
     });
     await simulateKeyboard(page, 280);
     const during = await readGeometry(page);
@@ -188,6 +193,70 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.threadScrollTop + geo.threadClientHeight).toBeGreaterThanOrEqual(
       geo.threadScrollHeight - 48,
     );
+    expect(geo.threadScrollHeight).toBeGreaterThanOrEqual(beforeOpen.scrollHeight);
+  });
+
+  test("keyboard dismiss while scrolled up preserves visible content (#930)", async ({ page }) => {
+    await openSessionChat(page);
+    await seedTranscript(page, 80);
+    const anchor = await page.evaluate(() => {
+      const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
+      const mid = Array.from(thread.querySelectorAll("p")).find((p) =>
+        p.textContent?.startsWith("Line 41:"),
+      ) as HTMLElement | undefined;
+      if (!mid) throw new Error("expected mid-history Line 41 message");
+
+      const lineTop = mid.offsetTop;
+      thread.scrollTop = Math.max(0, lineTop - Math.floor(thread.clientHeight / 3));
+      thread.dispatchEvent(new Event("scroll", { bubbles: false }));
+
+      const threadRect = thread.getBoundingClientRect();
+      const rect = mid.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(centerX, centerY);
+
+      return {
+        scrollTop: thread.scrollTop,
+        scrollHeight: thread.scrollHeight,
+        anchorText: mid.textContent?.slice(0, 60) ?? "",
+        anchorInView:
+          rect.bottom > threadRect.top + 4 &&
+          rect.top < threadRect.bottom - 4 &&
+          (hit === mid || mid.contains(hit)),
+      };
+    });
+    expect(anchor.anchorInView).toBe(true);
+
+    await simulateKeyboard(page, 260);
+    await dismissKeyboard(page);
+
+    const after = await page.evaluate(({ anchorText }) => {
+      const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
+      const mid = Array.from(thread.querySelectorAll("p")).find((p) =>
+        p.textContent?.startsWith(anchorText.slice(0, 20)),
+      ) as HTMLElement | undefined;
+      if (!mid) throw new Error("mid-history anchor missing after dismiss");
+
+      const threadRect = thread.getBoundingClientRect();
+      const rect = mid.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(centerX, centerY);
+
+      return {
+        scrollTop: thread.scrollTop,
+        scrollHeight: thread.scrollHeight,
+        anchorInView:
+          rect.bottom > threadRect.top + 4 &&
+          rect.top < threadRect.bottom - 4 &&
+          (hit === mid || mid.contains(hit)),
+      };
+    }, { anchorText: anchor.anchorText });
+
+    expect(after.scrollTop).toBe(anchor.scrollTop);
+    expect(after.anchorInView).toBe(true);
+    expect(after.scrollHeight).toBeGreaterThanOrEqual(anchor.scrollHeight);
   });
 
   test("keyboard open/close while scrolled up keeps transcript flush to composer", async ({ page }) => {

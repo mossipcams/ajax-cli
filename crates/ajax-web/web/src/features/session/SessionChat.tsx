@@ -179,10 +179,16 @@ export default function SessionChat({
 
   pinnedRef.current = pinned;
 
+  const restoreLiveEdge = useCallback(() => {
+    setPinned(true);
+    setBehind(false);
+  }, []);
+
   const { surfaceStyle } = useSessionChatViewport({
     threadRef,
     composerRef,
     pinnedRef,
+    onRestoreLiveEdge: restoreLiveEdge,
   });
 
   const scrollToLive = useCallback(() => {
@@ -193,8 +199,8 @@ export default function SessionChat({
     setBehind(false);
   }, []);
 
-  // Follow the live edge only while the operator is already at it. Yanking the
-  // viewport back mid-read is what made a streaming turn impossible to follow.
+  // Follow the live edge while the operator remains pinned. Scroll-up clears
+  // `pinned` in onThreadScroll, so history readers are not yanked back.
   //
   // `behind` tracks output that arrived *since* the operator left the edge, so
   // it keys off the items changing — not off the unpin itself, which would
@@ -205,33 +211,37 @@ export default function SessionChat({
     const node = threadRef.current;
     if (!node) return;
     if (pinned) {
-      const atLive =
-        node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
-      if (atLive) node.scrollTop = node.scrollHeight;
+      node.scrollTop = node.scrollHeight;
       seenRef.current = { items: state.items };
       return;
     }
     if (state.items !== seenRef.current.items) setBehind(true);
   }, [state.items, pinned]);
 
-  // The effect above re-pins when *entries* change, which leaves every other
-  // way the transcript loses height unhandled — the composer growing under a
-  // multi-line draft, the head gaining a decision panel, the keyboard band
-  // resizing. Each of those slid the live edge out from under a pinned reader
-  // (a four-line draft moved it 62px), and the next message then snapped it
-  // back. Observing the thread's own box catches all of them at once.
-  //
-  // Keyed on detailStatus, not []: the first render is the loading skeleton,
-  // which has no thread to observe, and a mount-only effect would bail there
-  // and never retry.
+  // The effect above re-pins when *entries* change. ResizeObserver catches
+  // thread box resizes (composer growth, keyboard band). MutationObserver
+  // catches scrollHeight growth inside the fixed-height scroller — streaming
+  // lines appended after keyboard dismiss — which RO does not see.
+  useEffect(() => {
+    const node = threadRef.current;
+    if (!node || typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => {
+      if (!pinnedRef.current) return;
+      node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(node, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [handle, detailStatus]);
+
+  // Observing the thread's border box catches layout-driven height changes the
+  // items effect misses — composer growth under a multi-line draft, the head
+  // gaining a decision panel, the keyboard band resizing.
   useEffect(() => {
     const node = threadRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (!pinnedRef.current) return;
-      const atLive =
-        node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
-      if (atLive) node.scrollTop = node.scrollHeight;
+      node.scrollTop = node.scrollHeight;
     });
     observer.observe(node);
     return () => observer.disconnect();

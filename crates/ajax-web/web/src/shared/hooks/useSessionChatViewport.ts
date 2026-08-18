@@ -1,9 +1,11 @@
 import { useEffect, useRef, type RefObject } from "react";
 import {
-  SESSION_PIN_THRESHOLD_PX,
+  captureTranscriptGeometry,
   claimSessionViewportOwnership,
   releaseSessionViewportOwnership,
+  restoreTranscriptGeometry,
   sessionSurfaceStyle,
+  type TranscriptGeometry,
 } from "@/shared/lib/sessionViewport";
 import { useMobileKeyboard } from "./useMobileKeyboard";
 
@@ -11,21 +13,50 @@ interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinnedRef: RefObject<boolean>;
+  onRestoreLiveEdge?: () => void;
 }
 
-function isAtLiveBottom(node: HTMLDivElement): boolean {
-  return node.scrollHeight - node.scrollTop - node.clientHeight < SESSION_PIN_THRESHOLD_PX;
+const LAYOUT_STABLE_FRAMES = 2;
+const LAYOUT_POLL_MAX_FRAMES = 20;
+
+function layoutKey(node: HTMLDivElement): string {
+  return `${node.scrollHeight}:${node.clientHeight}`;
 }
 
-/** Repin to scrollHeight for ~500ms while flex layout settles after a chrome resize. */
-function repinLiveEdge(node: HTMLDivElement): () => void {
+/** Poll until scrollHeight/clientHeight stop changing, then run restore once. */
+function afterLayoutSettles(
+  node: HTMLDivElement,
+  restoreTarget: TranscriptGeometry,
+  restore: () => void,
+): () => void {
   let raf = 0;
-  const start = performance.now();
-  const pin = () => {
-    node.scrollTop = node.scrollHeight;
-    if (performance.now() - start < 500) raf = requestAnimationFrame(pin);
+  let stableFrames = 0;
+  let lastKey = layoutKey(node);
+  let frameCount = 0;
+
+  const poll = () => {
+    frameCount++;
+    // While the keyboard band closes, clientHeight grows; pin live edge each frame
+    // so a stale scrollTop does not paint a keyboard-sized gap. History mode waits.
+    if (restoreTarget.atBottom) {
+      node.scrollTop = node.scrollHeight;
+    }
+    const key = layoutKey(node);
+    if (key === lastKey) {
+      stableFrames++;
+    } else {
+      stableFrames = 0;
+      lastKey = key;
+    }
+
+    if (stableFrames >= LAYOUT_STABLE_FRAMES || frameCount >= LAYOUT_POLL_MAX_FRAMES) {
+      restore();
+      return;
+    }
+    raf = requestAnimationFrame(poll);
   };
-  raf = requestAnimationFrame(pin);
+
+  raf = requestAnimationFrame(poll);
   return () => cancelAnimationFrame(raf);
 }
 
@@ -34,12 +65,17 @@ function repinLiveEdge(node: HTMLDivElement): () => void {
  * apply iOS Safari bottom reservation, and preserve live-edge vs history scroll
  * across keyboard and composer height changes.
  */
-export function useSessionChatViewport({ threadRef, composerRef, pinnedRef }: Options) {
+export function useSessionChatViewport({
+  threadRef,
+  composerRef,
+  pinnedRef,
+  onRestoreLiveEdge,
+}: Options) {
   const { keyboardOpen, keyboardHeight, innerHeight, visualViewportHeight } = useMobileKeyboard();
-  const lastAtBottomRef = useRef(false);
-  const lastAtBottomAtRef = useRef(0);
-  const savedScrollTopRef = useRef<number | null>(null);
+  const geometryRef = useRef<TranscriptGeometry | null>(null);
+  const ignoreScrollIntentRef = useRef(false);
   const keyboardTransitionInitRef = useRef(true);
+  const prevKeyboardOpenRef = useRef<boolean | null>(null);
   const composerHeightRef = useRef(0);
 
   useEffect(() => {
@@ -47,53 +83,53 @@ export function useSessionChatViewport({ threadRef, composerRef, pinnedRef }: Op
     return () => releaseSessionViewportOwnership();
   }, []);
 
-  // Sample live-edge intent from scroll events (keyboard resize is not a scroll-up).
+  // Sample operator scroll intent; ignore Safari resize-generated scroll events.
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
+
+    geometryRef.current = captureTranscriptGeometry(node);
     const onScroll = () => {
-      const atBottom = isAtLiveBottom(node);
-      lastAtBottomRef.current = atBottom;
-      if (atBottom) {
-        lastAtBottomAtRef.current = performance.now();
-        savedScrollTopRef.current = null;
-      } else {
-        savedScrollTopRef.current = node.scrollTop;
-      }
+      if (ignoreScrollIntentRef.current) return;
+      geometryRef.current = captureTranscriptGeometry(node);
     };
     node.addEventListener("scroll", onScroll, { passive: true });
     return () => node.removeEventListener("scroll", onScroll);
   }, [threadRef]);
 
-  // Hold bottom pin across keyboard open/close when the operator was at the live edge.
+  // Restore equivalent position after keyboard open/close once layout settles.
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
+
     if (keyboardTransitionInitRef.current) {
       keyboardTransitionInitRef.current = false;
+      prevKeyboardOpenRef.current = keyboardOpen;
+      geometryRef.current = captureTranscriptGeometry(node);
       return;
     }
 
-    const recentlyAtBottom =
-      lastAtBottomAtRef.current > 0 &&
-      performance.now() - lastAtBottomAtRef.current < 1200;
-    const shouldRepin =
-      pinnedRef.current || lastAtBottomRef.current || recentlyAtBottom;
+    if (prevKeyboardOpenRef.current === keyboardOpen) return;
 
-    if (shouldRepin) {
-      savedScrollTopRef.current = null;
-      return repinLiveEdge(node);
-    }
+    const closing = prevKeyboardOpenRef.current === true && !keyboardOpen;
+    const before = geometryRef.current ?? captureTranscriptGeometry(node);
+    const restoreTarget: TranscriptGeometry = {
+      ...before,
+      atBottom: before.atBottom || pinnedRef.current,
+    };
 
-    const target = savedScrollTopRef.current ?? node.scrollTop;
-    let raf = 0;
-    raf = requestAnimationFrame(() => {
-      node.scrollTop = target;
+    prevKeyboardOpenRef.current = keyboardOpen;
+    ignoreScrollIntentRef.current = true;
+
+    return afterLayoutSettles(node, restoreTarget, () => {
+      restoreTranscriptGeometry(node, restoreTarget);
+      if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
+      geometryRef.current = captureTranscriptGeometry(node);
+      ignoreScrollIntentRef.current = false;
     });
-    return () => cancelAnimationFrame(raf);
-  }, [keyboardOpen, pinnedRef, threadRef]);
+  }, [keyboardOpen, onRestoreLiveEdge, pinnedRef, threadRef]);
 
-  // Composer growth while pinned uses the same repin model as the keyboard band.
+  // Composer growth while pinned uses the same bottom restore as the keyboard band.
   useEffect(() => {
     const composer = composerRef.current;
     const node = threadRef.current;
@@ -105,8 +141,13 @@ export function useSessionChatViewport({ threadRef, composerRef, pinnedRef }: Op
       if (nextHeight === composerHeightRef.current) return;
       composerHeightRef.current = nextHeight;
 
-      if (!pinnedRef.current && !lastAtBottomRef.current) return;
-      repinLiveEdge(node);
+      const geo = geometryRef.current ?? captureTranscriptGeometry(node);
+      if (!pinnedRef.current && !geo.atBottom) return;
+
+      ignoreScrollIntentRef.current = true;
+      restoreTranscriptGeometry(node, { ...geo, atBottom: true });
+      geometryRef.current = captureTranscriptGeometry(node);
+      ignoreScrollIntentRef.current = false;
     });
     observer.observe(composer);
     return () => observer.disconnect();

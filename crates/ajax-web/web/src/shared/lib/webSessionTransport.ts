@@ -6,8 +6,8 @@ export const SESSION_PROTOCOL_VERSION = 2;
 /** Match host FIFO cap (`web_session::MAX_QUEUED_PROMPTS`). */
 const MAX_QUEUED_PROMPTS = 8;
 
-/** Match the host's per-frame ceiling (`web_session_acp::MAX_SESSION_FRAME_BYTES`). */
-const MAX_FRAME_BYTES = 4096;
+/** Match the host's per-frame ceiling (`ws_bridge::MAX_SESSION_FRAME_BYTES`). */
+export const MAX_FRAME_BYTES = 256 * 1024;
 
 export const PROMPT_TOO_LONG = "That message is too long to send. Shorten it and try again.";
 export const OPEN_FAILURE = "Session WebSocket failed to open";

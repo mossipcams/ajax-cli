@@ -419,4 +419,88 @@ describe("SessionChat smoke", () => {
     await waitFor(() => expect(onSwappedAgent).toHaveBeenCalledOnce());
     expect(onMutated).toHaveBeenCalledOnce();
   });
+
+  // Regression for #930: after keyboard dismiss the one-shot restore can leave
+  // scrollTop lagging scrollHeight; pinned readers must follow new content.
+  it("follows the live edge on new items while pinned", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "First", itemId: "a1" });
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    thread.scrollTop = 800;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1400 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+
+    send({ type: "message", role: "agent", text: "Streaming chunk", itemId: "a2" });
+    expect(thread.scrollTop).toBe(thread.scrollHeight);
+  });
+
+  it("does not yank history readers when transcript grows", () => {
+    mountChat();
+    send({ type: "message", role: "agent", text: "First", itemId: "a1" });
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 2000 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+    thread.scrollTop = 120;
+    fireEvent.scroll(thread);
+
+    const before = thread.scrollTop;
+    send({ type: "message", role: "agent", text: "Second", itemId: "a2" });
+    expect(thread.scrollTop).toBe(before);
+    expect(thread.scrollTop).not.toBe(thread.scrollHeight);
+  });
+
+  it("follows the live edge on thread resize while pinned", () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class MockResizeObserver {
+      private readonly callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+
+    mountChat();
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    thread.scrollTop = 800;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1400 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+
+    act(() => {
+      resizeCallbacks.at(-1)?.(
+        [{ target: thread } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      );
+    });
+
+    expect(thread.scrollTop).toBe(1400);
+  });
+
+  it("follows the live edge on transcript DOM mutations while pinned", () => {
+    const mutationCallbacks: MutationCallback[] = [];
+    class MockMutationObserver {
+      private readonly callback: MutationCallback;
+      constructor(callback: MutationCallback) {
+        this.callback = callback;
+        mutationCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("MutationObserver", MockMutationObserver);
+
+    mountChat();
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    thread.scrollTop = 800;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1500 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+
+    act(() => {
+      mutationCallbacks.at(-1)?.([], {} as MutationObserver);
+    });
+
+    expect(thread.scrollTop).toBe(1500);
+  });
 });
