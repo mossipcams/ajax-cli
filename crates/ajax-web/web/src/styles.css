@@ -667,10 +667,9 @@ html.terminal-expanded .result-panel,
 }
 
 .session-details-sheet .model-picker {
-  max-height: 46vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  /* Let the task-details body scroll one list; nested caps hid most models (#948). */
+  max-height: none;
+  overflow: visible;
 }
 
 .session-model-switching {
