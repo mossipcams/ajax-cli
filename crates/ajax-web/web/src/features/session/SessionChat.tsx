@@ -98,6 +98,10 @@ interface Props {
   onOpenTerminal?: () => void;
   onDismiss?: () => void;
   onRetry?: () => void;
+  /** Shell confirm currently armed (`drop`, etc.). Sibling taps must not POST. */
+  pendingConfirmAction?: string | null;
+  /** Cancel that confirm when a different action is chosen. */
+  onCancelPendingConfirm?: () => void;
 }
 
 export default function SessionChat({
@@ -114,6 +118,8 @@ export default function SessionChat({
   onOpenTerminal,
   onDismiss,
   onRetry,
+  pendingConfirmAction = null,
+  onCancelPendingConfirm,
 }: Props) {
   const composerId = useId();
   const rootRef = useRef<HTMLElement | null>(null);
@@ -175,6 +181,12 @@ export default function SessionChat({
   });
 
   pinnedRef.current = pinned;
+
+  // Drop confirm uses the shell ResultPanel (z-index 40); close the details
+  // sheet (z-index 50) so Confirm is reachable without raising ResultPanel.
+  useEffect(() => {
+    if (pendingConfirmAction === "drop") setDetailsOpen(false);
+  }, [pendingConfirmAction]);
 
   const restoreLiveEdge = useCallback(() => {
     setPinned(true);
@@ -350,6 +362,8 @@ export default function SessionChat({
                 onResult={onResult}
                 onMutated={onSessionMutated}
                 onDismiss={onDismiss}
+                pendingConfirmAction={pendingConfirmAction}
+                onCancelPendingConfirm={onCancelPendingConfirm}
               />
             </div>
           ) : null
@@ -550,6 +564,8 @@ export default function SessionChat({
                           onResult={onResult}
                           onMutated={onSessionMutated}
                           onDismiss={onDismiss}
+                          pendingConfirmAction={pendingConfirmAction}
+                          onCancelPendingConfirm={onCancelPendingConfirm}
                         />
                       ) : null}
                       <div className="session-sheet-tools">

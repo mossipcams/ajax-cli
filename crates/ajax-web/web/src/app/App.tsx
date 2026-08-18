@@ -81,6 +81,17 @@ type PendingConfirmState = {
   interactionId: string;
 };
 
+/** Task surfaces where Drop confirm/dismiss treat the operator as on this handle. */
+function routeStillOnDroppedTask(
+  current: ReturnType<typeof parseRoute>,
+  handle: string,
+): boolean {
+  return (
+    (current.kind === "task" || current.kind === "diff" || current.kind === "session") &&
+    current.handle === handle
+  );
+}
+
 export default function App() {
   const route = useHashRoute();
   const orchestrationChat = useOrchestrationChatEnabled();
@@ -180,12 +191,7 @@ export default function App() {
 
   const cancelPendingConfirmOnRouteChange = useEffectEvent(() => {
     if (!pendingConfirm) return;
-    if (
-      (route.kind === "task" || route.kind === "diff") &&
-      route.handle === pendingConfirm.handle
-    ) {
-      return;
-    }
+    if (routeStillOnDroppedTask(route, pendingConfirm.handle)) return;
     cancelPendingConfirm();
   });
 
@@ -211,10 +217,7 @@ export default function App() {
     // operator is still on the dropped task — leave latch + live hash check.
     const stillOnDroppedTask = () => {
       if (dropLeaveLatchRef.current?.left) return false;
-      const current = parseRoute(window.location.hash);
-      return (
-        (current.kind === "task" || current.kind === "diff") && current.handle === handle
-      );
+      return routeStillOnDroppedTask(parseRoute(window.location.hash), handle);
     };
     commitConfirmedAction(
       action,
@@ -433,9 +436,7 @@ export default function App() {
   useEffect(() => {
     const latch = dropLeaveLatchRef.current;
     if (!latch) return;
-    const stillOnDropped =
-      (route.kind === "task" || route.kind === "diff") && route.handle === latch.handle;
-    if (!stillOnDropped) latch.left = true;
+    if (!routeStillOnDroppedTask(route, latch.handle)) latch.left = true;
   }, [route]);
 
   useEffect(() => {
@@ -692,6 +693,8 @@ export default function App() {
                   onMutated={() => route.kind === "session" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                   onRetry={reload}
+                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
+                  onCancelPendingConfirm={cancelPendingConfirm}
                 />
               ) : (
                 <NewTaskSheet
