@@ -4,6 +4,7 @@ import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
+import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
@@ -27,6 +28,30 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     text: () => Promise.resolve(JSON.stringify(body)),
   };
+}
+
+const sessionCapableDetail = { ...taskDetail, session_capable: true };
+
+function stubSessionFetch(operations?: unknown[]) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+      if (path.startsWith("/api/session/models")) {
+        return Promise.resolve(jsonResponse({ models: [{ id: "auto", label: "Auto" }] }));
+      }
+      if (path.startsWith("/api/tasks/")) {
+        return Promise.resolve(jsonResponse(sessionCapableDetail));
+      }
+      if (path === "/api/operations") {
+        operations?.push(JSON.parse(String(init?.body ?? "{}")));
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    }),
+  );
 }
 
 describe("App drop shell confirm", () => {
@@ -328,5 +353,104 @@ describe("App drop shell confirm", () => {
     expect(
       operations.filter((op) => (op as { action?: string }).action === "drop"),
     ).toHaveLength(0);
+  });
+});
+
+describe("App drop shell confirm on session chat (#947)", () => {
+  beforeEach(() => {
+    window.location.hash = "";
+    localStorage.clear();
+    writeOrchestrationChatEnabled(true);
+    document.title = "";
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        readyState = 1;
+        close() {}
+        addEventListener() {}
+        send() {}
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class MockResizeObserver {
+        observe = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows Confirm from session details, posts Drop, and dismisses to dashboard", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: unknown[] = [];
+    stubSessionFetch(operations);
+
+    render(<App />);
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(await screen.findByTestId("session-task-panel")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    await waitFor(() => {
+      expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(true);
+      expect(window.location.hash).toBe("#/");
+    });
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+  });
+
+  it("keeps Drop confirm while staying on the same session handle", async () => {
+    stubSessionFetch();
+
+    render(<App />);
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
+  });
+
+  it("cancels Drop confirm when navigating away from the session", async () => {
+    const operations: unknown[] = [];
+    stubSessionFetch(operations);
+
+    render(<App />);
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    setHash("#/");
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
+    });
+    expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(false);
   });
 });

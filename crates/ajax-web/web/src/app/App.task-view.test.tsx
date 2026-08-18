@@ -130,7 +130,7 @@ describe("App task view preference", () => {
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
   });
 
-  it("returns to Ajax chat from terminal task details and clears terminal preference", async () => {
+  it("returns to Ajax chat from the terminal task page and clears terminal preference", async () => {
     localStorage.setItem(TASK_TERMINAL_PREFERENCE_STORAGE_KEY, JSON.stringify(["web/fix-login"]));
     stubFetch();
     render(<App />);
@@ -138,7 +138,7 @@ describe("App task view preference", () => {
 
     setHash(taskHash("web/fix-login"));
     await screen.findByTestId("outlet-task");
-    fireEvent.click(screen.getByText("Task details"));
+    fireEvent.click(screen.getByTestId("task-details"));
     fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
 
     await waitFor(() => expect(window.location.hash).toBe(sessionHash("web/fix-login")));

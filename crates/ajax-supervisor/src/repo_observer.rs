@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, path::Path, process::Output};
 
 use ajax_core::{
-    adapters::GitAdapter,
+    adapters::{GitAdapter, AMBIENT_GIT_ENV_VARS},
     events::{MonitorEvent, RepoEvent},
 };
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -38,14 +38,18 @@ pub fn watch_repo(
 
 pub async fn git_snapshot(worktree_path: impl AsRef<Path>) -> Result<RepoEvent, SupervisorError> {
     let worktree_path = worktree_path.as_ref();
-    let status_output = Command::new("git")
+    let mut status_cmd = Command::new("git");
+    clear_ambient_git_env(&mut status_cmd);
+    let status_output = status_cmd
         .args(["-C"])
         .arg(worktree_path)
         .args(["status", "--porcelain=v1", "--branch"])
         .output()
         .await?;
     ensure_git_success("git status", &status_output)?;
-    let diff_output = Command::new("git")
+    let mut diff_cmd = Command::new("git");
+    clear_ambient_git_env(&mut diff_cmd);
+    let diff_output = diff_cmd
         .args(["-C"])
         .arg(worktree_path)
         .args(["diff", "--stat"])
@@ -79,6 +83,12 @@ fn is_ignored_watch_path(path: &Path) -> bool {
                 || name == OsStr::new("node_modules")
         )
     })
+}
+
+fn clear_ambient_git_env(cmd: &mut Command) {
+    for variable in AMBIENT_GIT_ENV_VARS {
+        cmd.env_remove(variable);
+    }
 }
 
 fn ensure_git_success(command: &str, output: &Output) -> Result<(), SupervisorError> {
@@ -151,5 +161,98 @@ mod tests {
         assert!(
             matches!(error, crate::SupervisorError::Process(message) if message.contains("git status failed"))
         );
+    }
+
+    fn git_with_cleared_env(args: &[&str]) -> std::process::Output {
+        let mut command = std::process::Command::new("git");
+        ajax_core::adapters::process::clear_ambient_git_env(&mut command);
+        command
+            .args(args)
+            .output()
+            .expect("git command should spawn")
+    }
+
+    fn poison_repo_config_with_bare_and_worktree(repo_path: &std::path::Path, worktree: &str) {
+        let config_path = repo_path.join(".git/config");
+        let mut config = std::fs::read_to_string(&config_path).expect("repo config should exist");
+        config.push_str(&format!("\n\tbare = true\n\tworktree = {worktree}\n"));
+        std::fs::write(config_path, config).expect("repo config should update");
+    }
+
+    #[tokio::test]
+    async fn git_snapshot_honors_worktree_path_when_git_dir_is_inherited() {
+        // #941
+        let root = std::env::temp_dir().join(format!(
+            "ajax-supervisor-git-snapshot-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = root.as_path();
+        let repo_str = repo.to_str().unwrap();
+
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "init"])
+                .status
+                .success(),
+            "git init failed"
+        );
+        assert!(git_with_cleared_env(&[
+            "-C",
+            repo_str,
+            "config",
+            "user.email",
+            "test@example.com"
+        ])
+        .status
+        .success());
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "config", "user.name", "test"])
+                .status
+                .success()
+        );
+        std::fs::write(repo.join("README.md"), "init\n").unwrap();
+        assert!(git_with_cleared_env(&["-C", repo_str, "add", "README.md"])
+            .status
+            .success());
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "commit", "-m", "init"])
+                .status
+                .success(),
+            "git commit failed"
+        );
+        poison_repo_config_with_bare_and_worktree(repo, "/tmp/ajax-fake-worktree");
+
+        let git_dir = repo.join(".git");
+        unsafe {
+            std::env::set_var("GIT_DIR", &git_dir);
+            std::env::set_var("GIT_WORK_TREE", repo);
+        }
+
+        let snapshot = git_snapshot(repo)
+            .await
+            .expect("git snapshot should succeed");
+
+        unsafe {
+            std::env::remove_var("GIT_DIR");
+            std::env::remove_var("GIT_WORK_TREE");
+        }
+
+        assert!(
+            matches!(
+                snapshot,
+                RepoEvent::GitSnapshot {
+                    ref worktree_path,
+                    ref status,
+                    ..
+                } if worktree_path == repo && status.worktree_exists
+            ),
+            "unexpected snapshot: {snapshot:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
