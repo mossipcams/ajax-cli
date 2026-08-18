@@ -61,6 +61,7 @@ pub(crate) enum TaskSessionCommand {
     Respawn {
         worktree_path: PathBuf,
         model: String,
+        force: bool,
         reply: oneshot::Sender<Result<u64, String>>,
     },
     AttachSnapshot {
@@ -289,9 +290,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::Respawn {
             worktree_path,
             model,
+            force,
             reply,
         } => {
-            let result = task_session_spawn::respawn(state, &worktree_path, &model).await;
+            let result = task_session_spawn::respawn(state, &worktree_path, &model, force).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {
