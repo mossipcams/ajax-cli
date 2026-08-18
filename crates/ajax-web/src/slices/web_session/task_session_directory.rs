@@ -253,11 +253,13 @@ impl TaskSessionDirectory {
         handle: &str,
         worktree_path: &Path,
         model: &str,
+        force: bool,
     ) -> Result<u64, String> {
         let tx = self.command_tx(handle)?;
         send_command(&tx, |reply| TaskSessionCommand::Respawn {
             worktree_path: worktree_path.to_path_buf(),
             model: model.to_string(),
+            force,
             reply,
         })
         .await?
@@ -438,9 +440,12 @@ pub(crate) async fn apply_client_message(
             if let Some(persist) = persist_session_model {
                 persist(&model)?;
             }
-            let next_generation = directory.respawn(handle, worktree_path, &model).await?;
+            // Operator explicitly picked a model: always re-pin the ACP child even
+            // when slot metadata already matches (the running process may not).
+            let next_generation = directory
+                .respawn(handle, worktree_path, &model, true)
+                .await?;
             *generation = next_generation;
-            let _ = directory.attach_snapshot(handle, model.clone(), None).await;
             Ok(ApplyClientMessageOutcome::ModelChanged)
         }
         SessionClientMessage::Permission {

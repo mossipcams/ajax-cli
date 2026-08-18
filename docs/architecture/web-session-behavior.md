@@ -94,7 +94,8 @@ existing paths.
 ## Model switching across ACP process replacement
 
 - `set_model` while idle persists the desired model on the task, then respawns the
-  ACP child with the new model pin.
+  ACP child with the new model pin. An explicit operator choice always replaces
+  the running child even when slot metadata already matches.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events.
 - A live `ready` event on an established socket must not reset browser reducer
@@ -102,6 +103,10 @@ existing paths.
 - Each attach delivers one protocol v2 `snapshot` wire frame to the browser
   reducer (as a synthetic `ready` event for turn state), then cursor-bearing
   `event` envelopes for replay/live traffic.
+- The in-session picker reverts only on model-change failures from the host
+  (persistence refused, invalid model, and similar). Unrelated `error` events
+  during the next prompt must not restore the previous picker value
+  ([#942](https://github.com/mossipcams/ajax-cli/issues/942)).
 
 ## Restart and transcript recovery
 
