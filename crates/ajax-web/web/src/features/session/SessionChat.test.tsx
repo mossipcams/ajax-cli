@@ -125,10 +125,13 @@ describe("SessionChat smoke", () => {
   it("docks the composer below the transcript scroller, not inside it", () => {
     mountChat();
     const chat = screen.getByTestId("session-chat");
+    const surface = screen.getByTestId("session-chat-surface");
     const thread = screen.getByTestId("session-thread");
     const composer = screen.getByTestId("session-composer");
     expect(thread).not.toContainElement(composer);
     expect(chat).toContainElement(composer);
+    expect(surface).toContainElement(thread);
+    expect(surface).toContainElement(composer);
   });
 
   it("blurs the composer when tapping the transcript scroller", () => {

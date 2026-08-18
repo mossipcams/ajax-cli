@@ -193,14 +193,33 @@ existing paths.
 
 ## Mobile keyboard band
 
-- On `#/session/<handle>`, while `html.keyboard-open` is set, **only**
-  `.app-viewport` pins to the visual-viewport band (`--app-top` /
-  `--app-height`). The session chat column must **not** add a nested
-  `position: fixed` pin on `.session-page.session-chat` inside that band —
-  double-applying `--app-top` strands the composer on iOS Safari ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
-- The session column fills the pinned band through a bounded flex chain
-  (`overflow: hidden`, `min-height: 0`); `.session-thread` uses
-  `flex: 1 1 0%` so it shrinks above the composer instead of overflowing.
+- Orchestration session chat owns its mobile layout boundary: a bounded flex
+  column (`session-chat-surface`) with LiveHead (`flex: none`), transcript
+  scroller (`.session-thread`: `flex: 1 1 0%`, `min-height: 0`,
+  `overflow-y: auto`), and composer (`flex: none`) as siblings. Every ancestor
+  from `.app-viewport` through the surface has `min-height: 0`; route-scroll
+  does not compete as a vertical scroll owner on `#/session/<handle>`.
+- While session chat is mounted, `html[data-session-viewport="owned"]` tells
+  global CSS to **not** apply the `position: fixed` visual-viewport pin on
+  `.app-viewport`. Task and terminal surfaces still use `html.keyboard-open` /
+  `--app-height` / `.app-viewport` fixed pinning. Session chat uses one
+  authoritative visible-height calculation via `useMobileKeyboard` +
+  `sessionKeyboardPadding`: reserve bottom padding only on iOS regular Safari
+  (visualViewport shrinks, innerHeight may not); zero padding when the layout
+  viewport already shrank (iOS PWA / Android) so keyboard band geometry is not
+  applied twice.
+- No nested `position: fixed` pin on `.session-page.session-chat` inside the
+  global band — double-applying `--app-top` strands the composer ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
+- Keyboard or composer resize is a layout change, not user scroll-up. If the
+  operator was pinned to the live bottom (`pinnedRef`, recent live-edge intent),
+  re-pin to `scrollHeight` after flex layout settles even when the live-edge
+  check fails mid-transition; if reading history, restore `scrollTop` once.
+  `useMobileKeyboard` clears keyboard geometry immediately on composer blur
+  (focusout with no form control focused) and ignores stale visualViewport
+  shrinks until a field is focused again, catching up when the viewport grows.
+  No stale `keyboard-open`, `--app-height`, bottom padding, or fixed positioning after
+  dismissal; safe-area is preserved without a second blank strip below the
+  composer.
 - Tapping anywhere on the session page outside the composer controls (textarea,
   Mic, Send, and other interactive targets) blurs the composer so iOS can
   dismiss the keyboard without leaving it stranded mid-viewport.

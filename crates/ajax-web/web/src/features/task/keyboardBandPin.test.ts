@@ -124,4 +124,15 @@ describe("keyboard band height pin contract", () => {
       /html\.keyboard-open[^{]*\.session-page\.session-chat[^{]*\{[^}]*position:fixed/,
     );
   });
+
+  it("bypasses app-viewport fixed pin when session owns viewport (#877)", () => {
+    const rule =
+      stylesSource.match(
+        /html\[data-session-viewport="owned"\]\.keyboard-open\s+\.app-viewport\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const body = stripCssComments(rule);
+    expect(body).toMatch(/position:\s*static/);
+    expect(body).toMatch(/height:\s*auto/);
+    expect(body).not.toMatch(/position:\s*fixed/);
+  });
 });

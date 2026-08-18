@@ -73,6 +73,7 @@ import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
 import { useTaskSession } from "./useTaskSession";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import { useSessionChatViewport } from "@/shared/hooks/useSessionChatViewport";
 import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
 
 const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
@@ -178,6 +179,12 @@ export default function SessionChat({
 
   pinnedRef.current = pinned;
 
+  const { surfaceStyle } = useSessionChatViewport({
+    threadRef,
+    composerRef,
+    pinnedRef,
+  });
+
   const scrollToLive = useCallback(() => {
     const node = threadRef.current;
     if (!node) return;
@@ -198,7 +205,9 @@ export default function SessionChat({
     const node = threadRef.current;
     if (!node) return;
     if (pinned) {
-      node.scrollTop = node.scrollHeight;
+      const atLive =
+        node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
+      if (atLive) node.scrollTop = node.scrollHeight;
       seenRef.current = { items: state.items };
       return;
     }
@@ -219,7 +228,10 @@ export default function SessionChat({
     const node = threadRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (pinnedRef.current) node.scrollTop = node.scrollHeight;
+      if (!pinnedRef.current) return;
+      const atLive =
+        node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
+      if (atLive) node.scrollTop = node.scrollHeight;
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -303,6 +315,11 @@ export default function SessionChat({
       style={style}
       onPointerDown={onPagePointerDown}
     >
+      <div
+        className="session-chat-surface"
+        data-testid="session-chat-surface"
+        style={surfaceStyle}
+      >
       <LiveHead
         title={title}
         state={state_}
@@ -415,6 +432,7 @@ export default function SessionChat({
           </p>
         ) : null}
       </form>
+      </div>
 
       {behind ? (
         <button
