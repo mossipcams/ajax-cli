@@ -12,6 +12,7 @@ interface Props {
   agentLabel: string;
   /** Composite selection: `opus|effort=high`. */
   value: string;
+  disabled?: boolean;
   onChange: (selection: string) => void;
   /** Called once with the harness default so callers can preselect it. */
   onCatalog?: (catalog: SessionModelCatalog) => void;
@@ -22,7 +23,14 @@ interface Props {
  * separate choice. Cursor bakes the level into its model ids; the bridges
  * expose it as their own config option, so it needs its own list.
  */
-export default function ModelPicker({ agent, agentLabel, value, onChange, onCatalog }: Props) {
+export default function ModelPicker({
+  agent,
+  agentLabel,
+  value,
+  disabled = false,
+  onChange,
+  onCatalog,
+}: Props) {
   const [catalog, setCatalog] = useState<SessionModelCatalog | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -73,6 +81,8 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
   }
 
   const reasoning = catalog.reasoning;
+  const catalogIds = new Set(catalog.models.map((option) => option.id));
+  const unknownModel = model && !catalogIds.has(model);
 
   return (
     <>
@@ -82,6 +92,19 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
         aria-label={`${agentLabel} models`}
         ref={listRef}
       >
+        {unknownModel ? (
+          <button
+            key={`unknown-${model}`}
+            type="button"
+            className="model-option is-selected"
+            role="radio"
+            aria-checked
+            disabled={disabled}
+            onClick={() => onChange(value)}
+          >
+            <span className="model-option-label">{model}</span>
+          </button>
+        ) : null}
         {catalog.models.map((option) => (
           <button
             key={option.id}
@@ -89,6 +112,7 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
             className={`model-option${model === option.id ? " is-selected" : ""}`}
             role="radio"
             aria-checked={model === option.id}
+            disabled={disabled}
             onClick={() => onChange(encodeModelSelection(option.id, options))}
           >
             <span className="model-option-label">{option.label}</span>
@@ -119,6 +143,7 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
                   className={`reasoning-option${current === option.id ? " is-selected" : ""}`}
                   role="radio"
                   aria-checked={current === option.id}
+                  disabled={disabled}
                   onClick={() =>
                     onChange(
                       encodeModelSelection(model || catalog.default, {
