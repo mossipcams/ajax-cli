@@ -1,12 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, fetchDetail, postOperation, requestId } from "@/shared/lib/api";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError, fetchDetail, requestId } from "@/shared/lib/api";
+import { queryKeys } from "@/shared/lib/queryClient";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource } from "@/shared/lib/types";
+import { useTaskOperationMutation } from "./useTaskOperationMutation";
 
 export type TaskDetailResourceDeps = {
   applyCockpit: (next: BrowserCockpitView) => void;
   applyConnectionError: (error: unknown) => void;
   markConnected: () => void;
 };
+
+function toDetailError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  return new ApiError("incompatible", error instanceof Error ? error.message : String(error));
+}
 
 export function useTaskDetailResource(
   handle: string | null,
@@ -21,44 +29,40 @@ export function useTaskDetailResource(
   const handleRef = useRef(handle);
   handleRef.current = handle;
 
-  const loadGenRef = useRef(0);
   const resumedHandleRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
+  const executeOperation = useTaskOperationMutation();
 
-  const [detail, setDetail] = useState<RemoteResource<BrowserTaskDetail>>({
-    status: "loading",
-    data: null,
-    error: null,
+  const query = useQuery({
+    queryKey: handle ? queryKeys.taskDetail(handle) : ["task-detail", null],
+    queryFn: async ({ signal }) => {
+      const data = await fetchDetail(handle!);
+      if (signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      return data;
+    },
+    enabled: Boolean(handle),
   });
 
-  const loadDetail = useCallback(async (requestedHandle: string) => {
-    const gen = ++loadGenRef.current;
-    try {
-      const next = await fetchDetail(requestedHandle);
-      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
-      setDetail({ status: "ready", data: next, error: null });
+  useEffect(() => {
+    if (query.isSuccess && handleRef.current === handle) {
       depsRef.current.markConnected();
-    } catch (error) {
-      if (handleRef.current !== requestedHandle || gen !== loadGenRef.current) return;
-      const detailError =
-        error instanceof ApiError
-          ? error
-          : new ApiError("incompatible", error instanceof Error ? error.message : String(error));
-      // #861: missing task is a detail error, not a cockpit disconnect
-      if (error instanceof ApiError && error.status !== 404) {
-        depsRef.current.applyConnectionError(error);
-      }
-      setDetail((prev) => {
-        if (prev.status === "ready" || prev.status === "stale") {
-          return { status: "stale", data: prev.data, error: detailError };
-        }
-        return { status: "error", data: null, error: detailError };
-      });
     }
-  }, []);
+  }, [query.isSuccess, handle, query.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (!handle) return;
+    const error = query.isRefetchError || query.isError ? query.error : null;
+    if (!error) return;
+    if (error instanceof ApiError && error.status !== 404) {
+      depsRef.current.applyConnectionError(error);
+    }
+  }, [query.isError, query.isRefetchError, query.error, handle]);
 
   const resumeOnOpen = useCallback(async (requestedHandle: string): Promise<boolean> => {
     try {
-      const opResult = await postOperation({
+      const opResult = await executeOperation({
         task_handle: requestedHandle,
         action: "resume",
         request_id: requestId(),
@@ -71,30 +75,63 @@ export function useTaskDetailResource(
     } catch {
       return false;
     }
-  }, []);
-
-  const reload = useCallback(() => {
-    const current = handleRef.current;
-    if (!current) return;
-    void loadDetail(current);
-  }, [loadDetail]);
+  }, [executeOperation]);
 
   useEffect(() => {
     if (!handle) {
       resumedHandleRef.current = null;
-      setDetail({ status: "loading", data: null, error: null });
       return;
     }
-    setDetail({ status: "loading", data: null, error: null });
-    void loadDetail(handle);
     if (resumedHandleRef.current === handle) return;
     resumedHandleRef.current = handle;
     void resumeOnOpen(handle).then((mutated) => {
       if (mutated && handleRef.current === handle) {
-        void loadDetail(handle);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(handle) });
       }
     });
-  }, [handle, loadDetail, resumeOnOpen]);
+  }, [handle, queryClient, resumeOnOpen]);
+
+  const detail = useMemo((): RemoteResource<BrowserTaskDetail> => {
+    if (!handle) {
+      return { status: "loading", data: null, error: null };
+    }
+    const detailData = query.data;
+    if (!detailData && (query.isPending || query.isFetching)) {
+      return { status: "loading", data: null, error: null };
+    }
+    if (query.isRefetchError && detailData) {
+      return {
+        status: "stale",
+        data: detailData,
+        error: toDetailError(query.error),
+      };
+    }
+    if (query.isError) {
+      const detailError = toDetailError(query.error);
+      if (detailData) {
+        return { status: "stale", data: detailData, error: detailError };
+      }
+      return { status: "error", data: null, error: detailError };
+    }
+    if (detailData) {
+      return { status: "ready", data: detailData, error: null };
+    }
+    return { status: "loading", data: null, error: null };
+  }, [
+    handle,
+    query.isPending,
+    query.isFetching,
+    query.isError,
+    query.isRefetchError,
+    query.error,
+    query.data,
+  ]);
+
+  const reload = useCallback(() => {
+    const current = handleRef.current;
+    if (!current) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(current) });
+  }, [queryClient]);
 
   return { detail, reload };
 }

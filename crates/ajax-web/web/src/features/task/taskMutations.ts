@@ -1,6 +1,7 @@
 import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
 import { postOperation, requestId } from "@/shared/lib/api";
+import type { ExecuteTaskOperation } from "./useTaskOperationMutation";
 import { operatorErrorPresentation } from "@/shared/lib/errorRecovery";
 import { endTapToFeedback, endTapToOperationComplete } from "@/shared/lib/telemetry";
 
@@ -33,10 +34,11 @@ export async function runTaskAction(
   confirmed: boolean,
   interactionId: string | null,
   callbacks: TaskMutationCallbacks,
+  executeOperation: ExecuteTaskOperation = postOperation,
 ): Promise<void> {
   if (interactionId) endTapToFeedback(interactionId, "busy");
   try {
-    const result = await postOperation({
+    const result = await executeOperation({
       task_handle: handle,
       action: action.action,
       request_id: requestId(),
@@ -84,6 +86,7 @@ export function armDropUndo(
   interactionId: string | null,
   callbacks: TaskMutationCallbacks,
   handles: DropUndoHandles,
+  executeOperation: ExecuteTaskOperation = postOperation,
 ): void {
   handles.dropResolvedRef.current = false;
   if (interactionId) endTapToFeedback(interactionId, "banner");
@@ -91,7 +94,7 @@ export function armDropUndo(
     if (handles.dropResolvedRef.current) return;
     handles.dropResolvedRef.current = true;
     clearDropTimer(handles);
-    void runTaskAction(action, handle, true, interactionId, callbacks);
+    void runTaskAction(action, handle, true, interactionId, callbacks, executeOperation);
   };
   const undo = () => {
     if (handles.dropResolvedRef.current) return;
@@ -116,10 +119,11 @@ export function commitConfirmedAction(
   interactionId: string,
   callbacks: TaskMutationCallbacks,
   dropHandles: DropUndoHandles,
+  executeOperation: ExecuteTaskOperation = postOperation,
 ): void {
   if (action.action === "drop") {
-    armDropUndo(action, handle, interactionId, callbacks, dropHandles);
+    armDropUndo(action, handle, interactionId, callbacks, dropHandles, executeOperation);
     return;
   }
-  void runTaskAction(action, handle, true, interactionId, callbacks);
+  void runTaskAction(action, handle, true, interactionId, callbacks, executeOperation);
 }
