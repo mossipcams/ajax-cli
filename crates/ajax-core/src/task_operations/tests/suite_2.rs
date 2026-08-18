@@ -670,3 +670,137 @@ fn drop_operation_delete_branch_prunes_stale_origin_tracking_ref() {
             && command.args[4] == "ajax/fix-login"
     }));
 }
+
+fn git_with_cleared_env(args: &[&str]) -> std::process::Output {
+    let mut command = std::process::Command::new("git");
+    crate::adapters::process::clear_ambient_git_env(&mut command);
+    command
+        .args(args)
+        .output()
+        .expect("git command should spawn")
+}
+
+fn poison_repo_config_with_bare_and_worktree(repo_path: &std::path::Path, worktree: &str) {
+    let config_path = repo_path.join(".git/config");
+    let mut config = std::fs::read_to_string(&config_path).expect("repo config should exist");
+    config.push_str(&format!("\n\tbare = true\n\tworktree = {worktree}\n"));
+    std::fs::write(config_path, config).expect("repo config should update");
+}
+
+#[test]
+fn drop_force_worktree_teardown_succeeds_with_poisoned_repo_config_and_inherited_git_dir() {
+    // #941
+    let root = std::env::temp_dir().join(format!(
+        "ajax-drop-941-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let repo_path = root.join("web");
+    let worktree_path = root.join("web__worktrees").join("ajax-fix-login");
+    std::fs::create_dir_all(&repo_path).unwrap();
+    let repo_str = repo_path.to_str().unwrap();
+    let worktree_str = worktree_path.to_str().unwrap();
+
+    assert!(
+        git_with_cleared_env(&["-C", repo_str, "init"])
+            .status
+            .success(),
+        "git init failed"
+    );
+    assert!(
+        git_with_cleared_env(&["-C", repo_str, "config", "user.email", "test@example.com"])
+            .status
+            .success()
+    );
+    assert!(
+        git_with_cleared_env(&["-C", repo_str, "config", "user.name", "test"])
+            .status
+            .success()
+    );
+    std::fs::write(repo_path.join("README.md"), "init\n").unwrap();
+    assert!(git_with_cleared_env(&["-C", repo_str, "add", "README.md"])
+        .status
+        .success());
+    assert!(
+        git_with_cleared_env(&["-C", repo_str, "commit", "-m", "init"])
+            .status
+            .success(),
+        "git commit failed"
+    );
+    assert!(
+        git_with_cleared_env(&[
+            "-C",
+            repo_str,
+            "worktree",
+            "add",
+            "-b",
+            "ajax/fix-login",
+            worktree_str,
+            "HEAD",
+        ])
+        .status
+        .success(),
+        "git worktree add failed"
+    );
+    poison_repo_config_with_bare_and_worktree(&repo_path, "/tmp/ajax-fake-worktree");
+
+    let mut context = CommandContext::new(
+        Config {
+            repos: vec![ManagedRepo::new("web", repo_str, "main")],
+            ..Config::default()
+        },
+        InMemoryRegistry::default(),
+    );
+    let mut task = Task::new(
+        TaskId::new("web/fix-login"),
+        "web",
+        "fix-login",
+        "Fix login",
+        "ajax/fix-login",
+        "main",
+        worktree_str,
+        "ajax-web-fix-login",
+        "task",
+        AgentClient::Codex,
+    );
+    task.lifecycle_status = LifecycleStatus::Cleanable;
+    context.registry.create_task(task).unwrap();
+
+    let decision = drop_op_execution_decision(
+        &context,
+        "web/fix-login",
+        DropOp::EnsureWorktreeAbsent,
+        true,
+    )
+    .unwrap();
+    let DropExecutionDecision::Command(command) = decision else {
+        panic!("expected force worktree command, got {decision:?}");
+    };
+
+    let git_dir = repo_path.join(".git");
+    unsafe {
+        std::env::set_var("GIT_DIR", &git_dir);
+        std::env::set_var("GIT_WORK_TREE", &repo_path);
+    }
+
+    let mut runner = crate::adapters::ProcessCommandRunner;
+    let output = runner.run(&command).unwrap();
+
+    unsafe {
+        std::env::remove_var("GIT_DIR");
+        std::env::remove_var("GIT_WORK_TREE");
+    }
+    let _ = std::fs::remove_dir_all(root);
+
+    assert_eq!(output.status_code, 0, "stderr: {}", output.stderr);
+    assert!(
+        !output
+            .stderr
+            .contains("core.bare and core.worktree do not make sense"),
+        "stderr: {}",
+        output.stderr
+    );
+}
