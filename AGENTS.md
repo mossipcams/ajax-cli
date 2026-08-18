@@ -117,7 +117,7 @@ Missing `acpx` is stop, not a license to Task or parent-local writes. Do not
 duplicate model rankings or exact model IDs in this file.
 
 When the user asks to create a PR, the selected delegate runs the repository's
-local verification gate, commits, pushes, and runs `gh pr create`; the
+local verification gate, commits, pushes, and runs `scripts/gh-pr-create`; the
 orchestrator reports the PR URL after reviewing the delta. Delegates must not
 merge, rebase, force-push, or switch branches unless the user explicitly
 authorizes that behavior.

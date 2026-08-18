@@ -161,27 +161,23 @@ describe("useTaskDetailResource", () => {
 
   it("does not let a slower same-handle fetch overwrite a newer one", async () => {
     postOperation.mockResolvedValue({ ok: false, response: {} });
-    let resolveSlow!: (value: BrowserTaskDetail) => void;
-    let resolveFast!: (value: BrowserTaskDetail) => void;
-    const slow = new Promise<BrowserTaskDetail>((res) => {
-      resolveSlow = res;
-    });
-    const fast = new Promise<BrowserTaskDetail>((res) => {
-      resolveFast = res;
-    });
-    fetchDetail.mockReturnValueOnce(slow).mockReturnValueOnce(fast);
-
+    fetchDetail.mockResolvedValueOnce(freshDetail);
     const deps = stableDeps();
     const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
 
+    await waitFor(() => expect(result.current.detail.data?.title).toBe("FRESH TITLE"));
+
+    let resolveSlow!: (value: BrowserTaskDetail) => void;
+    const slow = new Promise<BrowserTaskDetail>((res) => {
+      resolveSlow = res;
+    });
+    fetchDetail.mockReturnValueOnce(slow).mockResolvedValueOnce(freshDetail);
+
     await act(async () => {
+      result.current.reload();
       result.current.reload();
     });
 
-    await act(async () => {
-      resolveFast(freshDetail);
-      await new Promise((r) => setTimeout(r, 0));
-    });
     await waitFor(() => expect(result.current.detail.data?.title).toBe("FRESH TITLE"));
 
     await act(async () => {

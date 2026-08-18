@@ -6,6 +6,7 @@ import {
   endTapToOperationComplete,
 } from "@/shared/lib/telemetry";
 import { runTaskAction, type TaskMutationCallbacks } from "./taskMutations";
+import { useTaskOperationMutation } from "./useTaskOperationMutation";
 
 export type PendingConfirmRequest = {
   action: WebAction;
@@ -73,6 +74,7 @@ export default function ActionBar({
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const interactionRef = useRef<string | null>(null);
+  const executeOperation = useTaskOperationMutation();
   // Sync latch: React `runningAction` / parent `pendingConfirmAction` commit too
   // late for same-turn double clicks (#799, #815).
   const clickLatchRef = useRef(false);
@@ -115,7 +117,7 @@ export default function ActionBar({
     if (mountedRef.current) setRunningAction(action.action);
     const interactionId = interactionRef.current;
     try {
-      await runTaskAction(action, handle, confirmed, interactionId, mutationCallbacks());
+      await runTaskAction(action, handle, confirmed, interactionId, mutationCallbacks(), executeOperation);
       if (interactionId) interactionRef.current = null;
     } finally {
       clickLatchRef.current = false;

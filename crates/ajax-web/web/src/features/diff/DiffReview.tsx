@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchTaskDiff, fetchTaskPullRequests, ApiError } from "@/shared/lib/api";
 import type {
   DiffFileView,
   DiffFlagKind,
   DiffFlagView,
-  PullRequestView,
-  TaskDiffView,
 } from "@/shared/lib/types";
 import { isDiffPanGestureTarget } from "@/shared/gestures/navigateSwipe";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import { useTaskDiffReviewQueries } from "./useTaskDiffReviewQueries";
 
 interface Props {
   handle: string;
@@ -16,23 +14,6 @@ interface Props {
   selectedPr?: number;
   onBack?: () => void;
   onSelectPr?: (pr: number | undefined) => void;
-}
-
-type LoadState =
-  | { status: "loading"; phase: "pull-requests" | "diff" }
-  | { status: "error"; message: string }
-  | {
-      status: "ready";
-      prs: PullRequestView[];
-      diff: TaskDiffView;
-      /** Non-fatal: PR list failed; diff may still be local/selected. */
-      prListError?: string;
-    };
-
-function errorText(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return fallback;
 }
 
 const FLAG_DETAIL: Record<DiffFlagKind, string> = {
@@ -193,14 +174,10 @@ export default function DiffReview({
   onBack,
   onSelectPr,
 }: Props) {
-  const [state, setState] = useState<LoadState>({
-    status: "loading",
-    phase: "pull-requests",
-  });
+  const { state } = useTaskDiffReviewQueries(handle, selectedPr);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [noiseExpanded, setNoiseExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
-  const loadSeqRef = useRef(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
@@ -211,49 +188,9 @@ export default function DiffReview({
   });
 
   useEffect(() => {
-    const loadSeq = ++loadSeqRef.current;
-    setState({ status: "loading", phase: "pull-requests" });
     setSelectedPath(null);
     setNoiseExpanded(false);
     autoOpenedRef.current = false;
-
-    async function load() {
-      let prs: Awaited<ReturnType<typeof fetchTaskPullRequests>> = [];
-      let prListError: string | undefined;
-      try {
-        prs = await fetchTaskPullRequests(handle);
-      } catch (error) {
-        // Keep going: selectedPr or local diff can still load. Surface the cause.
-        prListError = errorText(error, "Failed to load pull requests");
-        prs = [];
-      }
-      if (loadSeq !== loadSeqRef.current) return;
-
-      setState({ status: "loading", phase: "diff" });
-      try {
-        const pr = selectedPr ?? prs[0]?.number;
-        const diff = await fetchTaskDiff(
-          handle,
-          pr !== undefined ? { pr } : { local: true },
-        );
-        if (loadSeq !== loadSeqRef.current) return;
-        if (!diff.judgment) {
-          setState({
-            status: "error",
-            message: "Diff response missing judgment projection",
-          });
-          return;
-        }
-        setState({ status: "ready", prs, diff, prListError });
-      } catch (error) {
-        if (loadSeq !== loadSeqRef.current) return;
-        setState({
-          status: "error",
-          message: errorText(error, "Failed to load diff"),
-        });
-      }
-    }
-    void load();
   }, [handle, selectedPr]);
 
   const { signalFiles, noiseFiles } = useMemo(() => {
