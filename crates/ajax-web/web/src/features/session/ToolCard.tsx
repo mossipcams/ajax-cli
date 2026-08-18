@@ -8,14 +8,7 @@
 
 import { useState } from "react";
 import type { ToolCall, ToolContent } from "./sessionThread";
-import { diffLines, shortPath, toolMark, TOOL_TONES } from "./toolPresentation";
-
-const STATUS_LABELS: Record<ToolCall["status"], string> = {
-  pending: "queued",
-  in_progress: "running",
-  completed: "done",
-  failed: "failed",
-};
+import { diffLines, shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
 
 function DiffBlock({ path, oldText, newText }: { path: string; oldText: string; newText: string }) {
   const lines = diffLines(oldText, newText);
@@ -95,14 +88,13 @@ export default function ToolCard({ call }: { call: ToolCall }) {
         <span className="session-tool-mark" aria-hidden="true">
           {toolMark(call.kind)}
         </span>
-        <span className="session-tool-kind">{call.kind || "tool"}</span>
         <span className="session-tool-title">{call.title || call.callId}</span>
         {location ? (
           <span className="session-tool-path" title={location}>
             {shortPath(location)}
           </span>
         ) : null}
-        <span className="session-toolcard-status">{STATUS_LABELS[call.status]}</span>
+        <span className="session-toolcard-status">{toolStatusLabel(call.status)}</span>
       </button>
 
       {expanded ? (

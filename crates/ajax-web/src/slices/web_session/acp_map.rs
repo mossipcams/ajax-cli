@@ -47,20 +47,7 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         "plan" | "plan_update" => vec![SessionServerEvent::Plan {
             entries: extract_plan_entries(update_body),
         }],
-        "state_update" => {
-            let state = update_body
-                .get("state")
-                .or_else(|| update_body.pointer("/status/state"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string();
-            let detail = update_body
-                .get("stopReason")
-                .or_else(|| update_body.get("detail"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            vec![SessionServerEvent::Status { state, detail }]
-        }
+        "state_update" | "status" => status_event(update_body),
         "usage_update" => extract_usage(update_body),
         // Capability announcements, not conversation: Cursor emits these on
         // every session/new and they carry nothing an operator can act on.
@@ -93,10 +80,7 @@ pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<Session
                 })
                 .collect(),
         }],
-        SessionUpdate::CurrentModeUpdate(mode) => vec![SessionServerEvent::Status {
-            state: "mode".to_string(),
-            detail: Some(mode.current_mode_id.to_string()),
-        }],
+        SessionUpdate::CurrentModeUpdate(_) => Vec::new(),
         SessionUpdate::ConfigOptionUpdate(update) => typed_artifact("config", update),
         SessionUpdate::SessionInfoUpdate(update) => typed_artifact("session_info", update),
         SessionUpdate::UsageUpdate(update) => typed_usage_event(update),
@@ -335,6 +319,34 @@ fn extract_tool_content(update_body: &Value) -> Vec<ToolContent> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// ACP status-like updates carry a machine `state` and sometimes a human
+/// `detail`/`label`/`title`. The browser prefers the human line in the head.
+fn status_event(update_body: &Value) -> Vec<SessionServerEvent> {
+    let state = update_body
+        .get("state")
+        .or_else(|| update_body.pointer("/status/state"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    vec![SessionServerEvent::Status {
+        state,
+        detail: human_status_detail(update_body),
+    }]
+}
+
+fn human_status_detail(update_body: &Value) -> Option<String> {
+    ["detail", "label", "title", "message", "stopReason"]
+        .iter()
+        .find_map(|key| {
+            update_body
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        })
 }
 
 fn extract_usage(update_body: &Value) -> Vec<SessionServerEvent> {

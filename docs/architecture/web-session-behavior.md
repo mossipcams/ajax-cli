@@ -152,9 +152,14 @@ existing paths.
   error with retry; it must not fall back to Auto plus the live session model
   ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
-  Message, thought, tool, plan, mode, configuration, session-info, and usage
-  updates have explicit mappings; unsupported capability announcements are
-  ignored by the chat projection.
+  Message, thought, tool, plan, mode, configuration, session-info, usage, and
+  status-like updates have explicit mappings; unsupported capability announcements
+  are ignored by the chat projection.
+- v1 `sessionUpdate: "status"` and raw `state_update` both map to head-only
+  `status` wire events. ACP `status.state` (`running` / `waiting` / `idle` /
+  `requires_action`) drives the live-head primary label (Working / Needs you /
+  Ready); human `detail` is stored but not shown as a quiet line.
+  Typed `CurrentModeUpdate` is ignored like capability announcements.
 - Tool calls carry their ACP `content` array to the browser as `text` and `diff`
   entries. Dropping it left the browser able to say only that an unnamed edit
   happened. A `tool_call_update` without `content` revises the other fields and
@@ -196,11 +201,11 @@ existing paths.
   indicator, and turn completion removes it.
 - This is a freshness warning, not a claim that the agent is stalled: stable
   ACP v1 has no portable stalled-state signal. The head must not invent
-  thinking content from that timer — it shows the latest ACP `thought` text (one
-  quiet line) while working with no tool or plan step, and `Thinking…` only
-  before the first thought, tool, or plan arrives. Reasoning in the transcript
-  auto-expands while it is the live tail of a busy turn and collapses when a
-  later item arrives or the turn settles.
+  thinking content from that timer — the tool row and any in-progress plan step
+  may appear together; with no tool or plan step the head shows the latest ACP
+  `thought` text, else `Thinking…` before the first of those arrives). Reasoning
+  in the transcript auto-expands while it is the live tail of a busy turn and
+  collapses when a later item arrives or the turn settles.
 
 ## Duplicate process and prompt prevention
 

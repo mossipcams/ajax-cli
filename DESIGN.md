@@ -308,9 +308,12 @@ rather than flattening them into prose: agent answers as Markdown, reasoning as
 one collapsed line (auto-expanded while it is the live tail of a busy turn),
 tool calls as cards that revise in place and open on failure, the plan as a
 checklist, and a marker row where permission was asked. While a turn is in flight
-with no tool or plan step, the head shows the latest ACP thought text — not a
-timer placeholder. The 60s `No recent activity` label remains a freshness
-warning only (#889).
+the tool row and any in-progress plan step may appear together; with no tool or
+plan step the head shows the latest ACP thought, else `Thinking…` before anything
+arrives — not a timer placeholder or human status detail line. The 60s `No recent activity` label remains a freshness warning only
+(#889). Tool calls use a 20px mono mark column (glyph per kind, no icon library)
+and a status chip; the visible kind word is omitted while `data-kind` stays for
+tests.
 A tool call's output — a command's text, a file diff — is the substance of a
 turn and stays in the record; a summary line in its place threw it away.
 Permission *buttons* stay in the head, never inline: a control in a scrolling

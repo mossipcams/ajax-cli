@@ -98,8 +98,10 @@ export interface SessionState {
   decision: Decision | null;
   /** Permission ids answered locally or durably by the host. */
   resolvedPermissionIds: string[];
-  /** Last agent-reported run state, shown in the head rather than appended. */
+  /** Last ACP `status.state` token (running / waiting / idle / requires_action). */
   status: string | null;
+  /** Human status line from ACP when the harness sends one; stored, not shown in head. */
+  statusDetail: string | null;
   /** Latest context pressure. One current value, not a history — a row per
    * update would bury the conversation under its own telemetry. */
   usage: Usage | null;
@@ -121,6 +123,7 @@ export const initialSessionState: SessionState = {
   decision: null,
   resolvedPermissionIds: [],
   status: null,
+  statusDetail: null,
   usage: null,
   proseOpen: true,
   seq: 0,
@@ -319,7 +322,7 @@ function mergeToolCall(state: SessionState, incoming: ToolCall): SessionState {
 }
 
 function settleTurn(state: SessionState): SessionState {
-  return { ...state, busy: false, status: null, proseOpen: false };
+  return { ...state, busy: false, status: null, statusDetail: null, proseOpen: false };
 }
 
 /** Answered here or answered durably by the host: same outcome. Clearing the
@@ -483,7 +486,11 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
     case "status":
       // Run state replaces itself in the head. Appending it is what turned the
       // old thread into a column of "Status: running".
-      return { ...state, status: event.state.trim() || null };
+      return {
+        ...state,
+        status: event.state.trim() || null,
+        statusDetail: event.detail?.trim() || null,
+      };
 
     case "turn_end": {
       const settled = settleTurn(state);

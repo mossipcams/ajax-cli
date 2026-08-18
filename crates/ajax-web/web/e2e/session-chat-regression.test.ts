@@ -165,6 +165,7 @@ async function mockTypedTurn(page: Page) {
       if (event.type !== "prompt") return;
       const events: SessionServerEvent[] = [
         { type: "message", role: "thought", text: "Deciding where the port is set" },
+        { type: "status", state: "running", detail: "Indexing workspace" },
         {
           type: "plan",
           entries: [
@@ -236,6 +237,8 @@ test("a turn renders its tool calls, diff, plan and reasoning in place", async (
   await page.getByLabel("Message").press("Enter");
 
   await expect(page.getByTestId("session-message-agent")).toContainText("Changed the port to 2.");
+
+  await expect(page.getByTestId("session-head-status")).toHaveCount(0);
 
   // Two calls, merged by id — the update revised the edit rather than adding a row.
   await expect(page.getByTestId("session-tool-card")).toHaveCount(2);

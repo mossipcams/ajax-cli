@@ -394,6 +394,44 @@ fn capability_announcements_are_dropped() {
 }
 
 #[test]
+fn status_update_prefers_human_detail_over_raw_state() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "status",
+            "state": "running",
+            "label": "Indexing workspace"
+        }
+    });
+    let events = map_acp_session_update(&update);
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Status {
+            state: "running".to_string(),
+            detail: Some("Indexing workspace".to_string()),
+        }]
+    );
+}
+
+#[test]
+fn state_update_still_maps_to_status() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "state_update",
+            "state": "idle",
+            "stopReason": "end_turn"
+        }
+    });
+    let events = map_acp_session_update(&update);
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Status {
+            state: "idle".to_string(),
+            detail: Some("end_turn".to_string()),
+        }]
+    );
+}
+
+#[test]
 fn map_agent_message_chunk_to_browser_message() {
     let update = serde_json::json!({
         "sessionId": "sess_1",
