@@ -121,6 +121,7 @@ TMUX_SESSION="ajax-web-${PROFILE}"
 SLOT_BIN_DIR="$RUN_DIR/bin"
 SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
+CARGO_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.cargo.prev"
 
 sync_main() {
   echo "Fetching origin/main (branch tip, not release tags) ..."
@@ -246,6 +247,10 @@ if [[ "$INSTALL" -eq 1 ]]; then
     # embed then force-reinstall. Without --force, same-version cargo install
     # can leave ~/.cargo/bin/ajax-cli on a stale embed after web:build.
     rebuild_web "$ROOT"
+    mkdir -p "$SLOT_BIN_DIR"
+    if command -v ajax-cli >/dev/null 2>&1; then
+      cp -f "$(command -v ajax-cli)" "$CARGO_BIN_PREV"
+    fi
     echo "Installing ajax-cli from $ROOT ..."
     cargo install --path "$ROOT/crates/ajax-cli" --locked --force
   fi
@@ -290,8 +295,9 @@ stop_pid_file() {
   if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
     old_command="$(ps -p "$old_pid" -o command= 2>/dev/null || true)"
     if [[ "$old_command" != *ajax-cli* || "$old_command" != *web* ]]; then
-      echo "refusing to stop pid-file process $old_pid; not an ajax-cli web process" >&2
-      exit 1
+      echo "warning: stale pid file $PID_FILE (pid $old_pid is not ajax-cli web; command: ${old_command:-unknown}); removing pid file without stopping that process" >&2
+      rm -f "$PID_FILE"
+      return 0
     fi
     echo "Stopping previous ${PROFILE} web (pid $old_pid) ..."
     kill "$old_pid" 2>/dev/null || true
@@ -347,10 +353,19 @@ start_web() {
   return 0
 }
 
-restore_previous_slot_bin() {
+restore_previous_binary() {
   if [[ "$USE_SLOT_BIN" -eq 1 && -x "$SLOT_BIN_PREV" ]]; then
     echo "Restoring previous dev slot binary ..."
     mv -f "$SLOT_BIN_PREV" "$SLOT_BIN"
+    RESTORE_BIN="$SLOT_BIN"
+    return 0
+  fi
+  if [[ "$USE_SLOT_BIN" -eq 0 && -x "$CARGO_BIN_PREV" ]]; then
+    local cargo_bin
+    cargo_bin="$(command -v ajax-cli 2>/dev/null || echo "$HOME/.cargo/bin/ajax-cli")"
+    echo "Restoring previous cargo-installed ajax-cli binary ..."
+    cp -f "$CARGO_BIN_PREV" "$cargo_bin"
+    RESTORE_BIN="$cargo_bin"
     return 0
   fi
   return 1
@@ -390,11 +405,11 @@ if ! start_web "$BIN_PATH"; then
   echo "${PROFILE} web failed to start; see $LOG_FILE" >&2
   tail -20 "$LOG_FILE" >&2 || true
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  if restore_previous_slot_bin; then
+  if restore_previous_binary; then
     echo "Retrying previous ${PROFILE} web binary ..."
     stop_tmux_session
     stop_pid_file
-    if start_web "$SLOT_BIN"; then
+    if start_web "$RESTORE_BIN"; then
       echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
       echo "  URL:  https://127.0.0.1:$PORT"
       echo "  Log:  $LOG_FILE"
@@ -415,10 +430,10 @@ if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "${PROFILE} web started but /api/health failed; see $LOG_FILE" >&2
     tail -20 "$LOG_FILE" >&2 || true
-    if restore_previous_slot_bin; then
+    if restore_previous_binary; then
       stop_tmux_session
       stop_pid_file
-      start_web "$SLOT_BIN" || true
+      start_web "$RESTORE_BIN" || true
     fi
     exit 1
   fi
