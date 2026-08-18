@@ -177,6 +177,34 @@ function verifyCi(ci, fail) {
 
   const jobs = ci.jobs ?? {};
 
+  const webJob = jobs.web ?? {};
+  const webSteps = JSON.stringify(webJob.steps ?? []);
+  if (!webSteps.includes("git diff --exit-code crates/ajax-web/web/dist")) {
+    fail(
+      "ci.yml web job must fail when crates/ajax-web/web/dist is stale after web:build.",
+    );
+  }
+
+  const webTimeout = webJob["timeout-minutes"];
+  if (typeof webTimeout !== "number" || webTimeout < 25 || webTimeout > 30) {
+    fail("ci.yml web job must set timeout-minutes between 25 and 30.");
+  }
+
+  if (!webSteps.includes('"id":"playwright-cache"')) {
+    fail("ci.yml web job Playwright cache step must have id: playwright-cache.");
+  }
+
+  if (
+    !webSteps.includes("steps.playwright-cache.outputs.cache-hit") ||
+    !webSteps.includes("npx playwright install webkit") ||
+    !webSteps.includes("npx playwright install --with-deps webkit")
+  ) {
+    fail(
+      "ci.yml web job must install webkit without --with-deps on cache hit and " +
+        "with --with-deps on cache miss.",
+    );
+  }
+
   for (const job of HEAVY_JOBS) {
     if (!jobs[job]) {
       fail(`ci.yml must define the ${job} job.`);

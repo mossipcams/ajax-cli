@@ -153,6 +153,7 @@ jobs:
   web:
     name: Web
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: pr-title
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
 
@@ -174,13 +175,28 @@ jobs:
       - name: Verify CI and release pipeline invariants
         run: npm run ci:verify
 
+      # Husky only rebuilds dist when web sources are staged. CI must still
+      # reject a stale embedded bundle (#593), including --no-verify commits.
+      - name: Check embedded web dist is current
+        run: |
+          npm run web:build
+          git diff --exit-code crates/ajax-web/web/dist
+
       - name: Cache Playwright browsers
+        id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Playwright browsers
+      # Cache hit restores browsers; skip apt --with-deps to avoid hung apt on
+      # ubuntu runners when archive mirrors stall after a restore.
+      - name: Install Playwright browsers (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install webkit
+
+      - name: Install Playwright browsers (cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps webkit
 
       - name: Smoke and visual-regression tests

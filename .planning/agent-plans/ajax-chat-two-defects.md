@@ -48,6 +48,8 @@ User requested immediate implementation of both fixes.
 
 ## Verification
 
+- [x] CI Web job skips Playwright `apt --with-deps` when browser cache hits
+      (`fix(ci): skip Playwright apt deps on cache hit`)
 - [x] `npm run web:test -- --run` transport + sessionViewport + useSessionChatViewport + SessionChat: 61 passed
 - [x] `cargo test -p ajax-web max_session_frame_bytes`: pass (256 KiB)
 - [x] Playwright `mobile-webkit` `session-chat-keyboard.test.ts`: 12/12 passed
