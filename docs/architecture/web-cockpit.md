@@ -565,6 +565,41 @@ state database and default web port, while dev uses the development state
 database and dev web port. The browser shell must not merge profile state in
 browser storage.
 
+### Test in Stable process model
+
+Settings **Test in Stable** (stable profile only) rebuilds and redeploys the
+stable Web Cockpit from `origin/main` without taking `https://127.0.0.1:8787`
+down during the build.
+
+Flow:
+
+1. Operator POSTs `/api/server/test-in-stable`. The live stable server spawns
+   `scripts/test-in-stable.sh` through a short delayed thread and **does not
+   exit**. The JSON response is `{ok:true,restarting:true}` so Settings waits
+   for cutover (version change or down-edge then two healthy checks). From dev,
+   the same POST returns `{ok:true,restarting:false}` because dev only triggers
+   stable rebuild remotely.
+2. `test-in-stable.sh` re-execs into a new session (`AJAX_TIS_DETACHED`), drops
+   inherited stdio, and starts `dev-web-restart.sh --profile stable` inside
+   tmux session `ajax-test-in-stable` with its own log under
+   `<host-clone>/.ajax-dev-web/test-in-stable.log`.
+3. `dev-web-restart.sh` fetches `origin/main` from the **host clone**
+   (`REPO_ROOT`, the checkout that launched stable web). Git reset/build uses a
+   **dedicated detached main worktree** (default
+   `~/.ajax-dev/worktrees/<repo-basename>-main`, override
+   `AJAX_STABLE_MAIN_WORKTREE`). The operator's current branch/checkout is
+   never reset. pid files and logs stay at `REPO_ROOT/.ajax-dev-web`.
+4. Build (`npm ci`, `web:build`, `cargo install --force` into `~/.cargo/bin`)
+   finishes **before** the script stops tmux session `ajax-web-stable`. A stale
+   pid file after stop warns and continues instead of aborting.
+5. Cutover stops the old tmux session and starts the new binary. If
+   `start_web` fails, the script restores the previous `~/.cargo/bin/ajax-cli`
+   snapshot taken before `--force` install and retries so `:8787` is not left
+   empty.
+
+Test in Dev (`--worktree`) keeps the same slot-binary install under
+`.ajax-dev-web/bin` and must never target profile stable.
+
 ### PostHog Cloud telemetry
 
 Web Cockpit may send approved outbound product telemetry to **PostHog Cloud**

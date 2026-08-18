@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Test in Stable: run the stable rebuild+restart detached from the web server.
 #
+# The live stable listener on :8787 must stay up until dev-web-restart.sh
+# finishes build/install and cuts over in ajax-test-in-stable. This wrapper
+# never causes the Settings-host process to exit; it only hands work to a
+# separate tmux session that nothing in the restart path kills.
+#
 # The button's server process lives in tmux session ajax-web-stable with its
 # stdout piped to `tee`. Running dev-web-restart.sh as a child of that process
 # means the restart kills its own logging pipe (tmux kill-session -> tee dies ->
