@@ -267,6 +267,14 @@ describe("sessionReducer", () => {
     ]);
     expect(state.items).toHaveLength(0);
     expect(state.status).toBe("waiting");
+    expect(state.statusDetail).toBeNull();
+  });
+
+  it("stores human status detail without appending transcript rows", () => {
+    const state = run([{ type: "status", state: "running", detail: "Indexing workspace" }]);
+    expect(state.items).toHaveLength(0);
+    expect(state.status).toBe("running");
+    expect(state.statusDetail).toBe("Indexing workspace");
   });
 
   it("revises the plan in place instead of stacking a copy per update", () => {

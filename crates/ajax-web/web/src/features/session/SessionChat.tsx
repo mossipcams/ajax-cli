@@ -306,13 +306,14 @@ export default function SessionChat({
 
   const actions = detail ? visibleTaskActions(detail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
-  const state_ = headState(state.decision, state.busy, detail);
+  const state_ = headState(state.decision, state.busy, detail, state.status);
   const tone = headTone(state_, detail);
   const plan = latestPlan(state.items);
   const headTool = activeTool(state);
   const headPlanStep = activePlanStep(plan);
+  const hasHeadWork = Boolean(headTool || headPlanStep);
   const headThought =
-    state.busy && !headTool && !headPlanStep
+    state_ === "working" && !hasHeadWork
       ? (() => {
           const text = latestThought(state.items);
           return text ? thoughtSnippet(text) : null;
@@ -348,9 +349,8 @@ export default function SessionChat({
         tool={headTool}
         planStep={headPlanStep}
         thoughtSnippet={headThought}
-        status={state.status}
         usage={state.usage}
-        activityAgeMs={state.busy ? activityAgeMs : 0}
+        activityAgeMs={state_ === "working" ? activityAgeMs : 0}
         connected={connected}
         actions={
           safeActions.length ? (

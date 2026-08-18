@@ -895,7 +895,7 @@ html.terminal-expanded .result-panel,
 .session-head .session-tool-path {
   flex: 1 0 100%;
   margin-left: 0;
-  padding-left: 0;
+  padding-left: 20px;
   min-width: 0;
   max-width: 100%;
   min-height: 1.5em;
@@ -903,6 +903,8 @@ html.terminal-expanded .result-panel,
 
 .session-tool-mark {
   flex: none;
+  width: 20px;
+  text-align: center;
   color: var(--tone, var(--ink-faint));
 }
 
@@ -1130,14 +1132,11 @@ html.terminal-expanded .result-panel,
      cards to a sliver of clipped text. */
   flex: none;
   min-width: 0;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--paper-tint);
   overflow: hidden;
 }
 
-.session-toolcard[data-status="failed"] {
-  border-color: var(--danger);
+.session-toolcard[data-status="failed"] .session-tool-title {
+  color: var(--danger);
 }
 
 .session-toolcard-head {
@@ -1145,8 +1144,8 @@ html.terminal-expanded .result-panel,
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 10px;
+  min-height: 28px;
+  padding: 4px 0;
   border: none;
   background: none;
   text-align: left;
@@ -1195,8 +1194,7 @@ html.terminal-expanded .result-panel,
 }
 
 .session-toolcard-body {
-  border-top: 1px solid var(--rule);
-  padding: 8px 10px;
+  padding: 4px 0 8px 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;

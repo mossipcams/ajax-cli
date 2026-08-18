@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
 import type { Decision, ToolCall, Usage } from "./sessionThread";
-import { shortPath, TOOL_TONES } from "./toolPresentation";
+import { shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
 
 export { shortPath } from "./toolPresentation";
 
@@ -23,13 +23,24 @@ const STATE_LABELS: Record<HeadState, string> = {
   idle: "Ready",
 };
 
+function agentNeedsYou(status: string | null): boolean {
+  const token = status?.trim().toLowerCase();
+  return token === "waiting" || token === "requires_action";
+}
+
+function agentWorking(status: string | null): boolean {
+  return status?.trim().toLowerCase() === "running";
+}
+
 export function headState(
   decision: Decision | null,
   busy: boolean,
   detail: BrowserTaskDetail | null,
+  agentStatus: string | null,
 ): HeadState {
   if (decision) return "decision";
-  if (busy) return "working";
+  if (agentNeedsYou(agentStatus)) return "attention";
+  if (agentWorking(agentStatus) || busy) return "working";
   if (detail && (detail.status === "waiting" || detail.status === "error")) return "attention";
   return "idle";
 }
@@ -59,12 +70,21 @@ function ToolRow({ call }: { call: ToolCall }) {
   const tone = TOOL_TONES[call.kind] ?? "muted";
   const location = call.locations[0];
   return (
-    <div className={`session-tool tone-${tone}`} data-testid="session-head-tool">
-      <span className="session-tool-kind">{call.kind || "tool"}</span>
-      <span className="session-tool-title">{call.title || call.callId}</span>
-      <span className="session-tool-path" title={location || undefined}>
-        {location ? shortPath(location) : "\u00a0"}
+    <div
+      className={`session-tool tone-${tone}`}
+      data-testid="session-head-tool"
+      data-kind={call.kind || "other"}
+    >
+      <span className="session-tool-mark" aria-hidden="true">
+        {toolMark(call.kind)}
       </span>
+      <span className="session-tool-title">{call.title || call.callId}</span>
+      {location ? (
+        <span className="session-tool-path" title={location}>
+          {shortPath(location)}
+        </span>
+      ) : null}
+      <span className="session-toolcard-status">{toolStatusLabel(call.status)}</span>
     </div>
   );
 }
@@ -78,9 +98,8 @@ interface Props {
   tool: ToolCall | null;
   /** In-progress ACP plan step, if any. Not the whole checklist. */
   planStep: string | null;
-  /** One-line latest ACP thought while working with no tool or plan step. */
+  /** One-line latest ACP thought while working. */
   thoughtSnippet: string | null;
-  status: string | null;
   /** Latest context pressure, or null when the harness does not report it. */
   usage: Usage | null;
   activityAgeMs: number;
@@ -104,7 +123,6 @@ export default function LiveHead({
   tool,
   planStep,
   thoughtSnippet,
-  status,
   usage,
   activityAgeMs,
   connected,
@@ -116,6 +134,8 @@ export default function LiveHead({
   onOpenDetails,
 }: Props) {
   const quiet = state === "working" && activityAgeMs >= 60_000;
+  const hasToolOrPlan = Boolean(tool || planStep);
+  const showThinking = state === "working" && !hasToolOrPlan && !thoughtSnippet;
   return (
     <section
       className={`session-head tone-${tone}`}
@@ -191,9 +211,17 @@ export default function LiveHead({
               {planStep}
             </p>
           ) : null}
-          {!tool && !planStep ? (
-            <p className="session-head-quiet" data-testid="session-head-thought">
-              {thoughtSnippet ?? status ?? "Thinking…"}
+          {thoughtSnippet && !hasToolOrPlan ? (
+            <p
+              className="session-head-quiet session-head-thought"
+              data-testid="session-head-thought"
+            >
+              {thoughtSnippet}
+            </p>
+          ) : null}
+          {showThinking ? (
+            <p className="session-head-quiet" data-testid="session-head-idle">
+              Thinking…
             </p>
           ) : null}
           {quiet ? (

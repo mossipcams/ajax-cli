@@ -124,6 +124,9 @@ fn typed_mapper_covers_stable_acp_updates() {
     assert!(events
         .iter()
         .any(|event| matches!(event, SessionServerEvent::Usage { used, size } if *used == 10 && *size == 100)));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Status { .. })));
     for kind in ["config", "session_info"] {
         assert!(events
             .iter()

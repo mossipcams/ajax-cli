@@ -33,6 +33,17 @@ export function toolMark(kind: string): string {
   return TOOL_MARKS[kind] ?? "•";
 }
 
+export const TOOL_STATUS_LABELS: Record<string, string> = {
+  pending: "queued",
+  in_progress: "running",
+  completed: "done",
+  failed: "failed",
+};
+
+export function toolStatusLabel(status: string): string {
+  return TOOL_STATUS_LABELS[status] ?? status;
+}
+
 /** Paths are long and their tail is the informative end, so keep the last two
  * segments rather than ellipsizing the filename away. */
 export function shortPath(path: string): string {
