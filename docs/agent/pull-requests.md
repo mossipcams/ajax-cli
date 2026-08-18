@@ -78,6 +78,10 @@ CodeQL uses GitHub default setup and cannot exclude the release branch. The
 duplicate release-PR scan is accepted; excluding it would require a manually
 maintained advanced-setup workflow.
 
+The Web job runs in the pinned Playwright container image matching
+`@playwright/test` in `package-lock.json` and fails when committed
+`crates/ajax-web/web/dist` is stale after `npm run web:build`.
+
 ## Who opens the PR
 
 The model-router-selected delegate runs `gh pr create`, not the orchestrator.

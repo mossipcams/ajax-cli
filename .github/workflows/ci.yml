@@ -155,6 +155,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: pr-title
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--main') }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -174,16 +178,14 @@ jobs:
       - name: Verify CI and release pipeline invariants
         run: npm run ci:verify
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps webkit
+      - name: Verify committed web dist matches build output
+        run: |
+          npm run web:build
+          git diff --exit-code crates/ajax-web/web/dist
 
       - name: Smoke and visual-regression tests
+        env:
+          HOME: /root
         run: npm run web:smoke -- --project=mobile-webkit
 
   check:
