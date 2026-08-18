@@ -219,7 +219,9 @@ pub fn resolve_restart_script(
 pub struct TestInStableConfig {
     pub script: String,
     pub port: String,
-    /// True when this process exits after spawning (stable instance only).
+    /// True when Settings should wait for cutover (stable instance only).
+    /// Independent of process exit; the live listener stays up until the
+    /// detached wrapper replaces it after build/install.
     pub exits_current_process: bool,
 }
 
@@ -289,8 +291,10 @@ pub fn test_in_stable_restarts_current_instance() -> bool {
     process_test_in_stable_config().is_some_and(|config| config.exits_current_process)
 }
 
-/// Spawn the detached Test in Stable wrapper with stable profile args, then exit
-/// only when the wrapper spawn succeeded.
+/// Spawn the detached Test in Stable wrapper with stable profile args.
+///
+/// The live stable listener must not exit here; the wrapper rebuilds in
+/// `ajax-test-in-stable` and cuts over only after the new binary is healthy.
 ///
 /// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_test_in_stable() {
@@ -298,22 +302,13 @@ pub fn schedule_test_in_stable() {
     {
         thread::spawn(|| {
             thread::sleep(RESTART_DELAY);
-            let config = process_test_in_stable_config();
-            let result = config.as_ref().map(|config| {
-                let args = test_in_stable_script_args(&config.port);
-                spawn_restart_script(&test_in_stable_script(&config.script), &args)
-            });
-            let exit = match (config, result) {
-                (Some(config), Some(launch)) => {
-                    if let Err(ref error) = launch {
-                        eprintln!("Ajax web test-in-stable failed: {error}");
-                    }
-                    config.exits_current_process && should_exit_after_launch(launch)
-                }
-                _ => false,
+            let Some(config) = process_test_in_stable_config() else {
+                return;
             };
-            if exit {
-                std::process::exit(0);
+            let args = test_in_stable_script_args(&config.port);
+            if let Err(error) = spawn_restart_script(&test_in_stable_script(&config.script), &args)
+            {
+                eprintln!("Ajax web test-in-stable failed: {error}");
             }
         });
     }
@@ -622,6 +617,33 @@ mod tests {
                 exits_current_process: false,
             })
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_test_in_stable_config_stable_signals_cutover_without_process_exit() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-test-in-stable-no-exit-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let restart = write_test_in_stable_scripts(&root, true);
+
+        let config = super::resolve_test_in_stable_config(super::TestInStableResolveInput {
+            restart_profile: Some(super::STABLE_PROFILE),
+            cli_args: &[],
+            ajax_profile: None,
+            restart_script_env: Some(restart.as_str()),
+            restart_port_env: Some("8787"),
+            cwd: Some(&root),
+        })
+        .expect("stable config");
+
+        assert!(config.exits_current_process);
+        // schedule_test_in_stable is cfg(test) no-op; stable must not exit the
+        // live listener — cutover is owned by the detached wrapper script.
+        super::schedule_test_in_stable();
 
         let _ = std::fs::remove_dir_all(&root);
     }
