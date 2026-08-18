@@ -81,6 +81,7 @@ describe("SessionChat smoke", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", () => {});
     transport.sendPrompt.mockClear();
+    transport.setModel.mockClear();
     transport.respondPermission.mockClear();
     localStorage.clear();
     sessionStorage.clear();
@@ -427,5 +428,53 @@ describe("SessionChat smoke", () => {
 
     await waitFor(() => expect(onSwappedAgent).toHaveBeenCalledOnce());
     expect(onMutated).toHaveBeenCalledOnce();
+  });
+
+  // Regression for #936: native <select> in the Radix task-details sheet was not
+  // operable, and composite session_model values did not show as selected.
+  it("shows the live session model as selected and changes it from task details (#936)", async () => {
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    act(() => ready?.("composer-2.5"));
+    fireEvent.click(screen.getByTestId("session-details"));
+
+    const current = await screen.findByRole("radio", { name: /Composer 2\.5/i });
+    expect(current).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Auto/i }));
+    expect(transport.setModel).toHaveBeenCalledWith("auto");
+  });
+
+  it("shows a composite session model as selected in task details (#936)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ id: "opus", label: "Opus" }],
+          default: "opus",
+          reasoning: {
+            id: "effort",
+            label: "Effort",
+            default: "medium",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        }),
+      }),
+    );
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "claude" } });
+    act(() => ready?.("opus|effort=high"));
+    fireEvent.click(screen.getByTestId("session-details"));
+
+    const current = await screen.findByRole("radio", { name: /Opus/i });
+    expect(current).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "High" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    expect(transport.setModel).toHaveBeenCalledWith("opus|effort=low");
   });
 });
