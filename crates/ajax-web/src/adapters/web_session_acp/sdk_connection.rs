@@ -18,7 +18,7 @@ use agent_client_protocol::{
     },
     Agent, Client, ConnectionTo, Lines, Responder, UntypedMessage,
 };
-use ajax_core::models::AgentClient;
+use ajax_core::{adapters::acp_launch_for_agent, models::AgentClient};
 use blocking::Unblock;
 use futures::{AsyncBufReadExt, AsyncWriteExt, StreamExt};
 use serde_json::Value;
@@ -311,6 +311,8 @@ async fn initialize_session(
         }
     };
     apply_permission_config(connection, agent, &session_id, config_options.as_deref()).await;
+    let model_pins_at_spawn =
+        acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
     let ApplyModelOutcome {
         applied_model,
         error: model_apply_error,
@@ -320,6 +322,7 @@ async fn initialize_session(
         &session_new_result,
         config_options.as_deref(),
         model,
+        model_pins_at_spawn,
     )
     .await;
 
