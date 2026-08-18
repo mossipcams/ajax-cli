@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import NewTaskSheet from "./NewTaskSheet";
 import newTaskSheetSource from "./NewTaskSheet.tsx?raw";
 import * as api from "@/shared/lib/api";
+import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
@@ -111,6 +112,22 @@ describe("NewTaskSheet", () => {
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].agent).toBe("pi");
+    expect(spy.mock.calls[0][0].orchestration_chat).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("omits orchestration_chat when the preference is explicitly off", async () => {
+    writeOrchestrationChatEnabled(false);
+    stubCatalog();
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), {
+      target: { value: "Fix login" },
+    });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].orchestration_chat).toBeUndefined();
     vi.unstubAllGlobals();
   });
 

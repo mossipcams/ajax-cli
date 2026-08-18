@@ -6,6 +6,10 @@ implementation how-to.
 
 ## Flag-off parity
 
+The browser preference (`ajax.web.session.orchestrationChat`) defaults **on**
+when unset; only an explicit stored value of `false` disables orchestration
+chat.
+
 When the Ajax web session preference is **off**, dashboard navigation, task
 detail, embedded raw terminal, Diff Review, and operate flows behave exactly as
 they do today. No session routes, WebSocket, or UI chrome may appear or alter
@@ -181,14 +185,19 @@ existing paths.
   in-flight `session/prompt`). Reconnect and double-Enter must not start a
   parallel prompt against the same slot.
 
-## Terminal and Diff Review escape paths
+## Terminal and Diff Review view paths
 
-- Opening the raw tmux terminal from a session is an overlay/sheet escape hatch;
-  it attaches to the task tmux session, not the ACP chat process.
+- **Ajax terminal** in Ajax chat task details navigates to `#/t/<handle>` and
+  stores a per-task terminal preference in browser localStorage; it is not a
+  session overlay or sheet escape hatch.
+- While that preference is set, dashboard opens, later visits, and
+  `#/session/<handle>` for that handle land on the terminal page until **Ajax
+  chat** in terminal task details clears the preference.
 - Navigating to `#/t/<handle>` is terminal-first host attachment, not ACP chat
   continuation.
-- Diff Review opened from a session returns to `#/session/<handle>` (chat-first),
-  not the terminal-first task page.
+- Diff Review back navigation returns to `#/t/<handle>` when the task prefers
+  terminal view, otherwise to `#/session/<handle>` for session-capable chat
+  tasks.
 - Session horizontal gestures must not steal Diff Review panes and vice versa.
 
 ## Mobile keyboard band

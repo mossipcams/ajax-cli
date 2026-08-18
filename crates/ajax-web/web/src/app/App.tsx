@@ -23,6 +23,11 @@ import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
 import SessionChat from "@/features/session/SessionChat";
 import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import {
+  clearTaskTerminalPreferred,
+  readTaskTerminalPreferred,
+  writeTaskTerminalPreferred,
+} from "@/features/session/taskViewPreference";
 import NewTaskSheet from "@/features/task/NewTaskSheet";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
@@ -268,7 +273,11 @@ export default function App() {
       const sessionCapable = (latestCockpit ?? cockpitRef.current.data)?.cards?.some(
         (card) => card.qualified_handle === handle && card.session_capable,
       );
-      const hash = orchestrationChat && sessionCapable ? sessionHash(handle) : taskHash(handle);
+      const terminalPreferred = readTaskTerminalPreferred(handle);
+      const hash =
+        orchestrationChat && sessionCapable && !terminalPreferred
+          ? sessionHash(handle)
+          : taskHash(handle);
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
       endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });
@@ -439,6 +448,7 @@ export default function App() {
     if (detail.status !== "ready" || !detail.data) return;
     if (detail.data.qualified_handle !== route.handle) return;
     if (detail.data.session_capable === false) go(taskHash(route.handle));
+    else if (readTaskTerminalPreferred(route.handle)) go(taskHash(route.handle));
   }, [route.kind, route.handle, detail.status, detail.data]);
 
   useEffect(() => {
@@ -621,8 +631,15 @@ export default function App() {
                   selectedPr={route.pr}
                   onBack={() => {
                     if (route.kind === "diff" && route.handle) {
+                      const sessionCapable =
+                        detail.data.session_capable !== false &&
+                        cockpitRef.current.data?.cards?.some(
+                          (card) =>
+                            card.qualified_handle === route.handle && card.session_capable,
+                        );
+                      const terminalPreferred = readTaskTerminalPreferred(route.handle);
                       go(
-                        orchestrationChat
+                        orchestrationChat && sessionCapable && !terminalPreferred
                           ? sessionHash(route.handle)
                           : taskHash(route.handle),
                       );
@@ -663,6 +680,12 @@ export default function App() {
                   onSwappedAgent={() => {
                     if (route.kind === "session" && route.handle) clearSessionOutbox(route.handle);
                   }}
+                  onOpenTerminal={() => {
+                    if (route.handle) {
+                      writeTaskTerminalPreferred(route.handle);
+                      go(taskHash(route.handle));
+                    }
+                  }}
                   onMutated={() => route.kind === "session" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                   onRetry={reload}
@@ -691,13 +714,17 @@ export default function App() {
               ) : detail.data ? (
                 <TaskDetail
                   detail={detail.data}
+                  orchestrationChat={orchestrationChat}
                   onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
                   onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
+                  onOpenChat={() => {
+                    if (route.handle) {
+                      clearTaskTerminalPreferred(route.handle);
+                      go(sessionHash(route.handle));
+                    }
+                  }}
                   onCockpit={applyCockpit}
                   onResult={showResult}
-                  onSwappedAgent={() => {
-                    if (route.kind === "task" && route.handle) clearSessionOutbox(route.handle);
-                  }}
                   onMutated={() => route.kind === "task" && route.handle && reload()}
                   onDismiss={() => go(dashboardHash())}
                   pendingConfirmAction={pendingConfirm?.action.action ?? null}

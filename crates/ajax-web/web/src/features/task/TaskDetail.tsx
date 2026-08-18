@@ -4,20 +4,19 @@ import { statusMeta } from "@/shared/lib/state";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
-import HarnessSwap from "./HarnessSwap";
 import TaskMetaDetails from "./TaskMetaDetails";
 
 const TaskTerminal = lazy(() => import("./TaskTerminal"));
 
 interface Props {
   detail: BrowserTaskDetail;
+  orchestrationChat?: boolean;
   onBack?: () => void;
   onOpenDiff?: () => void;
+  onOpenChat?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
   onMutated?: () => void;
-  /** Swap-only hook — e.g. clear the orchestration session outbox before reload. */
-  onSwappedAgent?: () => void;
   onDismiss?: () => void;
   pendingConfirmAction?: string | null;
   onCancelPendingConfirm?: () => void;
@@ -25,12 +24,13 @@ interface Props {
 
 export default function TaskDetail({
   detail,
+  orchestrationChat = false,
   onBack,
   onOpenDiff,
+  onOpenChat,
   onCockpit,
   onResult,
   onMutated,
-  onSwappedAgent,
   onDismiss,
   pendingConfirmAction = null,
   onCancelPendingConfirm,
@@ -52,10 +52,8 @@ export default function TaskDetail({
     return line && line !== detail.status_explanation ? line : null;
   })();
 
-  function handleHarnessSwapped() {
-    onSwappedAgent?.();
-    onMutated?.();
-  }
+  const showAjaxChat =
+    orchestrationChat && detail.session_capable !== false && Boolean(onOpenChat);
 
   return (
     <div
@@ -75,14 +73,6 @@ export default function TaskDetail({
         <h1 className="detail-title">{detail.title || detail.qualified_handle}</h1>
         <span className={`interact-pill tone-${meta.tone}`}>{meta.label}</span>
       </div>
-
-      {detail.agent ? (
-        <HarnessSwap
-          handle={detail.qualified_handle}
-          currentAgent={detail.agent}
-          onSwapped={handleHarnessSwapped}
-        />
-      ) : null}
 
       <section
         className="interact-panel"
@@ -122,7 +112,12 @@ export default function TaskDetail({
         </Suspense>
       </div>
 
-      <TaskMetaDetails detail={detail} onResult={onResult} />
+      <TaskMetaDetails
+        detail={detail}
+        onResult={onResult}
+        showAjaxChat={showAjaxChat}
+        onOpenAjaxChat={onOpenChat}
+      />
     </div>
   );
 }

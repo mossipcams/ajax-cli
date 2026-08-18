@@ -6,9 +6,9 @@ const SESSION_MODE_EVENT = "ajax:session-mode";
 
 export function readOrchestrationChatEnabled(): boolean {
   try {
-    return localStorage.getItem(ORCHESTRATION_CHAT_STORAGE_KEY) === "true";
+    return localStorage.getItem(ORCHESTRATION_CHAT_STORAGE_KEY) !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 

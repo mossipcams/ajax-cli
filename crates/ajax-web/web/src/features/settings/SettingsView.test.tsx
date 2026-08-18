@@ -193,7 +193,10 @@ describe("SettingsView", () => {
       ),
     ).toBeInTheDocument();
     const toggle = screen.getByTestId("orchestration-chat-toggle");
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
     expect(toggle).not.toBeChecked();
+    expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("false");
     fireEvent.click(toggle);
     expect(toggle).toBeChecked();
     expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("true");

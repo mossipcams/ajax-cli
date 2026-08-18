@@ -12,7 +12,12 @@ afterEach(() => {
 });
 
 describe("sessionMode", () => {
-  it("defaults orchestration chat to false", () => {
+  it("defaults orchestration chat to true when the key is missing", () => {
+    expect(readOrchestrationChatEnabled()).toBe(true);
+  });
+
+  it("disables orchestration chat only when explicitly set to false", () => {
+    localStorage.setItem(ORCHESTRATION_CHAT_STORAGE_KEY, "false");
     expect(readOrchestrationChatEnabled()).toBe(false);
   });
 

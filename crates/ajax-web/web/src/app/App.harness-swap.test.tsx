@@ -4,6 +4,7 @@ import App from "./App";
 import appSource from "./App.tsx?raw";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
+import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 
 class StubWebSocket {
   readyState = 1;
@@ -30,6 +31,8 @@ describe("App harness swap", () => {
   beforeEach(() => {
     window.location.hash = "";
     document.title = "";
+    localStorage.clear();
+    writeOrchestrationChatEnabled(true);
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
@@ -57,21 +60,18 @@ describe("App harness swap", () => {
     vi.unstubAllGlobals();
     window.location.hash = "";
     document.title = "";
+    localStorage.clear();
   });
 
-  it("wires harness swap on TaskDetail and SessionChat with swap-only session outbox clearing", () => {
+  it("wires harness swap on SessionChat with swap-only session outbox clearing", () => {
     const diffReviewBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
     const taskDetailBlock = appSource.match(/<TaskDetail[\s\S]*?\/>/)?.[0] ?? "";
     const sessionChatBlock = appSource.match(/<SessionChat[\s\S]*?\/>/)?.[0] ?? "";
 
     expect(diffReviewBlock).not.toMatch(/\bagent=/);
     expect(diffReviewBlock).not.toMatch(/onSwappedAgent=/);
-    expect(taskDetailBlock).toMatch(
-      /onSwappedAgent=\{\(\) => \{[\s\S]*?clearSessionOutbox\(route\.handle\)/,
-    );
-    expect(taskDetailBlock).toMatch(
-      /onMutated=\{\(\) => route\.kind === "task" && route\.handle && reload\(\)\}/,
-    );
+    expect(taskDetailBlock).not.toMatch(/onSwappedAgent=/);
+    expect(taskDetailBlock).not.toMatch(/HarnessSwap/);
     expect(sessionChatBlock).toMatch(
       /onSwappedAgent=\{\(\) => \{[\s\S]*?clearSessionOutbox\(route\.handle\)/,
     );
@@ -80,7 +80,7 @@ describe("App harness swap", () => {
     );
   });
 
-  it("clears the session outbox and reloads task detail after a harness swap", async () => {
+  it("clears the session outbox and reloads task detail after a harness swap in Ajax chat", async () => {
     let detailFetches = 0;
     vi.stubGlobal(
       "fetch",
@@ -91,7 +91,7 @@ describe("App harness swap", () => {
         if (path.startsWith("/api/tasks/web%2Ffix-login")) {
           if (init?.method === "POST") return Promise.resolve(jsonResponse({ ok: true }));
           detailFetches += 1;
-          return Promise.resolve(jsonResponse(taskDetail));
+          return Promise.resolve(jsonResponse({ ...taskDetail, session_capable: true }));
         }
         if (path.startsWith("/api/session/models"))
           return Promise.resolve(jsonResponse({ models: [], default: "" }));
@@ -106,8 +106,9 @@ describe("App harness swap", () => {
     );
 
     render(<App />);
-    setHash("#/t/web%2Ffix-login");
-    await screen.findByTestId("harness-swap");
+    setHash("#/session/web/fix-login");
+    await screen.findByTestId("session-chat");
+    fireEvent.click(screen.getByTestId("session-details"));
     await waitFor(() => expect(detailFetches).toBeGreaterThan(0));
     const beforeSwap = detailFetches;
 

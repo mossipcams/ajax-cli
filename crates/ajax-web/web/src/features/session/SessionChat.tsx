@@ -35,8 +35,6 @@
 //   finish review, the verdict, and DESIGN.md.
 
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -76,8 +74,6 @@ import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { useSessionChatViewport } from "@/shared/hooks/useSessionChatViewport";
 import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
 
-const TaskTerminal = lazy(() => import("@/features/task/TaskTerminal"));
-
 interface Props {
   handle: string | null;
   detail: BrowserTaskDetail | null;
@@ -99,6 +95,7 @@ interface Props {
   onMutated?: () => void;
   /** Swap-only hook — e.g. clear the orchestration session outbox before reload. */
   onSwappedAgent?: () => void;
+  onOpenTerminal?: () => void;
   onDismiss?: () => void;
   onRetry?: () => void;
 }
@@ -114,6 +111,7 @@ export default function SessionChat({
   onResult,
   onMutated,
   onSwappedAgent,
+  onOpenTerminal,
   onDismiss,
   onRetry,
 }: Props) {
@@ -141,7 +139,6 @@ export default function SessionChat({
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
 
   const {
     state,
@@ -554,53 +551,16 @@ export default function SessionChat({
                         <Button
                           type="button"
                           variant="secondary"
-                          data-testid="session-terminal-toggle"
+                          data-testid="session-ajax-terminal"
                           onClick={() => {
                             setDetailsOpen(false);
-                            setTerminalOpen(true);
+                            onOpenTerminal?.();
                           }}
                         >
-                          Terminal
+                          Ajax terminal
                         </Button>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </FullscreenLayer>
-      ) : null}
-
-      {terminalOpen ? (
-        <FullscreenLayer zIndex={50}>
-          <Sheet open onOpenChange={(open) => !open && setTerminalOpen(false)}>
-            <SheetContent asChild aria-describedby={undefined}>
-              <div
-                className="session-sheet-scrim"
-                onPointerDown={(event) => {
-                  if (event.target === event.currentTarget) setTerminalOpen(false);
-                }}
-              >
-                <div
-                  className="session-terminal-sheet"
-                  data-testid="session-terminal-sheet"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Task terminal"
-                >
-                  <div className="session-sheet-header">
-                    <SheetTitle asChild>
-                      <h2>Terminal</h2>
-                    </SheetTitle>
-                    <Button type="button" variant="secondary" onClick={() => setTerminalOpen(false)}>
-                      Close
-                    </Button>
-                  </div>
-                  <div className="session-terminal-body">
-                    <Suspense fallback={null}>
-                      <TaskTerminal handle={detail?.qualified_handle ?? handle} />
-                    </Suspense>
                   </div>
                 </div>
               </div>
