@@ -80,26 +80,28 @@ maintained advanced-setup workflow.
 
 ## Who opens the PR
 
-The model-router-selected delegate runs `gh pr create`, not the orchestrator.
-The orchestrator reviews the delta and reports the PR URL.
+The model-router-selected delegate runs `scripts/gh-pr-create`, not raw
+`gh pr create` and not the orchestrator. The wrapper creates the PR, strips
+Cursor footer / co-author lines from the body, and prints the URL. The
+orchestrator reviews the delta and reports that URL.
 
 ## Local verification gate before a PR
 
-Do not create a pull request until local tests have passed in the worktree.
+Work goes straight to the PR. There is no separate local full-suite step.
+Husky on the PR-creating commit only:
 
-Before `gh pr create`:
+1. Rebuilds and stages `crates/ajax-web/web/dist` when web sources are staged
+   (`#593`).
+2. Checks staged Rust file size.
+3. Runs `cargo fmt --check`.
+4. Strips Cursor attribution lines from the commit message (`commit-msg`).
 
-1. Install Husky with `npm prepare` or `npx husky` so `.husky/pre-commit` runs.
-2. Either commit through the Husky hook successfully or run its equivalent
-   local suite successfully. The current hook rebuilds and stages the embedded
-   web bundle, checks staged Rust file size, runs `npm run verify`, builds
-   `ajax-cli` in release mode, and installs it from the locked workspace.
-3. If `prek` is available and configured for this repository, it may satisfy
-   the gate only when it runs the equivalent suite successfully.
+Install Husky with `npm prepare` or `npx husky` so those hooks run. Do not use
+`--no-verify` or `--no-gpg-sign` to skip them. CI runs the full suite
+(clippy, nextest, web tests, Playwright, audit) and fails if `dist/` is stale.
 
-Do not use `--no-verify`, `--no-gpg-sign`, or another bypass merely to open a
-PR. Do not open a PR after a failed verification run; fix the failure and rerun
-until green. Focused crate tests alone do not satisfy this PR gate.
+Focused tests for the code you touched still belong in the worktree before the
+PR commit. They do not replace CI.
 
 Record the commands and exit statuses in the persistent plan when one exists
 and in the final report. The final report must include:
