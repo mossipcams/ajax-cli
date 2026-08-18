@@ -16,6 +16,7 @@ describe("useSessionTransport", () => {
     vi.useFakeTimers();
     const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
     const models: (string | undefined)[] = [];
+    const hostModels: string[] = [];
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
@@ -43,6 +44,7 @@ describe("useSessionTransport", () => {
         onActivity: vi.fn(),
         setConnected: vi.fn(),
         setEverOpened: vi.fn(),
+        onSessionModel: (model) => hostModels.push(model),
       }),
     );
 
@@ -51,6 +53,46 @@ describe("useSessionTransport", () => {
     act(() => vi.advanceTimersByTime(0));
 
     expect(models).toEqual([undefined, undefined]);
+    expect(hostModels).toEqual(["auto", "auto"]);
+    unmount();
+  });
+
+  // Regression for issue #931: host snapshots seed the New Task preference
+  // through onSessionModel, not by reading localStorage as live session truth.
+  it("reports host snapshot models through onSessionModel (#931)", () => {
+    const hostModels: string[] = [];
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        nextCallbacks.onReady("gpt-5.6-sol-medium");
+        return transport;
+      },
+    );
+
+    const { unmount } = renderHook(() =>
+      useSessionTransport({
+        handle: "web/fix-login",
+        dispatch: vi.fn(),
+        detailRef: { current: null },
+        transportRef: { current: undefined },
+        connectedRef: { current: false },
+        everOpenedRef: { current: false },
+        onActivity: vi.fn(),
+        setConnected: vi.fn(),
+        setEverOpened: vi.fn(),
+        onSessionModel: (model) => hostModels.push(model),
+      }),
+    );
+
+    writeSessionModel("composer-2.5");
+    expect(hostModels).toEqual(["gpt-5.6-sol-medium"]);
+    expect(localStorage.getItem("ajax.web.session.model")).toBe("composer-2.5");
     unmount();
   });
 
