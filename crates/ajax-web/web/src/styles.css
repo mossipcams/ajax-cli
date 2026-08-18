@@ -1928,13 +1928,13 @@ html.keyboard-open .session-composer textarea {
     margin-top: 0;
   }
 
-  html.keyboard-open .task-detail .meta-details {
+  html.keyboard-open .task-detail .task-meta-chrome {
     display: none;
   }
 
   html.terminal-expanded .task-detail .detail-header,
   html.terminal-expanded .task-detail .interact-panel,
-  html.terminal-expanded .task-detail .meta-details {
+  html.terminal-expanded .task-detail .task-meta-chrome {
     display: none;
   }
 

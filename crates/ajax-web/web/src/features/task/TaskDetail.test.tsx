@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { render, fireEvent, screen, act } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
+import taskTerminalSource from "./TaskTerminal?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -358,6 +359,25 @@ describe("TaskDetail projection surface", () => {
     const mobileBlock = taskDetailMobileBlock();
 
     expect(mobileBlock).toMatch(/\.task-meta-chrome\s*\{[^}]*margin-top:\s*0/);
+  });
+
+  it("keyboard-open hides footer meta chrome so hotkeys flush to the band bottom", () => {
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.task-meta-chrome\s*\{[^}]*display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.task-meta-chrome[\s\S]*?display:\s*none/,
+    );
+  });
+
+  it("marks footer meta-details inert during phone fullscreen expand", () => {
+    const inertBody =
+      taskTerminalSource.match(
+        /const applyExpandedInert\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/,
+      )?.[1] ?? "";
+
+    expect(inertBody).toMatch(/querySelectorAll<HTMLElement>\(["']\.meta-details["']\)/);
+    expect(inertBody).toMatch(/el\.inert\s*=\s*true/);
   });
 
   it("keeps the mobile interact panel to a single row", () => {
