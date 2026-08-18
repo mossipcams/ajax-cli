@@ -179,30 +179,44 @@ function verifyCi(ci, fail) {
 
   const webJob = jobs.web ?? {};
   const webSteps = JSON.stringify(webJob.steps ?? []);
+  const webText = JSON.stringify(webJob);
   if (!webSteps.includes("git diff --exit-code crates/ajax-web/web/dist")) {
     fail(
       "ci.yml web job must fail when crates/ajax-web/web/dist is stale after web:build.",
     );
   }
 
-  const webTimeout = webJob["timeout-minutes"];
-  if (typeof webTimeout !== "number" || webTimeout < 25 || webTimeout > 30) {
-    fail("ci.yml web job must set timeout-minutes between 25 and 30.");
+  if (webJob["timeout-minutes"] !== 20) {
+    fail("ci.yml web job must set timeout-minutes: 20.");
   }
 
-  if (!webSteps.includes('"id":"playwright-cache"')) {
-    fail("ci.yml web job Playwright cache step must have id: playwright-cache.");
-  }
-
-  if (!webSteps.includes("npx playwright install-deps webkit")) {
+  const container = webJob.container ?? {};
+  if (container.image !== "mcr.microsoft.com/playwright:v1.61.1-noble") {
     fail(
-      "ci.yml web job must install Playwright OS dependencies on every run " +
-        "(npx playwright install-deps webkit).",
+      "ci.yml web job must run in mcr.microsoft.com/playwright:v1.61.1-noble.",
     );
   }
 
-  if (!webSteps.includes("npx playwright install webkit")) {
-    fail("ci.yml web job must install webkit browsers (npx playwright install webkit).");
+  if (container.options !== "--ipc=host") {
+    fail("ci.yml web job container must set options: --ipc=host.");
+  }
+
+  if (!webText.includes("safe.directory")) {
+    fail("ci.yml web job must configure git safe.directory for container checkout.");
+  }
+
+  if (!webSteps.includes("/root")) {
+    fail("ci.yml web job smoke step must set HOME=/root.");
+  }
+
+  if (
+    webSteps.includes("playwright install-deps") ||
+    webSteps.includes("playwright install webkit") ||
+    webSteps.includes("playwright-cache")
+  ) {
+    fail(
+      "ci.yml web job must not install or cache Playwright when using the container image.",
+    );
   }
 
   for (const job of HEAVY_JOBS) {
