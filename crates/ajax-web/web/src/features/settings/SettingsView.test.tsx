@@ -40,6 +40,7 @@ describe("SettingsView", () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: true,
+      profile: "stable",
     });
     const spy = vi.spyOn(api, "startTestInStable").mockResolvedValue({
       ok: true,
@@ -55,10 +56,49 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Tap to confirm" })).toBeInTheDocument();
   });
 
+  it("waits and replaces when Test in Stable POST fails on stable profile #850", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: true,
+      profile: "stable",
+    });
+    const startSpy = vi.spyOn(api, "startTestInStable").mockRejectedValue(new Error("Failed to fetch"));
+    const waitSpy = vi.spyOn(api, "waitForServerRestart").mockResolvedValue(true);
+    const replace = vi.fn();
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "https://ajax.local:8787",
+      hash: "#/settings",
+      replace,
+    });
+    const onResult = vi.fn();
+
+    render(<SettingsView onResult={onResult} />);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Test in Stable" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(waitSpy).toHaveBeenCalledWith({
+        timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,
+        previousVersion: "1.0.0",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(replace).toHaveBeenCalledWith("https://ajax.local:8787#/settings"),
+    );
+    expect(onResult).not.toHaveBeenCalledWith("Test in Stable failed", null, true);
+
+    vi.unstubAllGlobals();
+  });
+
   it("starts Test in Stable and replaces location on success #850", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: true,
+      profile: "stable",
     });
     const startSpy = vi.spyOn(api, "startTestInStable").mockResolvedValue({
       ok: true,
@@ -82,10 +122,12 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
     await vi.waitFor(() => expect(startSpy).toHaveBeenCalledOnce());
-    expect(waitSpy).toHaveBeenCalledWith({
-      timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,
-      previousVersion: "1.0.0",
-    });
+    await vi.waitFor(() =>
+      expect(waitSpy).toHaveBeenCalledWith({
+        timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,
+        previousVersion: "1.0.0",
+      }),
+    );
     await vi.waitFor(() =>
       expect(replace).toHaveBeenCalledWith("https://ajax.local:8787#/settings"),
     );
@@ -94,10 +136,47 @@ describe("SettingsView", () => {
     vi.unstubAllGlobals();
   });
 
+  it("starts Test in Stable on dev without waiting for restart", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: true,
+      profile: "dev",
+    });
+    const startSpy = vi.spyOn(api, "startTestInStable").mockResolvedValue({
+      ok: true,
+      restarting: false,
+    });
+    const waitSpy = vi.spyOn(api, "waitForServerRestart");
+    const replace = vi.fn();
+    vi.stubGlobal("location", {
+      ...window.location,
+      replace,
+    });
+    const onResult = vi.fn();
+
+    render(<SettingsView onResult={onResult} />);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Test in Stable" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Test in Stable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalledOnce());
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(
+      "Test in Stable started on stable Cockpit",
+      null,
+      false,
+    );
+
+    vi.unstubAllGlobals();
+  });
+
   it("reports a timeout when the server does not return after Test in Stable #850", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: true,
+      profile: "stable",
     });
     vi.spyOn(api, "startTestInStable").mockResolvedValue({
       ok: true,

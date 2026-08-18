@@ -108,7 +108,7 @@ test("settings Back returns to the dashboard", async ({ page }) => {
 
 test("settings Test in Stable confirms then pulls main and reloads", async ({ page }) => {
   await mockFetch(page, {
-    "/api/version": { version: "0.20.5", test_in_stable: true },
+    "/api/version": { version: "0.20.5", test_in_stable: true, profile: "stable" },
   });
   await page.goto("/app.html#/settings");
   await page.evaluate(() => sessionStorage.removeItem("ajax-e2e-test-in-stable-posted"));

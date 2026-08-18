@@ -75,12 +75,13 @@ pub(super) async fn respawn(
     state: &mut TaskSessionState,
     worktree_path: &Path,
     model: &str,
+    force: bool,
 ) -> Result<u64, String> {
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };
     let host_exited = client.host_exited();
-    if !slot_must_replace(state.acp_alive, &state.model, model, host_exited) {
+    if !force && !slot_must_replace(state.acp_alive, &state.model, model, host_exited) {
         return Ok(state.generation);
     }
     let resume_id = replace_resume_id(

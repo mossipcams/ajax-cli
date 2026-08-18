@@ -15,6 +15,7 @@ import {
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
 } from "./sessionChatSeed";
+import { isSessionModelChangeFailure } from "./sessionModel";
 
 type Dispatch = (action: SessionAction) => void;
 
@@ -108,7 +109,7 @@ export function useSessionTransport({
           },
           onEvent: (event) => {
             onActivity();
-            if (event.type === "error") {
+            if (event.type === "error" && isSessionModelChangeFailure(event.message)) {
               onSessionModelRejected?.();
             }
             // The socket cannot report why an upgrade was refused, so swap its
