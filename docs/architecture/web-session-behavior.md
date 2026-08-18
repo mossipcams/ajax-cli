@@ -210,11 +210,12 @@ existing paths.
 
 ## Session composer speech
 
-- The session Mic control keeps the **Mic** text label. At rest it is a
-  square-corner chip (`--radius-sm`, same family as terminal keys), not a pill:
-  filled with Soft Steel Blue (`--accent` / `--soft-steel-blue`, `#87afd7`) and
-  charcoal text (`--paper`). Send remains the accent-filled pill CTA
+- The session Mic control keeps the **Mic** text label. At rest it is plain
+  Soft Steel Blue text (`--accent` / `--soft-steel-blue`, `#87afd7`): no pill,
+  no fill, no border or background (`border-radius: 0` overrides the shared
+  composer button pill). Send remains the accent-filled pill CTA
   (`border-radius: 999px`).
 - While listening or pause-pending (`is-armed`) and while connecting
-  (`is-connecting`), Mic fills with `--warn` so the state change is obvious;
-  connecting must not look like a disabled no-op at reduced opacity.
+  (`is-connecting`), Mic stays text-only; the label may use `--warn` so the
+  state change is obvious. Hover and focus must not restore a filled chip.
+  Connecting must not look like a disabled no-op at reduced opacity.
