@@ -177,10 +177,45 @@ function verifyCi(ci, fail) {
 
   const jobs = ci.jobs ?? {};
 
-  const webSteps = JSON.stringify(jobs.web?.steps ?? []);
+  const webJob = jobs.web ?? {};
+  const webSteps = JSON.stringify(webJob.steps ?? []);
+  const webText = JSON.stringify(webJob);
   if (!webSteps.includes("git diff --exit-code crates/ajax-web/web/dist")) {
     fail(
       "ci.yml web job must fail when crates/ajax-web/web/dist is stale after web:build.",
+    );
+  }
+
+  if (webJob["timeout-minutes"] !== 20) {
+    fail("ci.yml web job must set timeout-minutes: 20.");
+  }
+
+  const container = webJob.container ?? {};
+  if (container.image !== "mcr.microsoft.com/playwright:v1.61.1-noble") {
+    fail(
+      "ci.yml web job must run in mcr.microsoft.com/playwright:v1.61.1-noble.",
+    );
+  }
+
+  if (container.options !== "--ipc=host") {
+    fail("ci.yml web job container must set options: --ipc=host.");
+  }
+
+  if (!webText.includes("safe.directory")) {
+    fail("ci.yml web job must configure git safe.directory for container checkout.");
+  }
+
+  if (!webSteps.includes("/root")) {
+    fail("ci.yml web job smoke step must set HOME=/root.");
+  }
+
+  if (
+    webSteps.includes("playwright install-deps") ||
+    webSteps.includes("playwright install webkit") ||
+    webSteps.includes("playwright-cache")
+  ) {
+    fail(
+      "ci.yml web job must not install or cache Playwright when using the container image.",
     );
   }
 

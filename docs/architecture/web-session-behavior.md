@@ -219,10 +219,23 @@ existing paths.
   applied twice.
 - No nested `position: fixed` pin on `.session-page.session-chat` inside the
   global band — double-applying `--app-top` strands the composer ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
-- Keyboard or composer resize is a layout change, not user scroll-up. If the
-  operator was pinned to the live bottom (`pinnedRef`, recent live-edge intent),
-  re-pin to `scrollHeight` after flex layout settles even when the live-edge
-  check fails mid-transition; if reading history, restore `scrollTop` once.
+- Keyboard or composer resize is a layout change, not user scroll-up. Before
+  the transition, capture the transcript geometry (`scrollTop`, `scrollHeight`,
+  `clientHeight`, live-edge intent). Poll until flex layout settles (stable
+  `scrollHeight` / `clientHeight`, no animation). While settling after keyboard
+  close, if the operator was at the live bottom (`pinnedRef` or recent live-edge
+  intent), keep `scrollTop = scrollHeight` each frame so growing `clientHeight`
+  does not paint a keyboard-sized gap; history mode leaves `scrollTop` untouched
+  until settle completes. Then restore once: live bottom → new live edge;
+  reading history → same visible content plus any `scrollHeight` delta from
+  content inserted above the viewport. Ignore Safari resize-generated scroll
+  events as user scrolling during the transition.
+- While the operator stays pinned (`pinned` / `pinnedRef`), transcript growth
+  from streaming or layout (items effect, thread `MutationObserver` for
+  scrollHeight growth, thread `ResizeObserver` for box resizes) keeps
+  `scrollTop = scrollHeight`. Keyboard restore to the live bottom re-asserts
+  `pinned`. Scroll-up clears `pinned`; unpinned readers are not yanked back
+  to the live edge.
   `useMobileKeyboard` clears keyboard geometry immediately on composer blur
   (focusout with no form control focused) and ignores stale visualViewport
   shrinks until a field is focused again, catching up when the viewport grows.
