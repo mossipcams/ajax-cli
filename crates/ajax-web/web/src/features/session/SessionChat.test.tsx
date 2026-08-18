@@ -349,6 +349,15 @@ describe("SessionChat smoke", () => {
     vi.useRealTimers();
   });
 
+  it("calls onOpenTerminal from the Ajax terminal control in task details", () => {
+    const onOpenTerminal = vi.fn();
+    mountChat({ onOpenTerminal });
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(screen.getByTestId("session-ajax-terminal"));
+    expect(onOpenTerminal).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("session-terminal-sheet")).not.toBeInTheDocument();
+  });
+
   it("shows the harness switch in the task details modal when the task has an agent", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
