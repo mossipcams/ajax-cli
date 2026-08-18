@@ -23,6 +23,8 @@ use ajax_core::{
     adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
     registry::Registry,
 };
+
+use crate::adapters::web_session_acp::is_unspecified_model;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
@@ -274,10 +276,12 @@ pub fn prepare_task_session<R: Registry>(
     }
 
     // Task metadata wins over a socket ?model= pin (#910). The URL fallback is
-    // only for tasks with no stored model, then the harness default.
+    // only for tasks with no stored model, then the harness default. Legacy
+    // stored `auto` is unspecified ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     let url_model = normalize_session_model(model).ok();
     let model = task
         .session_model()
+        .filter(|stored| !is_unspecified_model(Some(stored)))
         .map(str::to_string)
         .or_else(|| {
             url_model

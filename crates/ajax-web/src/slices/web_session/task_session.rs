@@ -127,7 +127,10 @@ pub(crate) struct TaskSessionState {
     pub(super) qualified_handle: String,
     pub(super) state_dir: PathBuf,
     pub(super) client: Option<AcpStdioClient>,
+    /// Normalized operator pin used for spawn and slot replacement.
     pub(super) model: String,
+    /// Harness-reported model id for protocol snapshots ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+    pub(super) applied_model: String,
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
@@ -212,6 +215,7 @@ pub(crate) fn spawn_task_session(
             state_dir,
             client: None,
             model: String::new(),
+            applied_model: String::new(),
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
@@ -433,21 +437,21 @@ fn answer_permission(
 
 fn attach_snapshot(
     state: &mut TaskSessionState,
-    model: String,
+    _model: String,
     client_cursor: Option<usize>,
 ) -> AttachSnapshot {
-    let effective_model = if state.model.is_empty() {
-        model
-    } else {
-        state.model.clone()
-    };
+    let snapshot_model = snapshot_applied_model(state);
     let (snapshot, replayed) =
-        build_attach(&state.log, effective_model, state.busy(), client_cursor);
+        build_attach(&state.log, snapshot_model, state.busy(), client_cursor);
     AttachSnapshot {
         generation: state.generation,
         snapshot,
         replayed,
     }
+}
+
+fn snapshot_applied_model(state: &TaskSessionState) -> String {
+    state.applied_model.clone()
 }
 
 fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64) -> OutboundBatch {
@@ -461,11 +465,7 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
     let snapshot = if generation_changed {
         Some(SessionSnapshot::new(
             state.log.absolute_next_cursor(),
-            if state.model.is_empty() {
-                "auto".to_string()
-            } else {
-                state.model.clone()
-            },
+            snapshot_applied_model(state),
             state.busy(),
             true,
             pending_permission(&state.log),

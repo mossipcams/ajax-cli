@@ -1,5 +1,6 @@
 //! Official ACP SDK connection actor behind the synchronous Web Session hub.
 
+use super::apply_model::{apply_model_pin, ApplyModelOutcome};
 use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
 use agent_client_protocol::{
     on_receive_notification, on_receive_request,
@@ -17,10 +18,7 @@ use agent_client_protocol::{
     },
     Agent, Client, ConnectionTo, Lines, Responder, UntypedMessage,
 };
-use ajax_core::{
-    adapters::{acp_launch_for_agent, parse_model_selection, AcpModelSelection},
-    models::AgentClient,
-};
+use ajax_core::models::AgentClient;
 use blocking::Unblock;
 use futures::{AsyncBufReadExt, AsyncWriteExt, StreamExt};
 use serde_json::Value;
@@ -41,6 +39,8 @@ pub(super) struct ConnectionReady {
     pub session_new_result: Value,
     pub load_session_advertised: bool,
     pub resumed: bool,
+    pub applied_model: String,
+    pub model_apply_error: Option<String>,
 }
 
 pub(super) enum ClientCommand {
@@ -297,20 +297,39 @@ async fn initialize_session(
             .await
             .map_err(|_| timeout_error("session/new"))?
             .map_err(|error| format!("ACP session/new failed: {error}"))?;
-            let value = serde_json::to_value(&response)
+            let mut value = serde_json::to_value(&response)
                 .map_err(|error| format!("invalid session/new response: {error}"))?;
+            if let Some(options) = response.config_options.as_ref() {
+                if let Ok(json) = serde_json::to_value(options) {
+                    if let Value::Object(ref mut map) = value {
+                        map.insert("configOptions".to_string(), json);
+                    }
+                }
+            }
             config_options = response.config_options;
             (response.session_id.to_string(), value)
         }
     };
     apply_permission_config(connection, agent, &session_id, config_options.as_deref()).await;
-    apply_model(connection, agent, &session_id, model).await;
+    let ApplyModelOutcome {
+        applied_model,
+        error: model_apply_error,
+    } = apply_model_pin(
+        connection,
+        &session_id,
+        &session_new_result,
+        config_options.as_deref(),
+        model,
+    )
+    .await;
 
     Ok(ConnectionReady {
         session_id,
         session_new_result,
         load_session_advertised,
         resumed,
+        applied_model,
+        model_apply_error,
     })
 }
 
@@ -404,48 +423,6 @@ async fn apply_permission_config(
     .await;
     if !matches!(result, Ok(Ok(_))) {
         tracing::warn!(target: "ajax_web", agent = ?agent, value, "ACP permission config refused");
-    }
-}
-
-async fn apply_model(
-    connection: &ConnectionTo<Agent>,
-    agent: AgentClient,
-    session_id: &str,
-    model: Option<&str>,
-) {
-    let Some(raw) = model.map(str::trim).filter(|model| !model.is_empty()) else {
-        return;
-    };
-    let Some(launch) = acp_launch_for_agent(agent) else {
-        return;
-    };
-    if raw == "auto" || matches!(launch.model_selection, AcpModelSelection::SpawnArg) {
-        return;
-    }
-    let Some(selection) = parse_model_selection(raw) else {
-        return;
-    };
-    let mut settings = vec![("model".to_string(), selection.model)];
-    settings.extend(selection.options);
-    for (config_id, value) in settings {
-        let request = SetSessionConfigOptionRequest::new(
-            session_id.to_string(),
-            config_id.clone(),
-            value.as_str(),
-        );
-        let result = tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            connection.send_request(request).block_task(),
-        )
-        .await;
-        if !matches!(result, Ok(Ok(_))) {
-            tracing::warn!(
-                target: "ajax_web",
-                agent = ?agent,
-                config_id = %config_id,
-                "ACP model selection refused"
-            );
-        }
     }
 }
 

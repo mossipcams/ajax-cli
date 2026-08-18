@@ -425,6 +425,50 @@ fn set_task_session_model_persists_on_a_provisioned_task() {
 }
 
 #[test]
+fn set_task_session_model_persists_none_for_auto() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("claude-opus-5"));
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    super::set_task_session_model(&mut context, "web/fix-login", "auto").unwrap();
+
+    let stored = context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+        .expect("task");
+    assert_eq!(stored.session_model(), None);
+}
+
+#[test]
+fn start_task_persists_none_for_auto_model() {
+    let mut context = context_with_managed_repo();
+    let mut runner = RecordingCommandRunner::default();
+
+    super::start_task(
+        &mut context,
+        &mut runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "cursor".to_string(),
+            request_id: String::new(),
+            orchestration_chat: true,
+            model: Some("auto".to_string()),
+        },
+    )
+    .unwrap();
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == "web/fix-login")
+        .expect("task created");
+    assert_eq!(task.session_model(), None);
+}
+
+#[test]
 fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
     let mut context = context_with_managed_repo();
     let mut runner = RecordingCommandRunner::default();

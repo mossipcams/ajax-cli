@@ -32,13 +32,21 @@ existing paths.
   `localStorage` preference on the WebSocket URL to override that metadata
   ([#910](https://github.com/mossipcams/ajax-cli/issues/910)). With no stored
   model, Cursor runs `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
-- Cursor takes its model on the spawn argv; Codex, Claude, and Pi take
-  `session/set_config_option` once the session exists (the host applies the model
-  id and any reasoning-level option separately). A harness that refuses the
-  selection keeps its own default and the session continues.
+- Task `session_model` is **desired** state. Protocol v2 `snapshot.model` is
+  **applied** state: the harness-reported model id after `session/new` or
+  resume/load and any in-band apply. It must not echo the attach-plan pin
+  ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+- Cursor takes its model on the spawn argv when the harness pins at spawn; every
+  harness (including Cursor) also applies an operator pin in-band when
+  `configOptions` or `models.availableModels` advertises a model control. A
+  refused or unprovable pin keeps the session, emits a typed `error` event, and
+  leaves `snapshot.model` on the harness-reported id (or empty), not the
+  rejected pin.
 - Changing the model while connected persists `session_model` on the task through
   a core-owned operation before the host replaces the ACP child; a persistence
   failure returns a typed `error` event and leaves the running child unchanged.
+  Persist `None` for Auto/unspecified; never store the literal string `auto` as
+  a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - Moving a task to another harness is refused unless it was launched over ACP,
   and drops the live ACP slot so the next attach spawns the new harness.
 - Ajax orchestration sessions are trusted local automation, and the Settings
@@ -104,9 +112,11 @@ existing paths.
   reducer (as a synthetic `ready` event for turn state), then cursor-bearing
   `event` envelopes for replay/live traffic.
 - The in-session picker reverts only on model-change failures from the host
-  (persistence refused, invalid model, and similar). Unrelated `error` events
-  during the next prompt must not restore the previous picker value
-  ([#942](https://github.com/mossipcams/ajax-cli/issues/942)).
+  (persistence refused, invalid model, refused/unprovable harness pin, and similar).
+  Unrelated `error` events during the next prompt must not restore the previous
+  picker value ([#942](https://github.com/mossipcams/ajax-cli/issues/942)). The
+  picker binds to `snapshot.model` (applied state), not task metadata
+  ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 
 ## Restart and transcript recovery
 

@@ -267,63 +267,46 @@ fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
     }
 
     let script = fake_acp_fixture();
-    for (agent, expected) in [
-        (
-            AgentClient::Codex,
-            "model:session/set_config_option:composer-2.5",
-        ),
-        (
-            AgentClient::Claude,
-            "model:session/set_config_option:composer-2.5",
-        ),
-    ] {
+    for agent in [AgentClient::Codex, AgentClient::Claude] {
         let dir = scratch_dir(&format!("model-in-band-{agent:?}"));
         with_test_acp_program(&script, || {
-            let (client, _report) =
+            let (_client, report) =
                 AcpStdioClient::spawn(agent, &dir, Some("composer-2.5"), None).expect("spawn");
-            let mut seen = Vec::new();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while Instant::now() < deadline {
-                match client.wait_event(Duration::from_millis(200)) {
-                    Some(AcpClientEvent::SessionUpdate(update)) => {
-                        seen.push(serde_json::to_string(&update).unwrap());
-                        if seen.iter().any(|text| text.contains(expected)) {
-                            return;
-                        }
-                    }
-                    Some(_) => {}
-                    None => {}
-                }
-            }
-            panic!("{agent:?} never selected its model in band; saw {seen:?}");
+            assert_eq!(report.applied_model, "composer-2.5");
+            assert!(
+                report.model_apply_error.is_none(),
+                "{agent:?} apply error: {:?}",
+                report.model_apply_error
+            );
         });
         let _ = fs::remove_dir_all(dir);
     }
 }
 
-// Cursor pins on argv, so it must not also ask over the wire.
+// Regression for #952: Cursor must apply in-band when session/new advertises model.
 #[test]
-fn spawn_does_not_select_in_band_for_cursor() {
-    let dir = scratch_dir("model-cursor-argv");
+fn cursor_applies_in_band_when_model_is_advertised_issue_952() {
+    let dir = scratch_dir("model-cursor-in-band-952");
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        let (client, _report) =
+        let (client, report) =
             AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some("composer-2.5"), None)
                 .expect("spawn");
-        let deadline = Instant::now() + Duration::from_secs(1);
+        assert_eq!(report.applied_model, "composer-2.5");
+        assert!(report.model_apply_error.is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             if let Some(AcpClientEvent::SessionUpdate(update)) =
                 client.wait_event(Duration::from_millis(100))
             {
-                assert!(
-                    !serde_json::to_string(&update)
-                        .unwrap()
-                        .contains("model:session/"),
-                    "cursor must not select in band: {update:?}"
-                );
+                let text = serde_json::to_string(&update).unwrap();
+                if text.contains("model:session/set_config_option:composer-2.5") {
+                    return;
+                }
             }
         }
+        panic!("cursor never applied its model in band when advertised");
     });
 
     let _ = fs::remove_dir_all(dir);

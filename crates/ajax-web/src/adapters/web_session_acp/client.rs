@@ -137,6 +137,9 @@ pub enum AcpClientEvent {
 pub struct SpawnReport {
     pub load_session_advertised: bool,
     pub resumed: bool,
+    /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+    pub applied_model: String,
+    pub model_apply_error: Option<String>,
 }
 
 pub struct AcpStdioClient {
@@ -205,6 +208,8 @@ impl AcpStdioClient {
             session_new_result,
             load_session_advertised,
             resumed,
+            applied_model,
+            model_apply_error,
         } = ready;
         if resumed {
             while event_rx.try_recv().is_ok() {}
@@ -222,6 +227,8 @@ impl AcpStdioClient {
         let report = SpawnReport {
             load_session_advertised,
             resumed,
+            applied_model,
+            model_apply_error,
         };
         Ok((client, report))
     }

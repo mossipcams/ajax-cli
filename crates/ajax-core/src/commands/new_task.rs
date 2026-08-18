@@ -226,7 +226,9 @@ pub fn task_from_new_request<R: Registry>(
     if request.skip_interactive_agent && acp_launch_for_agent(task.selected_agent).is_some() {
         task.set_skip_interactive_agent(true);
     }
-    task.set_session_model(request.model.as_deref());
+    task.set_session_model(super::set_session_model::normalize_persisted_session_model(
+        request.model.as_deref(),
+    ));
 
     Ok(task)
 }

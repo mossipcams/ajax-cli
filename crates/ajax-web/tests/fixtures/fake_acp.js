@@ -10,8 +10,24 @@ const resumeMode = process.argv.includes('--resume') || process.argv.includes('-
 const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const sessionId = 'fake-sess-1';
+let currentModel = 'harness-default';
+const modelRefuse = process.argv.includes('--model-refuse');
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
+
+function modelConfigOptions() {
+  return [{
+    id: 'model',
+    name: 'Model',
+    type: 'select',
+    currentValue: currentModel,
+    options: [
+      { value: 'harness-default', name: 'Harness default' },
+      { value: 'composer-2.5', name: 'Composer 2.5' },
+      { value: 'gpt-5.6-sol[medium]', name: 'GPT-5.6-Sol (medium)' },
+    ],
+  }];
+}
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -53,19 +69,19 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/new') {
-    send({ jsonrpc: '2.0', id, result: { sessionId } });
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        sessionId,
+        configOptions: modelConfigOptions(),
+      },
+    });
     if (malformedMode) process.stdout.write('{not-json}\n');
     return;
   }
-  // Model selection: echo what the client asked for so tests can assert the
-  // request shape each harness family uses.
-  if (method === 'session/set_model' || method === 'session/set_config_option') {
-    send({ jsonrpc: '2.0', id, result: { configOptions: [] } });
-    replayUpdate(`model:${method}:${params?.modelId ?? params?.value ?? ''}`);
-    return;
-  }
-  if (method === 'session/load') {
-    if (loadFail) {
+  if (method === 'session/load' || method === 'session/resume') {
+    if (method === 'session/load' && loadFail) {
       send({
         jsonrpc: '2.0',
         id,
@@ -73,16 +89,39 @@ function handleRequest(msg) {
       });
       return;
     }
+    if (method === 'session/resume' && resumeFail) {
+      send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'resume failed' } });
+      return;
+    }
     replayUpdate('replayed');
-    send({ jsonrpc: '2.0', id, result: {} });
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: { configOptions: modelConfigOptions() },
+    });
     return;
   }
-  if (method === 'session/resume') {
-    if (resumeFail) {
-      send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'resume failed' } });
-    } else {
-      send({ jsonrpc: '2.0', id, result: {} });
+  // Model selection: echo what the client asked for so tests can assert the
+  // request shape each harness family uses.
+  if (method === 'session/set_model' || method === 'session/set_config_option') {
+    const requested = params?.modelId ?? params?.value ?? '';
+    if (modelRefuse && requested && requested !== currentModel) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: 'model refused' },
+      });
+      return;
     }
+    if (params?.configId === 'model' || method === 'session/set_model') {
+      currentModel = requested || currentModel;
+    }
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: { configOptions: modelConfigOptions() },
+    });
+    replayUpdate(`model:${method}:${requested}`);
     return;
   }
   if (method === 'session/prompt') {

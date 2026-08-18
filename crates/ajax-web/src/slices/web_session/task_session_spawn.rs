@@ -58,10 +58,23 @@ pub(super) async fn acquire(
         &state.state_dir,
         &state.qualified_handle,
         Some(client.session_id()),
-        model,
+        &report.applied_model,
     );
     state.client = Some(client);
     state.model = model.to_string();
+    state.applied_model = report.applied_model.clone();
+    if let Some(error) = &report.model_apply_error {
+        log.append(vec![SessionServerEvent::Error {
+            message: error.clone(),
+        }]);
+        web_session_store::append_events(
+            &state.state_dir,
+            &state.qualified_handle,
+            &[SessionServerEvent::Error {
+                message: error.clone(),
+            }],
+        );
+    }
     state.generation = 0;
     state.reset_holders_to_one();
     state.log = log;
@@ -111,10 +124,16 @@ fn install_replaced_client(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
-        model,
+        &report.applied_model,
     );
     state.client = Some(new_client);
     state.model = model.to_string();
+    state.applied_model = report.applied_model.clone();
+    if let Some(error) = &report.model_apply_error {
+        state.append_to_log(vec![SessionServerEvent::Error {
+            message: error.clone(),
+        }]);
+    }
     state.generation = state.generation.saturating_add(1);
     state.acp_alive = true;
     Ok(())
