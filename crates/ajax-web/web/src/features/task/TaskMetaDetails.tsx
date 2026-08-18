@@ -1,14 +1,12 @@
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { formatDuration, relativeTime } from "@/shared/lib/state";
 import { copyText } from "@/shared/lib/clipboard";
-import { Button } from "@/shared/ui/button";
 import TestInDevPanel from "./TestInDevPanel";
 
 interface Props {
   detail: BrowserTaskDetail;
+  embedded?: boolean;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
-  showAjaxChat?: boolean;
-  onOpenAjaxChat?: () => void;
 }
 
 function MetaCopyCell({ value }: { value: string }) {
@@ -24,29 +22,15 @@ function MetaCopyCell({ value }: { value: string }) {
   );
 }
 
-export default function TaskMetaDetails({
-  detail,
-  onResult,
-  showAjaxChat = false,
-  onOpenAjaxChat,
-}: Props) {
+export default function TaskMetaDetails({ detail, embedded = false, onResult }: Props) {
   const nowSecs = () => Math.floor(Date.now() / 1000);
 
   function absoluteTime(unixSecs: number): string | undefined {
     return unixSecs ? new Date(unixSecs * 1000).toLocaleString() : undefined;
   }
 
-  return (
-    <details className="meta-details">
-      <summary>Task details</summary>
-      <div className="meta-details-body">
-        {showAjaxChat ? (
-          <div className="meta-details-actions" data-testid="task-ajax-chat-action">
-            <Button type="button" variant="secondary" onClick={() => onOpenAjaxChat?.()}>
-              Ajax chat
-            </Button>
-          </div>
-        ) : null}
+  const body = (
+      <div className="meta-details-body" data-testid={embedded ? "task-meta-details-embedded" : undefined}>
         {detail.repo === "ajax-cli" ? (
           <TestInDevPanel taskHandle={detail.qualified_handle} onResult={onResult} />
         ) : null}
@@ -111,6 +95,16 @@ export default function TaskMetaDetails({
           </>
         ) : null}
       </div>
+  );
+
+  if (embedded) {
+    return body;
+  }
+
+  return (
+    <details className="meta-details">
+      <summary>Task details</summary>
+      {body}
     </details>
   );
 }

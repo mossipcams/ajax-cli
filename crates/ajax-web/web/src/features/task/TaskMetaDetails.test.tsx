@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import TaskMetaDetails from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
@@ -118,19 +118,6 @@ describe("TaskMetaDetails", () => {
     expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
   });
 
-  it("shows Ajax chat inside task details when enabled", () => {
-    const onOpenAjaxChat = vi.fn();
-    render(
-      <TaskMetaDetails
-        detail={detail({ session_capable: true })}
-        showAjaxChat
-        onOpenAjaxChat={onOpenAjaxChat}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
-    expect(onOpenAjaxChat).toHaveBeenCalledOnce();
-  });
-
   it("does not render the harness switch inside task details", () => {
     render(<TaskMetaDetails detail={detail({ agent: "cursor" })} />);
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
@@ -168,6 +155,13 @@ describe("TaskMetaDetails", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: /attempts/i })).toBeInTheDocument();
+  });
+
+  it("renders embedded task metadata without the footer disclosure wrapper", () => {
+    render(<TaskMetaDetails detail={detail()} embedded />);
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(screen.getByTestId("task-meta-details-embedded")).toBeInTheDocument();
+    expect(screen.getByText("Branch")).toBeInTheDocument();
   });
 
   it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {

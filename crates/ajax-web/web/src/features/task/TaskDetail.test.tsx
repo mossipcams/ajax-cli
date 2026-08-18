@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { render, fireEvent, screen, act } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
+import taskTerminalSource from "./TaskTerminal?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -112,12 +113,18 @@ describe("TaskDetail", () => {
     expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
 
+  it("exposes a header Details control matching the session chat live head", () => {
+    render(<TaskDetail detail={detail()} />);
+    expect(screen.getByTestId("task-details")).toHaveClass("session-head-details");
+    expect(screen.getByTestId("task-details")).toHaveTextContent("Details");
+  });
+
   it("does not show the harness switch on the terminal task page", () => {
     render(<TaskDetail detail={detail({ agent: "cursor" })} />);
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
   });
 
-  it("shows Ajax chat in task details when orchestration chat is enabled and the task is session-capable", () => {
+  it("shows Ajax chat in the header Details sheet when orchestration chat is enabled and the task is session-capable", () => {
     const onOpenChat = vi.fn();
     render(
       <TaskDetail
@@ -126,7 +133,26 @@ describe("TaskDetail", () => {
         onOpenChat={onOpenChat}
       />,
     );
-    fireEvent.click(screen.getByText("Task details"));
+    expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("task-details"));
+    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
+    expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("reaches Ajax chat via Details without opening the footer Task details disclosure", () => {
+    const onOpenChat = vi.fn();
+    render(
+      <TaskDetail
+        detail={detail({ session_capable: true })}
+        orchestrationChat
+        onOpenChat={onOpenChat}
+      />,
+    );
+    const footerDisclosure = screen.getByRole("group");
+    expect(footerDisclosure).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByTestId("task-details"));
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+    expect(footerDisclosure).not.toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
@@ -135,12 +161,13 @@ describe("TaskDetail", () => {
     render(
       <TaskDetail detail={detail({ session_capable: true })} orchestrationChat={false} onOpenChat={vi.fn()} />,
     );
-    fireEvent.click(screen.getByText("Task details"));
+    fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
 
     render(
       <TaskDetail detail={detail({ session_capable: false })} orchestrationChat onOpenChat={vi.fn()} />,
     );
+    fireEvent.click(screen.getAllByTestId("task-details").at(-1)!);
     expect(screen.queryAllByRole("button", { name: "Ajax chat" })).toHaveLength(0);
   });
 
@@ -331,7 +358,26 @@ describe("TaskDetail projection surface", () => {
   it("keeps the details line flush against the terminal on mobile", () => {
     const mobileBlock = taskDetailMobileBlock();
 
-    expect(mobileBlock).toMatch(/\.meta-details\s*\{[^}]*margin-top:\s*0/);
+    expect(mobileBlock).toMatch(/\.task-meta-chrome\s*\{[^}]*margin-top:\s*0/);
+  });
+
+  it("keyboard-open hides footer meta chrome so hotkeys flush to the band bottom", () => {
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.task-meta-chrome\s*\{[^}]*display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.task-meta-chrome[\s\S]*?display:\s*none/,
+    );
+  });
+
+  it("marks footer meta-details inert during phone fullscreen expand", () => {
+    const inertBody =
+      taskTerminalSource.match(
+        /const applyExpandedInert\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n {2}\};/,
+      )?.[1] ?? "";
+
+    expect(inertBody).toMatch(/querySelectorAll<HTMLElement>\(["']\.meta-details["']\)/);
+    expect(inertBody).toMatch(/el\.inert\s*=\s*true/);
   });
 
   it("keeps the mobile interact panel to a single row", () => {
