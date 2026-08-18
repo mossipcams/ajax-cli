@@ -1927,13 +1927,13 @@ html.keyboard-open .session-composer textarea {
     margin-top: 0;
   }
 
-  html.keyboard-open .task-detail .meta-details {
+  html.keyboard-open .task-detail .task-meta-chrome {
     display: none;
   }
 
   html.terminal-expanded .task-detail .detail-header,
   html.terminal-expanded .task-detail .interact-panel,
-  html.terminal-expanded .task-detail .meta-details {
+  html.terminal-expanded .task-detail .task-meta-chrome {
     display: none;
   }
 
@@ -3282,9 +3282,16 @@ html.keyboard-open .session-composer textarea {
   overflow-wrap: anywhere;
 }
 
-.detail-header .interact-pill {
+.detail-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex: none;
   margin-left: auto;
+}
+
+.detail-header .interact-pill {
+  flex: none;
 }
 
 /* STATUS — CLI cockpit glyph + label (▸ ? ! ✓ ·), painted with the tone
@@ -3358,6 +3365,25 @@ html.keyboard-open .session-composer textarea {
 }
 
 /* META DETAILS ---------------------------------------------------------- */
+.task-meta-chrome {
+  margin-top: 18px;
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+}
+
+.task-meta-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.task-meta-chrome .meta-details {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
+}
+
 .meta-details {
   margin-top: 18px;
   border-top: 1px solid var(--rule);
@@ -3564,11 +3590,16 @@ html.keyboard-open .session-composer textarea {
   .detail-title { font-size: var(--text-body-sm); line-height: 1.2; }
 
   /* The details hairline sits flush under the terminal hotbar. */
-  .meta-details {
+  .task-meta-chrome {
     margin-top: 0;
     padding-top: 10px;
     padding-left: calc(12px + env(safe-area-inset-left));
     padding-right: calc(12px + env(safe-area-inset-right));
+  }
+
+  .task-meta-chrome .meta-details {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .detail-grid {

@@ -1,7 +1,10 @@
-import { lazy, Suspense, useRef } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { statusMeta } from "@/shared/lib/state";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import FullscreenLayer from "@/shared/ui/FullscreenLayer";
+import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
+import { Button } from "@/shared/ui/button";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import TaskMetaDetails from "./TaskMetaDetails";
@@ -54,6 +57,7 @@ export default function TaskDetail({
 
   const showAjaxChat =
     orchestrationChat && detail.session_capable !== false && Boolean(onOpenChat);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <div
@@ -71,7 +75,17 @@ export default function TaskDetail({
           ← Back
         </button>
         <h1 className="detail-title">{detail.title || detail.qualified_handle}</h1>
-        <span className={`interact-pill tone-${meta.tone}`}>{meta.label}</span>
+        <div className="detail-header-controls">
+          <button
+            type="button"
+            className="session-head-details"
+            data-testid="task-details"
+            onClick={() => setDetailsOpen(true)}
+          >
+            Details
+          </button>
+          <span className={`interact-pill tone-${meta.tone}`}>{meta.label}</span>
+        </div>
       </div>
 
       <section
@@ -112,12 +126,61 @@ export default function TaskDetail({
         </Suspense>
       </div>
 
-      <TaskMetaDetails
-        detail={detail}
-        onResult={onResult}
-        showAjaxChat={showAjaxChat}
-        onOpenAjaxChat={onOpenChat}
-      />
+      <div className="task-meta-chrome">
+        <TaskMetaDetails detail={detail} onResult={onResult} />
+      </div>
+
+      {detailsOpen ? (
+        <FullscreenLayer zIndex={50}>
+          <Sheet open onOpenChange={(open) => !open && setDetailsOpen(false)}>
+            <SheetContent asChild aria-describedby={undefined}>
+              <div
+                className="session-sheet-scrim"
+                onPointerDown={(event) => {
+                  if (event.target === event.currentTarget) setDetailsOpen(false);
+                }}
+              >
+                <div
+                  className="session-details-sheet"
+                  data-testid="task-details-sheet"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Task details"
+                >
+                  <div className="session-sheet-header">
+                    <SheetTitle asChild>
+                      <h2>Task details</h2>
+                    </SheetTitle>
+                    <Button type="button" variant="secondary" onClick={() => setDetailsOpen(false)}>
+                      Close
+                    </Button>
+                  </div>
+
+                  <div className="session-details-body">
+                    <TaskMetaDetails detail={detail} onResult={onResult} embedded />
+
+                    {showAjaxChat ? (
+                      <div className="session-sheet-tools" data-testid="task-ajax-chat-action">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          data-testid="task-ajax-chat"
+                          onClick={() => {
+                            setDetailsOpen(false);
+                            onOpenChat?.();
+                          }}
+                        >
+                          Ajax chat
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </FullscreenLayer>
+      ) : null}
     </div>
   );
 }
