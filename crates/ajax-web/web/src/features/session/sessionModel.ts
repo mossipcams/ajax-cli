@@ -3,6 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 export const SESSION_MODEL_STORAGE_KEY = "ajax.web.session.model";
 export const DEFAULT_SESSION_MODEL = "auto";
 
+/** Harness id the session models API expects, regardless of task-detail casing. */
+export function normalizeSessionAgent(agent?: string): string {
+  const trimmed = (agent ?? "cursor").trim().toLowerCase();
+  return trimmed || "cursor";
+}
+
 const SESSION_MODEL_EVENT = "ajax:session-model";
 
 export function readSessionModel(): string {
@@ -122,32 +128,32 @@ function fallbackCatalog(agent: string): SessionModelCatalog {
 
 /** Models the given harness can run; each harness advertises its own list. */
 export async function fetchSessionModels(agent = "cursor"): Promise<SessionModelCatalog> {
-  try {
-    const response = await fetch(`/api/session/models?agent=${encodeURIComponent(agent)}`, {
-      credentials: "same-origin",
-    });
-    if (!response.ok) return fallbackCatalog(agent);
-    const body = (await response.json()) as {
-      models?: SessionModelOption[];
-      default?: string;
-      reasoning?: SessionModelGroup;
-      error?: string;
-    };
-    if (!Array.isArray(body.models) || body.models.length === 0) {
-      return body.error
-        ? { models: [], default: "", error: body.error }
-        : fallbackCatalog(agent);
-    }
-    return {
-      models: body.models.filter(
-        (m) => m && typeof m.id === "string" && typeof m.label === "string",
-      ),
-      default: typeof body.default === "string" ? body.default : "",
-      ...(body.reasoning && Array.isArray(body.reasoning.options)
-        ? { reasoning: body.reasoning }
-        : {}),
-    };
-  } catch {
-    return fallbackCatalog(agent);
+  const harness = normalizeSessionAgent(agent);
+  const response = await fetch(`/api/session/models?agent=${encodeURIComponent(harness)}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`session models request failed (${response.status})`);
   }
+  const body = (await response.json()) as {
+    models?: SessionModelOption[];
+    default?: string;
+    reasoning?: SessionModelGroup;
+    error?: string;
+  };
+  if (!Array.isArray(body.models) || body.models.length === 0) {
+    return body.error
+      ? { models: [], default: "", error: body.error }
+      : fallbackCatalog(harness);
+  }
+  return {
+    models: body.models.filter(
+      (m) => m && typeof m.id === "string" && typeof m.label === "string",
+    ),
+    default: typeof body.default === "string" ? body.default : "",
+    ...(body.reasoning && Array.isArray(body.reasoning.options)
+      ? { reasoning: body.reasoning }
+      : {}),
+  };
 }

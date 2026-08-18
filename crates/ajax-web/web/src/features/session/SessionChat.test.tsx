@@ -579,4 +579,37 @@ describe("SessionChat smoke", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Low" }));
     expect(transport.setModel).toHaveBeenCalledWith("opus|effort=low");
   });
+
+  // Regression for #948: task details must list the full harness catalog, not Auto
+  // plus the live session model when the API advertises more.
+  it("lists the full harness catalog in task details (#948)", async () => {
+    const catalog = {
+      models: Array.from({ length: 8 }, (_, index) => ({
+        id: `model-${index}`,
+        label: `Catalog Model ${index}`,
+      })),
+      default: "model-0",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => catalog,
+      }),
+    );
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    act(() => ready?.("model-2"));
+    fireEvent.click(screen.getByTestId("session-details"));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
+        catalog.models.length,
+      );
+    });
+    expect(screen.getByRole("radio", { name: "Catalog Model 2" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
 });
