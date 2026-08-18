@@ -157,14 +157,15 @@ describe("SessionChat smoke", () => {
     expect(composer).toHaveFocus();
   });
 
-  it("styles the idle mic as a square-corner accent chip, not a pill", () => {
+  it("styles the idle mic as accent text only, not a pill", () => {
     const micCss =
       stylesSource.match(/\.session-composer-mic\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(micCss).toMatch(/border-radius:\s*var\(--radius-sm\)/);
+    expect(micCss).toMatch(/border-radius:\s*0/);
     expect(micCss).not.toMatch(/border-radius:\s*999px/);
-    expect(micCss).toMatch(/background:\s*var\(--accent\)/);
-    expect(micCss).toMatch(/border-color:\s*var\(--accent\)/);
-    expect(micCss).toMatch(/color:\s*var\(--paper\)/);
+    expect(micCss).toMatch(/background:\s*transparent/);
+    expect(micCss).toMatch(/border:\s*none/);
+    expect(micCss).toMatch(/color:\s*var\(--accent\)/);
+    expect(micCss).not.toMatch(/background:\s*var\(--accent\)/);
 
     const sendCss =
       stylesSource.match(/\.session-composer-send\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -174,7 +175,7 @@ describe("SessionChat smoke", () => {
     );
   });
 
-  it("fills the mic with warn while listening", () => {
+  it("shows warn text while listening without a filled chip", () => {
     vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
       speechModel: {
         state: "listening",
@@ -198,7 +199,7 @@ describe("SessionChat smoke", () => {
     expect(mic).toHaveTextContent("Mic");
   });
 
-  it("fills the mic with warn while connecting without looking disabled-dead", () => {
+  it("shows warn text while connecting without looking disabled-dead", () => {
     vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
       speechModel: {
         state: "connecting",

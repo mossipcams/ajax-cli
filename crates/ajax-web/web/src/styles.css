@@ -1448,17 +1448,33 @@ html.keyboard-open .session-composer {
 }
 
 .session-composer-mic {
-  border-radius: var(--radius-sm);
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--paper);
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+}
+
+.session-composer-mic:hover,
+.session-composer-mic:focus-visible {
+  border: none;
+  background: transparent;
+  color: var(--accent);
 }
 
 .session-composer-mic.is-armed,
 .session-composer-mic.is-connecting {
-  border-color: var(--warn);
-  background: var(--warn);
-  color: var(--paper);
+  border: none;
+  background: transparent;
+  color: var(--warn);
+}
+
+.session-composer-mic.is-armed:hover,
+.session-composer-mic.is-armed:focus-visible,
+.session-composer-mic.is-connecting:hover,
+.session-composer-mic.is-connecting:focus-visible {
+  border: none;
+  background: transparent;
+  color: var(--warn);
 }
 
 .session-composer-mic.is-connecting:disabled {
