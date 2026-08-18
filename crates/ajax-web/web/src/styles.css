@@ -351,7 +351,8 @@ header .bar h1 {
 
 /* Nav hidden: sit just above the home indicator instead of a dead 72px band. */
 html.keyboard-open .result-panel,
-html.terminal-expanded .result-panel {
+html.terminal-expanded .result-panel,
+.app-viewport:has(.app-shell--session) .result-panel {
   bottom: calc(12px + env(safe-area-inset-bottom));
 }
 

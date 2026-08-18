@@ -514,6 +514,24 @@ describe("SessionChat smoke", () => {
     expect(thread.scrollTop).toBe(1500);
   });
 
+  // Regression for #947: Drop confirm arms in the shell ResultPanel; the details
+  // sheet (FullscreenLayer z-index 50) must close so Confirm is reachable.
+  it("closes the task details sheet when Drop confirm arms (#947)", () => {
+    const { rerender } = mountChat({ pendingConfirmAction: null });
+    fireEvent.click(screen.getByTestId("session-details"));
+    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+
+    rerender(
+      <SessionChat
+        handle="web/fix-login"
+        detail={taskDetail as BrowserTaskDetail}
+        detailStatus="ready"
+        pendingConfirmAction="drop"
+      />,
+    );
+    expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
+  });
+
   // Regression for #936: native <select> in the Radix task-details sheet was not
   // operable, and composite session_model values did not show as selected.
   it("shows the live session model as selected and changes it from task details (#936)", async () => {
