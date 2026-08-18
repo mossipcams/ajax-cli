@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Button } from "@/shared/ui/button";
 import {
   decodeModelSelection,
   encodeModelSelection,
@@ -32,7 +33,7 @@ export default function ModelPicker({
   onChange,
   onCatalog,
 }: Props) {
-  const { data: catalog, isPending } = useSessionModelsQuery(agent);
+  const { data: catalog, isPending, isError, refetch } = useSessionModelsQuery(agent);
   const listRef = useRef<HTMLDivElement>(null);
   const catalogNotifiedRef = useRef<string | null>(null);
 
@@ -53,6 +54,17 @@ export default function ModelPicker({
       // Optional call: jsdom has no scrollIntoView.
       ?.scrollIntoView?.({ block: "nearest" });
   }, [model, catalog]);
+
+  if (isError) {
+    return (
+      <p className="sheet-error" data-testid="model-catalog-error">
+        Could not read models from {agentLabel}.{" "}
+        <Button type="button" variant="secondary" onClick={() => void refetch()}>
+          Retry
+        </Button>
+      </p>
+    );
+  }
 
   if (isPending || catalog === undefined) {
     return <p className="sheet-note">Reading models from {agentLabel}…</p>;

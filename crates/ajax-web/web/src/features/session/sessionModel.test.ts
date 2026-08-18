@@ -4,6 +4,7 @@ import {
   SESSION_MODEL_STORAGE_KEY,
   fetchSessionModels,
   isSessionModelChangeFailure,
+  normalizeSessionAgent,
   readSessionModel,
   writeSessionModel,
 } from "./sessionModel";
@@ -74,17 +75,36 @@ describe("sessionModel", () => {
     });
   });
 
-  it("asks for the requested harness and offers Cursor Auto when it cannot answer", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+  it("asks for the normalized harness and rejects when the API cannot answer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
     vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchSessionModels("cursor")).rejects.toThrow("session models request failed");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("agent=cursor");
+
+    await expect(fetchSessionModels("Codex")).rejects.toThrow("session models request failed");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("agent=codex");
+  });
+
+  it("normalizes harness ids for catalog lookup", () => {
+    expect(normalizeSessionAgent("Cursor")).toBe("cursor");
+    expect(normalizeSessionAgent("  ")).toBe("cursor");
+  });
+
+  it("offers Cursor Auto when the harness answers with an empty list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ models: [], default: "" }),
+      }),
+    );
 
     await expect(fetchSessionModels("cursor")).resolves.toEqual({
       models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
       default: DEFAULT_SESSION_MODEL,
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("agent=cursor");
 
-    // A bridge harness has no Auto sentinel: an empty catalog means "harness picks".
     await expect(fetchSessionModels("codex")).resolves.toEqual({ models: [], default: "" });
   });
 });

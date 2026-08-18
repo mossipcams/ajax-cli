@@ -133,6 +133,10 @@ existing paths.
   WebSocket URL; task `session_model` metadata and the host attach plan decide
   the model. The preference may still be updated from `ready` so it seeds the
   New Task picker for the next task only.
+- New Task and task-details model pickers list the full harness catalog from
+  `GET /api/session/models`. A failed catalog read shows an operator-visible
+  error with retry; it must not fall back to Auto plus the live session model
+  ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
   Message, thought, tool, plan, mode, configuration, session-info, and usage
   updates have explicit mappings; unsupported capability announcements are
