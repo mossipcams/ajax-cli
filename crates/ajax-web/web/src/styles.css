@@ -564,6 +564,17 @@ html.terminal-expanded .result-panel {
   min-height: 0;
 }
 
+/* Bounded flex column: LiveHead + transcript scroller + composer sibling. */
+.session-chat-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
 /* Starter keeps a dedicated header; the chat route folds back/title into the
    live head so chrome stays one strip. */
 .session-header {
@@ -3652,6 +3663,17 @@ html.keyboard-open .app-viewport {
   height: var(--app-height, var(--app-band-height, 100dvh));
   max-height: var(--app-height, var(--app-band-height, 100dvh));
   z-index: 30;
+}
+
+/* Session chat owns its band via session-chat-surface padding; skip the global
+   fixed pin so geometry is not double-owned (#877). */
+html[data-session-viewport="owned"].keyboard-open .app-viewport {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  height: auto;
+  max-height: none;
 }
 
 /* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
