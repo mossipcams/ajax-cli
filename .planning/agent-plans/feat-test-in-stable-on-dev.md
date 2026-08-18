@@ -41,5 +41,11 @@ User requested the missing Settings button immediately. Implement now.
 ```bash
 rtk cargo nextest run -p ajax-web -- adapters::server::tests test_in_stable
 rtk cargo nextest run -p ajax-web -- test_in_stable axum_router_reports_shell_version
-rtk npm run web:test -- --run src/features/settings/SettingsView.test.tsx src/shared/lib/api.test.ts
+rtk npm run web:test -- --run src/features/settings/SettingsView.test.tsx
 ```
+
+Results (2026-08-18): all three passed (21 + 11 Rust, 17 Vitest).
+
+## PR
+
+https://github.com/mossipcams/ajax-cli/pull/946
