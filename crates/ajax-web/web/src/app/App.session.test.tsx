@@ -81,6 +81,7 @@ describe("App session routing", () => {
   });
 
   it("redirects #/session/<handle> to the task when orchestration chat is off", async () => {
+    writeOrchestrationChatEnabled(false);
     let wsConstructCount = 0;
     vi.stubGlobal(
       "WebSocket",
@@ -105,6 +106,7 @@ describe("App session routing", () => {
   });
 
   it("redirects #/session to the dashboard when orchestration chat is off", async () => {
+    writeOrchestrationChatEnabled(false);
     stubFetch();
     render(<App />);
     await screen.findByText("Fix login");

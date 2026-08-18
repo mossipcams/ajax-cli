@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import TaskMetaDetails from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
@@ -116,6 +116,19 @@ describe("TaskMetaDetails", () => {
   it("omits the annotations block when the task has none", () => {
     render(<TaskMetaDetails detail={detail()} />);
     expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
+  });
+
+  it("shows Ajax chat inside task details when enabled", () => {
+    const onOpenAjaxChat = vi.fn();
+    render(
+      <TaskMetaDetails
+        detail={detail({ session_capable: true })}
+        showAjaxChat
+        onOpenAjaxChat={onOpenAjaxChat}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
+    expect(onOpenAjaxChat).toHaveBeenCalledOnce();
   });
 
   it("does not render the harness switch inside task details", () => {
