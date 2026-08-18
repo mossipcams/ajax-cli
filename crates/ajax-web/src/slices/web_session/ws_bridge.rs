@@ -12,7 +12,8 @@ use std::{
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
-pub(crate) const MAX_SESSION_FRAME_BYTES: usize = 4096;
+/// Per-frame WebSocket ceiling for session client messages (prompts, cancel, etc.).
+pub(crate) const MAX_SESSION_FRAME_BYTES: usize = 256 * 1024;
 pub(crate) const SESSION_PING_INTERVAL: Duration = Duration::from_secs(20);
 
 pub(crate) fn should_send_keepalive(since_last_write: Duration) -> bool {

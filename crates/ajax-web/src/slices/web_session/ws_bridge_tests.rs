@@ -16,8 +16,8 @@ fn fake_acp_fixture() -> PathBuf {
 }
 
 #[test]
-fn max_session_frame_bytes_is_4096() {
-    assert_eq!(MAX_SESSION_FRAME_BYTES, 4096);
+fn max_session_frame_bytes_is_256_kib() {
+    assert_eq!(MAX_SESSION_FRAME_BYTES, 256 * 1024);
 }
 
 #[test]

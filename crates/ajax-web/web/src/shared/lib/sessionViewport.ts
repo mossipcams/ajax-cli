@@ -5,6 +5,50 @@ export const MIN_USABLE_VIEWPORT_PX = 50;
 export const SESSION_PIN_THRESHOLD_PX = 48;
 export const SESSION_VIEWPORT_ATTR = "data-session-viewport";
 
+/** Transcript scroll snapshot captured before a keyboard or layout transition. */
+export interface TranscriptGeometry {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  atBottom: boolean;
+}
+
+export function transcriptAtBottom(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+  threshold = SESSION_PIN_THRESHOLD_PX,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight < threshold;
+}
+
+export function captureTranscriptGeometry(node: HTMLDivElement): TranscriptGeometry {
+  const { scrollTop, scrollHeight, clientHeight } = node;
+  return {
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+    atBottom: transcriptAtBottom(scrollTop, scrollHeight, clientHeight),
+  };
+}
+
+/**
+ * Restore equivalent transcript position after layout settles. No animation.
+ * At-bottom → new live edge; history → same visible content plus any
+ * scrollHeight growth above the viewport.
+ */
+export function restoreTranscriptGeometry(
+  node: HTMLDivElement,
+  before: TranscriptGeometry,
+): void {
+  if (before.atBottom) {
+    node.scrollTop = node.scrollHeight;
+    return;
+  }
+  const heightDelta = node.scrollHeight - before.scrollHeight;
+  node.scrollTop = before.scrollTop + heightDelta;
+}
+
 /** Tell global keyboard CSS that session chat owns its band geometry. */
 export function claimSessionViewportOwnership(): void {
   if (typeof document === "undefined") return;
