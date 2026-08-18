@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   decodeModelSelection,
   encodeModelSelection,
-  fetchSessionModels,
   type SessionModelCatalog,
 } from "./sessionModel";
+import { useSessionModelsQuery } from "./useSessionModelsQuery";
 
 interface Props {
   /** Harness whose own catalog to list. */
@@ -23,24 +23,15 @@ interface Props {
  * expose it as their own config option, so it needs its own list.
  */
 export default function ModelPicker({ agent, agentLabel, value, onChange, onCatalog }: Props) {
-  const [catalog, setCatalog] = useState<SessionModelCatalog | null>(null);
+  const { data: catalog, isPending } = useSessionModelsQuery(agent);
   const listRef = useRef<HTMLDivElement>(null);
+  const catalogNotifiedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    setCatalog(null);
-    void fetchSessionModels(agent).then((next) => {
-      if (cancelled) return;
-      setCatalog(next);
-      onCatalog?.(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // onCatalog is a notification, not an input: re-fetching on identity change
-    // would restart the handshake on every parent render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent]);
+    if (!catalog || catalogNotifiedRef.current === agent) return;
+    catalogNotifiedRef.current = agent;
+    onCatalog?.(catalog);
+  }, [agent, catalog, onCatalog]);
 
   const { model, options } = decodeModelSelection(value);
 
@@ -54,7 +45,7 @@ export default function ModelPicker({ agent, agentLabel, value, onChange, onCata
       ?.scrollIntoView?.({ block: "nearest" });
   }, [model, catalog]);
 
-  if (catalog === null) {
+  if (isPending || catalog === undefined) {
     return <p className="sheet-note">Reading models from {agentLabel}…</p>;
   }
 

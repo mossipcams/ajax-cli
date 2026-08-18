@@ -39,6 +39,7 @@ import { usePullToRefresh } from "@/shared/hooks/usePullToRefresh";
 import { useVersionMonitor } from "@/shared/hooks/useVersionMonitor";
 import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
 import { useTaskDetailResource } from "@/features/task/useTaskDetailResource";
+import { useTaskOperationMutation } from "@/features/task/useTaskOperationMutation";
 import {
   consumeSwipeEnterDirection,
   navigateHashWithEnter,
@@ -103,6 +104,7 @@ export default function App() {
     markConnected,
   });
   const { updateAvailable, checkVersion } = useVersionMonitor();
+  const executeOperation = useTaskOperationMutation();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
@@ -242,6 +244,7 @@ export default function App() {
         },
       },
       dropHandles,
+      executeOperation,
     );
   }
 

@@ -177,6 +177,13 @@ function verifyCi(ci, fail) {
 
   const jobs = ci.jobs ?? {};
 
+  const webSteps = JSON.stringify(jobs.web?.steps ?? []);
+  if (!webSteps.includes("git diff --exit-code crates/ajax-web/web/dist")) {
+    fail(
+      "ci.yml web job must fail when crates/ajax-web/web/dist is stale after web:build.",
+    );
+  }
+
   for (const job of HEAVY_JOBS) {
     if (!jobs[job]) {
       fail(`ci.yml must define the ${job} job.`);

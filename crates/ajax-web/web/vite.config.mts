@@ -95,5 +95,12 @@ export default defineConfig({
     globals: true,
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["src/test-setup.ts"],
+    alias: {
+      "@testing-library/react": join(root, "src/test/testing-library-shim.tsx"),
+      "@testing-library/react-original": join(
+        root,
+        "../../../node_modules/@testing-library/react",
+      ),
+    },
   },
 });

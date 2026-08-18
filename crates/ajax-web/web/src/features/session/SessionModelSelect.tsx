@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import {
   DEFAULT_SESSION_MODEL,
-  fetchSessionModels,
   type SessionModelCatalog,
 } from "./sessionModel";
+import { useSessionModelsQuery } from "./useSessionModelsQuery";
 
 interface Props {
   id: string;
@@ -16,20 +16,14 @@ interface Props {
 }
 
 export default function SessionModelSelect({ id, value, disabled, agent, onChange }: Props) {
-  const [catalog, setCatalog] = useState<SessionModelCatalog>({
-    models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
-    default: DEFAULT_SESSION_MODEL,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchSessionModels(agent).then((next) => {
-      if (!cancelled) setCatalog(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [agent]);
+  const fallbackCatalog = useMemo<SessionModelCatalog>(
+    () => ({
+      models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
+      default: DEFAULT_SESSION_MODEL,
+    }),
+    [],
+  );
+  const { data: catalog = fallbackCatalog } = useSessionModelsQuery(agent ?? "cursor");
 
   const options = catalog.models;
   const known = options.some((option) => option.id === value);

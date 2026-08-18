@@ -1,7 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ErrorBoundary } from "@/shared/ui/ErrorBoundary";
+import { queryClient } from "@/shared/lib/queryClient";
 import { initTelemetry } from "@/shared/lib/telemetry";
 import "../styles.css";
 
@@ -12,7 +14,9 @@ if (el) {
   createRoot(el).render(
     <StrictMode>
       <ErrorBoundary>
-        <App />
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
       </ErrorBoundary>
     </StrictMode>,
   );
