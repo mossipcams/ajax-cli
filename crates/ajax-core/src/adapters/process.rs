@@ -8,6 +8,21 @@ use std::{
 
 use super::command::{CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec};
 
+pub const AMBIENT_GIT_ENV_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+pub fn clear_ambient_git_env(process: &mut Command) {
+    for variable in AMBIENT_GIT_ENV_VARS {
+        process.env_remove(variable);
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProcessCommandRunner;
 
@@ -19,8 +34,8 @@ impl CommandRunner for ProcessCommandRunner {
         if let Some(cwd) = &command.cwd {
             process.current_dir(cwd);
         }
-        if command.program == "git" {
-            clear_repo_local_git_env(&mut process);
+        if command_invokes_git(command) {
+            clear_ambient_git_env(&mut process);
         }
         let outcome = match command.mode {
             CommandMode::Capture => run_capture(process, command),
@@ -149,17 +164,16 @@ fn run_inherit_stdio(mut process: Command) -> Result<CommandOutput, CommandRunEr
     })
 }
 
-fn clear_repo_local_git_env(process: &mut Command) {
-    for variable in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    ] {
-        process.env_remove(variable);
+fn command_invokes_git(command: &CommandSpec) -> bool {
+    if command.program == "git" {
+        return true;
     }
+
+    command.program == "sh"
+        && command
+            .args
+            .iter()
+            .any(|arg| arg.contains("git -C") || arg.contains("git -c "))
 }
 
 fn timing_logging_enabled() -> bool {
@@ -367,5 +381,102 @@ mod tests {
         );
         assert!(line.contains(" 1234ms"));
         assert!(line.contains('…'));
+    }
+
+    fn git_with_cleared_env(args: &[&str]) -> std::process::Output {
+        let mut command = std::process::Command::new("git");
+        super::clear_ambient_git_env(&mut command);
+        command
+            .args(args)
+            .output()
+            .expect("git command should spawn")
+    }
+
+    fn poison_repo_config_with_bare_and_worktree(repo_path: &std::path::Path, worktree: &str) {
+        let config_path = repo_path.join(".git/config");
+        let mut config = std::fs::read_to_string(&config_path).expect("repo config should exist");
+        config.push_str(&format!("\n\tbare = true\n\tworktree = {worktree}\n"));
+        std::fs::write(config_path, config).expect("repo config should update");
+    }
+
+    #[test]
+    fn sh_wrapped_git_with_c_ignores_inherited_git_dir() {
+        // #941
+        let root = std::env::temp_dir().join(format!(
+            "ajax-sh-git-c-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let repo = root.as_path();
+        let repo_str = repo.to_str().unwrap();
+
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "init"])
+                .status
+                .success(),
+            "git init failed"
+        );
+        assert!(git_with_cleared_env(&[
+            "-C",
+            repo_str,
+            "config",
+            "user.email",
+            "test@example.com"
+        ])
+        .status
+        .success());
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "config", "user.name", "test"])
+                .status
+                .success()
+        );
+        std::fs::write(repo.join("README.md"), "init\n").unwrap();
+        assert!(git_with_cleared_env(&["-C", repo_str, "add", "README.md"])
+            .status
+            .success());
+        assert!(
+            git_with_cleared_env(&["-C", repo_str, "commit", "-m", "init"])
+                .status
+                .success(),
+            "git commit failed"
+        );
+        poison_repo_config_with_bare_and_worktree(repo, "/tmp/ajax-fake-worktree");
+
+        let git_dir = repo.join(".git");
+        unsafe {
+            std::env::set_var("GIT_DIR", &git_dir);
+            std::env::set_var("GIT_WORK_TREE", repo);
+        }
+
+        let mut runner = ProcessCommandRunner;
+        let command = CommandSpec::new(
+            "sh",
+            [
+                "-c",
+                "git -C \"$1\" status --porcelain=v1 --branch",
+                "ajax-test-git-c",
+                repo_str,
+            ],
+        );
+        let output = runner.run(&command).unwrap();
+
+        unsafe {
+            std::env::remove_var("GIT_DIR");
+            std::env::remove_var("GIT_WORK_TREE");
+        }
+        let _ = std::fs::remove_dir_all(root);
+
+        assert_eq!(output.status_code, 0, "stderr: {}", output.stderr);
+        assert!(
+            !output
+                .stderr
+                .contains("core.bare and core.worktree do not make sense"),
+            "stderr: {}",
+            output.stderr
+        );
     }
 }

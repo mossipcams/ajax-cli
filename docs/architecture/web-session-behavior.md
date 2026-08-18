@@ -205,6 +205,18 @@ existing paths.
   tasks.
 - Session horizontal gestures must not steal Diff Review panes and vice versa.
 
+## Task actions from Ajax chat
+
+- Drop and other destructive actions live in the task details sheet, not the
+  session head ActionBar (destructive actions are filtered there).
+- Arming Drop confirm closes the details sheet so the shell ResultPanel
+  (z-index 40) is usable; ResultPanel must not be raised above NewTaskSheet /
+  FullscreenLayer globally.
+- `#/session/<handle>` counts as staying on the dropped task for shell confirm,
+  the drop leave latch, and post-Drop dismiss — same as `#/t/<handle>` and diff
+  review for that handle. Leaving the session route cancels an armed confirm
+  without POSTing Drop.
+
 ## Mobile keyboard band
 
 - Orchestration session chat owns its mobile layout boundary: a bounded flex
