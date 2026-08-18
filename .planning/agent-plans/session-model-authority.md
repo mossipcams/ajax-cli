@@ -6,7 +6,8 @@ Ajax chat must run the model the operator picks. Task `session_model` is
 desired state. ACP handshake evidence is applied state. Snapshot `model` must
 not echo the desired pin.
 
-GitHub: [#952](https://github.com/mossipcams/ajax-cli/issues/952).
+GitHub: [#952](https://github.com/mossipcams/ajax-cli/issues/952),
+[#954](https://github.com/mossipcams/ajax-cli/issues/954).
 
 Non-goals: catalog-only picker patches, native `<select>` (#936), browser as a
 second registry, task lifecycle / ACP permission mode changes, vendoring model
@@ -24,6 +25,7 @@ Approved in chat 2026-08-18 (“Delegate until finished”).
 - [x] Apply after handshake and read back current model into SessionSnapshot
 - [x] Bind Ajax chat picker to snapshot applied model (#942 revert-on-model-failure only)
 - [x] Update `docs/architecture/web-session-behavior.md` and `web-cockpit.md`
+- [x] Apply only exact advertised handshake ids in-band; skip in-band for spawn-pinned Cursor when catalog id is not advertised ([#954](https://github.com/mossipcams/ajax-cli/issues/954))
 
 ## Validation
 
@@ -34,6 +36,8 @@ Approved in chat 2026-08-18 (“Delegate until finished”).
 
 Implemented in bounded delegate: `apply_model.rs`, snapshot applied-model authority,
 Cursor in-band apply when advertised, auto→None persistence, host/web #952 regressions.
+#954: in-band apply sends only exact advertised handshake values; spawn-pinned Cursor
+skips in-band when the catalog id is not advertised.
 
 ## Deviations
 

@@ -3,7 +3,8 @@
 
 use super::catalog::parse_session_new_catalog;
 use agent_client_protocol::schema::v1::{
-    SessionConfigKind, SessionConfigOption, SetSessionConfigOptionRequest,
+    SessionConfigKind, SessionConfigOption, SessionConfigSelect, SessionConfigSelectOptions,
+    SetSessionConfigOptionRequest,
 };
 use agent_client_protocol::{Agent, ConnectionTo};
 use ajax_core::adapters::{parse_model_selection, ModelSelection};
@@ -125,6 +126,70 @@ async fn apply_in_band(
     Ok(applied)
 }
 
+fn select_value_advertised(select: &SessionConfigSelect, value: &str) -> bool {
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options
+            .iter()
+            .any(|option| option.value.0.as_ref() == value),
+        SessionConfigSelectOptions::Grouped(groups) => groups.iter().any(|group| {
+            group
+                .options
+                .iter()
+                .any(|option| option.value.0.as_ref() == value)
+        }),
+        _ => false,
+    }
+}
+
+fn config_option_value_advertised(
+    config_options: Option<&[SessionConfigOption]>,
+    config_id: &str,
+    value: &str,
+) -> bool {
+    let Some(config_options) = config_options else {
+        return false;
+    };
+    let Some(option) = config_options
+        .iter()
+        .find(|option| option.id.0.as_ref() == config_id)
+    else {
+        return false;
+    };
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return false;
+    };
+    select_value_advertised(select, value)
+}
+
+fn available_model_advertised(session_result: &Value, model: &str) -> bool {
+    session_result
+        .get("models")
+        .and_then(|models| models.get("availableModels"))
+        .and_then(Value::as_array)
+        .is_some_and(|models| {
+            models
+                .iter()
+                .any(|entry| entry.get("modelId").and_then(Value::as_str) == Some(model))
+        })
+}
+
+/// True when every piece of `selection` is an exact advertised handshake value.
+pub fn selection_fully_advertised(
+    session_result: &Value,
+    config_options: Option<&[SessionConfigOption]>,
+    selection: &ModelSelection,
+) -> bool {
+    let model_ok = config_option_value_advertised(config_options, "model", &selection.model)
+        || available_model_advertised(session_result, &selection.model);
+    if !model_ok {
+        return false;
+    }
+    selection
+        .options
+        .iter()
+        .all(|(config_id, value)| config_option_value_advertised(config_options, config_id, value))
+}
+
 /// Apply `desired_model` when advertised and return the harness-reported applied id.
 pub async fn apply_model_pin(
     connection: &ConnectionTo<Agent>,
@@ -132,6 +197,7 @@ pub async fn apply_model_pin(
     session_result: &Value,
     config_options: Option<&[SessionConfigOption]>,
     desired_model: Option<&str>,
+    model_pins_at_spawn: bool,
 ) -> ApplyModelOutcome {
     let mut applied = read_applied_model(session_result, config_options);
 
@@ -152,7 +218,8 @@ pub async fn apply_model_pin(
         };
     };
 
-    if model_config_advertised(session_result, config_options) {
+    let pin_advertised = selection_fully_advertised(session_result, config_options, &selection);
+    if model_config_advertised(session_result, config_options) && pin_advertised {
         match apply_in_band(connection, session_id, &selection).await {
             Ok(next) => applied = next,
             Err(error) => {
@@ -162,6 +229,12 @@ pub async fn apply_model_pin(
                 };
             }
         }
+    } else if model_pins_at_spawn && model_config_advertised(session_result, config_options) {
+        // Cursor pins on spawn argv; handshake ids may differ from Ajax catalog ids.
+        return ApplyModelOutcome {
+            applied_model: applied,
+            error: None,
+        };
     }
 
     if model_matches_pin(&applied, &selection) {
@@ -259,5 +332,35 @@ mod tests {
         });
         assert_eq!(read_applied_model(&handshake, None), "harness-default");
         assert_ne!(read_applied_model(&handshake, None), "composer-2.5");
+    }
+
+    // Regression for #954: only exact advertised handshake values qualify for in-band apply.
+    #[test]
+    fn selection_fully_advertised_requires_exact_handshake_values_issue_954() {
+        use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+        use ajax_core::adapters::parse_model_selection;
+
+        let options = vec![SessionConfigOption::select(
+            "model",
+            "Model",
+            "harness-default",
+            vec![
+                SessionConfigSelectOption::new("harness-default", "Default"),
+                SessionConfigSelectOption::new("composer-2.5", "Composer"),
+            ],
+        )];
+        let handshake = json!({ "sessionId": "s1" });
+        let composer = parse_model_selection("composer-2.5").unwrap();
+        let catalog = parse_model_selection("cursor-grok-4.6-high").unwrap();
+        assert!(selection_fully_advertised(
+            &handshake,
+            Some(&options),
+            &composer
+        ));
+        assert!(!selection_fully_advertised(
+            &handshake,
+            Some(&options),
+            &catalog
+        ));
     }
 }
