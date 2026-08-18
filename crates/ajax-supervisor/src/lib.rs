@@ -69,6 +69,15 @@ mod tests {
         RepoEvent, SupervisorAgent, SupervisorError, SupervisorStatusMachine,
     };
 
+    fn git_with_cleared_env(args: &[&str]) -> std::process::Output {
+        let mut command = std::process::Command::new("git");
+        ajax_core::adapters::process::clear_ambient_git_env(&mut command);
+        command
+            .args(args)
+            .output()
+            .expect("git command should spawn")
+    }
+
     #[test]
     fn public_monitor_config_exposes_optional_event_log_path() {
         let config = MonitorConfig::codex_exec("fix tests");
@@ -262,12 +271,7 @@ mod tests {
     async fn spawn_monitor_emits_start_and_exit_git_snapshots() {
         let root = std::env::temp_dir().join(format!("ajax-monitor-git-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let git_init = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .arg("init")
-            .output()
-            .unwrap();
+        let git_init = git_with_cleared_env(&["-C", root.to_str().unwrap(), "init"]);
         assert!(
             git_init.status.success(),
             "git init should succeed: {}",
@@ -307,12 +311,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("ajax-monitor-git-change-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let git_init = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .arg("init")
-            .output()
-            .unwrap();
+        let git_init = git_with_cleared_env(&["-C", root.to_str().unwrap(), "init"]);
         assert!(
             git_init.status.success(),
             "git init should succeed: {}",
