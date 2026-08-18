@@ -105,14 +105,16 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-The orchestrator writes plans when required, routes through the `model-router`
-skill for executor, model, risk, scope, verification, and fallback decisions,
-and reviews delegate work. It does not explore the tree; it plans and routes.
-It must not implement, commit, push, or open pull requests. Call
-`model-router` for every implementation write. Do not duplicate model rankings
-or exact model IDs in this file. A Cursor delegate must implement in-process.
-Native Cursor Task, best-of-n, and other same-harness subagent fan-out are a
-contract violation. Missing `acpx` is stop, not a substitute.
+Always use the `model-router` skill for implementation writes. Do not spawn
+native harness subagents (Cursor Task, best-of-n, Claude/Codex task children,
+or pstack explorers) as a substitute. The orchestrator writes plans when
+required, emits one `EXECUTION` decision, and reviews delegate work. It does
+not explore the tree, implement, commit, push, or open pull requests.
+
+Call `model-router` for every implementation write. Dispatch through acpx
+(`scripts/run-delegate`). A Cursor delegate must implement in-process.
+Missing `acpx` is stop, not a license to Task or parent-local writes. Do not
+duplicate model rankings or exact model IDs in this file.
 
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, commits, pushes, and runs `gh pr create`; the
