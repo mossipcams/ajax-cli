@@ -142,6 +142,33 @@ function normalizeEvidence(evidence) {
   return {};
 }
 
+function nonEmptyString(value) {
+  if (value === undefined || value === null) return "";
+  const trimmed = String(value).trim();
+  return trimmed;
+}
+
+function coerceExpectedActual(finding, status, evidence) {
+  let expected = nonEmptyString(finding.expected);
+  let actual = nonEmptyString(finding.actual);
+
+  if (!actual) {
+    if (nonEmptyString(finding.title)) {
+      actual = nonEmptyString(finding.title);
+    } else if (nonEmptyString(evidence?.notes)) {
+      actual = nonEmptyString(evidence.notes);
+    }
+  }
+
+  if (!expected) {
+    if (status === "observation" || status === "rejected") {
+      expected = "Not yet characterized (observation only; reproduction pending)";
+    }
+  }
+
+  return { expected, actual };
+}
+
 export function normalizeFinding(finding) {
   if (!finding || typeof finding !== "object") return null;
 
@@ -189,6 +216,9 @@ export function normalizeFinding(finding) {
     reproductionSuccesses = reproductionAttempts;
   }
 
+  const evidence = normalizeEvidence(finding.evidence);
+  const { expected, actual } = coerceExpectedActual(finding, status, evidence);
+
   const normalized = {
     id: finding.id,
     title: finding.title,
@@ -199,9 +229,9 @@ export function normalizeFinding(finding) {
     reproductionAttempts,
     reproductionSuccesses,
     steps,
-    expected: finding.expected,
-    actual: finding.actual,
-    evidence: normalizeEvidence(finding.evidence),
+    expected,
+    actual,
+    evidence,
   };
 
   if (finding.fingerprint) normalized.fingerprint = finding.fingerprint;
@@ -289,6 +319,12 @@ export function validateFindingsDocument(doc) {
     }
     if (finding?.status === "confirmed" && finding.reproductionSuccesses < 1) {
       problems.push(`${prefix}: confirmed findings need ≥1 successful reproduction`);
+    }
+    if (
+      finding?.status === "confirmed" &&
+      (nonEmptyString(finding?.expected) === "" || nonEmptyString(finding?.actual) === "")
+    ) {
+      problems.push(`${prefix}: confirmed findings need non-empty expected and actual`);
     }
   });
 

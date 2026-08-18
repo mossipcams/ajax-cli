@@ -67,7 +67,10 @@ failures, unrecoverable workflows, runaway requests.
 
 - `exploratory-results/run.json` — run metadata
 - `exploratory-results/observations.json` — append observations
-- `exploratory-results/findings.json` — confirmed / observation / rejected (see schema)
+- `exploratory-results/findings.json` — confirmed / observation / rejected (see schema).
+  Every finding must include non-empty `expected` and `actual` strings (for
+  observations, state what you expected vs what you saw; use the title for
+  `actual` when you have not yet characterized expected behavior).
 - `exploratory-results/traces/`, `screenshots/`, `logs/` — evidence (redact secrets)
 - `exploratory-results/memory-delta.json` — before finish:
   - `areasVisited`: array of area **name strings** (`cockpit`, `session`, `terminal`,

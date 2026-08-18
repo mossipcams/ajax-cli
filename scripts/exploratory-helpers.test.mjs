@@ -92,6 +92,39 @@ test("normalizeFinding maps agent output to valid schema", async () => {
   assert.equal(problems.length, 0, problems.join("; "));
 });
 
+test("observation without expected/actual normalizes from title", async () => {
+  const {
+    normalizeFindingsDocument,
+    validateFindingsDocument,
+  } = await import("./exploratory/lib.mjs");
+  const doc = normalizeFindingsDocument({
+    version: 1,
+    findings: [
+      {
+        id: "finding-2026-08-18-001",
+        title: "Dashboard inline Drop buttons are not clickable",
+        status: "observation",
+        confidence: "high",
+        area: "cockpit",
+        severity: "medium",
+        reproductionAttempts: 0,
+        reproductionSuccesses: 0,
+        steps: [],
+        evidence: {
+          screenshots: ["exploratory-results/screenshots/dashboard-drop-blocked.png"],
+          consoleErrors: [],
+          networkFailures: [],
+        },
+        fingerprint: "dashboard-drop-pointer-blocked",
+      },
+    ],
+  });
+  assert.match(doc.findings[0].expected, /Not yet characterized/);
+  assert.equal(doc.findings[0].actual, "Dashboard inline Drop buttons are not clickable");
+  const problems = validateFindingsDocument(doc);
+  assert.equal(problems.length, 0, problems.join("; "));
+});
+
 test("confirmed without steps demotes to observation", async () => {
   const { normalizeFinding } = await import("./exploratory/lib.mjs");
   const normalized = normalizeFinding({
