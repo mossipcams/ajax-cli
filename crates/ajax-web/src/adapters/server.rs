@@ -10,6 +10,7 @@ const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
 const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";
 const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
 pub const AJAX_PROFILE_ENV: &str = "AJAX_PROFILE";
+pub const DEV_PROFILE: &str = "dev";
 pub const STABLE_PROFILE: &str = "stable";
 pub const DEFAULT_STABLE_PORT: &str = "8787";
 const TEST_IN_STABLE_SCRIPT: &str = "test-in-stable.sh";
@@ -136,7 +137,8 @@ pub fn web_profile_from_env<'a>(
 }
 
 pub fn test_in_stable_enabled(profile: Option<&str>, script: Option<&str>) -> bool {
-    profile == Some(STABLE_PROFILE) && script.is_some_and(|value| !value.is_empty())
+    script.is_some_and(|value| !value.is_empty())
+        && matches!(profile, Some(STABLE_PROFILE) | Some(DEV_PROFILE))
 }
 
 /// Test in Stable runs through a sibling of the restart script, not the restart
@@ -217,6 +219,8 @@ pub fn resolve_restart_script(
 pub struct TestInStableConfig {
     pub script: String,
     pub port: String,
+    /// True when this process exits after spawning (stable instance only).
+    pub exits_current_process: bool,
 }
 
 pub struct TestInStableResolveInput<'a> {
@@ -237,13 +241,21 @@ pub fn resolve_test_in_stable_config(
     if !test_in_stable_enabled(profile, Some(script.as_str())) {
         return None;
     }
-    let port = input
-        .restart_port_env
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| flag_value_from_args(input.cli_args, "--port").map(str::to_string))
-        .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string());
-    Some(TestInStableConfig { script, port })
+    let port = if profile == Some(STABLE_PROFILE) {
+        input
+            .restart_port_env
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| flag_value_from_args(input.cli_args, "--port").map(str::to_string))
+            .unwrap_or_else(|| DEFAULT_STABLE_PORT.to_string())
+    } else {
+        DEFAULT_STABLE_PORT.to_string()
+    };
+    Some(TestInStableConfig {
+        script,
+        port,
+        exits_current_process: profile == Some(STABLE_PROFILE),
+    })
 }
 
 fn process_test_in_stable_config() -> Option<TestInStableConfig> {
@@ -263,6 +275,20 @@ pub fn test_in_stable_enabled_from_env() -> bool {
     process_test_in_stable_config().is_some()
 }
 
+pub fn resolved_web_profile_from_env() -> Option<String> {
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    web_profile_from_sources(
+        std::env::var(RESTART_PROFILE_ENV).ok().as_deref(),
+        flag_value_from_args(&cli_args, "--profile"),
+        std::env::var(AJAX_PROFILE_ENV).ok().as_deref(),
+    )
+    .map(str::to_string)
+}
+
+pub fn test_in_stable_restarts_current_instance() -> bool {
+    process_test_in_stable_config().is_some_and(|config| config.exits_current_process)
+}
+
 /// Spawn the detached Test in Stable wrapper with stable profile args, then exit
 /// only when the wrapper spawn succeeded.
 ///
@@ -272,18 +298,20 @@ pub fn schedule_test_in_stable() {
     {
         thread::spawn(|| {
             thread::sleep(RESTART_DELAY);
-            let result = process_test_in_stable_config().map(|config| {
+            let config = process_test_in_stable_config();
+            let result = config.as_ref().map(|config| {
                 let args = test_in_stable_script_args(&config.port);
                 spawn_restart_script(&test_in_stable_script(&config.script), &args)
             });
-            let exit = result
-                .map(|launch| {
+            let exit = match (config, result) {
+                (Some(config), Some(launch)) => {
                     if let Err(ref error) = launch {
                         eprintln!("Ajax web test-in-stable failed: {error}");
                     }
-                    should_exit_after_launch(launch)
-                })
-                .unwrap_or(false);
+                    config.exits_current_process && should_exit_after_launch(launch)
+                }
+                _ => false,
+            };
             if exit {
                 std::process::exit(0);
             }
@@ -495,6 +523,7 @@ mod tests {
             Some(super::TestInStableConfig {
                 script: restart,
                 port: "8788".to_string(),
+                exits_current_process: true,
             })
         );
 
@@ -534,6 +563,7 @@ mod tests {
             Some(super::TestInStableConfig {
                 script: restart,
                 port: "8788".to_string(),
+                exits_current_process: true,
             })
         );
 
@@ -541,12 +571,16 @@ mod tests {
     }
 
     #[test]
-    fn test_in_stable_enabled_requires_stable_profile_and_script() {
+    fn test_in_stable_enabled_requires_dev_or_stable_profile_and_script() {
         assert!(super::test_in_stable_enabled(
             Some(super::STABLE_PROFILE),
             Some("/x")
         ));
-        assert!(!super::test_in_stable_enabled(Some("dev"), Some("/x")));
+        assert!(super::test_in_stable_enabled(
+            Some(super::DEV_PROFILE),
+            Some("/x")
+        ));
+        assert!(!super::test_in_stable_enabled(Some("prod"), Some("/x")));
         assert!(!super::test_in_stable_enabled(
             Some(super::STABLE_PROFILE),
             Some("")
@@ -555,6 +589,41 @@ mod tests {
             Some(super::STABLE_PROFILE),
             None
         ));
+    }
+
+    #[test]
+    fn resolve_test_in_stable_config_dev_profile_targets_stable_port() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-test-in-stable-dev-port-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let restart = write_test_in_stable_scripts(&root, true);
+        let cli_args = vec![
+            "web".to_string(),
+            "--profile".to_string(),
+            super::DEV_PROFILE.to_string(),
+            "--port".to_string(),
+            "8788".to_string(),
+        ];
+
+        assert_eq!(
+            super::resolve_test_in_stable_config(super::TestInStableResolveInput {
+                restart_profile: None,
+                cli_args: &cli_args,
+                ajax_profile: None,
+                restart_script_env: Some(restart.as_str()),
+                restart_port_env: Some("8788"),
+                cwd: Some(&root),
+            }),
+            Some(super::TestInStableConfig {
+                script: restart,
+                port: super::DEFAULT_STABLE_PORT.to_string(),
+                exits_current_process: false,
+            })
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

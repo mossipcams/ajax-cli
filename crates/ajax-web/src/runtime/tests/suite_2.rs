@@ -317,6 +317,7 @@ async fn concurrent_cockpit_polls_share_one_refresh() {
 
 #[tokio::test]
 async fn axum_router_reports_shell_version() {
+    let _profile = EnvVarGuard::set("AJAX_WEB_RESTART_PROFILE", "prod");
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
     let (_state, cookie, app) = app_with(context, TestBridge::default(), "axum-version");
 
@@ -331,6 +332,7 @@ async fn axum_router_reports_shell_version() {
     assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
     assert_eq!(version, crate::slices::install::app_version());
     assert_eq!(value["test_in_stable"], false);
+    assert_eq!(value["profile"], "prod");
 }
 
 #[tokio::test]
@@ -671,4 +673,28 @@ async fn axum_start_task_duplicate_request_id_does_not_clear_original_in_flight_
         StatusCode::OK
     );
     assert_eq!(state.shared().bridge.start_calls.load(Ordering::SeqCst), 1);
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: ajax-web runtime tests are not run in parallel with other
+        // env-mutating tests in this module.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe { std::env::set_var(self.key, value) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
 }
