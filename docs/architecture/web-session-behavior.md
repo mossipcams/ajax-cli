@@ -161,7 +161,9 @@ existing paths.
   keeps the content already received.
 - `usage_update` is a first-class `usage` event, not an `artifact`. A zero
   window means the harness does not report context and is dropped, so it never
-  renders as 0% used.
+  renders as 0% used. When the harness reports a non-zero window, the live head
+  shows the current fraction (`Context N% full`) in idle and working states; at
+  90%+ the indicator uses the warning tone.
 - `messageId` is optional in ACP v1. It is carried when present and refines both
   host-side coalescing and browser-side grouping; with it absent, role adjacency
   decides message boundaries as before.
