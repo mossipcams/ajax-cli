@@ -21,21 +21,25 @@ desktop.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
-preference defaults **off** (`ajax.web.session.orchestrationChat` in
-localStorage); when off, dashboard and embedded terminal behavior is unchanged.
+preference defaults **on** (`ajax.web.session.orchestrationChat` in
+localStorage; only an explicit `false` disables it). When off, dashboard and
+embedded terminal behavior is unchanged.
 The browser `webSessionTransport` client, `useTaskSession` hook, and pure
 `sessionReducer` fold validated protocol v2 frames into view state; they retain
 only unacknowledged prompt IDs, the last applied transcript cursor, and
 transient UI state. They do not own the transcript, prompt queue, or ACP process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
-default **off**) gates `#/session`, discloses full tool access without approval
+default **on**) gates `#/session`, discloses full tool access without approval
 prompts for supported agents, and makes task creation provisioned: with it on,
 the New task sheet calls `startTask` with `orchestration_chat: true` for the
 chosen harness. When the flag is on,
-`#/session/<handle>` renders SessionChat (live head + transcript + composer);
-the terminal is the escape hatch sheet; Diff Review remains swipe-left. The
-browser still does not own transcript/queue.
+`#/session/<handle>` renders SessionChat (live head + transcript + composer) for
+session-capable tasks that prefer chat; **Ajax terminal** in task details switches
+to `#/t/<handle>` and remembers that choice in browser localStorage
+(`ajax.web.taskView.terminal`). **Ajax chat** in terminal task details clears
+the preference and returns to `#/session/<handle>`. Diff Review remains swipe-left.
+The browser still does not own transcript/queue.
 
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
@@ -126,8 +130,8 @@ the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
-another harness, exposed as the Harness switch on the task details page and in
-the Ajax chat (SessionChat) task-details modal. It is
+another harness, exposed as the Harness switch in the Ajax chat (SessionChat)
+task-details modal. It is
 refused for a task that was launched interactively, because that task's agent is
 live in its tmux pane and the registry must not name a harness that is not the
 running process. On success the host drops the task's ACP slot so the next attach

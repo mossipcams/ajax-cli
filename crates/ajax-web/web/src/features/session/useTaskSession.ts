@@ -11,7 +11,7 @@ import {
   clearSessionTransportState,
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
-import { useSessionModelPreference } from "./sessionModel";
+import { DEFAULT_SESSION_MODEL, writeSessionModel } from "./sessionModel";
 import { initialSessionState, sessionReducer } from "./sessionThread";
 import { useSessionTransport } from "./useSessionTransport";
 
@@ -26,13 +26,22 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
   const [connected, setConnected] = useState(false);
   const [everOpened, setEverOpened] = useState(false);
   const [activityAgeMs, setActivityAgeMs] = useState(0);
-  const [sessionModel, setSessionModel] = useSessionModelPreference();
+  /** Host-authoritative model for this task's live session (not localStorage). */
+  const [sessionModel, setSessionModel] = useState(DEFAULT_SESSION_MODEL);
+  const serverModelRef = useRef(DEFAULT_SESSION_MODEL);
+  const pendingModelRef = useRef<string | null>(null);
 
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
   const connectedRef = useRef(false);
   const everOpenedRef = useRef(false);
   const detailRef = useRef(detail);
   const lastActivityAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    setSessionModel(DEFAULT_SESSION_MODEL);
+    serverModelRef.current = DEFAULT_SESSION_MODEL;
+    pendingModelRef.current = null;
+  }, [handle]);
 
   detailRef.current = detail;
   connectedRef.current = connected;
@@ -46,6 +55,24 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     if (handle) clearSessionTransportState(handle);
   }, [handle]);
 
+  const applyHostSessionModel = useCallback((nextModel: string) => {
+    const next = nextModel.trim() || DEFAULT_SESSION_MODEL;
+    if (pendingModelRef.current !== null && pendingModelRef.current !== next) {
+      return;
+    }
+    pendingModelRef.current = null;
+    serverModelRef.current = next;
+    setSessionModel(next);
+    // Seed the New Task picker only; task metadata remains authoritative in-session.
+    writeSessionModel(next);
+  }, []);
+
+  const revertPendingModelChange = useCallback(() => {
+    if (pendingModelRef.current === null) return;
+    pendingModelRef.current = null;
+    setSessionModel(serverModelRef.current);
+  }, []);
+
   useSessionTransport({
     handle,
     dispatch,
@@ -57,6 +84,8 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     setConnected,
     setEverOpened,
     onSessionInvalidated: invalidateSession,
+    onSessionModel: applyHostSessionModel,
+    onSessionModelRejected: revertPendingModelChange,
   });
 
   useEffect(() => {
@@ -84,13 +113,12 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     transportRef.current?.sendCancel();
   }, []);
 
-  const setModel = useCallback(
-    (model: string) => {
-      setSessionModel(model);
-      transportRef.current?.setModel(model);
-    },
-    [setSessionModel],
-  );
+  const setModel = useCallback((model: string) => {
+    const trimmed = model.trim() || DEFAULT_SESSION_MODEL;
+    pendingModelRef.current = trimmed;
+    setSessionModel(trimmed);
+    transportRef.current?.setModel(trimmed);
+  }, []);
 
   const respondPermission = useCallback(
     (approved: boolean) => {

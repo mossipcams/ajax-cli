@@ -87,3 +87,80 @@ fn apply_client_message_prompt_records_user_message_immediately() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// Regression for issue #931: in-session set_model must persist on the task
+// before the host replaces its ACP child; persistence failure leaves the slot
+// unchanged and returns a typed error.
+#[test]
+fn apply_client_message_set_model_persists_before_respawn() {
+    let dir = scratch_dir("set-model-persist");
+    let handle = "web/set-model";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let before = directory.child_id(handle).expect("child");
+        let mut generation = directory.generation(handle);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let persist: super::PersistSessionModel = std::sync::Arc::new(move |model: &str| {
+            *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+            Ok(())
+        });
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::SetModel {
+                model: "composer-2.5".to_string(),
+            },
+            &mut generation,
+            Some(persist),
+        ))
+        .expect("set model");
+
+        assert_eq!(persisted.lock().unwrap().as_deref(), Some("composer-2.5"));
+        assert_ne!(directory.child_id(handle), Some(before));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
+    let dir = scratch_dir("set-model-persist-fail");
+    let handle = "web/set-model-fail";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let before = directory.child_id(handle).expect("child");
+        let mut generation = directory.generation(handle);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let persist: super::PersistSessionModel =
+            std::sync::Arc::new(|_model: &str| Err("registry write failed".to_string()));
+        let error = rt
+            .block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: "composer-2.5".to_string(),
+                },
+                &mut generation,
+                Some(persist),
+            ))
+            .unwrap_err();
+        assert!(error.contains("registry write failed"));
+        assert_eq!(directory.child_id(handle), Some(before));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

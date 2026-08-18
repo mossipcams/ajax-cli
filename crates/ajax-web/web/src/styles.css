@@ -1613,8 +1613,7 @@ html.keyboard-open .session-composer textarea {
   background: color-mix(in srgb, var(--soft-charcoal) 62%, transparent);
 }
 
-.session-details-sheet,
-.session-terminal-sheet {
+.session-details-sheet {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1626,41 +1625,6 @@ html.keyboard-open .session-composer textarea {
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
   animation: sheet-rise 220ms var(--ease-spring);
-}
-
-/* Terminal escape hatch must fill the sheet. Without this, TaskTerminal only
-   gets its 120px min-height and operators leave for #/t/…, which unmounts chat.
-   Beat the desktop `.terminal-panel .terminal-interaction-wrap { 58vh }` cap
-   (same file, later) so the sheet is not a half-height pane. */
-.session-terminal-sheet {
-  height: min(96dvh, 100%);
-  max-height: 100%;
-  gap: 8px;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-}
-
-.session-terminal-body {
-  display: flex;
-  flex: 1 1 0%;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.session-terminal-sheet .terminal-panel {
-  flex: 1 1 0%;
-  min-height: 0;
-  margin-top: 0;
-}
-
-.session-terminal-sheet .terminal-panel .terminal-interaction-wrap {
-  height: auto;
-  flex: 1 1 0%;
-  min-height: 0;
-}
-
-.session-terminal-sheet .terminal-panel .terminal-host {
-  height: 100%;
-  min-height: 0;
 }
 
 .session-sheet-header {

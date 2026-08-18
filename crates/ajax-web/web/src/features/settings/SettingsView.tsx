@@ -214,8 +214,8 @@ export default function SettingsView({
       <div className="settings-section" data-testid="ajax-web-session-settings">
         <h3>Ajax web session</h3>
         <p className="settings-note">
-          Chat-first orchestration session with inline artifacts. Terminal remains available as an
-          escape hatch.
+          Chat-first orchestration session with inline artifacts. Use Ajax terminal in task details
+          to switch a task to the embedded terminal view.
         </p>
         <label className="settings-toggle" htmlFor="orchestration-chat-toggle">
           <input

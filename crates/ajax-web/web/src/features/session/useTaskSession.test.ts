@@ -1,12 +1,21 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import {
+  SESSION_MODEL_STORAGE_KEY,
+  writeSessionModel,
+} from "./sessionModel";
 import { useTaskSession } from "./useTaskSession";
 
 describe("useTaskSession", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
   });
 
   it("clears the session outbox when the task mutates", () => {
@@ -77,5 +86,99 @@ describe("useTaskSession", () => {
     expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
     unmount();
     vi.useRealTimers();
+  });
+
+  // Regression for issue #931: the in-session picker must track the host
+  // snapshot, not the browser localStorage preference, and must not revert
+  // while a set_model change is still pending.
+  it("keeps an in-session model change when a stale host snapshot arrives (#931)", () => {
+    writeSessionModel("composer-2.5");
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        callbacks.push(nextCallbacks);
+        return transport;
+      },
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => callbacks[0]?.onReady("gpt-5.6-sol-medium"));
+    expect(result.current.sessionModel).toBe("gpt-5.6-sol-medium");
+
+    act(() => result.current.setModel("claude-opus-5"));
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+    expect(transport.setModel).toHaveBeenCalledWith("claude-opus-5");
+
+    act(() => callbacks[0]?.onReady("gpt-5.6-sol-medium"));
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+
+    act(() => callbacks[0]?.onReady("claude-opus-5"));
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+    expect(localStorage.getItem(SESSION_MODEL_STORAGE_KEY)).toBe("claude-opus-5");
+    unmount();
+  });
+
+  it("reverts an optimistic model change when the host reports an error (#931)", () => {
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        callbacks.push(nextCallbacks);
+        nextCallbacks.onReady("gpt-5.6-sol-medium");
+        return transport;
+      },
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => result.current.setModel("claude-opus-5"));
+    expect(result.current.sessionModel).toBe("claude-opus-5");
+
+    act(() => callbacks[0]?.onEvent({ type: "error", message: "session model change needs a task Ajax started over ACP" }));
+    expect(result.current.sessionModel).toBe("gpt-5.6-sol-medium");
+    unmount();
+  });
+
+  it("does not seed the in-session picker from localStorage (#931)", () => {
+    writeSessionModel("composer-2.5");
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, callbacks) => {
+        callbacks.onReady("gpt-5.6-sol-medium");
+        return transport;
+      },
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    expect(result.current.sessionModel).toBe("gpt-5.6-sol-medium");
+    expect(result.current.sessionModel).not.toBe("composer-2.5");
+    unmount();
   });
 });

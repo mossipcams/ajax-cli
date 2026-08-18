@@ -410,6 +410,21 @@ fn start_task_rejects_shell_bearing_model_id() {
 }
 
 #[test]
+fn set_task_session_model_persists_on_a_provisioned_task() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+
+    super::set_task_session_model(&mut context, "web/fix-login", "claude-opus-5").unwrap();
+
+    let stored = context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+        .expect("task");
+    assert_eq!(stored.session_model(), Some("claude-opus-5"));
+}
+
+#[test]
 fn start_task_claude_agent_command_omits_cd_flag_and_skips_permissions() {
     let mut context = context_with_managed_repo();
     let mut runner = RecordingCommandRunner::default();
