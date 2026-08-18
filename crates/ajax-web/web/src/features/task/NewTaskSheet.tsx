@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { BrowserCockpitView, RepoSummary } from "@/shared/lib/types";
-import { requestId, startTask } from "@/shared/lib/api";
 import { startTaskHandle } from "./taskSlug";
+import { useStartTaskMutation } from "./useStartTaskMutation";
 import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
@@ -81,6 +81,7 @@ export default function NewTaskSheet({
   const [dragOffset, setDragOffset] = useState(0);
   const sheetRef = useRef<HTMLDivElement>(null);
   const grabRef = useRef<HTMLDivElement>(null);
+  const startTaskMutation = useStartTaskMutation();
 
   useEffect(() => {
     if (repos.length && !repos.some((option) => option.name === repo)) {
@@ -138,14 +139,12 @@ export default function NewTaskSheet({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const result = await startTask({
+      const result = await startTaskMutation.mutateAsync({
         repo,
         title: title.trim(),
         agent,
         ...(model ? { model } : {}),
-        // Every harness Ajax can start over ACP runs the task through ACP.
         ...(orchestrationChat ? { orchestration_chat: true } : {}),
-        request_id: requestId(),
       });
       if (!mountedRef.current) {
         if (result.ok && result.response.cockpit) onCockpit?.(result.response.cockpit);
