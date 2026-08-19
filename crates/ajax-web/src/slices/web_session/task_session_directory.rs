@@ -304,23 +304,6 @@ impl TaskSessionDirectory {
         }
     }
 
-    pub async fn respawn(
-        &self,
-        handle: &str,
-        worktree_path: &Path,
-        model: &str,
-        force: bool,
-    ) -> Result<u64, String> {
-        let tx = self.command_tx(handle)?;
-        send_command(&tx, |reply| TaskSessionCommand::Respawn {
-            worktree_path: worktree_path.to_path_buf(),
-            model: model.to_string(),
-            force,
-            reply,
-        })
-        .await?
-    }
-
     pub async fn attach_snapshot(
         &self,
         handle: &str,

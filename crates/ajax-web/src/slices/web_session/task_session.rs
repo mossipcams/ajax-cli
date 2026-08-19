@@ -59,12 +59,6 @@ pub(crate) enum TaskSessionCommand {
         reason: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    Respawn {
-        worktree_path: PathBuf,
-        model: String,
-        force: bool,
-        reply: oneshot::Sender<Result<u64, String>>,
-    },
     ApplyModel {
         worktree_path: PathBuf,
         model: String,
@@ -307,15 +301,6 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             reply,
         } => {
             let result = answer_permission(state, &request_id, approved, reason.as_deref());
-            let _ = reply.send(result);
-        }
-        TaskSessionCommand::Respawn {
-            worktree_path,
-            model,
-            force,
-            reply,
-        } => {
-            let result = task_session_spawn::respawn(state, &worktree_path, &model, force).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::ApplyModel {
