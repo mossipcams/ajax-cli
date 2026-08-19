@@ -236,8 +236,13 @@ existing paths.
   session overlay or sheet escape hatch.
 - While that preference is set, dashboard opens, later visits, and
   `#/session/<handle>` for that handle land on the terminal page until **Ajax
-  chat** in terminal task details (header Details sheet primary tools row or
-  footer Task details disclosure) clears the preference.
+  chat** in terminal task details (header Details sheet pinned primary tools row
+  or footer Task details disclosure) clears the preference.
+- On `#/t/<handle>`, the header Details sheet pins Ajax chat outside
+  `.session-details-body` so it appears in the first viewport; the sheet uses
+  contained overflow with the body as the bounded scroller (iOS-safe). While
+  `html.terminal-expanded`, the header Details control remains reachable without
+  permanently reserving terminal band space.
 - Navigating to `#/t/<handle>` is terminal-first host attachment, not ACP chat
   continuation.
 - Diff Review back navigation returns to `#/t/<handle>` when the task prefers

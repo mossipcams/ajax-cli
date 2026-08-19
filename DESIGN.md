@@ -327,9 +327,14 @@ reuse the shared `TaskMetaDetails` grid; Rust Debug annotation strings are shown
 as human Notes lines, not raw struct dumps.
 
 On the terminal task route (`#/t/<handle>`), the header Details sheet and footer
-Task details disclosure lead with **Ajax chat** in the same first-viewport primary
-tools row pattern when orchestration chat is enabled and the task is
-session-capable — the chat analog to Ajax terminal on the session route.
+Task details disclosure lead with **Ajax chat** in a pinned primary tools row
+(sibling of the sheet header, not inside the scrolling body — same reachability
+pattern as Ajax terminal on the session route) when orchestration chat is enabled
+and the task is session-capable. The sheet uses contained overflow with
+`.session-details-body` as the bounded scroller so Ajax chat stays in the first
+viewport on iOS. While `html.terminal-expanded`, the header Details control
+remains reachable (overlay, not band space) even though back/title/status chrome
+is hidden.
 
 ## 6. Do's and Don'ts
 
