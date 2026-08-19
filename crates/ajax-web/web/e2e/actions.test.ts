@@ -213,8 +213,9 @@ test("new task sheet steps to the harness model page", async ({ page }) => {
   await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
 });
 
-// Found against the real dev server: Codex lists 29 models, which grew the card
-// until Start sat below the viewport and the preselected default was off-screen.
+// Found against the real dev server: Codex lists 29 models. The picker now
+// shortlists ~10 and pins the harness default so Start stays on screen; Show all
+// reveals the rest and scrolls the checked default into view.
 test("long model catalog keeps Start reachable and scrolls to the default", async ({ page }) => {
   await mockFetch(page, { "/api/session/models": LONG_SESSION_MODELS });
   await page.goto("/app.html");
@@ -225,10 +226,17 @@ test("long model catalog keeps Start reachable and scrolls to the default", asyn
   await sheet.locator("#new-task-title-input").fill("Long catalog");
   await sheet.getByRole("button", { name: "Next" }).click();
   await expect(page.getByTestId("new-task-model-page")).toBeVisible();
-  await expect(sheet.getByRole("radio", { name: "Model 24" })).toHaveAttribute(
-    "aria-checked",
-    "true",
+
+  const modelPicker = sheet.locator(".model-picker");
+  const showAll = sheet.getByTestId("model-picker-toggle");
+  const defaultModel = sheet.getByRole("radio", { name: "Model 24" });
+
+  await expect(defaultModel).toHaveAttribute("aria-checked", "true");
+  await expect(showAll).toHaveText("Show all");
+  expect(await modelPicker.getByRole("radio").count()).toBeLessThan(
+    LONG_SESSION_MODELS.models.length,
   );
+  await expect(sheet.getByRole("radio", { name: "Model 28" })).toHaveCount(0);
 
   const start = sheet.getByRole("button", { name: "Start" });
   const box = await start.boundingBox();
@@ -236,8 +244,27 @@ test("long model catalog keeps Start reachable and scrolls to the default", asyn
   expect(box, "Start must be laid out").not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
 
-  // The list itself scrolls, and it opens on the current choice.
-  expect(await sheet.locator(".model-picker").evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  // Pinned default sits in the shortlist without scrolling the picker open.
+  expect(await modelPicker.evaluate((el) => el.scrollTop)).toBe(0);
+
+  await showAll.click();
+  await expect(showAll).toHaveText("Show fewer");
+  expect(await modelPicker.getByRole("radio").count()).toBe(
+    LONG_SESSION_MODELS.models.length,
+  );
+  await expect(sheet.getByRole("radio", { name: "Model 28" })).toBeVisible();
+  await expect(defaultModel).toHaveAttribute("aria-checked", "true");
+  await expect(defaultModel).toBeInViewport();
+
+  expect(
+    await modelPicker.evaluate((picker) => {
+      const selected = picker.querySelector<HTMLElement>("[aria-checked='true']");
+      if (!selected) return false;
+      const rect = selected.getBoundingClientRect();
+      const bounds = picker.getBoundingClientRect();
+      return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+    }),
+  ).toBe(true);
 });
 
 // Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in
