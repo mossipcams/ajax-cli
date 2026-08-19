@@ -553,7 +553,7 @@ export default function SessionChat({
                         handle={detail.qualified_handle ?? handle}
                         currentAgent={detail.agent}
                         currentModel={sessionModel}
-                        disabled={state.busy || !connected}
+                        disabled={state.busy}
                         onSwapped={handleHarnessSwapped}
                       />
                     ) : null}

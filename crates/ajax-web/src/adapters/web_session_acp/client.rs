@@ -549,8 +549,15 @@ fn spawn_acp_process(
         if let Some((program, mut args)) = override_command {
             args.extend(TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap().iter().cloned());
             let mut command = std::process::Command::new(program);
+            command.args(args);
+            if let Some(launch) = acp_launch_for_agent(agent) {
+                if launch.model_pins_at_spawn() {
+                    if let Some(spawn_model) = acp_spawn_model_for_argv(launch, model) {
+                        command.arg("--model").arg(spawn_model);
+                    }
+                }
+            }
             command
-                .args(args)
                 .current_dir(worktree_path)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

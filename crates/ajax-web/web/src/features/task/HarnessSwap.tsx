@@ -71,7 +71,6 @@ export default function HarnessSwap({
             setModel(currentModel);
             setOpen(true);
           }}
-          disabled={disabled}
         >
           Switch
         </button>
