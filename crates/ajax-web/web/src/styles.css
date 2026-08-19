@@ -666,13 +666,9 @@ html.terminal-expanded .result-panel,
   color: var(--ink-muted);
 }
 
-.session-details-sheet .session-model-catalog .model-picker {
-  max-height: min(40vh, 320px);
-  overflow-y: auto;
-}
-
+.session-details-sheet .session-model-catalog .model-picker,
 .session-details-sheet .model-picker {
-  /* Let the task-details body scroll one list; nested caps hid most models (#948). */
+  /* One body scroller; nested caps hid models and stole scroll (#948, #976). */
   max-height: none;
   overflow: visible;
 }
@@ -1661,8 +1657,9 @@ html.keyboard-open .session-composer textarea {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
   overflow: hidden;
   background: color-mix(in srgb, var(--soft-charcoal) 62%, transparent);
 }
@@ -1670,12 +1667,14 @@ html.keyboard-open .session-composer textarea {
 .session-details-sheet {
   display: flex;
   flex-direction: column;
+  flex: 0 1 auto;
   gap: 14px;
   width: min(var(--shell), 100%);
-  max-height: calc(100% - 24px);
+  max-height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+    calc(16px + env(safe-area-inset-bottom, 0px));
   background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
   border-bottom: none;

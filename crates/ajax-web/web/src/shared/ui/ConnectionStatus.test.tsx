@@ -57,6 +57,21 @@ describe("ConnectionStatus", () => {
     expect(onCopyDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("accepts a later Reload click after a failed recoverable reload callback", async () => {
+    const onReload = vi.fn();
+    render(<ConnectionStatus state="disconnected" onReload={onReload} />);
+    const reload = screen.getByText("Reload");
+
+    fireEvent.click(reload);
+    expect(onReload).toHaveBeenCalledOnce();
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    fireEvent.click(reload);
+    expect(onReload).toHaveBeenCalledTimes(2);
+  });
+
   it("latches Retry and Reload under same-turn multi-click", () => {
     const onRetry = vi.fn();
     const onReload = vi.fn();

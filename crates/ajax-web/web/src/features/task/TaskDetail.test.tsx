@@ -490,16 +490,32 @@ describe("TaskDetail projection surface", () => {
   });
 
   it("bounds session details sheets with a contained scroller for iOS-safe reachability", () => {
+    const scrimBlock =
+      stylesSource.match(/\.session-sheet-scrim\s*\{([^}]*)\}/)?.[1] ?? "";
     const sheetBlock =
       stylesSource.match(/\.session-details-sheet\s*\{([^}]*)\}/)?.[1] ?? "";
     const bodyBlock =
       stylesSource.match(/\.session-details-body\s*\{([^}]*)\}/)?.[1] ?? "";
+    const modelPickerBlock =
+      stylesSource.match(
+        /\.session-details-sheet \.session-model-catalog \.model-picker[\s\S]*?\{([^}]*)\}/,
+      )?.[1] ?? "";
 
-    expect(sheetBlock).toMatch(/max-height:\s*calc\(100% - 24px\)/);
+    expect(scrimBlock).toMatch(/flex-direction:\s*column/);
+    expect(scrimBlock).toMatch(/justify-content:\s*flex-end/);
+    expect(scrimBlock).toMatch(/overflow:\s*hidden/);
+    expect(scrimBlock).toMatch(/min-height:\s*0/);
+    expect(sheetBlock).toMatch(/flex:\s*0\s+1\s+auto/);
+    expect(sheetBlock).toMatch(/max-height:\s*100%/);
+    expect(sheetBlock).not.toMatch(/max-height:\s*calc\(100% - 24px\)/);
+    expect(sheetBlock).toMatch(/env\(safe-area-inset-top/);
+    expect(sheetBlock).toMatch(/env\(safe-area-inset-bottom/);
     expect(sheetBlock).toMatch(/overflow:\s*hidden/);
     expect(bodyBlock).toMatch(/flex:\s*1\s+1\s+auto/);
     expect(bodyBlock).toMatch(/min-height:\s*0/);
     expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
+    expect(modelPickerBlock).toMatch(/max-height:\s*none/);
+    expect(modelPickerBlock).toMatch(/overflow:\s*visible/);
   });
 
   it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {
