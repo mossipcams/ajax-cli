@@ -78,7 +78,8 @@ pub(super) struct RunOptions {
     pub busy: Arc<AtomicBool>,
     pub agent: AgentClient,
     pub cwd: PathBuf,
-    pub model: Option<String>,
+    /// Operator catalog pin used for in-band apply (may differ from spawn argv).
+    pub apply_pin: Option<String>,
     pub resume_session_id: Option<String>,
 }
 
@@ -114,8 +115,9 @@ async fn run_async(options: RunOptions) {
         busy,
         agent,
         cwd,
-        model,
+        apply_pin,
         resume_session_id,
+        ..
     } = options;
     let permissions: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
     let connection_events = events.clone();
@@ -170,7 +172,7 @@ async fn run_async(options: RunOptions) {
                 &connection,
                 agent,
                 &cwd,
-                model.as_deref(),
+                apply_pin.as_deref(),
                 resume_session_id.as_deref(),
             )
             .await;
@@ -238,7 +240,7 @@ async fn initialize_session(
     connection: &ConnectionTo<Agent>,
     agent: AgentClient,
     cwd: &PathBuf,
-    model: Option<&str>,
+    apply_pin: Option<&str>,
     resume_session_id: Option<&str>,
 ) -> Result<ConnectionReady, String> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
@@ -321,7 +323,7 @@ async fn initialize_session(
         &session_id,
         &session_new_result,
         config_options.as_deref(),
-        model,
+        apply_pin,
         model_pins_at_spawn,
     )
     .await;

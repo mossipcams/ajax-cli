@@ -386,6 +386,81 @@ fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression for #979: respawn once when spawn argv and in-band apply both leave CLI default.
+#[test]
+fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-979");
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    None,
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
+#[test]
+fn cursor_unspecified_spawn_recovers_onto_mapped_default_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-default-979");
+    let script = fake_acp_fixture();
+    let mapped = cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    "auto",
+                    None,
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // Regression for #979: unspecified Cursor attach must not accept Composer Fast.
 #[test]
 fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {

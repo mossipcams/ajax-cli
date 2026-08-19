@@ -19,6 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::apply_model::operator_pin_satisfied;
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
 use agent_client_protocol::schema::v1::SessionNotification;
 
@@ -163,7 +164,61 @@ impl AcpStdioClient {
         model: Option<&str>,
         resume_session_id: Option<&str>,
     ) -> Result<(Self, SpawnReport), String> {
-        let mut child = spawn_acp_process(agent, worktree_path, model)?;
+        Self::spawn_internal(agent, worktree_path, model, model, resume_session_id)
+    }
+
+    /// Spawn with operator-pin recovery when the first handshake leaves a mismatched model.
+    pub fn spawn_with_operator_pin(
+        agent: AgentClient,
+        worktree_path: &Path,
+        operator_pin: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<(Self, SpawnReport), String> {
+        let launch = acp_launch_for_agent(agent);
+        let spawn_model = launch
+            .as_ref()
+            .and_then(|launch| acp_spawn_model_for_argv(*launch, Some(operator_pin)));
+        let model_pins_at_spawn = launch.is_some_and(|launch| launch.model_pins_at_spawn());
+
+        let attempt = |resume: Option<&str>| {
+            Self::spawn_internal(
+                agent,
+                worktree_path,
+                spawn_model.as_deref(),
+                Some(operator_pin),
+                resume,
+            )
+        };
+
+        let (client, report) = attempt(resume_session_id)?;
+        if Self::pin_report_acceptable(operator_pin, &report, model_pins_at_spawn) {
+            return Ok((client, report));
+        }
+        // Resume/load keeps transcript continuity; recover only on fresh attach.
+        if resume_session_id.is_some() {
+            return Ok((client, report));
+        }
+        drop(client);
+        attempt(None)
+    }
+
+    fn pin_report_acceptable(
+        operator_pin: &str,
+        report: &SpawnReport,
+        model_pins_at_spawn: bool,
+    ) -> bool {
+        operator_pin_satisfied(operator_pin, &report.applied_model, model_pins_at_spawn)
+            && report.model_apply_error.is_none()
+    }
+
+    fn spawn_internal(
+        agent: AgentClient,
+        worktree_path: &Path,
+        spawn_model: Option<&str>,
+        apply_pin: Option<&str>,
+        resume_session_id: Option<&str>,
+    ) -> Result<(Self, SpawnReport), String> {
+        let mut child = spawn_acp_process(agent, worktree_path, spawn_model)?;
         let stdin = child
             .stdin
             .take()
@@ -183,7 +238,7 @@ impl AcpStdioClient {
         let busy = Arc::new(AtomicBool::new(false));
         let connection_busy = Arc::clone(&busy);
         let cwd = worktree_path.to_path_buf();
-        let model = model.map(str::to_string);
+        let apply_pin = apply_pin.map(str::to_string);
         let resume_session_id = resume_session_id.map(str::to_string);
         let connection = thread::spawn(move || {
             sdk_connection::run(RunOptions {
@@ -195,7 +250,7 @@ impl AcpStdioClient {
                 busy: connection_busy,
                 agent,
                 cwd,
-                model,
+                apply_pin,
                 resume_session_id,
             });
         });

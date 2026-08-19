@@ -7,9 +7,7 @@ use super::transcript::{
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{AcpStdioClient, SpawnReport};
 use crate::adapters::web_session_store::{self, StoredSession};
-use ajax_core::{
-    adapters::acp_launch_for_agent, adapters::acp_spawn_model_for_argv, models::AgentClient,
-};
+use ajax_core::models::AgentClient;
 use std::path::Path;
 
 pub(super) async fn acquire(
@@ -154,10 +152,6 @@ fn replace_resume_id(
     }
 }
 
-fn spawn_model_arg(agent: AgentClient, model: &str) -> Option<String> {
-    acp_launch_for_agent(agent).and_then(|launch| acp_spawn_model_for_argv(launch, Some(model)))
-}
-
 async fn spawn_acp(
     agent: AgentClient,
     worktree_path: &Path,
@@ -168,9 +162,8 @@ async fn spawn_acp(
     // the child's dedicated owner stay aligned. One task per session, so this
     // does not block the directory or other sessions.
     let worktree = worktree_path.to_path_buf();
-    let spawn_model = spawn_model_arg(agent, model);
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
-        AcpStdioClient::spawn(agent, &worktree, spawn_model.as_deref(), resume.as_deref())
+        AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
     })
 }

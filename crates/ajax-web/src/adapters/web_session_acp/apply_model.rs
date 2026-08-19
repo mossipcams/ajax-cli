@@ -27,6 +27,30 @@ pub fn is_unspecified_model(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), None | Some("") | Some("auto"))
 }
 
+/// True when the harness-reported applied id satisfies the operator pin.
+pub fn operator_pin_satisfied(
+    operator_pin: &str,
+    applied_model: &str,
+    model_pins_at_spawn: bool,
+) -> bool {
+    if is_unspecified_model(Some(operator_pin)) {
+        if !model_pins_at_spawn {
+            return true;
+        }
+        let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) else {
+            return false;
+        };
+        let Some(applied_intent) = parse_cursor_model_intent(applied_model) else {
+            return false;
+        };
+        return cursor_model_intents_match(&default_intent, &applied_intent);
+    }
+    let Some(selection) = parse_model_selection(operator_pin.trim()) else {
+        return false;
+    };
+    model_matches_pin(applied_model, &selection, model_pins_at_spawn)
+}
+
 /// Read the model id a harness advertises as currently applied on the handshake.
 pub fn read_applied_model(
     session_result: &Value,
@@ -533,6 +557,28 @@ mod tests {
             resolve_cursor_pin_for_apply(&handshake, Some(&options), "cursor-grok-4.6-high")
                 .expect("mapped non-Fast token is advertised");
         assert_eq!(resolved.model, "grok-4.6[effort=high,fast=false]");
+    }
+
+    #[test]
+    fn operator_pin_satisfied_matches_catalog_to_applied_acp_id_issue_979() {
+        use ajax_core::adapters::parse_model_selection;
+
+        let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
+        assert!(operator_pin_satisfied(
+            "cursor-grok-4.6-high",
+            "grok-4.6[effort=high,fast=false]",
+            true
+        ));
+        assert!(!operator_pin_satisfied(
+            "cursor-grok-4.6-high",
+            "composer-2.5[fast=true]",
+            true
+        ));
+        assert!(model_matches_pin(
+            "grok-4.6[effort=high,fast=false]",
+            &pin,
+            true
+        ));
     }
 
     #[test]

@@ -144,6 +144,16 @@ changes spawn the new harness on the next attach. Switch is refused for a task
 that was launched interactively, because that task's agent is live in its tmux
 pane and the registry must not name a harness that is not the running process.
 
+When spawn argv and in-band apply leave a model that does not match the operator
+pin (for example Cursor CLI default Composer Fast while Grok High or
+`CURSOR_DEFAULT_MODEL` was chosen), the session host drops the ACP child and
+respawns once with the mapped spawn token and a fresh `session/new` (no resume),
+then applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+After a successful recover, `snapshot.model` reflects the running model and no
+error is logged for the failed first attempt. If recovery still fails, the host
+emits a typed error while `session_model` stays the operator pin and
+`snapshot.model` remains harness-reported evidence.
+
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
 `web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +

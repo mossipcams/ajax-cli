@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 'use strict';
+const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
 const holdPromptMode = process.argv.includes('--hold-prompt');
@@ -10,11 +12,31 @@ const resumeMode = process.argv.includes('--resume') || process.argv.includes('-
 const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
+const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
+const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
 const sessionId = 'fake-sess-1';
 const cliDefaultModel = process.argv.includes('--cli-default-model')
   ? 'composer-2.5[fast=true]'
   : null;
+
+function spawnGeneration() {
+  const counterPath = path.join(process.cwd(), '.fake-acp-spawn-gen');
+  let gen = 0;
+  try {
+    gen = parseInt(fs.readFileSync(counterPath, 'utf8'), 10) || 0;
+  } catch {}
+  gen += 1;
+  fs.writeFileSync(counterPath, String(gen));
+  return gen;
+}
+
+const spawnGen = spawnGeneration();
+const firstSpawnAttempt = spawnGen === 1;
+
 function spawnModelFromArgv() {
+  if (ignoreSpawnModelOnce && firstSpawnAttempt) {
+    return null;
+  }
   const idx = process.argv.indexOf('--model');
   if (idx >= 0 && idx + 1 < process.argv.length) {
     const model = process.argv[idx + 1];
@@ -129,7 +151,11 @@ function handleRequest(msg) {
   // request shape each harness family uses.
   if (method === 'session/set_model' || method === 'session/set_config_option') {
     const requested = params?.modelId ?? params?.value ?? '';
-    if (modelRefuse && requested && requested !== currentModel) {
+    const refuseInBand =
+      requested &&
+      requested !== currentModel &&
+      (modelRefuse || (refuseInBandOnce && firstSpawnAttempt));
+    if (refuseInBand) {
       send({
         jsonrpc: '2.0',
         id,
