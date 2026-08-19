@@ -1026,38 +1026,102 @@ html.terminal-expanded .result-panel,
   overflow-wrap: anywhere;
 }
 
+/* Activity grid ----------------------------------------------------------- */
+/* Every line of the work log — tool call, reasoning, run summary — is the same
+   row: mark, target, meta. One structure, one left edge, one line each. The log
+   is the quiet layer under the conversation, so it is mono and dimmed; agent
+   prose keeps full contrast and the sans body size. */
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--text-body-sm);
+  line-height: 1.4;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-row:disabled {
+  cursor: default;
+}
+
+.session-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.session-row-mark {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--tone, var(--ink-faint));
+}
+
+/* Middle truncation without measuring: the head ellipsizes into whatever width
+   is left, the tail is never allowed to shrink. Two commands differing only in
+   their last flag stay distinguishable. */
+.session-row-target {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-row-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row-tail {
+  flex: none;
+  white-space: pre;
+}
+
+.session-row-meta {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* A settled run of work is one row until asked for. */
+.session-activity {
+  align-self: stretch;
+  flex: none;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.session-activity-summary .session-row-target {
+  color: var(--ink-faint);
+}
+
 /* Reasoning --------------------------------------------------------------- */
-/* One quiet line by default. Reasoning is the agent's account of the turn, not
-   the answer to it, so it never competes with prose for the first read. */
+/* One quiet line by default, and that line is the reasoning itself: a row that
+   only says "Thinking" spends a full row of a phone on nothing. */
 .session-thinking {
   align-self: stretch;
   min-width: 0;
 }
 
-.session-thinking-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: var(--text-micro);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.session-thinking-toggle:hover,
-.session-thinking-toggle:focus-visible {
-  color: var(--ink-soft);
-  outline: none;
-}
-
-.session-thinking-mark {
-  color: var(--ink-faint);
+.session-thinking .session-row-target {
+  font-style: italic;
 }
 
 .session-thinking-body {
@@ -1134,66 +1198,24 @@ html.terminal-expanded .result-panel,
   overflow: hidden;
 }
 
-.session-toolcard[data-status="failed"] .session-tool-title {
+/* Outcome is the mark's job, not a word's: only the states that want the
+   operator are allowed to spend the right column. */
+.session-toolcard[data-status="failed"] .session-row-mark,
+.session-toolcard[data-status="failed"] .session-row-meta {
   color: var(--danger);
 }
 
-.session-toolcard-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
-  min-height: 28px;
-  padding: 4px 0;
-  border: none;
-  background: none;
-  text-align: left;
-  font-family: var(--mono);
-  font-size: var(--text-label);
-  line-height: 1.5;
-  cursor: pointer;
+.session-toolcard[data-status="failed"] .session-row-target {
+  color: var(--ink-soft);
 }
 
-.session-toolcard-head:disabled {
-  cursor: default;
-}
-
-.session-toolcard-head:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.session-toolcard-status {
-  flex: none;
-  margin-left: auto;
-  padding-left: 8px;
-  font-size: var(--text-micro);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.session-toolcard[data-status="failed"] .session-toolcard-status {
-  color: var(--danger);
-}
-
-.session-toolcard[data-status="completed"] .session-toolcard-status {
-  color: var(--ok);
-}
-
-.session-toolcard[data-status="in_progress"] .session-toolcard-status {
+.session-toolcard[data-status="in_progress"] .session-row-mark,
+.session-toolcard[data-status="in_progress"] .session-row-meta {
   color: var(--accent);
 }
 
-/* The path has the header's remaining width to itself only when there is any;
-   on a phone the title wins and the path wraps under it. */
-.session-toolcard-head .session-tool-path {
-  margin-left: 0;
-  max-width: 40%;
-}
-
 .session-toolcard-body {
-  padding: 4px 0 8px 20px;
+  padding: 4px 0 8px 24px;
   display: flex;
   flex-direction: column;
   gap: 8px;

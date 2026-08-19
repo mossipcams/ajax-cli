@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
 import type { Decision, ToolCall, Usage } from "./sessionThread";
-import { shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
+import { cleanTitle, shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
 
 export { shortPath } from "./toolPresentation";
 
@@ -78,13 +78,13 @@ function ToolRow({ call }: { call: ToolCall }) {
       <span className="session-tool-mark" aria-hidden="true">
         {toolMark(call.kind)}
       </span>
-      <span className="session-tool-title">{call.title || call.callId}</span>
+      <span className="session-tool-title">{cleanTitle(call.title) || call.callId}</span>
       {location ? (
         <span className="session-tool-path" title={location}>
           {shortPath(location)}
         </span>
       ) : null}
-      <span className="session-toolcard-status">{toolStatusLabel(call.status)}</span>
+      <span className="session-row-meta">{toolStatusLabel(call.status)}</span>
     </div>
   );
 }

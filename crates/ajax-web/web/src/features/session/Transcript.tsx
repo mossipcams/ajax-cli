@@ -7,28 +7,30 @@
 
 import { memo, useState } from "react";
 import Markdown from "./Markdown";
-import ToolCard from "./ToolCard";
-import type { ConversationItem, PlanEntry } from "./sessionThread";
+import ToolCard, { ActivityRow } from "./ToolCard";
+import { thoughtSnippet, type ConversationItem, type PlanEntry } from "./sessionThread";
+import { elapsedMs, formatElapsed } from "./toolPresentation";
 
 /** Reasoning is the agent's account of its own turn: worth keeping, never worth
  * outranking the answer. Collapsed to one line until asked for, except while it
- * is the live tail of a busy turn. */
+ * is the live tail of a busy turn.
+ *
+ * The collapsed line carries the reasoning itself rather than the word
+ * "Thinking": a divider that only announces a section spends a full row of a
+ * phone on no information. */
 function Thinking({ text, live }: { text: string; live: boolean }) {
   const [manualOpen, setManualOpen] = useState(false);
   const expanded = live || manualOpen;
   return (
     <div className="session-thinking" data-testid="session-thinking">
-      <button
-        type="button"
+      <ActivityRow
         className="session-thinking-toggle"
+        mark="∴"
+        target={thoughtSnippet(text, 90)}
+        aria-label={`Thinking — ${thoughtSnippet(text, 90)}`}
         aria-expanded={expanded}
         onClick={() => setManualOpen(!manualOpen)}
-      >
-        <span className="session-thinking-mark" aria-hidden="true">
-          ∴
-        </span>
-        Thinking
-      </button>
+      />
       {expanded ? (
         <p className="session-thinking-body" data-testid="session-thinking-body">
           {text}
@@ -36,6 +38,86 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
       ) : null}
     </div>
   );
+}
+
+const ACTIVITY_KINDS = ["tool", "thought"];
+
+function isActivity(item: ConversationItem): boolean {
+  return ACTIVITY_KINDS.includes(item.kind);
+}
+
+/** Split the conversation into runs: each stretch of tool calls and reasoning
+ * between two pieces of prose is one unit of work, and everything else stands
+ * alone. */
+export function activityRuns(items: ConversationItem[]): ConversationItem[][] {
+  const runs: ConversationItem[][] = [];
+  for (const item of items) {
+    const last = runs[runs.length - 1];
+    if (last && isActivity(item) && isActivity(last[0])) last.push(item);
+    else runs.push([item]);
+  }
+  return runs;
+}
+
+function runSummary(items: ConversationItem[]): string {
+  const calls = items.flatMap((item) => (item.kind === "tool" ? [item.call] : []));
+  const failed = calls.filter((call) => call.status === "failed").length;
+  const parts = [
+    calls.length
+      ? `${calls.length} ${calls.length === 1 ? "tool" : "tools"}`
+      : `${items.length} thoughts`,
+  ];
+  if (failed) parts.push(`${failed} failed`);
+  // Wall time across the run, not the sum of its calls: the gaps between them
+  // are the agent thinking, and the operator waited through those too.
+  const first = calls.find((call) => call.startedAt !== undefined);
+  const last = [...calls].reverse().find((call) => call.endedAt !== undefined);
+  const span = formatElapsed(
+    first && last ? elapsedMs({ startedAt: first.startedAt, endedAt: last.endedAt }) : undefined,
+  );
+  if (span) parts.push(span);
+  return parts.join(" · ");
+}
+
+/** A finished run of work collapses to one row. The operator reads a
+ * conversation and opens the work when they want it; while it is still running,
+ * or when something in it failed, it is already open. */
+function ActivityRun({ items, live }: { items: ConversationItem[]; live: boolean }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const unsettled = items.some(
+    (item) => item.kind === "tool" && item.call.status !== "completed",
+  );
+  const expanded = open ?? (live || unsettled);
+  // One row summarising one row is worse than the row.
+  const summarised = items.length > 1;
+
+  return (
+    <div
+      className="session-activity"
+      data-testid="session-activity"
+      data-expanded={expanded ? "true" : "false"}
+    >
+      {summarised ? (
+        <ActivityRow
+          className="session-activity-summary"
+          data-testid="session-activity-summary"
+          mark="⚙"
+          target={runSummary(items)}
+          meta={expanded ? "⌃" : "⌄"}
+          aria-expanded={expanded}
+          onClick={() => setOpen(!expanded)}
+        />
+      ) : null}
+      {!summarised || expanded
+        ? items.map((item) => <Row key={item.id} item={item} live={live && isLiveTail(items, item)} />)
+        : null}
+    </div>
+  );
+}
+
+/** Only the run's last row can be the live one. */
+function isLiveTail(items: ConversationItem[], item: ConversationItem): boolean {
+  return items[items.length - 1]?.id === item.id;
 }
 
 const PLAN_MARKS: Record<string, string> = {
@@ -132,22 +214,17 @@ export default function Transcript({
     }
     return null;
   })();
-  const liveThoughtId =
-    busy && items[items.length - 1]?.kind === "thought" ? items[items.length - 1].id : null;
+  const runs = activityRuns(items);
 
   return (
     <>
-      {items.map((item) => (
-        <Row
-          key={item.id}
-          item={item}
-          live={
-            item.kind === "thought"
-              ? item.id === liveThoughtId
-              : busy && item.id === lastAgentProseId
-          }
-        />
-      ))}
+      {runs.map((run, index) =>
+        isActivity(run[0]) ? (
+          <ActivityRun key={run[0].id} items={run} live={busy && index === runs.length - 1} />
+        ) : (
+          <Row key={run[0].id} item={run[0]} live={busy && run[0].id === lastAgentProseId} />
+        ),
+      )}
     </>
   );
 }

@@ -136,6 +136,56 @@ describe("Transcript", () => {
     expect(steps[1]).toHaveAttribute("data-status", "in_progress");
   });
 
+  it("collapses a settled run of work into one row, and opens it on tap", () => {
+    const items: ConversationItem[] = [
+      { kind: "thought", id: "e1", text: "Checking the router" },
+      { kind: "tool", id: "e2", call: call({ callId: "a", startedAt: 1_000, endedAt: 3_000 }) },
+      { kind: "tool", id: "e3", call: call({ callId: "b", startedAt: 3_000, endedAt: 131_000 }) },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    const summary = screen.getByTestId("session-activity-summary");
+    expect(summary).toHaveTextContent("2 tools");
+    expect(summary).toHaveTextContent("2m 10s");
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
+
+    fireEvent.click(summary);
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+    expect(screen.getByTestId("session-thinking")).toBeInTheDocument();
+  });
+
+  it("leaves a run open when it is still running or something in it failed", () => {
+    const items: ConversationItem[] = [
+      { kind: "tool", id: "e1", call: call({ callId: "a" }) },
+      { kind: "tool", id: "e2", call: call({ callId: "b", status: "failed" }) },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getByTestId("session-activity-summary")).toHaveTextContent("1 failed");
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+  });
+
+  it("shows a single call as its own row rather than a summary of one", () => {
+    const items: ConversationItem[] = [{ kind: "tool", id: "e1", call: call() }];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.queryByTestId("session-activity-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-tool-card")).toHaveTextContent("…/src/config.ts");
+  });
+
+  it("keeps prose out of the collapse: a reply is never inside a run", () => {
+    const items: ConversationItem[] = [
+      { kind: "tool", id: "e1", call: call({ callId: "a" }) },
+      agentProse("e2", "Changed the port."),
+      { kind: "tool", id: "e3", call: call({ callId: "b" }) },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Changed the port.");
+    expect(screen.getAllByTestId("session-activity")).toHaveLength(2);
+  });
+
   it("marks a permission ask in history without offering the buttons twice", () => {
     const items: ConversationItem[] = [
       { kind: "permission", id: "e1", requestId: "7", title: "Run tests?", resolved: true },

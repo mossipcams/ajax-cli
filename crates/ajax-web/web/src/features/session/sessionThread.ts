@@ -71,6 +71,10 @@ export interface ToolCall {
   locations: string[];
   /** What the call produced: printed output, a file diff. */
   content: ToolContent[];
+  /** Client arrival times — the wire carries none. Absent on replayed history,
+   * which is why every elapsed reader treats them as optional. */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface PlanEntry {
@@ -301,13 +305,26 @@ function upsertOrPushUser(state: SessionState, text: string, itemId?: string, me
  * fields an update omits is what stops the title vanishing.
  *
  * The call keeps its original position: a completing edit belongs where the
- * agent made it, not at the bottom of the conversation. */
+ * agent made it, not at the bottom of the conversation.
+ *
+ * ponytail: the clock is the client's, because ACP sends no timestamps. A
+ * replayed transcript therefore has no honest durations, and the row hides the
+ * column rather than printing the replay burst as elapsed work. */
 function mergeToolCall(state: SessionState, incoming: ToolCall): SessionState {
+  const now = Date.now();
+  const settled = incoming.status === "completed" || incoming.status === "failed";
   const index = state.items.findIndex(
     (item) => item.kind === "tool" && item.call.callId === incoming.callId,
   );
   if (index < 0) {
-    return { ...push(state, { kind: "tool", call: incoming }), busy: true, proseOpen: false };
+    return {
+      ...push(state, {
+        kind: "tool",
+        call: { ...incoming, startedAt: now, endedAt: settled ? now : undefined },
+      }),
+      busy: true,
+      proseOpen: false,
+    };
   }
   const item = state.items[index];
   if (item.kind !== "tool") return state;
@@ -318,6 +335,8 @@ function mergeToolCall(state: SessionState, incoming: ToolCall): SessionState {
       call: {
         ...previous,
         ...incoming,
+        startedAt: previous.startedAt ?? now,
+        endedAt: previous.endedAt ?? (settled ? now : undefined),
         title: incoming.title || previous.title,
         kind: incoming.kind || previous.kind,
         locations: incoming.locations.length ? incoming.locations : previous.locations,
