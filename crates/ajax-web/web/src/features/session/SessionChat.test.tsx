@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import * as useTaskTerminalSpeechModule from "@/features/task/useTaskTerminalSpeech";
@@ -13,7 +13,7 @@ import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { writeSessionModel } from "./sessionModel";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
+const stylesSource = readOrderedStylesSource(join(here, "../.."));
 
 const transport = {
   // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and

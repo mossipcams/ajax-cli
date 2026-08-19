@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
+const stylesSource = readOrderedStylesSource(join(here, "../.."));
 
 function taskTerminalStylesSection(): string {
   const start = stylesSource.indexOf("/* TaskTerminal");

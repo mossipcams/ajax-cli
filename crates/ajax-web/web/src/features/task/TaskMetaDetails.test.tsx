@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import TaskMetaDetails, { humanizeTaskAnnotation } from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
+const stylesSource = readOrderedStylesSource(
+  join(dirname(fileURLToPath(import.meta.url)), "../.."),
 );
 
 const fetchDevDeploy = vi.fn();

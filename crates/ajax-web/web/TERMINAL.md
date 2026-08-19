@@ -12,6 +12,7 @@ mobile-WebKit behavior suite including the viewport-burst case passes as of
 
 | Concern | Owner |
 | --- | --- |
+| Terminal chrome CSS (TaskTerminal, xterm surfaces) | `styles/terminal.css` |
 | Lifecycle, DOM, accessibility, composition | `TaskTerminal.tsx` |
 | WebSocket lifecycle / transport | `terminalConnection.ts` |
 | Document viewport + keyboard truth | `viewport.ts` |
