@@ -152,14 +152,6 @@ fn replace_resume_id(
     }
 }
 
-fn spawn_model_arg(model: &str) -> Option<&str> {
-    if model.is_empty() || model == "auto" {
-        None
-    } else {
-        Some(model)
-    }
-}
-
 async fn spawn_acp(
     agent: AgentClient,
     worktree_path: &Path,
@@ -170,9 +162,8 @@ async fn spawn_acp(
     // the child's dedicated owner stay aligned. One task per session, so this
     // does not block the directory or other sessions.
     let worktree = worktree_path.to_path_buf();
-    let model = model.to_string();
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
-        AcpStdioClient::spawn(agent, &worktree, spawn_model_arg(&model), resume.as_deref())
+        AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
     })
 }

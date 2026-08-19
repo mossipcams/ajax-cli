@@ -12,7 +12,8 @@ mod client_tests;
 mod spawn_tests;
 
 pub use apply_model::{
-    apply_model_pin, is_unspecified_model, read_applied_model, ApplyModelOutcome,
+    apply_model_pin, is_unspecified_model, operator_pin_satisfied, read_applied_model,
+    ApplyModelOutcome,
 };
 pub use catalog::{read_agent_model_catalog, AgentModelCatalog};
 pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};

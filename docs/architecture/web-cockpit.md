@@ -73,7 +73,7 @@ harness to its ACP entry point and to how it accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` on the spawn argv |
+| Cursor | `agent acp` (native) | `--model` on the spawn argv with catalog ids mapped to ACP bracket tokens (including mapped `CURSOR_DEFAULT_MODEL` when Auto/unspecified) |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
 | Pi | `pi-acp` | `session/set_config_option` |
@@ -136,13 +136,23 @@ sheet as the dashboard (orchestration chat pre-selected when the flag is on);
 the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
-`POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
-another harness, exposed as the Harness switch in the Ajax chat (SessionChat)
-task-details modal. It is
-refused for a task that was launched interactively, because that task's agent is
-live in its tmux pane and the registry must not name a harness that is not the
-running process. On success the host drops the task's ACP slot so the next attach
-spawns the new harness.
+`POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
+model for an existing task, exposed as **Switch** in the Ajax chat (SessionChat)
+task-details modal. Same-harness model changes persist `session_model` and drop
+the live ACP slot so the next attach runs the chosen model; cross-harness
+changes spawn the new harness on the next attach. Switch is refused for a task
+that was launched interactively, because that task's agent is live in its tmux
+pane and the registry must not name a harness that is not the running process.
+
+When spawn argv, resume/load, and in-band apply leave a model that does not match
+the operator pin (for example Cursor CLI default Composer Fast while Grok High or
+`CURSOR_DEFAULT_MODEL` was chosen), the session host drops the ACP child and
+respawns once with the mapped spawn token and a fresh `session/new` (no resume),
+then applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+After a successful recover, `snapshot.model` reflects the running model and no
+error is logged for the failed first attempt. If recovery still fails, the host
+emits a typed error while `session_model` stays the operator pin and
+`snapshot.model` remains harness-reported evidence.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The

@@ -20,6 +20,10 @@ use nix::{
 
 static NEXT_SANDBOX_ID: AtomicUsize = AtomicUsize::new(0);
 
+const PTY_DEFAULT_WAIT: Duration = Duration::from_secs(5);
+// Attach after an EINTR retry can lag under parallel CI; keep other waits tight.
+const PTY_ATTACH_WAIT: Duration = Duration::from_secs(30);
+
 fn ajax_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_ajax-cli"))
 }
@@ -246,7 +250,7 @@ fn run_ajax_cockpit_ctrl_q_flow_with_env(
             let mut env = vec![("AJAX_SMOKE_TMUX_ATTACH_BLOCK", "1"), ("TERM", "xterm")];
             env.extend_from_slice(extra_env);
             let error = sandbox
-                .ajax_command(["cockpit", "--interval-ms", "10000"], env)
+                .ajax_command(["cockpit", "--no-web", "--interval-ms", "10000"], env)
                 .exec();
             eprintln!("failed to exec ajax cockpit: {error}");
             std::process::exit(127);
@@ -272,7 +276,7 @@ fn run_ajax_cockpit_ctrl_q_flow_with_env(
             master
                 .write_all(b"\r")
                 .expect("failed to confirm resume action from cockpit PTY");
-            wait_for_pty_output(
+            wait_for_pty_attach_output(
                 &mut master,
                 &mut stdout,
                 "attached ajax-web-fix-login",
@@ -301,13 +305,24 @@ fn run_ajax_cockpit_ctrl_q_flow_with_env(
 }
 
 fn wait_for_pty_output(master: &mut fs::File, stdout: &mut Vec<u8>, expected: &str, context: &str) {
-    wait_until_pty(context, master, stdout, |stdout| {
+    wait_until_pty(context, master, stdout, PTY_DEFAULT_WAIT, |stdout| {
+        String::from_utf8_lossy(stdout).contains(expected)
+    });
+}
+
+fn wait_for_pty_attach_output(
+    master: &mut fs::File,
+    stdout: &mut Vec<u8>,
+    expected: &str,
+    context: &str,
+) {
+    wait_until_pty(context, master, stdout, PTY_ATTACH_WAIT, |stdout| {
         String::from_utf8_lossy(stdout).contains(expected)
     });
 }
 
 fn wait_for_pty_resume_confirmation(master: &mut fs::File, stdout: &mut Vec<u8>, context: &str) {
-    wait_until_pty(context, master, stdout, |stdout| {
+    wait_until_pty(context, master, stdout, PTY_DEFAULT_WAIT, |stdout| {
         strip_ansi_escapes(&String::from_utf8_lossy(stdout)).contains(">> resume")
     });
 }
@@ -337,7 +352,7 @@ fn wait_for_pty_output_after(
     expected: &str,
     context: &str,
 ) {
-    wait_until_pty(context, master, stdout, |stdout| {
+    wait_until_pty(context, master, stdout, PTY_DEFAULT_WAIT, |stdout| {
         String::from_utf8_lossy(stdout.get(after..).unwrap_or_default()).contains(expected)
     });
 }
@@ -346,10 +361,11 @@ fn wait_until_pty(
     context: &str,
     master: &mut fs::File,
     stdout: &mut Vec<u8>,
+    timeout: Duration,
     mut done: impl FnMut(&[u8]) -> bool,
 ) {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(5) {
+    while started.elapsed() < timeout {
         read_pty_available(master, stdout);
         if done(stdout) {
             return;

@@ -51,8 +51,8 @@ function openTaskDetails() {
   fireEvent.click(screen.getByTestId("session-details"));
 }
 
-function openModelCatalog() {
-  fireEvent.click(screen.getByTestId("session-model-change"));
+function openSwitchPanel() {
+  fireEvent.click(screen.getByTestId("harness-swap-open"));
 }
 
 function mountChat(overrides: Partial<React.ComponentProps<typeof SessionChat>> = {}) {
@@ -454,20 +454,16 @@ describe("SessionChat smoke", () => {
     expect(body).toContainElement(identity);
   });
 
-  it("keeps the model catalog collapsed until Change is opened (#p1 distill)", async () => {
+  it("keeps Switch collapsed until opened (#979)", async () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("composer-2.5"));
     openTaskDetails();
 
-    expect(screen.getByTestId("session-model-summary")).toBeInTheDocument();
-    expect(screen.queryByTestId("session-model-catalog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByTestId("session-model-current")).toHaveTextContent(/Composer 2\.5/i);
-    });
+    expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
+    expect(screen.queryByRole("radio", { name: /Composer 2\.5/i })).not.toBeInTheDocument();
 
-    openModelCatalog();
+    openSwitchPanel();
     expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -656,23 +652,27 @@ describe("SessionChat smoke", () => {
     expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
   });
 
-  // Regression for #936: native <select> in the Radix task-details sheet was not
-  // operable, and composite session_model values did not show as selected.
-  it("shows the live session model as selected and changes it from task details (#936)", async () => {
+  // Regression for #936 / #979: Switch preselects the live session model and
+  // persists changes through swap, not the removed in-session picker.
+  it("preselects the live session model in Switch and applies Auto through swap (#936, #979)", async () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("composer-2.5"));
     openTaskDetails();
-    openModelCatalog();
+    openSwitchPanel();
 
     const current = await screen.findByRole("radio", { name: /Composer 2\.5/i });
     expect(current).toHaveAttribute("aria-checked", "true");
 
+    const swapSpy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
     fireEvent.click(screen.getByRole("radio", { name: /Auto/i }));
-    expect(transport.setModel).toHaveBeenCalledWith("auto");
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+    await waitFor(() => expect(swapSpy).toHaveBeenCalled());
+    expect(swapSpy).toHaveBeenCalledWith("web/fix-login", "cursor", undefined);
+    expect(transport.setModel).not.toHaveBeenCalled();
   });
 
-  it("shows a composite session model as selected in task details (#936)", async () => {
+  it("shows a composite session model as selected in Switch (#936, #979)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -696,18 +696,21 @@ describe("SessionChat smoke", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "claude" } });
     act(() => ready?.("opus|effort=high"));
     openTaskDetails();
-    openModelCatalog();
+    openSwitchPanel();
 
     const current = await screen.findByRole("radio", { name: /Opus/i });
     expect(current).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "High" })).toHaveAttribute("aria-checked", "true");
 
+    const swapSpy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
     fireEvent.click(screen.getByRole("radio", { name: "Low" }));
-    expect(transport.setModel).toHaveBeenCalledWith("opus|effort=low");
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+    await waitFor(() => expect(swapSpy).toHaveBeenCalled());
+    expect(swapSpy).toHaveBeenCalledWith("web/fix-login", "claude", "opus|effort=low");
   });
 
-  // Regression for #948: task details show a shortlist first, with Show all for the rest.
-  it("shows a model shortlist with Show all in task details (#948)", async () => {
+  // Regression for #948: Switch shows a shortlist first, with Show all for the rest.
+  it("shows a model shortlist with Show all in Switch (#948, #979)", async () => {
     const catalog = {
       models: Array.from({ length: 12 }, (_, index) => ({
         id: `model-${index}`,
@@ -726,7 +729,7 @@ describe("SessionChat smoke", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("model-2"));
     openTaskDetails();
-    openModelCatalog();
+    openSwitchPanel();
 
     await waitFor(() => {
       expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
@@ -743,9 +746,9 @@ describe("SessionChat smoke", () => {
     );
   });
 
-  // Regression for #952: the in-session picker must reflect snapshot applied model,
-  // not task metadata or localStorage, when the host reports a different harness id.
-  it("shows the host snapshot applied model in task details (#952)", async () => {
+  // Regression for #952: Switch must reflect snapshot applied model, not task
+  // metadata or localStorage, when the host reports a different harness id.
+  it("preselects the host snapshot applied model in Switch (#952, #979)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -765,7 +768,7 @@ describe("SessionChat smoke", () => {
     act(() => ready?.("harness-default"));
 
     openTaskDetails();
-    openModelCatalog();
+    openSwitchPanel();
     const current = await screen.findByRole("radio", { name: /Harness default/i });
     expect(current).toHaveAttribute("aria-checked", "true");
     expect(
@@ -818,7 +821,7 @@ describe("SessionChat task details polish", () => {
     expect(closeCss).toMatch(/min-height:\s*44px/);
   });
 
-  it("exposes aria-expanded on Details and model Change", async () => {
+  it("exposes aria-expanded on Details and Switch", async () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("composer-2.5"));
@@ -830,14 +833,13 @@ describe("SessionChat task details polish", () => {
     openTaskDetails();
     expect(details).toHaveAttribute("aria-expanded", "true");
 
-    const change = screen.getByTestId("session-model-change");
-    expect(change).toHaveAttribute("aria-expanded", "false");
-    expect(change).toHaveAttribute("aria-controls");
-
-    openModelCatalog();
-    expect(await screen.findByTestId("session-model-catalog")).toHaveAttribute("id");
-    expect(screen.getByTestId("session-model-done")).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByTestId("session-model-change")).not.toBeInTheDocument();
+    expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
+    openSwitchPanel();
+    expect(screen.getByTestId("harness-swap")).toHaveClass("is-open");
+    expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("pins observation error under identity with the task-detail prefix", () => {
@@ -851,20 +853,17 @@ describe("SessionChat task details polish", () => {
 
     const identity = screen.getByTestId("session-task-identity");
     const observationError = screen.getByTestId("session-observation-error");
-    const modelSelect = screen.getByTestId("session-model-select");
+    const harnessSwap = screen.getByTestId("harness-swap");
     expect(observationError).toHaveTextContent("Observation error: tmux session missing");
     expect(identity.compareDocumentPosition(observationError) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(observationError.compareDocumentPosition(modelSelect) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(observationError.compareDocumentPosition(harnessSwap) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("hides the session model picker while harness Switch is open", () => {
+  it("does not render a separate in-session model picker (#979)", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     openTaskDetails();
-    expect(screen.getByTestId("session-model-select")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("harness-swap-open"));
     expect(screen.queryByTestId("session-model-select")).not.toBeInTheDocument();
-    expect(screen.getByTestId("harness-swap")).toHaveClass("is-open");
+    expect(screen.getByTestId("harness-swap")).toBeInTheDocument();
   });
 
   it("does not give the first sheet ActionBar action primary fill", () => {

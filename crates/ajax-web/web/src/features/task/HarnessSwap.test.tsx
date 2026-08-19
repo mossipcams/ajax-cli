@@ -31,6 +31,39 @@ describe("HarnessSwap", () => {
     expect(screen.queryByRole("radio", { name: "Codex" })).not.toBeInTheDocument();
   });
 
+  it("preselects the current harness and model when Switch opens", async () => {
+    stubCatalog();
+    render(
+      <HarnessSwap
+        handle="web/fix-login"
+        currentAgent="cursor"
+        currentModel="gpt-5.6-sol[low]"
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    expect(screen.getByRole("radio", { name: "Cursor" })).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByRole("radio", { name: /GPT-5.6-Sol \(low\)/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("persists a model-only change on the same harness", async () => {
+    stubCatalog();
+    const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    render(
+      <HarnessSwap handle="web/fix-login" currentAgent="cursor" currentModel="gpt-5.6-sol[low]" />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    fireEvent.click(await screen.findByRole("radio", { name: /GPT-5.6-Sol \(high\)/ }));
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith("web/fix-login", "cursor", "gpt-5.6-sol[high]");
+  });
+
   it("switches the task to the chosen harness and model", async () => {
     stubCatalog();
     const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });

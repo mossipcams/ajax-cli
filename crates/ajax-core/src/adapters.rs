@@ -7,8 +7,10 @@ pub mod process;
 pub mod tmux;
 
 pub use agent::{
-    acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, agent_launch_spec,
-    parse_model_selection, valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch,
+    acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
+    agent_launch_spec, cursor_catalog_to_acp_spawn_token, cursor_model_intents_match,
+    is_unspecified_acp_model, parse_cursor_model_intent, parse_model_selection,
+    valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch, CursorModelIntent,
     ModelSelection, CURSOR_DEFAULT_MODEL,
 };
 pub use command::{
@@ -575,6 +577,83 @@ mod tests {
         }
 
         assert!(acp_launch_for_agent(AgentClient::Other).is_none());
+    }
+
+    #[test]
+    fn acp_spawn_model_for_argv_pins_cursor_default_when_unspecified() {
+        use crate::adapters::agent::{
+            acp_launch_for_agent, acp_spawn_model_for_argv, cursor_catalog_to_acp_spawn_token,
+        };
+        use crate::models::AgentClient;
+
+        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
+        let mapped_default =
+            cursor_catalog_to_acp_spawn_token(crate::adapters::agent::CURSOR_DEFAULT_MODEL);
+        assert_eq!(
+            acp_spawn_model_for_argv(launch, None),
+            Some(mapped_default.clone())
+        );
+        assert_eq!(
+            acp_spawn_model_for_argv(launch, Some("auto")),
+            Some(mapped_default)
+        );
+        assert_eq!(
+            acp_spawn_model_for_argv(launch, Some("composer-2.5")),
+            Some("composer-2.5[fast=false]".to_string())
+        );
+
+        let codex = acp_launch_for_agent(AgentClient::Codex).expect("codex");
+        assert_eq!(acp_spawn_model_for_argv(codex, None), None);
+        assert_eq!(acp_spawn_model_for_argv(codex, Some("auto")), None);
+    }
+
+    #[test]
+    fn cursor_catalog_maps_grok_high_to_acp_spawn_token_issue_979() {
+        use crate::adapters::agent::cursor_catalog_to_acp_spawn_token;
+
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("cursor-grok-4.6-high"),
+            "grok-4.6[effort=high,fast=false]"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("cursor-grok-4.6-high-fast"),
+            "grok-4.6[effort=high,fast=true]"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("composer-2.5"),
+            "composer-2.5[fast=false]"
+        );
+    }
+
+    #[test]
+    fn cursor_model_intents_match_requires_matching_fast_issue_979() {
+        use crate::adapters::{cursor_model_intents_match, parse_cursor_model_intent};
+
+        let desired = parse_cursor_model_intent("cursor-grok-4.6-high").unwrap();
+        let non_fast = parse_cursor_model_intent("grok-4.6[effort=high,fast=false]").unwrap();
+        let fast = parse_cursor_model_intent("grok-4.6[effort=high,fast=true]").unwrap();
+        let composer_fast = parse_cursor_model_intent("composer-2.5[fast=true]").unwrap();
+        assert!(cursor_model_intents_match(&desired, &non_fast));
+        assert!(!cursor_model_intents_match(&desired, &fast));
+        assert!(!cursor_model_intents_match(&desired, &composer_fast));
+    }
+
+    #[test]
+    fn acp_args_for_candidate_pins_cursor_default_on_unspecified() {
+        use crate::adapters::agent::{
+            acp_args_for_candidate, acp_launch_for_agent, cursor_catalog_to_acp_spawn_token,
+        };
+        use crate::models::AgentClient;
+
+        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
+        assert_eq!(
+            acp_args_for_candidate(launch, &["acp"], None),
+            vec![
+                "--model".to_string(),
+                cursor_catalog_to_acp_spawn_token(crate::adapters::agent::CURSOR_DEFAULT_MODEL),
+                "acp".to_string()
+            ]
+        );
     }
 
     #[test]

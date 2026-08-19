@@ -65,7 +65,6 @@ import {
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
-import SessionModelSelect from "./SessionModelSelect";
 import TaskMetaDetails from "@/features/task/TaskMetaDetails";
 import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
@@ -146,7 +145,6 @@ export default function SessionChat({
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [harnessSwapOpen, setHarnessSwapOpen] = useState(false);
 
   const {
     state,
@@ -156,7 +154,6 @@ export default function SessionChat({
     sessionModel,
     sendPrompt,
     sendCancel,
-    setModel,
     respondPermission,
     onMutated: onSessionMutated,
   } = useTaskSession({ handle, detail, onMutated });
@@ -189,10 +186,6 @@ export default function SessionChat({
   useEffect(() => {
     if (pendingConfirmAction === "drop") setDetailsOpen(false);
   }, [pendingConfirmAction]);
-
-  useEffect(() => {
-    if (!detailsOpen) setHarnessSwapOpen(false);
-  }, [detailsOpen]);
 
   const restoreLiveEdge = useCallback(() => {
     setPinned(true);
@@ -559,18 +552,9 @@ export default function SessionChat({
                       <HarnessSwap
                         handle={detail.qualified_handle ?? handle}
                         currentAgent={detail.agent}
+                        currentModel={sessionModel}
+                        disabled={state.busy}
                         onSwapped={handleHarnessSwapped}
-                        onOpenChange={setHarnessSwapOpen}
-                      />
-                    ) : null}
-
-                    {!harnessSwapOpen ? (
-                      <SessionModelSelect
-                        id={`${composerId}-model`}
-                        agent={detail?.agent}
-                        value={sessionModel}
-                        disabled={state.busy || !connected}
-                        onChange={(id) => setModel(id)}
                       />
                     ) : null}
 

@@ -11,6 +11,7 @@ use agent_client_protocol::schema::{
     },
     ProtocolVersion,
 };
+use ajax_core::adapters::{cursor_catalog_to_acp_spawn_token, CURSOR_DEFAULT_MODEL};
 use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
@@ -197,7 +198,7 @@ fn cursor_acp_args_insert_model_before_acp() {
     let launch = cursor_launch();
     assert_eq!(
         acp_args_for_program(launch, &["acp"], Some("composer-2.5")),
-        vec!["--model", "composer-2.5", "acp"]
+        vec!["--model", "composer-2.5[fast=false]", "acp"]
     );
     assert_eq!(
         acp_args_for_program(launch, &["agent", "acp"], Some("gpt-5.6-sol-medium")),
@@ -205,9 +206,20 @@ fn cursor_acp_args_insert_model_before_acp() {
     );
     assert_eq!(
         acp_args_for_program(launch, &["acp"], Some("auto")),
-        vec!["acp"]
+        vec![
+            "--model",
+            cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL).as_str(),
+            "acp"
+        ]
     );
-    assert_eq!(acp_args_for_program(launch, &["acp"], None), vec!["acp"]);
+    assert_eq!(
+        acp_args_for_program(launch, &["acp"], None),
+        vec![
+            "--model",
+            cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL).as_str(),
+            "acp"
+        ]
+    );
 }
 
 // The bridges take no `--model` on argv; a pinned model must not leak onto them.
@@ -320,27 +332,197 @@ fn cursor_spawn_catalog_id_skips_in_band_when_not_advertised_issue_954() {
     let catalog_id = "cursor-grok-4.6-high";
 
     with_test_acp_program(&script, || {
-        let (client, report) =
-            AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
-                .expect("spawn");
-        assert!(
-            report.model_apply_error.is_none(),
-            "catalog id in a different id space must not refuse: {:?}",
-            report.model_apply_error
-        );
-        assert_eq!(report.applied_model, "harness-default");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Some(AcpClientEvent::SessionUpdate(update)) =
-                client.wait_event(Duration::from_millis(100))
-            {
-                let text = serde_json::to_string(&update).unwrap();
-                assert!(
-                    !text.contains("model:session/set_config_option:cursor-grok-4.6-high"),
-                    "must not send catalog id as handshake value: {text}"
-                );
+        with_test_acp_extra_args(&["--cursor-models"], || {
+            let (client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
+                    .expect("spawn");
+            assert!(
+                report.model_apply_error.is_none(),
+                "catalog id in a different id space must not refuse: {:?}",
+                report.model_apply_error
+            );
+            assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Some(AcpClientEvent::SessionUpdate(update)) =
+                    client.wait_event(Duration::from_millis(100))
+                {
+                    let text = serde_json::to_string(&update).unwrap();
+                    assert!(
+                        !text.contains("model:session/set_config_option:cursor-grok-4.6-high"),
+                        "must not send catalog id as handshake value: {text}"
+                    );
+                }
             }
-        }
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: mapped spawn token must run Grok High, not Composer Fast.
+#[test]
+fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
+    let dir = scratch_dir("model-cursor-cli-default-979");
+    let script = fake_acp_fixture();
+    let catalog_id = CURSOR_DEFAULT_MODEL;
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
+                    .expect("spawn");
+            assert!(
+                report.model_apply_error.is_none(),
+                "mapped spawn must run {mapped:?}, not Composer Fast: {:?}",
+                report.model_apply_error
+            );
+            assert_eq!(report.applied_model, mapped);
+            assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: resume with wrong applied model must recover like fresh attach.
+#[test]
+fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-resume-979");
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--resume",
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    Some("fake-sess-1"),
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+                assert!(
+                    !report.resumed,
+                    "recovery must respawn with session/new, not resume/load"
+                );
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: respawn once when spawn argv and in-band apply both leave CLI default.
+#[test]
+fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-979");
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    None,
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
+#[test]
+fn cursor_unspecified_spawn_recovers_onto_mapped_default_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-default-979");
+    let script = fake_acp_fixture();
+    let mapped = cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    "auto",
+                    None,
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
+#[test]
+fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
+    let dir = scratch_dir("model-cursor-unspecified-979");
+    let script = fake_acp_fixture();
+    let mapped = cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
+            assert!(
+                report.model_apply_error.is_none(),
+                "unspecified spawn must run {mapped:?}, not Composer Fast: {:?}",
+                report.model_apply_error
+            );
+            assert_eq!(report.applied_model, mapped);
+            assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+        });
     });
 
     let _ = fs::remove_dir_all(dir);
