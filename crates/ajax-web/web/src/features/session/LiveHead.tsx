@@ -86,16 +86,6 @@ export function formatTurnUsage(turnUsage: TurnUsage): string | null {
   return `Turn tokens: ${parts.join(" · ")}`;
 }
 
-function TurnUsageLine({ turnUsage }: { turnUsage: TurnUsage }) {
-  const text = formatTurnUsage(turnUsage);
-  if (!text) return null;
-  return (
-    <p className="session-head-quiet session-turn-usage" data-testid="session-turn-usage">
-      {text}
-    </p>
-  );
-}
-
 function ToolRow({ call }: { call: ToolCall }) {
   const tone = TOOL_TONES[call.kind] ?? "muted";
   const location = call.locations[0];
@@ -160,7 +150,7 @@ export default function LiveHead({
   planStep,
   thoughtSnippet,
   usage,
-  turnUsage,
+  turnUsage: _turnUsage,
   activityAgeMs,
   connected,
   actions,
@@ -287,7 +277,6 @@ export default function LiveHead({
       ) : null}
 
       {usage ? <UsageMeter usage={usage} /> : null}
-      {turnUsage ? <TurnUsageLine turnUsage={turnUsage} /> : null}
     </section>
   );
 }

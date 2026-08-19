@@ -144,16 +144,32 @@ describe("Transcript", () => {
     expect(steps[1]).toHaveAttribute("data-status", "in_progress");
   });
 
+  it("keeps the work chapter collapsed while the agent answer streams after tools settle", () => {
+    const items: ConversationItem[] = [
+      { kind: "prose", id: "u1", role: "user", text: "Fix it" },
+      { kind: "thought", id: "e1", text: "Checking the router" },
+      { kind: "tool", id: "e2", call: call({ callId: "a", status: "completed" }) },
+      agentProse("a1", "Still **streaming**"),
+    ];
+    render(<Transcript items={items} busy />);
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-message-agent")).toHaveAttribute("data-live", "true");
+  });
+
   it("collapses a settled run of work into one row, and opens it on tap", () => {
     const items: ConversationItem[] = [
+      { kind: "prose", id: "u1", role: "user", text: "Fix it" },
       { kind: "thought", id: "e1", text: "Checking the router" },
       { kind: "tool", id: "e2", call: call({ callId: "a", startedAt: 1_000, endedAt: 3_000 }) },
       { kind: "tool", id: "e3", call: call({ callId: "b", startedAt: 3_000, endedAt: 131_000 }) },
+      agentProse("a1", "Done."),
     ];
     render(<Transcript items={items} busy={false} />);
 
-    const summary = screen.getByTestId("session-activity-summary");
-    expect(summary).toHaveTextContent("2 tools");
+    const summary = screen.getByTestId("session-turn-work-summary");
+    expect(summary).toHaveTextContent("Edited 2 files");
     expect(summary).toHaveTextContent("2m 10s");
     expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
@@ -165,16 +181,15 @@ describe("Transcript", () => {
 
   it("leaves a run open when it is still running or something in it failed", () => {
     const items: ConversationItem[] = [
+      { kind: "prose", id: "u1", role: "user", text: "Try again" },
       { kind: "tool", id: "e1", call: call({ callId: "a" }) },
       { kind: "tool", id: "e2", call: call({ callId: "b", status: "failed" }) },
     ];
     render(<Transcript items={items} busy={false} />);
 
-    expect(screen.getByTestId("session-activity-summary")).toHaveTextContent("1 failed");
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent("1 failed");
     expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
-    // Collapsed by hand, the summary row is all that reports the failure, so it
-    // carries the tone rather than staying uniform grey.
-    expect(screen.getByTestId("session-activity")).toHaveClass("has-failure");
+    expect(screen.getByTestId("session-turn-work")).toHaveClass("has-failure");
   });
 
   // #970 A: the row uppercased label and payload alike, so `rm -rf` reached the
@@ -225,16 +240,18 @@ describe("Transcript", () => {
     expect(screen.getByTestId("session-tool-card")).toHaveTextContent("…/src/config.ts");
   });
 
-  it("keeps prose out of the collapse: a reply is never inside a run", () => {
+  it("keeps prose out of the collapse: a reply follows the work chapter", () => {
     const items: ConversationItem[] = [
+      { kind: "prose", id: "u1", role: "user", text: "Change the port" },
       { kind: "tool", id: "e1", call: call({ callId: "a" }) },
       agentProse("e2", "Changed the port."),
       { kind: "tool", id: "e3", call: call({ callId: "b" }) },
     ];
     render(<Transcript items={items} busy={false} />);
 
+    expect(screen.getByTestId("session-message-user")).toHaveTextContent("Change the port");
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Changed the port.");
-    expect(screen.getAllByTestId("session-activity")).toHaveLength(2);
+    expect(screen.getByTestId("session-turn-work")).toBeInTheDocument();
   });
 
   it("marks a permission ask in history without offering the buttons twice", () => {

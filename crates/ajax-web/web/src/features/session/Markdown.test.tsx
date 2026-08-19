@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import Markdown, { parseBlocks } from "./Markdown";
 
 describe("parseBlocks", () => {
@@ -15,8 +15,22 @@ describe("parseBlocks", () => {
   it("groups consecutive list items and splits on list type", () => {
     const blocks = parseBlocks("- one\n- two\n1. first\n2. second");
     expect(blocks).toEqual([
-      { kind: "list", ordered: false, items: ["one", "two"] },
-      { kind: "list", ordered: true, items: ["first", "second"] },
+      {
+        kind: "list",
+        ordered: false,
+        items: [
+          { text: "one", children: [] },
+          { text: "two", children: [] },
+        ],
+      },
+      {
+        kind: "list",
+        ordered: true,
+        items: [
+          { text: "first", children: [] },
+          { text: "second", children: [] },
+        ],
+      },
     ]);
   });
 
@@ -52,5 +66,45 @@ describe("Markdown", () => {
     render(<Markdown source={"<img src=x onerror=alert(1)>"} />);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+  });
+
+  it("renders http(s) links, blockquotes, tables, and nested lists", () => {
+    render(
+      <Markdown
+        source={[
+          "> Quoted line",
+          "",
+          "| Col A | Col B |",
+          "| --- | --- |",
+          "| one | two |",
+          "",
+          "- parent",
+          "  - child",
+          "",
+          "See [docs](https://example.com/docs).",
+        ].join("\n")}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+    const quote = screen.getByRole("blockquote");
+    expect(quote).toHaveClass("md-quote");
+    expect(within(quote).getByText("Quoted line")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("md-table");
+    expect(within(table).getByRole("columnheader", { name: "Col A" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "one" })).toBeInTheDocument();
+    const [outerList, nestedList] = screen.getAllByRole("list");
+    expect(within(outerList).getByText("parent")).toBeInTheDocument();
+    expect(within(nestedList).getByText("child")).toBeInTheDocument();
+    expect(outerList).toContainElement(nestedList);
+  });
+
+  it("does not link javascript or other non-http schemes", () => {
+    render(<Markdown source="[bad](javascript:alert(1))" />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText(/\[bad\]/)).toBeInTheDocument();
   });
 });

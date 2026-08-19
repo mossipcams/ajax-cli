@@ -93,50 +93,22 @@ describe("LiveHead context usage", () => {
 });
 
 describe("LiveHead turn usage", () => {
-  it("shows present token fields in the quiet line", () => {
+  it("does not render turn token counts in the head", () => {
     mountHead({
       state: "idle",
       turnUsage: { inputTokens: 1200, outputTokens: 450, totalTokens: 1650 },
     });
-    const row = screen.getByTestId("session-turn-usage");
-    expect(row).toHaveTextContent("Turn tokens:");
-    expect(row).toHaveTextContent("input 1,200");
-    expect(row).toHaveTextContent("output 450");
-    expect(row).toHaveTextContent("total 1,650");
-  });
-
-  it("omits missing token fields instead of showing zero", () => {
-    mountHead({
-      state: "working",
-      tone: "running",
-      turnUsage: { inputTokens: 800, totalTokens: 800 },
-    });
-    const row = screen.getByTestId("session-turn-usage");
-    expect(row).toHaveTextContent("input 800");
-    expect(row).toHaveTextContent("total 800");
-    expect(row.textContent).not.toMatch(/output\s+0/);
-    expect(row.textContent).not.toMatch(/cache read\s+0/);
-    expect(row.textContent).not.toMatch(/cache write\s+0/);
-  });
-
-  it("does not render a row when turnUsage is absent", () => {
-    mountHead({ state: "idle", turnUsage: null });
     expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
   });
 
-  it("does not render a row when turnUsage has no token counts", () => {
-    mountHead({ state: "idle", turnUsage: { requestId: "req-1" } });
-    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
-  });
-
-  it("shows context usage and turn usage separately", () => {
+  it("still shows context usage when turn usage is present", () => {
     mountHead({
       state: "idle",
       usage: { used: 30, size: 100 },
       turnUsage: { inputTokens: 500, totalTokens: 500 },
     });
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 30% full");
-    expect(screen.getByTestId("session-turn-usage")).toHaveTextContent("Turn tokens:");
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
   });
 });
 

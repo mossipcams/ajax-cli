@@ -303,11 +303,12 @@ same instrument grammar — a live head carrying state, running tool and any
 pending decision, over the conversation. Everything else in this document
 binds it unchanged.
 
-Below the head, the conversation keeps the kinds ACP distinguishes distinct
-rather than flattening them into prose: agent answers as Markdown, reasoning as
-one collapsed line (auto-expanded while it is the live tail of a busy turn),
-tool calls as cards that revise in place and open on failure, the plan as a
-checklist, and a marker row where permission was asked. While a turn is in flight
+Below the head, the conversation is **turn-as-chapter**: each operator prompt opens a
+turn whose agent answer leads, with ACP work (reasoning, tool calls, plan,
+permission markers) collapsed to one summary row per settled turn. Agent answers
+render as Markdown, reasoning as one collapsed line (auto-expanded while it is the
+live tail of a busy turn), tool calls as cards that revise in place and open on
+failure, the plan as a checklist, and a marker row where permission was asked. While a turn is in flight
 the tool row and any in-progress plan step may appear together; with no tool or
 plan step the head shows the latest ACP thought, else `Thinking…` before anything
 arrives — not a timer placeholder or human status detail line. The 60s `No recent activity` label remains a freshness warning only
@@ -321,7 +322,8 @@ column can leave the screen mid-decision on a phone.
 
 The Task details sheet on this route is a thin operator dossier, not a settings
 dump. Its first viewport leads with task identity (title, handle, branch), the
-current session model with a Change disclosure (full harness catalog on demand),
+current session model with a Change disclosure (shortlist of popular options plus
+**Show all** for the rest — not the full harness catalog in the first viewport),
 and Ajax terminal without scrolling past the model list. Deeper registry fields
 reuse the shared `TaskMetaDetails` grid; Rust Debug annotation strings are shown
 as human Notes lines, not raw struct dumps.

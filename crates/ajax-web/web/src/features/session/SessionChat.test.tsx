@@ -145,14 +145,10 @@ describe("SessionChat smoke", () => {
     expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
   });
 
-  it("shows per-turn token usage in the head from turn_usage events", () => {
+  it("stores per-turn token usage without showing it in the head", () => {
     mountChat();
     send({ type: "turn_usage", inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
-    const row = screen.getByTestId("session-turn-usage");
-    expect(row).toHaveTextContent("Turn tokens:");
-    expect(row).toHaveTextContent("input 1,200");
-    expect(row).toHaveTextContent("output 300");
-    expect(row).toHaveTextContent("total 1,500");
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
   });
 
   it("does not render turn usage when turn_usage carries no token counts", () => {
@@ -161,15 +157,14 @@ describe("SessionChat smoke", () => {
     expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
   });
 
-  it("keeps context usage separate from per-turn token usage", () => {
+  it("shows context usage without a turn token line", () => {
     mountChat({
       detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
     });
     send({ type: "usage", used: 40, size: 100 });
     send({ type: "turn_usage", inputTokens: 900, totalTokens: 900 });
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 40% full");
-    expect(screen.getByTestId("session-turn-usage")).toHaveTextContent("Turn tokens:");
-    expect(screen.getByTestId("session-turn-usage")).not.toHaveTextContent("Context");
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
   });
 
   // Regression for #877: sticky inside the masked overflow scroller left the
@@ -675,11 +670,10 @@ describe("SessionChat smoke", () => {
     expect(transport.setModel).toHaveBeenCalledWith("opus|effort=low");
   });
 
-  // Regression for #948: task details must list the full harness catalog, not Auto
-  // plus the live session model when the API advertises more.
-  it("lists the full harness catalog in task details (#948)", async () => {
+  // Regression for #948: task details show a shortlist first, with Show all for the rest.
+  it("shows a model shortlist with Show all in task details (#948)", async () => {
     const catalog = {
-      models: Array.from({ length: 8 }, (_, index) => ({
+      models: Array.from({ length: 12 }, (_, index) => ({
         id: `model-${index}`,
         label: `Catalog Model ${index}`,
       })),
@@ -699,13 +693,17 @@ describe("SessionChat smoke", () => {
     openModelCatalog();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
-        catalog.models.length,
-      );
+      expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
     });
+    expect(screen.queryByRole("radio", { name: "Catalog Model 11" })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Catalog Model 2" })).toHaveAttribute(
       "aria-checked",
       "true",
+    );
+    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
+    fireEvent.click(screen.getByTestId("model-picker-toggle"));
+    expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
+      catalog.models.length,
     );
   });
 

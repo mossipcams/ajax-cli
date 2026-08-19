@@ -1,6 +1,6 @@
-// Agent prose is markdown. This renders the six constructs agents actually
-// emit into React nodes — fenced code, inline code, headings, bullet and
-// ordered lists, bold — and lets everything else through as text.
+// Agent prose is markdown. This renders the constructs agents actually emit into
+// React nodes — fenced code, inline code, headings, lists (including nested),
+// tables, blockquotes, links, bold — and lets everything else through as text.
 //
 // Deliberately not a markdown library: the full CommonMark surface is not
 // reachable from a chat turn, and a parser that never touches innerHTML cannot
@@ -8,16 +8,72 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+type ListItem = { text: string; children: ListItem[] };
+
 type Block =
   | { kind: "code"; lang: string; text: string }
   | { kind: "heading"; text: string }
-  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "list"; ordered: boolean; items: ListItem[] }
+  | { kind: "table"; headers: string[]; rows: string[][] }
+  | { kind: "quote"; lines: string[] }
   | { kind: "para"; text: string };
 
 const FENCE = /^```(\w*)\s*$/;
 const HEADING = /^#{1,6}\s+(.*)$/;
-const BULLET = /^\s*[-*+]\s+(.*)$/;
-const ORDERED = /^\s*\d+[.)]\s+(.*)$/;
+const BULLET = /^(\s*)[-*+]\s+(.*)$/;
+const ORDERED = /^(\s*)\d+[.)]\s+(.*)$/;
+const BLOCKQUOTE = /^>\s?(.*)$/;
+const TABLE_SEP = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+function parseListItem(line: string): { ordered: boolean; indent: number; text: string } | null {
+  const bullet = BULLET.exec(line);
+  if (bullet) return { ordered: false, indent: bullet[1].length, text: bullet[2] };
+  const ordered = ORDERED.exec(line);
+  if (ordered) return { ordered: true, indent: ordered[1].length, text: ordered[2] };
+  return null;
+}
+
+function addListItemToBlock(
+  block: Extract<Block, { kind: "list" }>,
+  indent: number,
+  text: string,
+) {
+  const item: ListItem = { text, children: [] };
+  if (block.items.length === 0 || indent === 0) {
+    block.items.push(item);
+    return;
+  }
+  let parent = block.items[block.items.length - 1];
+  let parentIndent = 0;
+  while (indent > parentIndent + 1 && parent.children.length > 0) {
+    parent = parent.children[parent.children.length - 1];
+    parentIndent += 2;
+  }
+  parent.children.push(item);
+}
+
+function parseTable(lines: string[], start: number): { block: Block; next: number } | null {
+  const headerLine = lines[start];
+  const sepLine = lines[start + 1];
+  if (!headerLine?.includes("|") || !sepLine || !TABLE_SEP.test(sepLine)) return null;
+
+  const splitRow = (row: string) =>
+    row
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim());
+
+  const headers = splitRow(headerLine);
+  const rows: string[][] = [];
+  let i = start + 2;
+  while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+    rows.push(splitRow(lines[i]));
+    i += 1;
+  }
+  return { block: { kind: "table", headers, rows }, next: i };
+}
 
 export function parseBlocks(source: string): Block[] {
   const lines = source.split("\n");
@@ -45,6 +101,14 @@ export function parseBlocks(source: string): Block[] {
       continue;
     }
 
+    const table = parseTable(lines, i);
+    if (table) {
+      flush();
+      blocks.push(table.block);
+      i = table.next - 1;
+      continue;
+    }
+
     const heading = HEADING.exec(line);
     if (heading) {
       flush();
@@ -52,15 +116,31 @@ export function parseBlocks(source: string): Block[] {
       continue;
     }
 
-    const bullet = BULLET.exec(line);
-    const ordered = bullet ? null : ORDERED.exec(line);
-    if (bullet || ordered) {
-      const isOrdered = Boolean(ordered);
+    const quote = BLOCKQUOTE.exec(line);
+    if (quote) {
+      flush();
+      const quoteLines = [quote[1]];
+      i += 1;
+      while (i < lines.length) {
+        const next = BLOCKQUOTE.exec(lines[i]);
+        if (!next) break;
+        quoteLines.push(next[1]);
+        i += 1;
+      }
+      blocks.push({ kind: "quote", lines: quoteLines });
+      i -= 1;
+      continue;
+    }
+
+    const listItem = parseListItem(line);
+    if (listItem) {
+      flush();
       const tail = blocks[blocks.length - 1];
-      const item = (bullet ?? ordered)![1];
-      if (paragraph.length) flush();
-      if (tail?.kind === "list" && tail.ordered === isOrdered) tail.items.push(item);
-      else blocks.push({ kind: "list", ordered: isOrdered, items: [item] });
+      if (!(tail?.kind === "list" && tail.ordered === listItem.ordered)) {
+        blocks.push({ kind: "list", ordered: listItem.ordered, items: [] });
+      }
+      const listBlock = blocks[blocks.length - 1] as Extract<Block, { kind: "list" }>;
+      addListItemToBlock(listBlock, listItem.indent, listItem.text);
       continue;
     }
 
@@ -71,9 +151,24 @@ export function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
-const INLINE = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+const INLINE =
+  /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((?:https?:\/\/[^)\s]+)\))/g;
 
-/** Inline code and bold only. Anything else stays literal text. */
+function safeLink(href: string, label: string, key: string): ReactNode {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return label;
+    return (
+      <a key={key} className="md-link" href={href} target="_blank" rel="noopener noreferrer">
+        {label}
+      </a>
+    );
+  } catch {
+    return label;
+  }
+}
+
+/** Inline code, bold, and http(s) links. Anything else stays literal text. */
 export function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return text.split(INLINE).map((part, index) => {
     const key = `${keyPrefix}-${index}`;
@@ -87,17 +182,30 @@ export function renderInline(text: string, keyPrefix: string): ReactNode[] {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return <strong key={key}>{part.slice(2, -2)}</strong>;
     }
+    const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(part);
+    if (link) return safeLink(link[2], link[1], key);
+    if (part === undefined || part === "") return null;
     return part;
   });
 }
 
-/** A streaming turn delivers a chunk per token, and each one would otherwise
- * re-parse and re-render the whole message. 50ms is under the ~100ms at which a
- * redraw stops reading as continuous, so the text still streams; it just stops
- * costing a full parse per token on a phone.
- *
- * Leading edge plus trailing timer: the first chunk paints immediately, and the
- * last one is never stranded waiting for a chunk that will not come. */
+function renderListItems(items: ListItem[], ordered: boolean, keyPrefix: string): ReactNode {
+  const Tag = ordered ? "ol" : "ul";
+  return (
+    <Tag className="md-list">
+      {items.map((item, index) => {
+        const key = `${keyPrefix}-${index}`;
+        return (
+          <li key={key}>
+            {renderInline(item.text, key)}
+            {item.children.length > 0 ? renderListItems(item.children, ordered, `${key}-n`) : null}
+          </li>
+        );
+      })}
+    </Tag>
+  );
+}
+
 const THROTTLE_MS = 50;
 
 function useThrottledSource(source: string, live: boolean): string {
@@ -147,13 +255,47 @@ export default function Markdown({ source, live = false }: { source: string; liv
           );
         }
         if (block.kind === "list") {
-          const Tag = block.ordered ? "ol" : "ul";
           return (
-            <Tag key={key} className="md-list">
-              {block.items.map((item, itemIndex) => (
-                <li key={`${key}-${itemIndex}`}>{renderInline(item, `${key}-${itemIndex}`)}</li>
+            <div key={key} className="md-list-wrap">
+              {renderListItems(block.items, block.ordered, key)}
+            </div>
+          );
+        }
+        if (block.kind === "table") {
+          return (
+            <div key={key} className="md-table-wrap">
+              <table className="md-table">
+                <thead>
+                  <tr>
+                    {block.headers.map((cell, cellIndex) => (
+                      <th key={`${key}-h-${cellIndex}`}>{renderInline(cell, `${key}-h-${cellIndex}`)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={`${key}-r-${rowIndex}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td key={`${key}-r-${rowIndex}-${cellIndex}`}>
+                          {renderInline(cell, `${key}-r-${rowIndex}-${cellIndex}`)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (block.kind === "quote") {
+          return (
+            <blockquote key={key} className="md-quote">
+              {block.lines.map((line, lineIndex) => (
+                <p key={`${key}-q-${lineIndex}`} className="md-para">
+                  {renderInline(line, `${key}-q-${lineIndex}`)}
+                </p>
               ))}
-            </Tag>
+            </blockquote>
           );
         }
         return (
