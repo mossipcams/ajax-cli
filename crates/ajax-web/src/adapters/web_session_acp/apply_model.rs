@@ -2,6 +2,10 @@
 //! the harness-reported applied id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 
 use super::catalog::parse_session_new_catalog;
+use super::cursor_config::{
+    cursor_parameterized_picker, parameterized_selection_advertised, reconstruct_applied_model,
+    resolve_parameterized_apply, resolve_parameterized_unspecified_apply,
+};
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigSelect, SessionConfigSelectOptions,
     SessionConfigValueId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
@@ -61,13 +65,7 @@ pub fn read_applied_model(
 fn read_applied_model_from_config_options(
     config_options: Option<&[SessionConfigOption]>,
 ) -> Option<String> {
-    let option = config_options?
-        .iter()
-        .find(|option| option.id.0.as_ref() == "model")?;
-    let SessionConfigKind::Select(select) = &option.kind else {
-        return None;
-    };
-    Some(select.current_value.0.to_string())
+    reconstruct_applied_model(config_options)
 }
 
 /// Live Cursor includes a Codex-style `models` block on `session/new`, but the ACP
@@ -238,6 +236,9 @@ fn resolve_cursor_pin_for_apply(
     config_options: Option<&[SessionConfigOption]>,
     catalog_id: &str,
 ) -> Option<ModelSelection> {
+    if cursor_parameterized_picker(config_options) {
+        return resolve_parameterized_apply(catalog_id, config_options);
+    }
     let spawn_token = cursor_catalog_to_acp_spawn_token(catalog_id);
     let advertised = advertised_model_ids(session_result, config_options);
     if advertised.iter().any(|id| id == &spawn_token) {
@@ -476,6 +477,9 @@ pub fn selection_fully_advertised(
     config_options: Option<&[SessionConfigOption]>,
     selection: &ModelSelection,
 ) -> bool {
+    if cursor_parameterized_picker(config_options) {
+        return parameterized_selection_advertised(config_options, selection);
+    }
     let model_ok = config_option_value_advertised(config_options, "model", &selection.model)
         || available_model_advertised(session_result, &selection.model);
     if !model_ok {
@@ -500,12 +504,31 @@ pub async fn apply_model_pin(
 
     if is_unspecified_model(desired_model) {
         if model_pins_at_spawn && !cursor_unspecified_spawn_satisfied(&applied) {
-            return ApplyModelOutcome {
-                applied_model: applied.clone(),
-                error: Some(format!(
-                    "session model defaulted to {applied} — Ajax expects {CURSOR_DEFAULT_SPAWN_MODEL} (non-Fast)"
-                )),
-            };
+            if let Some(selection) = resolve_parameterized_unspecified_apply(config_options) {
+                if selection_fully_advertised(session_result, config_options, &selection)
+                    && model_config_advertised(session_result, config_options)
+                {
+                    match apply_in_band(connection, session_id, &selection).await {
+                        Ok(next) => applied = next,
+                        Err(error) => {
+                            return ApplyModelOutcome {
+                                applied_model: applied.clone(),
+                                error: Some(format!(
+                                    "session model defaulted to {applied} — could not clear Fast: {error}"
+                                )),
+                            };
+                        }
+                    }
+                }
+            }
+            if !cursor_unspecified_spawn_satisfied(&applied) {
+                return ApplyModelOutcome {
+                    applied_model: applied.clone(),
+                    error: Some(format!(
+                        "session model defaulted to {applied} — Ajax expects {CURSOR_DEFAULT_SPAWN_MODEL} (non-Fast)"
+                    )),
+                };
+            }
         }
         return ApplyModelOutcome {
             applied_model: applied,

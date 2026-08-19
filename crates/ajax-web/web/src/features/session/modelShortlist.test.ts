@@ -4,7 +4,9 @@ import { buildModelShortlist, SHORTLIST_CAP } from "./modelShortlist";
 const cursorCatalog = [
   { id: "auto", label: "Auto" },
   { id: "composer-2.5", label: "Composer 2.5" },
+  { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
   { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+  { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
   { id: "gpt-5.6-sol-medium", label: "GPT 5.6" },
   { id: "claude-opus-4.6", label: "Opus 4.6" },
   { id: "claude-sonnet-4.6", label: "Sonnet 4.6" },
@@ -53,5 +55,29 @@ describe("buildModelShortlist", () => {
     const { shortlist, hasMore } = buildModelShortlist(sparse, "cursor", {});
     expect(shortlist.map((option) => option.id)).toEqual(["auto", "only-one"]);
     expect(hasMore).toBe(false);
+  });
+
+  it("does not list Fast and non-Fast Cursor variants as two shortlist slots (#979)", () => {
+    const { shortlist } = buildModelShortlist(cursorCatalog, "cursor", {
+      catalogDefault: "cursor-grok-4.6-high",
+    });
+    const ids = shortlist.map((option) => option.id);
+    expect(ids).toContain("composer-2.5");
+    expect(ids).not.toContain("composer-2.5-fast");
+    expect(ids).toContain("cursor-grok-4.6-high");
+    expect(ids).not.toContain("cursor-grok-4.6-high-fast");
+  });
+
+  it("caps generic Cursor catalogs without leaking model-11 (#948)", () => {
+    const generic = Array.from({ length: 12 }, (_, index) => ({
+      id: `model-${index}`,
+      label: `Model ${index}`,
+    }));
+    const { shortlist, hasMore } = buildModelShortlist(generic, "cursor", {
+      currentModelId: "model-3",
+      catalogDefault: "model-0",
+    });
+    expect(shortlist.map((option) => option.id)).not.toContain("model-11");
+    expect(hasMore).toBe(true);
   });
 });

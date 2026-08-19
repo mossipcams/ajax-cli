@@ -13,13 +13,14 @@ const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
 const cursorLiveModels = process.argv.includes('--cursor-live-models');
+const cursorParameterizedModels = process.argv.includes('--cursor-parameterized-models');
 const acceptUnadvertisedGrokHigh = process.argv.includes('--accept-unadvertised-grok-high');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
 const modelRefuse = process.argv.includes('--model-refuse');
 const sessionId = 'fake-sess-1';
 const cliDefaultModel = process.argv.includes('--cli-default-model')
-  ? 'composer-2.5[fast=true]'
+  ? (cursorParameterizedModels ? 'composer-2.5' : 'composer-2.5[fast=true]')
   : null;
 
 function spawnGeneration() {
@@ -61,10 +62,48 @@ function spawnModelFromArgv() {
   return null;
 }
 let currentModel = spawnModelFromArgv() ?? cliDefaultModel ?? 'harness-default';
+let currentEffort = 'high';
+let currentFast = cursorParameterizedModels ? 'true' : null;
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
 function modelConfigOptions() {
+  if (cursorParameterizedModels) {
+    return [
+      {
+        id: 'model',
+        name: 'Model',
+        type: 'select',
+        currentValue: currentModel,
+        options: [
+          { value: 'composer-2.5', name: 'Composer 2.5' },
+          { value: 'grok-4.6', name: 'Grok 4.6' },
+          { value: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+        ],
+      },
+      {
+        id: 'effort',
+        name: 'Effort',
+        type: 'select',
+        currentValue: currentEffort,
+        options: [
+          { value: 'high', name: 'High' },
+          { value: 'medium', name: 'Medium' },
+          { value: 'low', name: 'Low' },
+        ],
+      },
+      {
+        id: 'fast',
+        name: 'Fast',
+        type: 'select',
+        currentValue: currentFast,
+        options: [
+          { value: 'true', name: 'Fast' },
+          { value: 'false', name: 'Standard' },
+        ],
+      },
+    ];
+  }
   const options = [
     { value: 'harness-default', name: 'Harness default' },
     { value: 'composer-2.5', name: 'Composer 2.5' },
@@ -187,6 +226,10 @@ function handleRequest(msg) {
     }
     if (params?.configId === 'model' || method === 'session/set_model') {
       currentModel = requested || currentModel;
+    } else if (params?.configId === 'effort') {
+      currentEffort = requested || currentEffort;
+    } else if (params?.configId === 'fast') {
+      currentFast = requested || currentFast;
     }
     send({
       jsonrpc: '2.0',

@@ -209,6 +209,30 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
+  it("submits composed Cursor catalog ids with Fast off by default (#979)", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "composer-2.5", label: "Composer 2.5" },
+        { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+        { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+        { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Cursor" }));
+    await goToModelStep();
+
+    fireEvent.click(await screen.findByRole("radio", { name: "On" }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("cursor-grok-4.6-high-fast");
+    vi.unstubAllGlobals();
+  });
+
   // Found in dev: an nvm switch left the bridges off the server's PATH and the
   // page said the harness "lists no models", hiding a fixable install problem.
   it("shows why a harness could not be read instead of an empty list", async () => {

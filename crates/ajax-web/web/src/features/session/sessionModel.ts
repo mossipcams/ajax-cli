@@ -118,6 +118,176 @@ export function decodeModelSelection(raw: string): {
   return { model, options };
 }
 
+/** Matches effort suffixes on Cursor catalog ids (see core `CURSOR_EFFORT_SUFFIXES`). */
+export const CURSOR_EFFORT_SUFFIXES = ["xhigh", "high", "medium", "low", "none", "max"] as const;
+
+export interface CursorModelIntent {
+  base: string;
+  effort?: string;
+  fast: boolean;
+}
+
+/** One collapsed Cursor model row (Fast and duplicate effort ids folded out). */
+export interface CursorDisplayModel {
+  base: string;
+  label: string;
+  efforts: readonly string[];
+  hasFast: boolean;
+}
+
+function stripFastSuffix(id: string): { stem: string; fast: boolean } {
+  if (id.endsWith("-fast")) {
+    return { stem: id.slice(0, -5), fast: true };
+  }
+  return { stem: id, fast: false };
+}
+
+/** Parse a Cursor Ajax catalog id into comparable base / effort / fast pieces. */
+export function parseCursorCatalogId(raw: string): CursorModelIntent | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === DEFAULT_SESSION_MODEL) return null;
+
+  const { stem, fast } = stripFastSuffix(trimmed);
+
+  if (stem.startsWith("cursor-grok-")) {
+    const rest = stem.slice("cursor-grok-".length);
+    for (const effort of CURSOR_EFFORT_SUFFIXES) {
+      const suffix = `-${effort}`;
+      if (rest.endsWith(suffix)) {
+        const version = rest.slice(0, rest.length - suffix.length);
+        return { base: `grok-${version}`, effort, fast };
+      }
+    }
+  }
+
+  const lastDash = stem.lastIndexOf("-");
+  if (lastDash > 0) {
+    const prefix = stem.slice(0, lastDash);
+    const maybeEffort = stem.slice(lastDash + 1);
+    if (prefix.endsWith("-thinking") && CURSOR_EFFORT_SUFFIXES.includes(maybeEffort as (typeof CURSOR_EFFORT_SUFFIXES)[number])) {
+      return {
+        base: prefix.slice(0, prefix.length - "-thinking".length),
+        effort: maybeEffort,
+        fast,
+      };
+    }
+  }
+
+  for (const effort of CURSOR_EFFORT_SUFFIXES) {
+    const suffix = `-${effort}`;
+    if (stem.endsWith(suffix)) {
+      return { base: stem.slice(0, stem.length - suffix.length), effort, fast };
+    }
+  }
+
+  return { base: stem, fast };
+}
+
+function effortRank(effort: string): number {
+  const index = CURSOR_EFFORT_SUFFIXES.indexOf(effort as (typeof CURSOR_EFFORT_SUFFIXES)[number]);
+  return index >= 0 ? index : CURSOR_EFFORT_SUFFIXES.length;
+}
+
+function stripFastLabel(label: string): string {
+  return label.replace(/\s+fast\s*$/i, "").trim();
+}
+
+function intentsMatch(a: CursorModelIntent, b: CursorModelIntent): boolean {
+  return a.base === b.base && (a.effort ?? "") === (b.effort ?? "") && a.fast === b.fast;
+}
+
+/** Find the catalog id for a Cursor intent, preferring an exact catalog match. */
+export function composeCursorCatalogId(
+  intent: CursorModelIntent,
+  catalogIds: Iterable<string>,
+): string | null {
+  for (const id of catalogIds) {
+    const parsed = parseCursorCatalogId(id);
+    if (parsed && intentsMatch(parsed, intent)) return id;
+  }
+  return null;
+}
+
+/** Collapse Cursor catalog rows that differ only by `-fast` or effort into one shortlist slot. */
+export function collapseCursorCatalogModels(models: SessionModelOption[]): SessionModelOption[] {
+  const auto = models.filter(
+    (option) => option.id === DEFAULT_SESSION_MODEL || option.id === "auto",
+  );
+  const catalogIds = models.map((option) => option.id);
+  const collapsed = buildCursorDisplayModels(models).map((row) => {
+    const effort = row.efforts[0];
+    const id =
+      composeCursorCatalogId({ base: row.base, effort, fast: false }, catalogIds) ??
+      models.find((option) => parseCursorCatalogId(option.id)?.base === row.base)?.id ??
+      row.base;
+    return { id, label: row.label };
+  });
+  return [...auto, ...collapsed];
+}
+
+/** Build collapsed Cursor model rows for the picker (Auto stays a normal catalog row). */
+export function buildCursorDisplayModels(models: SessionModelOption[]): CursorDisplayModel[] {
+  const grouped = new Map<
+    string,
+    { label: string; efforts: Set<string>; hasFast: boolean }
+  >();
+
+  for (const option of models) {
+    const intent = parseCursorCatalogId(option.id);
+    if (!intent) continue;
+    const entry = grouped.get(intent.base) ?? {
+      label: stripFastLabel(option.label),
+      efforts: new Set<string>(),
+      hasFast: false,
+    };
+    if (!intent.fast) entry.label = stripFastLabel(option.label);
+    if (intent.effort) entry.efforts.add(intent.effort);
+    if (intent.fast) entry.hasFast = true;
+    grouped.set(intent.base, entry);
+  }
+
+  return [...grouped.entries()].map(([base, entry]) => ({
+    base,
+    label: entry.label,
+    efforts: [...entry.efforts].sort((a, b) => effortRank(a) - effortRank(b)),
+    hasFast: entry.hasFast,
+  }));
+}
+
+/** Decode a persisted Cursor catalog id into picker state. */
+export function decodeCursorSelection(
+  catalogId: string,
+  displayModels: CursorDisplayModel[],
+): { base: string; effort?: string; fast: boolean } | null {
+  const intent = parseCursorCatalogId(catalogId);
+  if (!intent) return null;
+  const row = displayModels.find((model) => model.base === intent.base);
+  if (!row) return null;
+  const effort =
+    intent.effort ??
+    (row.efforts.length === 1 ? row.efforts[0] : undefined);
+  return { base: intent.base, effort, fast: intent.fast };
+}
+
+/** Default effort when the operator picks a collapsed Cursor base row. */
+export function defaultCursorEffort(
+  row: CursorDisplayModel,
+  catalogDefault?: string,
+): string | undefined {
+  if (row.efforts.length === 0) return undefined;
+  if (row.efforts.length === 1) return row.efforts[0];
+  const fromDefault = catalogDefault ? parseCursorCatalogId(catalogDefault) : null;
+  if (fromDefault?.base === row.base && fromDefault.effort && row.efforts.includes(fromDefault.effort)) {
+    return fromDefault.effort;
+  }
+  return row.efforts[0];
+}
+
+export function effortOptionLabel(effort: string): string {
+  if (effort === "xhigh") return "Extra high";
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
 /** Cursor always has Auto; a bridge harness with no answer has nothing to
  *  offer, and an empty catalog means "let the harness choose". */
 function fallbackCatalog(agent: string): SessionModelCatalog {
