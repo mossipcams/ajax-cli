@@ -48,9 +48,18 @@ existing paths.
   `model=<base>`, `effort=<level>` when present, and `fast=false` unless Fast is
   on; Ajax reconstructs the applied id from those options (e.g.
   `grok-4.6[effort=high,fast=false]`) for `snapshot.model` and pin matching. Bare
-  `grok-4.6` must not satisfy `grok-4.6|effort=high|fast=false`. Pipe-form Grok
-  selections reconstruct `cursor-grok-*` spawn argv tokens; legacy exploded ids
-  keep their existing spawn/in-band mappings ([#979]). Catalog ids must never be
+  `grok-4.6` must not satisfy `grok-4.6|effort=high|fast=false`. Explicit operator
+  pins and legacy exploded catalog ids pass unchanged on spawn `--model` (e.g.
+  `claude-opus-5-medium`, `gpt-5.6-sol-high`, `cursor-grok-4.6-high`); pipe-form
+  selections reconstruct those same catalog ids on spawn argv (e.g.
+  `grok-4.6|effort=high|fast=false` → `cursor-grok-4.6-high`,
+  `composer-2.5|fast=true` → `composer-2.5-fast`); unspecified / Auto still uses
+  [`CURSOR_DEFAULT_SPAWN_MODEL`] (`grok-4.6`) on spawn argv
+  ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
+  [#991](https://github.com/mossipcams/ajax-cli/issues/991)). In-band apply maps
+  effort-suffixed catalog ids to bracket tokens such as
+  `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]`
+  when the harness still advertises exploded variants; catalog ids must never be
   sent through `session/set_config_option`
   ([#954](https://github.com/mossipcams/ajax-cli/issues/954)).
   When the handshake omits the non-Fast bracket token (variants mode often
@@ -71,7 +80,7 @@ existing paths.
   `cursor-grok-4.6-high` must not be satisfied by `grok-4.6[effort=high,fast=true]`
   or Composer Fast. When spawn, resume/load, and in-band apply still leave a different
   model running (e.g. Composer Fast while Grok High was pinned), the host drops
-  the child and respawns once with the mapped ACP spawn token (no resume), then
+  the child and respawns once with the catalog spawn token (no resume), then
   applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
   The ACP SDK keeps only `configOptions` from live Cursor `session/new`; Ajax
   mirrors that catalog into `models.availableModels` on the stored handshake

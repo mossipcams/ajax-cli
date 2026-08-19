@@ -120,53 +120,42 @@ pub fn cursor_model_intents_match(
     desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
-fn cursor_grok_spawn_token(intent: &CursorModelIntent) -> Option<String> {
-    let version = intent.base.strip_prefix("grok-")?;
-    let mut token = format!("cursor-grok-{version}");
+/// Reconstruct an exploded Cursor catalog id from a parsed intent.
+///
+/// Pipe-form picker selections persist base / effort / fast separately ([#991]);
+/// spawn argv must receive the catalog id Cursor accepts on `--model` ([#989]).
+/// Only `grok-*` bases receive the `cursor-grok-*` prefix; effort and fast suffixes
+/// are appended deterministically without inferring thinking variants.
+fn compose_cursor_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
+    let fast = intent.fast.unwrap_or(false);
+    let mut id = if let Some(version) = intent.base.strip_prefix("grok-") {
+        format!("cursor-grok-{version}")
+    } else {
+        intent.base.clone()
+    };
     if let Some(effort) = &intent.effort {
-        token.push_str(&format!("-{effort}"));
+        id.push('-');
+        id.push_str(effort);
     }
-    if intent.fast.unwrap_or(false) {
-        token.push('-');
-        token.push_str("fast");
+    if fast {
+        id.push_str("-fast");
     }
-    Some(token)
+    id
 }
 
-/// Map an Ajax catalog id to the ACP spawn token Cursor accepts on `--model`.
+/// Map an Ajax catalog id or pipe-form selection to the token Cursor accepts on spawn `--model`.
 ///
-/// `cursor-grok-*` catalog ids pass through unchanged: live Cursor honors them on
-/// spawn argv while bracket ids such as `grok-4.6[effort=high,fast=true]` are
-/// ignored until in-band apply ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-/// Pipe-form Grok selections reconstruct `cursor-grok-*` spawn tokens. Other
-/// effort-suffixed ids map to bracket tokens, preferring non-Fast when the
-/// catalog id has no `-fast` suffix.
-pub fn cursor_catalog_to_acp_spawn_token(catalog_id: &str) -> String {
-    let Some(intent) = parse_cursor_model_intent(catalog_id) else {
-        return catalog_id.to_string();
-    };
-    if catalog_id.starts_with("cursor-grok-") && !catalog_id.contains('[') {
-        return catalog_id.to_string();
+/// Live Cursor honors catalog ids from `agent models` on spawn argv ([#989]).
+/// Pipe-form selections reconstruct those catalog ids; bracket synthesis is reserved
+/// for in-band apply via [`cursor_catalog_to_acp_in_band_token`].
+pub fn cursor_catalog_to_acp_spawn_token(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.contains('|') {
+        return parse_cursor_model_intent(trimmed)
+            .map(|intent| compose_cursor_catalog_id_from_intent(&intent))
+            .unwrap_or_else(|| trimmed.to_string());
     }
-    if catalog_id.contains('|') {
-        if let Some(token) = cursor_grok_spawn_token(&intent) {
-            return token;
-        }
-    }
-    let uses_acp_brackets = intent.effort.is_some()
-        || catalog_id.starts_with("composer-")
-        || catalog_id.contains("-thinking-")
-        || catalog_id.contains('[');
-    if !uses_acp_brackets {
-        return catalog_id.to_string();
-    }
-    let fast = intent.fast.unwrap_or(false);
-    let mut options = Vec::new();
-    if let Some(effort) = &intent.effort {
-        options.push(format!("effort={effort}"));
-    }
-    options.push(format!("fast={fast}"));
-    format!("{}[{}]", intent.base, options.join(","))
+    trimmed.to_string()
 }
 
 /// Map an Ajax catalog id to the bracket ACP model id for in-band apply.
