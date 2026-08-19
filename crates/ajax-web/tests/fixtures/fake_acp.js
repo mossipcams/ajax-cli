@@ -14,6 +14,7 @@ const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
+const modelRefuse = process.argv.includes('--model-refuse');
 const sessionId = 'fake-sess-1';
 const cliDefaultModel = process.argv.includes('--cli-default-model')
   ? 'composer-2.5[fast=true]'
@@ -37,6 +38,11 @@ function spawnModelFromArgv() {
   if (ignoreSpawnModelOnce && firstSpawnAttempt) {
     return null;
   }
+  // #952: --model-refuse simulates a harness that keeps its own default and
+  // rejects operator pins at spawn as well as in-band.
+  if (modelRefuse) {
+    return null;
+  }
   const idx = process.argv.indexOf('--model');
   if (idx >= 0 && idx + 1 < process.argv.length) {
     const model = process.argv[idx + 1];
@@ -49,7 +55,6 @@ function spawnModelFromArgv() {
   return null;
 }
 let currentModel = spawnModelFromArgv() ?? cliDefaultModel ?? 'harness-default';
-const modelRefuse = process.argv.includes('--model-refuse');
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
