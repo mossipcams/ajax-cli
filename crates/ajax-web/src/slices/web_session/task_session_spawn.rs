@@ -32,11 +32,9 @@ pub(super) async fn acquire(
             &state.qualified_handle,
         );
         state.acquire_holder();
+        release_live_client(state)?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
-        if let Some(old_client) = state.client.as_mut() {
-            let _ = old_client.cancel();
-        }
         install_replaced_client(state, new_client, &report, model)?;
         return Ok(());
     }
@@ -148,10 +146,8 @@ pub(super) async fn respawn(
         &state.qualified_handle,
     );
     let agent = state.agent;
+    release_live_client(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
-    if let Some(old_client) = state.client.as_mut() {
-        let _ = old_client.cancel();
-    }
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
 }
@@ -162,21 +158,7 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, String> {
-    if let Some(client) = state.client.as_mut() {
-        apply_cancel_to_queue(&mut state.queued, false);
-        let cancelled = client.cancel()?;
-        let resolved: Vec<SessionServerEvent> = cancelled
-            .into_iter()
-            .map(|request_id| SessionServerEvent::PermissionResolved {
-                request_id,
-                approved: false,
-            })
-            .collect();
-        state.append_to_log(resolved);
-        state.client = None;
-    } else {
-        apply_cancel_to_queue(&mut state.queued, false);
-    }
+    release_live_client(state)?;
 
     web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
 
@@ -205,6 +187,28 @@ pub(super) async fn reset_harness_context(
         }]);
     }
     Ok(state.generation)
+}
+
+/// Cancel and drop the live ACP child so the next spawn owns stdio alone.
+fn release_live_client(state: &mut TaskSessionState) -> Result<(), String> {
+    let Some(mut client) = state.client.take() else {
+        apply_cancel_to_queue(&mut state.queued, false);
+        return Ok(());
+    };
+    apply_cancel_to_queue(&mut state.queued, false);
+    if !client.host_exited() {
+        let cancelled = client.cancel()?;
+        let resolved: Vec<SessionServerEvent> = cancelled
+            .into_iter()
+            .map(|request_id| SessionServerEvent::PermissionResolved {
+                request_id,
+                approved: false,
+            })
+            .collect();
+        state.append_to_log(resolved);
+    }
+    drop(client);
+    Ok(())
 }
 
 fn install_replaced_client(

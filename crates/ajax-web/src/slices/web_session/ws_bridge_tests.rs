@@ -404,6 +404,89 @@ fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+// Regression for #989: respawn fallback must shut down the live child before session/new.
+#[test]
+fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_new_issue_989() {
+    let dir = scratch_dir("set-model-respawn-transport-989");
+    let handle = "web/set-model-respawn-989";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let lock = dir.join(".fake-acp-exclusive-lock");
+    let _ = std::fs::remove_file(&lock);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--exclusive-session-new",
+                "--refuse-in-band-once",
+                "--cursor-models",
+                "--cli-default-model",
+            ],
+            || {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire");
+                let before = directory.child_id(handle).expect("child");
+                let mut generation = directory.generation(handle);
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(apply_client_message(
+                    directory.inner(),
+                    handle,
+                    &dir,
+                    SessionClientMessage::SetModel {
+                        model: "cursor-grok-4.6-high".to_string(),
+                    },
+                    &mut generation,
+                    None,
+                ))
+                .expect("set model must complete session/new without incoming_transport_closed");
+
+                assert_ne!(directory.child_id(handle), Some(before));
+                assert!(directory.inner().has_live_entry(handle));
+            },
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression for #989: bridge harness respawn fallback also requires a lone stdio owner.
+#[test]
+fn apply_client_message_set_model_codex_respawn_shuts_down_live_child_issue_989() {
+    let dir = scratch_dir("set-model-codex-respawn-989");
+    let handle = "web/set-model-codex-respawn-989";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let lock = dir.join(".fake-acp-exclusive-lock");
+    let _ = std::fs::remove_file(&lock);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--exclusive-session-new", "--refuse-in-band-once"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Codex)
+                .expect("acquire");
+            let before = directory.child_id(handle).expect("child");
+            let mut generation = directory.generation(handle);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: "composer-2.5".to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("codex set model respawn must finish session/new");
+
+            assert_ne!(directory.child_id(handle), Some(before));
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn swap_resets_context_only_for_cross_harness() {
     use super::model_change::swap_resets_harness_context;

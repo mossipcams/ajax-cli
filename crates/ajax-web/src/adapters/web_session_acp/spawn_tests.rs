@@ -206,3 +206,42 @@ fn cursor_parameterized_unspecified_clears_fast_on_attach_issue_979() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+// Regression for #989: operator-pin recovery must not session/new while the prior child lives.
+#[test]
+fn spawn_with_operator_pin_recovery_waits_for_prior_child_shutdown_issue_989() {
+    let dir = scratch_dir("spawn-recover-exclusive-989");
+    let script = fake_acp_fixture();
+    let lock = dir.join(".fake-acp-exclusive-lock");
+    let _ = fs::remove_file(&lock);
+    let catalog_id = "composer-2.5-fast";
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--exclusive-session-new",
+                "--cursor-models",
+                "--cli-default-model",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    None,
+                )
+                .expect("recovery spawn must not fail session/new with incoming_transport_closed");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "composer fast pin must apply after recovery: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, "composer-2.5[fast=true]");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
