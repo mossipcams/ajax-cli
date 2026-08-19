@@ -82,7 +82,9 @@ export default function ModelPicker({
     return <p className="sheet-note">Reading models from {agentLabel}…</p>;
   }
 
-  if (catalog.models.length === 0) {
+  const activeCatalog = catalog;
+
+  if (activeCatalog.models.length === 0) {
     return catalog.error ? (
       <p className="sheet-error" data-testid="model-catalog-error">
         {catalog.error}
@@ -140,7 +142,7 @@ export default function ModelPicker({
   function selectCursorBase(base: string) {
     const row = displayModels.find((entry) => entry.base === base);
     if (!row) return;
-    emitCursorSelection(base, defaultCursorEffort(row, catalog.default), false);
+    emitCursorSelection(base, defaultCursorEffort(row, activeCatalog.default), false);
   }
 
   return (

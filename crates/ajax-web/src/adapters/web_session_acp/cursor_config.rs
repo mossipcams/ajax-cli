@@ -4,9 +4,7 @@
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions,
 };
-use ajax_core::adapters::{
-    parse_cursor_model_intent, parse_model_selection, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
-};
+use ajax_core::adapters::{parse_cursor_model_intent, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL};
 
 /// True when Cursor advertises separate `fast` (and optionally `effort`) options.
 pub fn cursor_parameterized_picker(config_options: Option<&[SessionConfigOption]>) -> bool {
@@ -50,13 +48,18 @@ pub fn reconstruct_applied_model(config_options: Option<&[SessionConfigOption]>)
     if !cursor_parameterized_picker(Some(config_options)) {
         return Some(model);
     }
-    let effort = read_config_option_current_value(Some(config_options), "effort");
-    let fast = read_config_option_current_value(Some(config_options), "fast");
-    Some(format_cursor_bracket_id(
-        &model,
-        effort.as_deref(),
-        fast.as_deref(),
-    ))
+    let mut options = Vec::new();
+    if let Some(effort) = read_config_option_current_value(Some(config_options), "effort")
+        .filter(|value| !value.is_empty())
+    {
+        options.push(("effort".to_string(), effort));
+    }
+    if let Some(fast) = read_config_option_current_value(Some(config_options), "fast")
+        .filter(|value| !value.is_empty())
+    {
+        options.push(("fast".to_string(), fast));
+    }
+    Some(parameterized_applied_id(&ModelSelection { model, options }))
 }
 
 fn format_cursor_bracket_id(base: &str, effort: Option<&str>, fast: Option<&str>) -> String {
@@ -214,6 +217,7 @@ pub fn parameterized_applied_id(selection: &ModelSelection) -> String {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+    use ajax_core::adapters::parse_model_selection;
 
     fn parameterized_options(
         current_model: &str,
