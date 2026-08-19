@@ -152,9 +152,9 @@ existing paths.
   error with retry; it must not fall back to Auto plus the live session model
   ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
-  Message, thought, tool, plan, mode, configuration, session-info, usage, and
-  status-like updates have explicit mappings; unsupported capability announcements
-  are ignored by the chat projection.
+  Message, thought, tool, plan, mode, configuration, session-info, usage,
+  turn_usage, and status-like updates have explicit mappings; unsupported
+  capability announcements are ignored by the chat projection.
 - v1 `sessionUpdate: "status"` and raw `state_update` both map to head-only
   `status` wire events. ACP `status.state` (`running` / `waiting` / `idle` /
   `requires_action`) drives the live-head primary label (Working / Needs you /
@@ -169,6 +169,16 @@ existing paths.
   renders as 0% used. When the harness reports a non-zero window, the live head
   shows the current fraction (`Context N% full`) in idle and working states; at
   90%+ the indicator uses the warning tone.
+- Per-turn token usage from `session/prompt` result.usage maps to a separate
+  `turn_usage` wire event. Cursor reports camelCase fields (`inputTokens`,
+  `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /
+  `cachedWriteTokens`, `totalTokens`); snake_case equivalents normalize to the
+  same shape. Missing fields are omitted from the wire event, never sent as zero.
+  When `totalTokens` is absent but component fields are present, the host may
+  emit a summed total. Duplicate usage for the same request, generation, or turn
+  id is dropped. Cursor does not emit standard `usage_update` events, so context
+  pressure stays unknown unless another harness reports it — per-turn tokens must
+  not populate the context meter.
 - `messageId` is optional in ACP v1. It is carried when present and refines both
   host-side coalescing and browser-side grouping; with it absent, role adjacency
   decides message boundaries as before.

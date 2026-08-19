@@ -1,5 +1,6 @@
 //! Map normalized ACP client events into session wire events.
 
+use super::acp_usage::UsageDeduper;
 use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
     normalize::StreamNormalizer, SessionServerEvent,
@@ -8,7 +9,10 @@ use crate::adapters::web_session_acp::AcpClientEvent;
 use crate::adapters::web_session_acp::AcpStdioClient;
 use serde_json::{json, Value};
 
-pub(crate) fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEvent>, bool, bool) {
+pub(crate) fn drain_acp_events(
+    client: &AcpStdioClient,
+    deduper: &mut UsageDeduper,
+) -> (Vec<SessionServerEvent>, bool, bool) {
     let mut events = Vec::new();
     let mut host_exited = false;
     let mut prompt_finished = false;
@@ -46,13 +50,13 @@ pub(crate) fn drain_acp_events(client: &AcpStdioClient) -> (Vec<SessionServerEve
                     events.push(mapped);
                 }
             }
-            AcpClientEvent::RequestFinished { result, method, .. } => {
+            AcpClientEvent::RequestFinished {
+                result, method, id, ..
+            } => {
                 if method == "session/prompt" {
                     prompt_finished = true;
                 }
-                if let Some(mapped) = map_request_finished(method, result) {
-                    events.push(mapped);
-                }
+                events.extend(map_request_finished(method, result, Some(id), deduper));
             }
             AcpClientEvent::Error(message) => {
                 events.push(SessionServerEvent::Error { message });
@@ -102,16 +106,27 @@ pub(crate) fn map_acp_session_update_with_startup(
 pub(crate) fn map_request_finished(
     method: &'static str,
     result: Result<Value, String>,
-) -> Option<SessionServerEvent> {
+    request_id: Option<u64>,
+    deduper: &mut UsageDeduper,
+) -> Vec<SessionServerEvent> {
     match result {
-        Ok(value) if method == "session/prompt" => Some(SessionServerEvent::TurnEnd {
-            stop_reason: value
-                .get("stopReason")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        }),
-        Ok(_) => None,
-        Err(message) => Some(SessionServerEvent::Error { message }),
+        Ok(value) if method == "session/prompt" => {
+            let mut events = Vec::new();
+            if let Some(usage) =
+                super::acp_usage::map_prompt_result_usage(&value, request_id, deduper)
+            {
+                events.push(usage);
+            }
+            events.push(SessionServerEvent::TurnEnd {
+                stop_reason: value
+                    .get("stopReason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            });
+            events
+        }
+        Ok(_) => Vec::new(),
+        Err(message) => vec![SessionServerEvent::Error { message }],
     }
 }
 

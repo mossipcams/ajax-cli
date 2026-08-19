@@ -47,6 +47,15 @@ export type WebSessionServerEvent =
   | { type: "plan"; entries: { content: string; status: string }[] }
   | { type: "usage"; used: number; size: number }
   | {
+      type: "turn_usage";
+      requestId?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      totalTokens?: number;
+    }
+  | {
       type: "permission_request";
       requestId: string;
       title?: string | null;
@@ -216,6 +225,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
 }
 
+function optionalTokenField(
+  payload: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent | null {
   if (typeof payload.type !== "string") return null;
   switch (payload.type) {
@@ -285,6 +302,34 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
     case "usage":
       if (typeof payload.used !== "number" || typeof payload.size !== "number") return null;
       return { type: "usage", used: payload.used, size: payload.size };
+    case "turn_usage": {
+      const requestId =
+        typeof payload.requestId === "string" ? payload.requestId : undefined;
+      const inputTokens = optionalTokenField(payload, "inputTokens");
+      const outputTokens = optionalTokenField(payload, "outputTokens");
+      const cacheReadTokens = optionalTokenField(payload, "cacheReadTokens");
+      const cacheWriteTokens = optionalTokenField(payload, "cacheWriteTokens");
+      const totalTokens = optionalTokenField(payload, "totalTokens");
+      if (
+        requestId === undefined &&
+        inputTokens === undefined &&
+        outputTokens === undefined &&
+        cacheReadTokens === undefined &&
+        cacheWriteTokens === undefined &&
+        totalTokens === undefined
+      ) {
+        return null;
+      }
+      return {
+        type: "turn_usage",
+        ...(requestId !== undefined ? { requestId } : {}),
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
+        ...(outputTokens !== undefined ? { outputTokens } : {}),
+        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+        ...(totalTokens !== undefined ? { totalTokens } : {}),
+      };
+    }
     case "permission_request":
       if (typeof payload.requestId !== "string") return null;
       return {
