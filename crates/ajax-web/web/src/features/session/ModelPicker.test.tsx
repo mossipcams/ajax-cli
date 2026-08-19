@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import ModelPicker from "./ModelPicker";
 
 const FULL_CATALOG = {
@@ -23,9 +23,7 @@ afterEach(() => {
 });
 
 describe("ModelPicker", () => {
-  // Regression for #948: a failed catalog fetch used to cache Auto plus the live
-  // session model — exactly two buttons — instead of the harness catalog.
-  it("lists every model the harness advertises (#948)", async () => {
+  it("shows a shortlist by default and reveals the full catalog on Show all (#948)", async () => {
     stubCatalog();
     render(
       <ModelPicker
@@ -37,9 +35,31 @@ describe("ModelPicker", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
+      expect(screen.getAllByRole("radio").length).toBeLessThan(FULL_CATALOG.models.length);
     });
     expect(screen.getByRole("radio", { name: "Model 3" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("radio", { name: "Model 11" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
+
+    fireEvent.click(screen.getByTestId("model-picker-toggle"));
+    expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
+    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show fewer");
+  });
+
+  it("pins the current selection when it sits outside the shortlist", async () => {
+    stubCatalog();
+    render(
+      <ModelPicker
+        agent="codex"
+        agentLabel="Codex"
+        value="model-11"
+        onChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Model 11" })).toHaveAttribute("aria-checked", "true");
+    });
     expect(screen.getByRole("radio", { name: "Model 11" })).toBeInTheDocument();
   });
 

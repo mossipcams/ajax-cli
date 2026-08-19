@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/button";
 import {
   decodeModelSelection,
@@ -6,6 +6,7 @@ import {
   DEFAULT_SESSION_MODEL,
   type SessionModelCatalog,
 } from "./sessionModel";
+import { buildModelShortlist } from "./modelShortlist";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
 
 interface Props {
@@ -36,6 +37,7 @@ export default function ModelPicker({
   const { data: catalog, isPending, isError, refetch } = useSessionModelsQuery(agent);
   const listRef = useRef<HTMLDivElement>(null);
   const catalogNotifiedRef = useRef<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     if (!catalog || catalogNotifiedRef.current === agent) return;
@@ -45,15 +47,16 @@ export default function ModelPicker({
 
   const { model, options } = decodeModelSelection(value);
 
-  // Long catalogs scroll: bring the current choice into view rather than
-  // opening on whatever happens to be first.
+  useEffect(() => {
+    setShowAll(false);
+  }, [agent, catalog]);
+
   useEffect(() => {
     if (!model) return;
     listRef.current
       ?.querySelector<HTMLElement>("[aria-checked='true']")
-      // Optional call: jsdom has no scrollIntoView.
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [model, catalog]);
+  }, [model, catalog, showAll]);
 
   if (isError) {
     return (
@@ -71,8 +74,6 @@ export default function ModelPicker({
   }
 
   if (catalog.models.length === 0) {
-    // A harness Ajax cannot start is an install problem the operator can fix;
-    // a harness with nothing to offer is normal.
     return catalog.error ? (
       <p className="sheet-error" data-testid="model-catalog-error">
         {catalog.error}
@@ -87,10 +88,16 @@ export default function ModelPicker({
   const reasoning = catalog.reasoning;
   const catalogIds = new Set(catalog.models.map((option) => option.id));
   const isKnownSelection =
-    !model ||
-    model === DEFAULT_SESSION_MODEL ||
-    catalogIds.has(model);
+    !model || model === DEFAULT_SESSION_MODEL || catalogIds.has(model);
   const unknownModel = model && !isKnownSelection;
+
+  const { shortlist, hasMore } = buildModelShortlist(catalog.models, agent, {
+    currentModelId: model || undefined,
+    catalogDefault: catalog.default || undefined,
+  });
+  const shortlistIds = new Set(shortlist.map((option) => option.id));
+  const remainingCatalog = catalog.models.filter((option) => !shortlistIds.has(option.id));
+  const visibleModels = showAll ? [...shortlist, ...remainingCatalog] : shortlist;
 
   return (
     <>
@@ -113,7 +120,7 @@ export default function ModelPicker({
             <span className="model-option-label">{model}</span>
           </button>
         ) : null}
-        {catalog.models.map((option) => (
+        {visibleModels.map((option) => (
           <button
             key={option.id}
             type="button"
@@ -130,6 +137,17 @@ export default function ModelPicker({
           </button>
         ))}
       </div>
+
+      {hasMore ? (
+        <button
+          type="button"
+          className="model-picker-toggle"
+          data-testid="model-picker-toggle"
+          onClick={() => setShowAll((open) => !open)}
+        >
+          {showAll ? "Show fewer" : "Show all"}
+        </button>
+      ) : null}
 
       {reasoning ? (
         <>

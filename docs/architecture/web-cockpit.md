@@ -114,8 +114,9 @@ keeps its agent in tmux and opens its terminal instead; a session URL for such a
 task falls back to the terminal route rather than sitting on a refused socket.
 
 The **New task** sheet is two steps: repository/title/harness, then a model page
-listing what that harness advertises, with its reasoning level beside the model
-list when it has one. `GET /api/session/models?agent=` serves the catalog —
+presenting a shortlist of popular options for that harness, with **Show all** for
+the full catalog. Its reasoning level sits beside the model list when the harness
+has one. `GET /api/session/models?agent=` still serves the complete catalog —
 Cursor from `agent models`, the bridges from their own `session/new` handshake.
 
 That handshake costs a short-lived bridge process, so the catalog is cached

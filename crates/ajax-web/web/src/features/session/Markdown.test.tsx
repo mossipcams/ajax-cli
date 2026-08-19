@@ -15,8 +15,22 @@ describe("parseBlocks", () => {
   it("groups consecutive list items and splits on list type", () => {
     const blocks = parseBlocks("- one\n- two\n1. first\n2. second");
     expect(blocks).toEqual([
-      { kind: "list", ordered: false, items: ["one", "two"] },
-      { kind: "list", ordered: true, items: ["first", "second"] },
+      {
+        kind: "list",
+        ordered: false,
+        items: [
+          { text: "one", children: [] },
+          { text: "two", children: [] },
+        ],
+      },
+      {
+        kind: "list",
+        ordered: true,
+        items: [
+          { text: "first", children: [] },
+          { text: "second", children: [] },
+        ],
+      },
     ]);
   });
 
@@ -52,5 +66,37 @@ describe("Markdown", () => {
     render(<Markdown source={"<img src=x onerror=alert(1)>"} />);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+  });
+
+  it("renders http(s) links, blockquotes, tables, and nested lists", () => {
+    render(
+      <Markdown
+        source={[
+          "> Quoted line",
+          "",
+          "| Col A | Col B |",
+          "| --- | --- |",
+          "| one | two |",
+          "",
+          "- parent",
+          "  - child",
+          "",
+          "See [docs](https://example.com/docs).",
+        ].join("\n")}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+    expect(screen.getByText("Quoted line").closest("blockquote")).toHaveClass("md-quote");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText("child").closest("ul")?.parentElement?.closest("ul")).toBeTruthy();
+  });
+
+  it("does not link javascript or other non-http schemes", () => {
+    render(<Markdown source="[bad](javascript:alert(1))" />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText(/\[bad\]/)).toBeInTheDocument();
   });
 });
