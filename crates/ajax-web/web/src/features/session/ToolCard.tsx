@@ -33,6 +33,7 @@ export function ActivityRow({
   target,
   meta,
   tailChars,
+  mono,
   ...rest
 }: {
   mark: string;
@@ -42,6 +43,9 @@ export function ActivityRow({
    * their end, so they keep the default; prose is not, and passes 0 rather than
    * ending on a severed word. */
   tailChars?: number;
+  /** The target is a path, a command, or other machine text. Labels and prose
+   * are set in the body face like the rest of the conversation. */
+  mono?: boolean;
 } & React.ComponentProps<"button">) {
   const [head, tail] = middleSplit(target, tailChars);
   return (
@@ -49,7 +53,7 @@ export function ActivityRow({
       <span className="session-row-mark" aria-hidden="true">
         {mark}
       </span>
-      <span className="session-row-target">
+      <span className={mono ? "session-row-target is-mono" : "session-row-target"}>
         <span className="session-row-head">{head}</span>
         {tail ? <span className="session-row-tail">{tail}</span> : null}
       </span>
@@ -130,6 +134,7 @@ export default function ToolCard({ call }: { call: ToolCall }) {
         className="session-toolcard-head"
         mark={toolMark(call.kind)}
         target={target}
+        mono
         // Elapsed is the resting right column; a word replaces it only when the
         // call is running, queued, or broken.
         meta={toolStatusNote(call.status) ?? formatElapsed(elapsedMs(call))}

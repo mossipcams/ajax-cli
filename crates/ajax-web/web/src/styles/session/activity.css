@@ -1,20 +1,20 @@
 /* Activity grid ----------------------------------------------------------- */
 /* Every line of the work log — tool call, reasoning, run summary — is the same
    row: mark, target, meta. One structure, one left edge, one line each. The log
-   is the quiet layer under the conversation, so it is mono and dimmed; agent
-   prose keeps full contrast and the sans body size. */
+   is the quiet layer under the conversation, so it is dimmed; it is set in the
+   body face like every other label on the surface, and only the machine text it
+   carries — a path, a command — switches to mono. */
 .session-row {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   min-width: 0;
-  min-height: 40px;
-  padding: 8px 0;
+  min-height: 36px;
+  padding: 6px 0;
   border: none;
   background: none;
   text-align: left;
-  font-family: var(--mono);
   font-size: var(--text-body-sm);
   line-height: 1.4;
   color: var(--ink-muted);
@@ -48,6 +48,13 @@
   overflow: hidden;
 }
 
+/* Paths, commands and other machine text only — the CLI speaking inside a
+   proportional row. */
+.session-row-target.is-mono {
+  font-family: var(--mono);
+  font-size: var(--text-label);
+}
+
 .session-row-head {
   min-width: 0;
   overflow: hidden;
@@ -70,40 +77,14 @@
   color: var(--ink-faint);
 }
 
-/* A settled run of work is one row until asked for. */
-.session-activity {
-  align-self: stretch;
-  flex: none;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.session-activity-summary .session-row-target {
-  color: var(--ink-faint);
-}
-
-/* Collapsed, the summary row is the only thing left saying a call in here
-   broke. Faint grey is not that. */
-.session-activity.has-failure .session-activity-summary .session-row-mark {
-  color: var(--danger);
-}
-
-.session-activity.has-failure .session-activity-summary .session-row-target {
-  color: var(--ink-soft);
-}
-
 /* Reasoning --------------------------------------------------------------- */
 /* One quiet line by default, and that line is the reasoning itself: a row that
-   only says "Thinking" spends a full row of a phone on nothing. */
+   only says "Thinking" spends a full row of a phone on nothing. It is a row on
+   the activity grid inside the disclosure, not a message in the conversation —
+   so no italic aside, which is what made reasoning read as the agent talking. */
 .session-thinking {
   align-self: stretch;
   min-width: 0;
-}
-
-.session-thinking .session-row-target {
-  font-style: italic;
 }
 
 .session-thinking-body {

@@ -303,22 +303,40 @@ same instrument grammar — a live head carrying state, running tool and any
 pending decision, over the conversation. Everything else in this document
 binds it unchanged.
 
-Below the head, the conversation is **turn-as-chapter**: each operator prompt opens a
-turn whose agent answer leads, with ACP work (reasoning, tool calls, plan,
-permission markers) collapsed to one summary row per settled turn. Agent answers
-render as Markdown, reasoning as one collapsed line (auto-expanded while it is the
-live tail of a busy turn), tool calls as cards that revise in place and open on
-failure, the plan as a checklist, and a marker row where permission was asked. While a turn is in flight
-the tool row and any in-progress plan step may appear together; with no tool or
-plan step the head shows the latest ACP thought, else `Thinking…` before anything
-arrives — not a timer placeholder or human status detail line. The 60s `No recent activity` label remains a freshness warning only
-(#889). Tool calls use a 20px mono mark column (glyph per kind, no icon library)
-and a status chip; the visible kind word is omitted while `data-kind` stays for
-tests.
+Below the head, the conversation is **turn-as-chapter**: each operator prompt opens
+a turn holding the operator's message, one activity disclosure, and the agent's
+answer. Only that — plus an unanswered permission ask, an error, and a hairline
+divider for cancellations, reconnects, harness switches and context resets — is
+allowed in the column. Agent answers render as Markdown and are revealed a
+completed paragraph at a time (never token by token, never split inside a fence);
+the whole response lands when the turn ends.
+
+The disclosure is where ACP's separation is kept. Collapsed, it reads out the
+current operation while the turn runs (`Running cargo test…`, replaced rather than
+appended, a completed call leaving it the moment ACP says so) and a counted
+summary once the turn settles (`Read 6 files · edited 2 files · ran 4 commands ·
+38s`). Opened, it is the full timeline: reasoning as one collapsed line per
+thought, tool calls as cards that revise in place, the plan as a checklist, a
+marker row where permission was asked. It opens itself for failure, blocked and
+approval-required work; a manual open or close by the operator wins from then on.
+While a turn is in flight the head's tool row and any in-progress plan step may
+appear together; with no tool or plan step the head shows the latest ACP thought,
+else `Thinking…` before anything arrives — not a timer placeholder or human status
+detail line. The 60s `No recent activity` label remains a freshness warning only
+(#889). Tool calls use a mono mark column (glyph per kind, no icon library); the
+visible kind word is omitted while `data-kind` stays for tests.
 A tool call's output — a command's text, a file diff — is the substance of a
-turn and stays in the record; a summary line in its place threw it away.
+turn and stays in the record one tap away; a summary line *in its place* threw it
+away, and a full trace in the column buried the answer.
 Permission *buttons* stay in the head, never inline: a control in a scrolling
 column can leave the screen mid-decision on a phone.
+
+Typography follows what is being said, not where it sits: conversation text and
+tool labels are proportional, and monospace is reserved for code, commands, paths
+and output. The operator's own messages take a raised surface with a hairline —
+a side and a step, not a saturated fill that shouts over the answer. A follow-up
+typed while a turn runs is queued as a muted `Queued` message that stays editable;
+the composer action names what Enter does next (`Send` / `Queue` / `Stop & send`).
 
 The Task details sheet on this route is a thin operator dossier, not a settings
 dump. Its first viewport leads with task identity (title, handle, branch), the

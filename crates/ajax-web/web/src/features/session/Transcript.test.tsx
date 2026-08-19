@@ -17,6 +17,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const userProse = (id: string, text: string): ConversationItem => ({
+  kind: "prose",
+  id,
+  role: "user",
+  text,
+});
+
 const agentProse = (id: string, text: string): ConversationItem => ({
   kind: "prose",
   id,
@@ -34,78 +41,227 @@ const call = (overrides: Partial<ToolCall> = {}): ToolCall => ({
   ...overrides,
 });
 
-describe("Transcript", () => {
-  it("renders the live agent tail as markdown while busy", () => {
-    render(<Transcript items={[agentProse("e1", "Still **streaming**")]} busy />);
+const tool = (id: string, overrides: Partial<ToolCall> = {}): ConversationItem => ({
+  kind: "tool",
+  id,
+  call: call({ callId: id, ...overrides }),
+});
+
+describe("Transcript — assistant response reveal", () => {
+  // Word-by-word reveal reflows the column under a reader. A live answer shows
+  // the paragraphs it has finished; the unfinished one waits.
+  it("reveals only completed paragraphs while the turn runs", () => {
+    const items = [
+      userProse("u1", "Explain it"),
+      agentProse("a1", "The port is read once at startup.\n\nIt is then han"),
+    ];
+    render(<Transcript items={items} busy />);
+
     const message = screen.getByTestId("session-message-agent");
-    expect(message).toHaveAttribute("data-live", "true");
-    expect(message).toHaveClass("is-live");
-    expect(message).toHaveTextContent("Still streaming");
-    expect(screen.queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.getByText("streaming").tagName).toBe("STRONG");
+    expect(message).toHaveTextContent("The port is read once at startup.");
+    expect(message).not.toHaveTextContent("It is then han");
   });
 
-  it("renders settled agent prose as markdown after the turn ends", () => {
-    render(<Transcript items={[agentProse("e1", "Done:\n\n- item")]} busy={false} />);
+  it("shows nothing for an answer with no completed paragraph yet", () => {
+    const items = [userProse("u1", "Explain it"), agentProse("a1", "Still **strea")];
+    render(<Transcript items={items} busy />);
+
+    expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
+  });
+
+  it("reveals the whole response, markdown and all, once the turn ends", () => {
+    const items = [userProse("u1", "Explain it"), agentProse("a1", "Done:\n\n- item")];
+    render(<Transcript items={items} busy={false} />);
+
     const message = screen.getByTestId("session-message-agent");
     expect(message).not.toHaveAttribute("data-live");
     expect(screen.getByRole("listitem")).toHaveTextContent("item");
   });
 
-  it("keeps earlier agent prose on markdown when a new tail streams", () => {
-    const items = [agentProse("e1", "First:\n\n- done"), agentProse("e2", "Next **chunk**")];
-    render(<Transcript items={items} busy />);
-    const messages = screen.getAllByTestId("session-message-agent");
-    expect(messages[0]).not.toHaveAttribute("data-live");
-    expect(screen.getByRole("listitem")).toHaveTextContent("done");
-    expect(messages[1]).toHaveAttribute("data-live", "true");
-    expect(messages[1]).toHaveTextContent("Next chunk");
-    expect(screen.getByText("chunk").tagName).toBe("STRONG");
-    expect(screen.getAllByRole("listitem")).toHaveLength(1);
-  });
-
-  it("keeps reasoning collapsed until it is asked for", () => {
-    const items: ConversationItem[] = [{ kind: "thought", id: "e1", text: "Checking the router" }];
-    render(<Transcript items={items} busy={false} />);
-
-    expect(screen.queryByTestId("session-thinking-body")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
-    expect(screen.getByTestId("session-thinking-body")).toHaveTextContent("Checking the router");
-  });
-
-  it("auto-expands the live thought tail while a turn is in flight", () => {
-    const items: ConversationItem[] = [{ kind: "thought", id: "e1", text: "Checking the router" }];
-    render(<Transcript items={items} busy />);
-
-    expect(screen.getByTestId("session-thinking-body")).toHaveTextContent("Checking the router");
-  });
-
-  it("collapses a thought when a later item arrives during the turn", () => {
-    const items: ConversationItem[] = [
-      { kind: "thought", id: "e1", text: "Checking the router" },
-      { kind: "tool", id: "e2", call: call({ status: "in_progress" }) },
+  // A break inside a fence is content, not a paragraph boundary; cutting there
+  // would render half a code block as prose.
+  it("never cuts a live answer inside a fenced block", () => {
+    const items = [
+      userProse("u1", "Show me"),
+      agentProse("a1", "Here:\n\n```sh\ncargo test\n\nnpm run web:test"),
     ];
     render(<Transcript items={items} busy />);
 
-    expect(screen.queryByTestId("session-thinking-body")).not.toBeInTheDocument();
+    const message = screen.getByTestId("session-message-agent");
+    expect(message).toHaveTextContent("Here:");
+    expect(message).not.toHaveTextContent("cargo test");
   });
 
-  it("renders a tool call's diff as a diff, not as prose", () => {
+  it("settles earlier turns while the newest one is still live", () => {
+    const items = [
+      userProse("u1", "First"),
+      agentProse("a1", "First answer, whole and unbroken."),
+      userProse("u2", "Second"),
+      agentProse("a2", "Partial second"),
+    ];
+    render(<Transcript items={items} busy />);
+
+    const messages = screen.getAllByTestId("session-message-agent");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toHaveTextContent("First answer, whole and unbroken.");
+  });
+});
+
+describe("Transcript — turn activity disclosure", () => {
+  it("keeps thoughts, tools and plans out of the transcript behind one row", () => {
     const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      { kind: "thought", id: "t1", text: "Checking the router" },
+      tool("e1", { kind: "read", status: "completed" }),
+      { kind: "plan", id: "p1", entries: [{ content: "Patch", status: "in_progress" }] },
+      agentProse("a1", "Fixed."),
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getAllByTestId("session-turn-work-summary")).toHaveLength(1);
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-plan")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Fixed.");
+  });
+
+  // While working the row is a readout of one operation, not a growing log: a
+  // settled call leaves the row the moment ACP reports it, with no timeout.
+  it("shows only the current operation while the turn runs", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      tool("e1", { kind: "read", status: "completed", locations: ["/repo/src/config.ts"] }),
+      tool("e2", {
+        kind: "execute",
+        title: "cargo test",
+        status: "in_progress",
+        locations: [],
+      }),
+    ];
+    render(<Transcript items={items} busy />);
+
+    const summary = screen.getByTestId("session-turn-work-summary");
+    expect(summary).toHaveTextContent("Running cargo test…");
+    expect(summary).not.toHaveTextContent("config.ts");
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the live plan step, then reasoning, with no call in flight", () => {
+    const planned: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      { kind: "plan", id: "p1", entries: [{ content: "Patch the listener", status: "in_progress" }] },
+    ];
+    const { unmount } = render(<Transcript items={planned} busy />);
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
+      "Patch the listener…",
+    );
+    unmount();
+
+    render(
+      <Transcript
+        items={[userProse("u1", "Fix it"), { kind: "thought", id: "t1", text: "Checking auth" }]}
+        busy
+      />,
+    );
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent("Checking auth");
+  });
+
+  it("collapses to a counted summary when the turn finishes", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      tool("r1", { kind: "read", startedAt: 1_000, endedAt: 2_000 }),
+      tool("r2", { kind: "read" }),
+      tool("x1", { kind: "edit" }),
+      tool("x2", { kind: "edit" }),
+      tool("s1", { kind: "execute", startedAt: 3_000, endedAt: 39_000 }),
+      agentProse("a1", "Done."),
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
+      "Read 2 files · edited 2 files · ran 1 command · 38s",
+    );
+  });
+
+  it("opens the full timeline on tap and keeps that choice as the turn grows", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      { kind: "thought", id: "t1", text: "Checking the router" },
+      tool("e1", { content: [{ type: "text", text: "ok" }] }),
+    ];
+    const view = render(<Transcript items={items} busy={false} />);
+
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
+    expect(screen.getByTestId("session-thinking")).toBeInTheDocument();
+
+    view.rerender(<Transcript items={[...items, tool("e2")]} busy={false} />);
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("keeps a manual collapse shut even when a later call fails", () => {
+    const items: ConversationItem[] = [userProse("u1", "Fix it"), tool("e1")];
+    const view = render(<Transcript items={items} busy={false} />);
+
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    view.rerender(
+      <Transcript items={[...items, tool("e2", { status: "failed" })]} busy={false} />,
+    );
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("opens itself on a failure, with the failing output already visible", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Try again"),
+      tool("e1", { status: "failed", content: [{ type: "text", text: "exit 1" }] }),
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+    expect(screen.getByTestId("session-turn-work")).toHaveClass("has-failure");
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent("1 failed");
+    expect(screen.getByTestId("session-tool-output")).toHaveTextContent("exit 1");
+  });
+
+  it("opens itself while the turn waits on an approval", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Ship it"),
+      tool("e1"),
+      { kind: "permission", id: "q1", requestId: "7", title: "Run tests?", resolved: false },
+    ];
+    render(<Transcript items={items} busy />);
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+  });
+
+  it("reveals a diff and command output once the timeline is open", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Change the port"),
       {
         kind: "tool",
         id: "e1",
         call: call({
           content: [
-            { type: "diff", path: "/repo/src/config.ts", oldText: "port = 1\n", newText: "port = 2\n" },
+            {
+              type: "diff",
+              path: "/repo/src/config.ts",
+              oldText: "port = 1\n",
+              newText: "port = 2\n",
+            },
           ],
         }),
       },
     ];
     render(<Transcript items={items} busy={false} />);
 
-    // Completed and quiet: the header states the outcome, the body is opt-in.
     expect(screen.queryByTestId("session-tool-diff")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     fireEvent.click(screen.getByRole("button", { name: /Edit config/i }));
 
     const diff = screen.getByTestId("session-tool-diff");
@@ -113,23 +269,12 @@ describe("Transcript", () => {
     expect(diff).toHaveTextContent("+port = 2");
   });
 
-  it("opens a failed tool call by default", () => {
+  it("renders the plan as a checklist inside the timeline", () => {
     const items: ConversationItem[] = [
-      {
-        kind: "tool",
-        id: "e1",
-        call: call({ status: "failed", content: [{ type: "text", text: "exit 1" }] }),
-      },
-    ];
-    render(<Transcript items={items} busy={false} />);
-    expect(screen.getByTestId("session-tool-output")).toHaveTextContent("exit 1");
-  });
-
-  it("renders the plan as a checklist with the current step marked", () => {
-    const items: ConversationItem[] = [
+      userProse("u1", "Plan it"),
       {
         kind: "plan",
-        id: "e1",
+        id: "p1",
         entries: [
           { content: "Read", status: "completed" },
           { content: "Patch", status: "in_progress" },
@@ -137,84 +282,24 @@ describe("Transcript", () => {
       },
     ];
     render(<Transcript items={items} busy={false} />);
+
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     const steps = screen.getAllByRole("listitem");
     expect(steps).toHaveLength(2);
     expect(steps[1]).toHaveAttribute("data-status", "in_progress");
   });
 
-  it("keeps the work chapter collapsed while the agent answer streams after tools settle", () => {
+  it("keeps reasoning collapsed inside the timeline until it is asked for", () => {
     const items: ConversationItem[] = [
-      { kind: "prose", id: "u1", role: "user", text: "Fix it" },
-      { kind: "thought", id: "e1", text: "Checking the router" },
-      { kind: "tool", id: "e2", call: call({ callId: "a", status: "completed" }) },
-      agentProse("a1", "Still **streaming**"),
-    ];
-    render(<Transcript items={items} busy />);
-
-    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
-    expect(screen.getByTestId("session-message-agent")).toHaveAttribute("data-live", "true");
-  });
-
-  it("collapses a settled run of work into one row, and opens it on tap", () => {
-    const items: ConversationItem[] = [
-      { kind: "prose", id: "u1", role: "user", text: "Fix it" },
-      { kind: "thought", id: "e1", text: "Checking the router" },
-      { kind: "tool", id: "e2", call: call({ callId: "a", startedAt: 1_000, endedAt: 3_000 }) },
-      { kind: "tool", id: "e3", call: call({ callId: "b", startedAt: 3_000, endedAt: 131_000 }) },
-      agentProse("a1", "Done."),
+      userProse("u1", "Fix it"),
+      { kind: "thought", id: "t1", text: "Checking the router" },
     ];
     render(<Transcript items={items} busy={false} />);
 
-    const summary = screen.getByTestId("session-turn-work-summary");
-    expect(summary).toHaveTextContent("Edited 2 files");
-    expect(summary).toHaveTextContent("2m 10s");
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
-
-    fireEvent.click(summary);
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
-    expect(screen.getByTestId("session-thinking")).toBeInTheDocument();
-  });
-
-  it("leaves a run open when it is still running or something in it failed", () => {
-    const items: ConversationItem[] = [
-      { kind: "prose", id: "u1", role: "user", text: "Try again" },
-      { kind: "tool", id: "e1", call: call({ callId: "a" }) },
-      { kind: "tool", id: "e2", call: call({ callId: "b", status: "failed" }) },
-    ];
-    render(<Transcript items={items} busy={false} />);
-
-    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent("1 failed");
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
-    expect(screen.getByTestId("session-turn-work")).toHaveClass("has-failure");
-  });
-
-  // #970 A: the row uppercased label and payload alike, so `rm -rf` reached the
-  // operator as `RM -RF` at the moment they were asked to approve it.
-  it("keeps a permission title in its own case, apart from the chrome label", () => {
-    const items: ConversationItem[] = [
-      {
-        kind: "permission",
-        id: "e1",
-        requestId: "r1",
-        title: "Run `rm -rf target/debug`",
-        resolved: false,
-      },
-    ];
-    render(<Transcript items={items} busy={false} />);
-
-    // Label and title are separate runs: the uppercase tracked cadence is
-    // chrome, and case-folding the title would turn a command the operator has
-    // to trust into `RM -RF TARGET/DEBUG`.
-    expect(screen.getByText("Permission requested")).toHaveClass("session-note-label");
-    expect(screen.getByText("Run rm -rf target/debug")).toHaveClass("session-note-text");
-    expect(stylesSource).toMatch(
-      /\.session-note-label\s*\{[^}]*text-transform:\s*uppercase/,
-    );
-    expect(stylesSource.match(/\.session-note-text\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
-      /text-transform/,
-    );
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.queryByTestId("session-thinking-body")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+    expect(screen.getByTestId("session-thinking-body")).toHaveTextContent("Checking the router");
   });
 
   // #970 B: the row held its last 14 characters aside — right for two paths that
@@ -223,45 +308,77 @@ describe("Transcript", () => {
   it("renders a collapsed reasoning line as one unbroken run of prose", () => {
     const text =
       "The port is read in config.ts and again in the listener bootstrap, so both need to move together or the dev server binds twice.";
-    render(<Transcript items={[{ kind: "thought", id: "e1", text }]} busy={false} />);
+    render(
+      <Transcript items={[userProse("u1", "Why?"), { kind: "thought", id: "t1", text }]} busy={false} />,
+    );
 
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     // getByText does not match across element boundaries, so this passes only
     // while the whole snippet lives in a single run.
     expect(screen.getByText(thoughtSnippet(text, 90))).toBeInTheDocument();
   });
 
-  it("shows a single call as its own row rather than a summary of one", () => {
-    const items: ConversationItem[] = [{ kind: "tool", id: "e1", call: call() }];
-    render(<Transcript items={items} busy={false} />);
-
-    expect(screen.queryByTestId("session-activity-summary")).not.toBeInTheDocument();
-    expect(screen.getByTestId("session-tool-card")).toHaveTextContent("…/src/config.ts");
+  // Reasoning is a row on the activity grid, not the agent talking in italics.
+  it("sets reasoning as a grid row rather than an italic aside", () => {
+    expect(stylesSource.match(/\.session-thinking\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
+      /font-style/,
+    );
   });
+});
 
-  it("keeps prose out of the collapse: a reply follows the work chapter", () => {
+describe("Transcript — what stays in the conversation", () => {
+  it("keeps an unanswered permission ask in the column, without the buttons", () => {
     const items: ConversationItem[] = [
-      { kind: "prose", id: "u1", role: "user", text: "Change the port" },
-      { kind: "tool", id: "e1", call: call({ callId: "a" }) },
-      agentProse("e2", "Changed the port."),
-      { kind: "tool", id: "e3", call: call({ callId: "b" }) },
+      userProse("u1", "Clean up"),
+      {
+        kind: "permission",
+        id: "q1",
+        requestId: "r1",
+        title: "Run `rm -rf target/debug`",
+        resolved: false,
+      },
     ];
     render(<Transcript items={items} busy={false} />);
 
-    expect(screen.getByTestId("session-message-user")).toHaveTextContent("Change the port");
-    expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Changed the port.");
-    expect(screen.getByTestId("session-turn-work")).toBeInTheDocument();
-  });
-
-  it("marks a permission ask in history without offering the buttons twice", () => {
-    const items: ConversationItem[] = [
-      { kind: "permission", id: "e1", requestId: "7", title: "Run tests?", resolved: true },
-    ];
-    render(<Transcript items={items} busy={false} />);
     const marker = screen.getByTestId("session-permission-marker");
-    expect(marker).toHaveAttribute("data-resolved", "true");
-    expect(marker).toHaveTextContent("Run tests?");
+    expect(marker).toHaveAttribute("data-resolved", "false");
+    // #970 A: the row uppercased label and payload alike, so `rm -rf` reached
+    // the operator as `RM -RF` at the moment they were asked to approve it.
+    expect(screen.getByText("Permission requested")).toHaveClass("session-note-label");
+    expect(screen.getByText("Run rm -rf target/debug")).toHaveClass("session-note-text");
+    expect(stylesSource).toMatch(/\.session-note-label\s*\{[^}]*text-transform:\s*uppercase/);
+    expect(stylesSource.match(/\.session-note-text\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
+      /text-transform/,
+    );
     // The Approve/Reject pair lives in the sticky head; a second copy here
     // would be a control that scrolls away mid-decision.
     expect(screen.queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+  });
+
+  it("files an answered permission into the timeline as history", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Clean up"),
+      { kind: "permission", id: "q1", requestId: "r1", title: "Run tests?", resolved: true },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.queryByTestId("session-permission-marker")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.getByTestId("session-permission-marker")).toHaveAttribute(
+      "data-resolved",
+      "true",
+    );
+  });
+
+  it("keeps an error in the column and puts a host note on a divider", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Switch harness"),
+      { kind: "note", id: "n1", tone: "error", text: "The agent stopped." },
+      { kind: "note", id: "n2", tone: "info", text: "Client switched harness. Context reset." },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    expect(screen.getByTestId("session-note-error")).toHaveTextContent("The agent stopped.");
+    expect(screen.getByTestId("session-note-info")).toHaveClass("session-divider");
   });
 });

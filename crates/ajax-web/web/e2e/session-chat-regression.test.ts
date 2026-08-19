@@ -145,6 +145,100 @@ for (const harness of HARNESSES) {
   });
 }
 
+/** A session with enough replayed history to overflow the thread, and a turn
+ * that never answers on its own — so the follow-up queue and the cancel
+ * handshake can be driven from the test. */
+async function mockHeldTurn(page: Page) {
+  let nextCursor = 0;
+
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    const send = (event: SessionServerEvent) =>
+      socket.send(sessionEventJson(nextCursor++, event));
+
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
+    for (let i = 0; i < 12; i += 1) {
+      send({ type: "message", role: "user", text: `Earlier question ${i}`, itemId: `u${i}` });
+      send({
+        type: "message",
+        role: "agent",
+        text: `Earlier answer ${i}. ${"Padding to make this history overflow the band. ".repeat(4)}`,
+        itemId: `a${i}`,
+      });
+    }
+    send({ type: "turn_end", stopReason: "end_turn" });
+
+    socket.onMessage((message) => {
+      if (typeof message !== "string") return;
+      const event = JSON.parse(message) as { type?: string; text?: string };
+      // The prompt is accepted and then held: no agent output, no turn_end,
+      // exactly like a long turn. Cancel is what ends it.
+      if (event.type === "cancel") send({ type: "turn_end", stopReason: "cancelled" });
+    });
+  });
+}
+
+test("opens at the latest content and holds a follow-up until the turn resolves", async ({
+  page,
+}) => {
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    // Sample the thread's position on every frame from before it mounts: an
+    // overflowing conversation must never be observed sitting away from its
+    // latest content while the operator has not scrolled.
+    const samples: { top: number; overflow: number }[] = [];
+    (window as unknown as { __threadSamples: typeof samples }).__threadSamples = samples;
+    const tick = () => {
+      const thread = document.querySelector('[data-testid="session-thread"]');
+      if (thread) {
+        samples.push({
+          top: thread.scrollTop,
+          overflow: thread.scrollHeight - thread.clientHeight,
+        });
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await mockHeldTurn(page);
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible();
+  await expect(page.getByTestId("session-message-agent").last()).toContainText("Earlier answer 11");
+
+  const strandedFrames = await page.evaluate(() => {
+    const samples = (window as unknown as { __threadSamples: { top: number; overflow: number }[] })
+      .__threadSamples;
+    return {
+      overflowed: samples.filter((sample) => sample.overflow > 48).length,
+      stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < sample.overflow - 48)
+        .length,
+    };
+  });
+  expect(strandedFrames.overflowed).toBeGreaterThan(0);
+  expect(strandedFrames.stranded).toBe(0);
+
+  await page.getByLabel("Message").fill("Start the work");
+  await page.getByLabel("Message").press("Enter");
+  await expect(page.getByTestId("session-head")).toContainText("Working");
+
+  // First Enter while busy queues one editable follow-up.
+  await page.getByLabel("Message").fill("And then deploy");
+  await page.getByLabel("Message").press("Enter");
+  await expect(page.getByTestId("session-queued")).toContainText("Queued");
+  await expect(page.getByTestId("session-queued")).toContainText("And then deploy");
+  await expect(page.getByRole("button", { name: "Stop & send" })).toBeVisible();
+
+  // Second Enter cancels the live turn, and the follow-up waits for it to
+  // resolve rather than racing it.
+  await page.getByLabel("Message").press("Enter");
+  await expect(page.getByTestId("session-note-info")).toContainText("Stopped");
+  await expect(page.getByTestId("session-queued")).toHaveCount(0);
+  await expect(page.getByTestId("session-message-user").last()).toContainText("And then deploy");
+});
+
 /** One turn carrying everything ACP separates: reasoning, a plan, a tool call
  * with a diff, and a tool call with command output. The long diff line is the
  * point of the width assertions — `white-space: pre` inside a flex column is
@@ -222,7 +316,7 @@ async function mockTypedTurn(page: Page) {
   });
 }
 
-test("a turn renders its tool calls, diff, plan and reasoning in place", async ({ page }) => {
+test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async ({ page }) => {
   await mockFetch(page, {
     __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
   });
@@ -240,7 +334,11 @@ test("a turn renders its tool calls, diff, plan and reasoning in place", async (
 
   await expect(page.getByTestId("session-head-status")).toHaveCount(0);
 
-  // Two calls, merged by id — the update revised the edit rather than adding a row.
+  // The turn carries one disclosure, and a failure inside it opens the timeline
+  // without being asked. Two calls, merged by id — the update revised the edit
+  // rather than adding a row.
+  await expect(page.getByTestId("session-turn-work-summary")).toHaveCount(1);
+  await expect(page.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
   await expect(page.getByTestId("session-tool-card")).toHaveCount(2);
   const edit = page.getByTestId("session-tool-card").first();
   await expect(edit).toHaveAttribute("data-status", "completed");
@@ -282,6 +380,15 @@ test("a turn renders its tool calls, diff, plan and reasoning in place", async (
     }).length,
   );
   expect(crushed).toBe(0);
+
+  // Collapsed, the turn is conversation again: one summary line, no trace.
+  await page.getByTestId("session-turn-work-summary").click();
+  await expect(page.getByTestId("session-tool-card")).toHaveCount(0);
+  await expect(page.getByTestId("session-plan")).toHaveCount(0);
+  await expect(page.getByTestId("session-thinking")).toHaveCount(0);
+  await expect(page.getByTestId("session-turn-work-summary")).toContainText(
+    "Edited 1 file · ran 1 command · 1 failed",
+  );
 });
 
 test("an error turn ends visibly with recovery guidance", async ({ page }) => {

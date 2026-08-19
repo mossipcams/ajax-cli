@@ -3,19 +3,20 @@ import type { ConversationItem } from "./sessionThread";
 export interface SessionTurn {
   id: string;
   user: ConversationItem | null;
+  /** Everything behind the turn's one activity disclosure. */
   work: ConversationItem[];
   agents: ConversationItem[];
-  /** Notes and other rows outside the user/work/agent shape. */
+  /** Rows that stay in the transcript: an ask the operator still owes an answer
+   * to, an error, a system divider. */
   other: ConversationItem[];
 }
 
+/** Protocol detail belongs behind the disclosure; only what the operator must
+ * act on stays in the conversation. An unanswered permission is an action, so
+ * it stays out here until it is resolved and becomes history. */
 function isWorkItem(item: ConversationItem): boolean {
-  return (
-    item.kind === "thought" ||
-    item.kind === "tool" ||
-    item.kind === "plan" ||
-    item.kind === "permission"
-  );
+  if (item.kind === "permission") return item.resolved;
+  return item.kind === "thought" || item.kind === "tool" || item.kind === "plan";
 }
 
 function emptyTurn(id: string): SessionTurn {
@@ -66,9 +67,4 @@ export function groupConversationTurns(items: ConversationItem[]): SessionTurn[]
 
   flush();
   return turns;
-}
-
-/** Flatten a turn back into render order for legacy preamble segments. */
-export function flattenTurnItems(turn: SessionTurn): ConversationItem[] {
-  return [...turn.other, ...turn.work, ...turn.agents];
 }

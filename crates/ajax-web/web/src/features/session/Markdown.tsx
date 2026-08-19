@@ -6,7 +6,7 @@
 // reachable from a chat turn, and a parser that never touches innerHTML cannot
 // inject agent output into the DOM as markup.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 type ListItem = { text: string; children: ListItem[] };
 
@@ -206,36 +206,11 @@ function renderListItems(items: ListItem[], ordered: boolean, keyPrefix: string)
   );
 }
 
-const THROTTLE_MS = 50;
-
-function useThrottledSource(source: string, live: boolean): string {
-  const [shown, setShown] = useState(source);
-  const lastAtRef = useRef(0);
-
-  useEffect(() => {
-    if (!live) {
-      setShown(source);
-      return;
-    }
-    const elapsed = Date.now() - lastAtRef.current;
-    if (elapsed >= THROTTLE_MS) {
-      lastAtRef.current = Date.now();
-      setShown(source);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      lastAtRef.current = Date.now();
-      setShown(source);
-    }, THROTTLE_MS - elapsed);
-    return () => window.clearTimeout(timer);
-  }, [source, live]);
-
-  return shown;
-}
-
-export default function Markdown({ source, live = false }: { source: string; live?: boolean }) {
-  const shown = useThrottledSource(source, live);
-  const blocks = useMemo(() => parseBlocks(shown), [shown]);
+// ponytail: no reveal throttle. Source changes at most once per completed
+// paragraph now, so there is nothing to smooth — the throttle existed for
+// token-by-token streaming, which the conversation no longer does.
+export default function Markdown({ source }: { source: string }) {
+  const blocks = useMemo(() => parseBlocks(source), [source]);
   return (
     <div className="md">
       {blocks.map((block, index) => {
