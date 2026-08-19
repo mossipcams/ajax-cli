@@ -2,6 +2,7 @@
 
 mod acp_drain;
 mod acp_map;
+pub(crate) mod acp_usage;
 mod normalize;
 mod protocol;
 mod replay;
@@ -132,6 +133,42 @@ pub enum SessionServerEvent {
     /// Context window pressure, from ACP `usage_update`.
     #[serde(rename = "usage")]
     Usage { used: u64, size: u64 },
+    /// Per-turn token usage, from ACP `session/prompt` result.usage.
+    #[serde(rename = "turn_usage")]
+    TurnUsage {
+        #[serde(rename = "requestId", default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        #[serde(
+            rename = "inputTokens",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        input_tokens: Option<u64>,
+        #[serde(
+            rename = "outputTokens",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        output_tokens: Option<u64>,
+        #[serde(
+            rename = "cacheReadTokens",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        cache_read_tokens: Option<u64>,
+        #[serde(
+            rename = "cacheWriteTokens",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        cache_write_tokens: Option<u64>,
+        #[serde(
+            rename = "totalTokens",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        total_tokens: Option<u64>,
+    },
     #[serde(rename = "status")]
     Status {
         state: String,
@@ -325,6 +362,9 @@ mod transcript_tests;
 
 #[cfg(test)]
 mod acp_drain_tests;
+
+#[cfg(test)]
+mod acp_usage_tests;
 
 #[cfg(test)]
 mod ws_bridge_tests;

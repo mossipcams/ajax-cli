@@ -105,6 +105,21 @@ export interface Usage {
   size: number;
 }
 
+/** Per-turn token usage from ACP `session/prompt` result.usage. */
+export interface TurnUsage {
+  requestId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+}
+
+/** Session wire events including turn usage before transport types catch up. */
+export type SessionWireEvent =
+  | WebSessionServerEvent
+  | ({ type: "turn_usage" } & TurnUsage);
+
 export interface SessionState {
   items: ConversationItem[];
   /** A turn is in flight: the agent owes us output. */
@@ -119,6 +134,9 @@ export interface SessionState {
   /** Latest context pressure. One current value, not a history — a row per
    * update would bury the conversation under its own telemetry. */
   usage: Usage | null;
+  /** Latest per-turn token usage from prompt results. Kept separate from
+   * context-window pressure so Cursor turns do not double-count. */
+  turnUsage: TurnUsage | null;
   /** False across a turn boundary so the next agent chunk starts a new
    * paragraph even when the previous item was also agent prose. */
   proseOpen: boolean;
@@ -126,7 +144,7 @@ export interface SessionState {
 }
 
 export type SessionAction =
-  | { type: "event"; event: WebSessionServerEvent }
+  | { type: "event"; event: SessionWireEvent }
   | { type: "prompt"; text: string }
   | { type: "decided" }
   | { type: "reset" };
@@ -139,6 +157,7 @@ export const initialSessionState: SessionState = {
   status: null,
   statusDetail: null,
   usage: null,
+  turnUsage: null,
   proseOpen: true,
   seq: 0,
 };
@@ -395,7 +414,7 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
   }
 }
 
-function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionState {
+function applyEvent(state: SessionState, event: SessionWireEvent): SessionState {
   switch (event.type) {
     case "message": {
       if (!event.text) return state;
@@ -477,6 +496,20 @@ function applyEvent(state: SessionState, event: WebSessionServerEvent): SessionS
 
     case "usage":
       return event.size > 0 ? { ...state, usage: { used: event.used, size: event.size } } : state;
+
+    case "turn_usage": {
+      const turnUsage: TurnUsage = {};
+      if (event.requestId !== undefined) turnUsage.requestId = event.requestId;
+      if (event.inputTokens !== undefined) turnUsage.inputTokens = event.inputTokens;
+      if (event.outputTokens !== undefined) turnUsage.outputTokens = event.outputTokens;
+      if (event.cacheReadTokens !== undefined) turnUsage.cacheReadTokens = event.cacheReadTokens;
+      if (event.cacheWriteTokens !== undefined) {
+        turnUsage.cacheWriteTokens = event.cacheWriteTokens;
+      }
+      if (event.totalTokens !== undefined) turnUsage.totalTokens = event.totalTokens;
+      if (Object.keys(turnUsage).length === 0) return state;
+      return { ...state, turnUsage };
+    }
 
     case "permission_request":
       // The buttons live in the head — sticky, so on a phone the ask cannot

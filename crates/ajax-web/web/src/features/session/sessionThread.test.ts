@@ -451,6 +451,28 @@ describe("sessionReducer", () => {
   });
 });
 
+describe("turn usage stays separate from context usage", () => {
+  it("stores turnUsage without writing context usage or zero-filled fields", () => {
+    const afterContext = sessionReducer(initialSessionState, {
+      type: "event",
+      event: { type: "usage", used: 50_000, size: 200_000 },
+    });
+    expect(afterContext.usage).toEqual({ used: 50_000, size: 200_000 });
+    expect(afterContext.turnUsage).toBeNull();
+
+    const afterTurn = sessionReducer(afterContext, {
+      type: "event",
+      event: { type: "turn_usage", inputTokens: 1200, totalTokens: 1200 },
+    });
+
+    expect(afterTurn.usage).toEqual({ used: 50_000, size: 200_000 });
+    expect(afterTurn.turnUsage).toEqual({ inputTokens: 1200, totalTokens: 1200 });
+    expect(afterTurn.turnUsage).not.toHaveProperty("outputTokens", 0);
+    expect(afterTurn.turnUsage).not.toHaveProperty("cacheReadTokens", 0);
+    expect(afterTurn.turnUsage).not.toHaveProperty("cacheWriteTokens", 0);
+  });
+});
+
 describe("explainAcpError", () => {
   it("maps opaque ACP failures to operator-facing copy", () => {
     expect(explainAcpError("internal error")).toMatch(/rejected that request/i);

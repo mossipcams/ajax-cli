@@ -10,6 +10,7 @@ use super::{
     acp_drain::{
         drain_acp_events, normalize_session_events, parse_json_rpc_id, permission_response,
     },
+    acp_usage::UsageDeduper,
     apply_cancel_to_queue, dispatch_prompt, PromptDispatch, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::AcpStdioClient;
@@ -140,6 +141,7 @@ pub(crate) struct TaskSessionState {
     pub(super) acp_alive: bool,
     pub(super) agent: AgentClient,
     pub(super) worktree_path: Option<PathBuf>,
+    pub(super) usage_deduper: UsageDeduper,
 }
 
 impl TaskSessionState {
@@ -175,7 +177,8 @@ impl TaskSessionState {
         let Some(client) = self.client.as_mut() else {
             return;
         };
-        let (events, host_exited, prompt_finished) = drain_acp_events(client);
+        let (events, host_exited, prompt_finished) =
+            drain_acp_events(client, &mut self.usage_deduper);
         if prompt_finished {
             if let Some(next) = self.queued.pop_front() {
                 if let Err(error) = client.begin_prompt(&next) {
@@ -225,6 +228,7 @@ pub(crate) fn spawn_task_session(
             acp_alive: false,
             agent: AgentClient::Cursor,
             worktree_path: None,
+            usage_deduper: UsageDeduper::default(),
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

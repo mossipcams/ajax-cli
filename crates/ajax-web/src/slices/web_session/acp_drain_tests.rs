@@ -3,6 +3,7 @@ use super::acp_drain::{
     permission_response,
 };
 use super::map_acp_session_notification;
+use crate::slices::web_session::acp_usage::UsageDeduper;
 use crate::slices::web_session::SessionServerEvent;
 use agent_client_protocol::schema::v1::{
     ConfigOptionUpdate, ContentBlock, ContentChunk, CurrentModeUpdate, Plan, PlanEntry,
@@ -13,28 +14,79 @@ use serde_json::json;
 
 #[test]
 fn finished_prompt_reports_turn_end_with_stop_reason() {
-    let event = map_request_finished("session/prompt", Ok(json!({ "stopReason": "end_turn" })));
+    let events = map_request_finished(
+        "session/prompt",
+        Ok(json!({ "stopReason": "end_turn" })),
+        Some(1),
+        &mut UsageDeduper::default(),
+    );
     assert_eq!(
-        event,
-        Some(SessionServerEvent::TurnEnd {
+        events,
+        vec![SessionServerEvent::TurnEnd {
             stop_reason: Some("end_turn".to_string()),
-        })
+        }]
+    );
+}
+
+#[test]
+fn finished_prompt_with_cursor_usage_emits_turn_usage_before_turn_end() {
+    let events = map_request_finished(
+        "session/prompt",
+        Ok(json!({
+            "stopReason": "end_turn",
+            "usage": {
+                "inputTokens": 100,
+                "outputTokens": 40,
+                "totalTokens": 140
+            }
+        })),
+        Some(9),
+        &mut UsageDeduper::default(),
+    );
+    assert_eq!(
+        events,
+        vec![
+            SessionServerEvent::TurnUsage {
+                request_id: Some("9".to_string()),
+                input_tokens: Some(100),
+                output_tokens: Some(40),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                total_tokens: Some(140),
+            },
+            SessionServerEvent::TurnEnd {
+                stop_reason: Some("end_turn".to_string()),
+            },
+        ]
     );
 }
 
 #[test]
 fn finished_non_prompt_request_reports_nothing() {
-    assert_eq!(map_request_finished("session/cancel", Ok(json!({}))), None);
+    assert_eq!(
+        map_request_finished(
+            "session/cancel",
+            Ok(json!({})),
+            None,
+            &mut UsageDeduper::default()
+        ),
+        Vec::<SessionServerEvent>::new()
+    );
 }
 
 #[test]
 fn failed_request_reports_error() {
-    let event = map_request_finished("session/prompt", Err("boom".to_string()));
+    let events = map_request_finished(
+        "session/prompt",
+        Err("boom".to_string()),
+        None,
+        &mut UsageDeduper::default(),
+    );
     assert_eq!(
-        event,
-        Some(SessionServerEvent::Error {
+        events,
+        vec![SessionServerEvent::Error {
             message: "boom".to_string(),
-        })
+        }]
     );
 }
 
