@@ -24,6 +24,16 @@ export function explainAcpError(message: string): string {
   if (/acp request timed out/i.test(message)) {
     return "The agent did not answer in time. Try sending again.";
   }
+  if (
+    /cannot block the current thread|would block|block_in_place|within a runtime/i.test(
+      message,
+    )
+  ) {
+    return "Could not save the selected model. Try again in a moment.";
+  }
+  if (/session task stopped|session task dropped reply/i.test(message)) {
+    return "The session worker stopped. Reopen the session to try again.";
+  }
   return message;
 }
 

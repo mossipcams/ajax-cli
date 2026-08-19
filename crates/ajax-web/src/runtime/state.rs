@@ -26,6 +26,9 @@ pub(crate) const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750
 pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
+/// Operator-facing copy when set_model persist hits a runtime/panic failure (#962).
+pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
+    "Could not save the session model. Try again in a moment.";
 
 pub(crate) fn moonshine_provider_from_config(config: &Config) -> Arc<Mutex<MoonshineProvider>> {
     Arc::new(Mutex::new(MoonshineProvider::new(
@@ -190,6 +193,26 @@ where
 
     /// Persist desired session model metadata before the host replaces an ACP child.
     pub(crate) fn persist_task_session_model(
+        &self,
+        handle: &str,
+        model: &str,
+    ) -> Result<(), String> {
+        let handle = handle.to_string();
+        let model = model.to_string();
+        let state = self.clone();
+        // WebSocket set_model invokes this from a Tokio worker; control_lane uses
+        // blocking_lock and must run inside block_in_place (issue #962).
+        tokio::task::block_in_place(|| {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.persist_task_session_model_on_control_lane(&handle, &model)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err(SESSION_MODEL_PERSIST_RUNTIME_ERROR.to_string()),
+            }
+        })
+    }
+
+    fn persist_task_session_model_on_control_lane(
         &self,
         handle: &str,
         model: &str,

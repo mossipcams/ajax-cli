@@ -165,6 +165,44 @@ fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[test]
+fn apply_client_message_set_model_surfaces_worker_stop_without_respawn_issue_962() {
+    let dir = scratch_dir("set-model-worker-stop");
+    let handle = "web/set-model-worker-stop";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let mut generation = directory.generation(handle);
+        let generation_before = generation;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(directory.inner().clone().drop_session(handle));
+        let persist: super::PersistSessionModel = std::sync::Arc::new(|_model: &str| Ok(()));
+        let error = rt
+            .block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: "composer-2.5".to_string(),
+                },
+                &mut generation,
+                Some(persist),
+            ))
+            .unwrap_err();
+        assert!(
+            error.contains("session slot missing"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(generation, generation_before);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // Regression for issue #942: set_model must replace the ACP child, publish the
 // new slot model on attach, and keep it after the next prompt.
 #[test]
