@@ -319,6 +319,13 @@ turn and stays in the record; a summary line in its place threw it away.
 Permission *buttons* stay in the head, never inline: a control in a scrolling
 column can leave the screen mid-decision on a phone.
 
+The Task details sheet on this route is a thin operator dossier, not a settings
+dump. Its first viewport leads with task identity (title, handle, branch), the
+current session model with a Change disclosure (full harness catalog on demand),
+and Ajax terminal without scrolling past the model list. Deeper registry fields
+reuse the shared `TaskMetaDetails` grid; Rust Debug annotation strings are shown
+as human Notes lines, not raw struct dumps.
+
 ## 6. Do's and Don'ts
 
 ### Do:

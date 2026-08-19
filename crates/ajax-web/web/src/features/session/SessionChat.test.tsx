@@ -47,6 +47,14 @@ function stubSessionTransport() {
   );
 }
 
+function openTaskDetails() {
+  fireEvent.click(screen.getByTestId("session-details"));
+}
+
+function openModelCatalog() {
+  fireEvent.click(screen.getByTestId("session-model-change"));
+}
+
 function mountChat(overrides: Partial<React.ComponentProps<typeof SessionChat>> = {}) {
   return render(
     <SessionChat
@@ -369,10 +377,57 @@ describe("SessionChat smoke", () => {
   it("calls onOpenTerminal from the Ajax terminal control in task details", () => {
     const onOpenTerminal = vi.fn();
     mountChat({ onOpenTerminal });
-    fireEvent.click(screen.getByTestId("session-details"));
+    openTaskDetails();
     fireEvent.click(screen.getByTestId("session-ajax-terminal"));
     expect(onOpenTerminal).toHaveBeenCalledOnce();
     expect(screen.queryByTestId("session-terminal-sheet")).not.toBeInTheDocument();
+  });
+
+  it("leads the task details sheet with task identity (#p1 layout)", () => {
+    mountChat();
+    openTaskDetails();
+    const body = screen.getByTestId("session-task-panel").querySelector(".session-details-body")!;
+    const ordered = Array.from(body.querySelectorAll("[data-testid]")).map((el) =>
+      el.getAttribute("data-testid"),
+    );
+    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("Fix login");
+    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("web/fix-login");
+    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("ajax/fix-login");
+    expect(ordered.indexOf("session-task-identity")).toBeLessThan(
+      ordered.indexOf("session-ajax-terminal"),
+    );
+    expect(ordered.indexOf("session-ajax-terminal")).toBeLessThan(
+      ordered.indexOf("task-meta-details-embedded"),
+    );
+  });
+
+  it("keeps the model catalog collapsed until Change is opened (#p1 distill)", async () => {
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    act(() => ready?.("composer-2.5"));
+    openTaskDetails();
+
+    expect(screen.getByTestId("session-model-summary")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-model-catalog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("session-model-current")).toHaveTextContent(/Composer 2\.5/i);
+    });
+
+    openModelCatalog();
+    expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("does not render Rust Debug annotation strings in task details (#p1 clarify)", () => {
+    mountChat();
+    openTaskDetails();
+    expect(screen.queryByText(/Annotation\s*\{/)).not.toBeInTheDocument();
+    const notes = screen.getByTestId("task-annotations");
+    expect(notes).toHaveTextContent("waiting for approval");
+    expect(notes).toHaveTextContent("reviewable · reviewable");
   });
 
   it("shows the harness switch in the task details modal when the task has an agent", () => {
@@ -554,7 +609,8 @@ describe("SessionChat smoke", () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("composer-2.5"));
-    fireEvent.click(screen.getByTestId("session-details"));
+    openTaskDetails();
+    openModelCatalog();
 
     const current = await screen.findByRole("radio", { name: /Composer 2\.5/i });
     expect(current).toHaveAttribute("aria-checked", "true");
@@ -586,7 +642,8 @@ describe("SessionChat smoke", () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "claude" } });
     act(() => ready?.("opus|effort=high"));
-    fireEvent.click(screen.getByTestId("session-details"));
+    openTaskDetails();
+    openModelCatalog();
 
     const current = await screen.findByRole("radio", { name: /Opus/i });
     expect(current).toHaveAttribute("aria-checked", "true");
@@ -616,7 +673,8 @@ describe("SessionChat smoke", () => {
     autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("model-2"));
-    fireEvent.click(screen.getByTestId("session-details"));
+    openTaskDetails();
+    openModelCatalog();
 
     await waitFor(() => {
       expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
@@ -650,11 +708,121 @@ describe("SessionChat smoke", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     act(() => ready?.("harness-default"));
 
-    fireEvent.click(screen.getByTestId("session-details"));
+    openTaskDetails();
+    openModelCatalog();
     const current = await screen.findByRole("radio", { name: /Harness default/i });
     expect(current).toHaveAttribute("aria-checked", "true");
     expect(
       screen.queryByRole("radio", { name: /Composer 2\.5/i, checked: true }),
     ).toBeNull();
+  });
+});
+
+describe("SessionChat task details polish", () => {
+  beforeEach(() => {
+    emit = undefined;
+    ready = undefined;
+    autoReady = true;
+    frameQueue = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frameQueue.push(callback);
+      return frameQueue.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    transport.sendPrompt.mockClear();
+    transport.setModel.mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+          ],
+        }),
+      }),
+    );
+    stubSessionTransport();
+  });
+
+  it("styles sheet field labels with tracked uppercase chrome", () => {
+    const labelCss =
+      stylesSource.match(/\.session-details-sheet \.field-label\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(labelCss).toMatch(/text-transform:\s*uppercase/);
+    expect(labelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
+    expect(labelCss).toMatch(/color:\s*var\(--ink-muted\)/);
+  });
+
+  it("lifts Close to 44px in the task details sheet", () => {
+    const closeCss =
+      stylesSource.match(
+        /\.session-details-sheet \.session-sheet-header \.pill[\s\S]*?\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(closeCss).toMatch(/min-height:\s*44px/);
+  });
+
+  it("exposes aria-expanded on Details and model Change", async () => {
+    autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    act(() => ready?.("composer-2.5"));
+
+    const details = screen.getByTestId("session-details");
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    expect(details).toHaveAttribute("aria-controls");
+
+    openTaskDetails();
+    expect(details).toHaveAttribute("aria-expanded", "true");
+
+    const change = screen.getByTestId("session-model-change");
+    expect(change).toHaveAttribute("aria-expanded", "false");
+    expect(change).toHaveAttribute("aria-controls");
+
+    openModelCatalog();
+    expect(await screen.findByTestId("session-model-catalog")).toHaveAttribute("id");
+    expect(screen.getByTestId("session-model-done")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByTestId("session-model-change")).not.toBeInTheDocument();
+  });
+
+  it("pins observation error under identity with the task-detail prefix", () => {
+    mountChat({
+      detail: {
+        ...(taskDetail as BrowserTaskDetail),
+        runtime_observation_error: "tmux session missing",
+      },
+    });
+    openTaskDetails();
+
+    const body = screen.getByTestId("session-task-panel").querySelector(".session-details-body")!;
+    const ordered = Array.from(body.querySelectorAll("[data-testid]")).map((el) =>
+      el.getAttribute("data-testid"),
+    );
+    expect(screen.getByTestId("session-observation-error")).toHaveTextContent(
+      "Observation error: tmux session missing",
+    );
+    expect(ordered.indexOf("session-task-identity")).toBeLessThan(
+      ordered.indexOf("session-observation-error"),
+    );
+    expect(ordered.indexOf("session-observation-error")).toBeLessThan(
+      ordered.indexOf("session-model-select"),
+    );
+  });
+
+  it("hides the session model picker while harness Switch is open", () => {
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    openTaskDetails();
+    expect(screen.getByTestId("session-model-select")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    expect(screen.queryByTestId("session-model-select")).not.toBeInTheDocument();
+    expect(screen.getByTestId("harness-swap")).toHaveClass("is-open");
+  });
+
+  it("does not give the first sheet ActionBar action primary fill", () => {
+    const mutedCss =
+      stylesSource.match(/\.session-sheet-actions-muted \.action\.primary\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    expect(mutedCss).toMatch(/background:\s*transparent/);
+    expect(mutedCss).not.toMatch(/background:\s*var\(--accent\)/);
   });
 });

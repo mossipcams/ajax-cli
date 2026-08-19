@@ -666,16 +666,15 @@ html.terminal-expanded .result-panel,
   color: var(--ink-muted);
 }
 
+.session-details-sheet .session-model-catalog .model-picker {
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+}
+
 .session-details-sheet .model-picker {
   /* Let the task-details body scroll one list; nested caps hid most models (#948). */
   max-height: none;
   overflow: visible;
-}
-
-.session-model-switching {
-  flex: none;
-  font-size: var(--text-caption, var(--text-body-sm));
-  color: var(--ink-muted);
 }
 
 /* Live head --------------------------------------------------------------- */
@@ -1637,6 +1636,21 @@ html.keyboard-open .session-composer textarea {
   font-weight: 700;
 }
 
+.session-details-sheet .field-label {
+  display: block;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-details-sheet .session-sheet-header .pill,
+.session-details-sheet .session-sheet-close {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
 .session-details-body {
   display: flex;
   flex-direction: column;
@@ -1645,33 +1659,96 @@ html.keyboard-open .session-composer textarea {
   overflow-y: auto;
 }
 
-.session-meta {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 7px 14px;
-  margin: 0;
-  font-size: var(--text-body-sm);
+.session-task-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
 }
 
-.session-meta dt {
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  padding-top: 2px;
+.session-task-title {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink);
 }
 
-.session-meta dd {
+.session-task-handle {
   margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-label);
   color: var(--ink-soft);
-  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.session-meta-mono {
+.session-task-branch {
+  margin: 0;
   font-family: var(--mono);
   font-size: var(--text-label);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.session-model-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-model-current-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.session-model-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.session-model-change,
+.session-model-done {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.session-model-change:hover:not(:disabled),
+.session-model-done:hover {
+  border-color: var(--ink-soft);
+}
+
+.session-model-change:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.session-model-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-sheet-tools-primary {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .session-sheet-warning {
@@ -1680,22 +1757,25 @@ html.keyboard-open .session-composer textarea {
   color: var(--danger);
 }
 
-.session-annotations {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: var(--text-body-sm);
-  color: var(--ink-soft);
-}
-
 .session-sheet-actions {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding-top: 14px;
   border-top: 1px solid var(--rule);
+}
+
+/* Settings sheet: Ship/Drop stay secondary chrome, not primary fill. */
+.session-sheet-actions-muted .action.primary {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.session-sheet-actions-muted .action.primary:hover,
+.session-sheet-actions-muted .action.primary:focus-visible {
+  background: transparent;
+  border-color: var(--ink-soft);
 }
 
 .session-sheet-tools {

@@ -51,7 +51,6 @@ import { visibleTaskActions } from "@/features/task/taskActions";
 import ActionBar from "@/features/task/ActionBar";
 import HarnessSwap from "@/features/task/HarnessSwap";
 import TaskLoadError from "@/features/task/TaskLoadError";
-import TestInDevPanel from "@/features/task/TestInDevPanel";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
@@ -67,6 +66,7 @@ import {
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
 import SessionModelSelect from "./SessionModelSelect";
+import TaskMetaDetails from "@/features/task/TaskMetaDetails";
 import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
 import { useTaskSession } from "./useTaskSession";
@@ -122,6 +122,7 @@ export default function SessionChat({
   onCancelPendingConfirm,
 }: Props) {
   const composerId = useId();
+  const taskPanelId = `${composerId}-task-panel`;
   const rootRef = useRef<HTMLElement | null>(null);
   const onOpenDiffRef = useRef(onOpenDiff);
   onOpenDiffRef.current = onOpenDiff;
@@ -145,6 +146,7 @@ export default function SessionChat({
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [harnessSwapOpen, setHarnessSwapOpen] = useState(false);
 
   const {
     state,
@@ -187,6 +189,10 @@ export default function SessionChat({
   useEffect(() => {
     if (pendingConfirmAction === "drop") setDetailsOpen(false);
   }, [pendingConfirmAction]);
+
+  useEffect(() => {
+    if (!detailsOpen) setHarnessSwapOpen(false);
+  }, [detailsOpen]);
 
   const restoreLiveEdge = useCallback(() => {
     setPinned(true);
@@ -323,7 +329,6 @@ export default function SessionChat({
     0,
     toolCount(state.items) - toolCount(seenRef.current.items),
   );
-  const activity = detail?.agent_activity ?? detail?.live_status_summary ?? null;
   const title = detail?.title || detail?.qualified_handle || handle;
 
   return (
@@ -373,6 +378,8 @@ export default function SessionChat({
         onReject={() => respondDecision(false)}
         onStop={sendCancel}
         onOpenDetails={() => setDetailsOpen(true)}
+        detailsOpen={detailsOpen}
+        detailsPanelId={taskPanelId}
       />
 
       <div
@@ -482,6 +489,7 @@ export default function SessionChat({
               >
                 <div
                   className="session-details-sheet"
+                  id={taskPanelId}
                   data-testid="session-task-panel"
                   role="dialog"
                   aria-modal="true"
@@ -491,72 +499,94 @@ export default function SessionChat({
                     <SheetTitle asChild>
                       <h2>Task details</h2>
                     </SheetTitle>
-                    <Button type="button" variant="secondary" onClick={() => setDetailsOpen(false)}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="session-sheet-close"
+                      onClick={() => setDetailsOpen(false)}
+                    >
                       Close
                     </Button>
                   </div>
 
                   <div className="session-details-body">
-                    <dl className="session-meta" data-testid="session-artifact-status">
-                      {detail?.status_explanation ? (
-                        <>
-                          <dt>Status</dt>
-                          <dd>{detail.status_explanation}</dd>
-                        </>
-                      ) : null}
-                      {activity ? (
-                        <>
-                          <dt>Activity</dt>
-                          <dd data-testid="session-artifact-activity">{activity}</dd>
-                        </>
-                      ) : null}
-                      {detail ? (
-                        <>
-                          <dt>Lifecycle</dt>
-                          <dd>{detail.lifecycle}</dd>
-                          <dt>Branch</dt>
-                          <dd className="session-meta-mono">{detail.branch}</dd>
-                        </>
-                      ) : null}
-                    </dl>
+                    {detail ? (
+                      <header
+                        className="session-task-identity"
+                        data-testid="session-task-identity"
+                      >
+                        <h3 className="session-task-title">
+                          {detail.title || detail.qualified_handle}
+                        </h3>
+                        <p className="session-task-handle">{detail.qualified_handle}</p>
+                        <p className="session-task-branch">{detail.branch}</p>
+                      </header>
+                    ) : null}
+
+                    {detail?.runtime_observation_error ? (
+                      <p
+                        className="session-sheet-warning"
+                        data-testid="session-observation-error"
+                      >
+                        Observation error: {detail.runtime_observation_error}
+                      </p>
+                    ) : null}
 
                     {detail?.agent ? (
                       <HarnessSwap
                         handle={detail.qualified_handle ?? handle}
                         currentAgent={detail.agent}
                         onSwapped={handleHarnessSwapped}
+                        onOpenChange={setHarnessSwapOpen}
                       />
                     ) : null}
 
-                    <SessionModelSelect
-                      id={`${composerId}-model`}
-                      agent={detail?.agent}
-                      value={sessionModel}
-                      disabled={state.busy || !connected}
-                      onChange={(id) => setModel(id)}
-                    />
-
-                    {detail?.runtime_observation_error ? (
-                      <p className="session-sheet-warning">{detail.runtime_observation_error}</p>
+                    {!harnessSwapOpen ? (
+                      <SessionModelSelect
+                        id={`${composerId}-model`}
+                        agent={detail?.agent}
+                        value={sessionModel}
+                        disabled={state.busy || !connected}
+                        onChange={(id) => setModel(id)}
+                      />
                     ) : null}
 
-                    {detail?.annotations.length ? (
-                      <ul className="session-annotations" data-testid="session-artifact-annotations">
-                        {detail.annotations.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
-                    ) : null}
+                    <div
+                      className="session-sheet-tools session-sheet-tools-primary"
+                      data-testid="session-primary-tools"
+                    >
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        data-testid="session-ajax-terminal"
+                        onClick={() => {
+                          setDetailsOpen(false);
+                          onOpenTerminal?.();
+                        }}
+                      >
+                        Ajax terminal
+                      </Button>
+                      {onOpenDiff ? (
+                        <Button type="button" variant="secondary" onClick={onOpenDiff}>
+                          Show diff
+                        </Button>
+                      ) : null}
+                    </div>
 
-                    {detail?.repo === "ajax-cli" ? (
-                      <TestInDevPanel
-                        taskHandle={detail.qualified_handle ?? handle}
+                    {detail ? (
+                      <TaskMetaDetails
+                        detail={detail}
+                        embedded
+                        hideBranch
                         onResult={onResult}
                       />
                     ) : null}
 
-                    <div className="session-sheet-actions" data-testid="session-quick-actions">
-                      {actions.length ? (
+                    {actions.length ? (
+                      <div
+                        className="session-sheet-actions session-sheet-actions-muted"
+                        data-testid="session-quick-actions"
+                      >
                         <ActionBar
                           actions={actions}
                           handle={detail?.qualified_handle ?? handle}
@@ -567,26 +597,8 @@ export default function SessionChat({
                           pendingConfirmAction={pendingConfirmAction}
                           onCancelPendingConfirm={onCancelPendingConfirm}
                         />
-                      ) : null}
-                      <div className="session-sheet-tools">
-                        {onOpenDiff ? (
-                          <Button type="button" variant="secondary" onClick={onOpenDiff}>
-                            Show diff
-                          </Button>
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          data-testid="session-ajax-terminal"
-                          onClick={() => {
-                            setDetailsOpen(false);
-                            onOpenTerminal?.();
-                          }}
-                        >
-                          Ajax terminal
-                        </Button>
                       </div>
-                    </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
