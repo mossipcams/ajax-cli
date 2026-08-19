@@ -31,10 +31,12 @@ pub(super) async fn acquire(
             &state.state_dir,
             &state.qualified_handle,
         );
-        let _ = client.cancel();
         state.acquire_holder();
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
+        if let Some(old_client) = state.client.as_mut() {
+            let _ = old_client.cancel();
+        }
         install_replaced_client(state, new_client, &report, model)?;
         return Ok(());
     }
@@ -128,10 +130,14 @@ pub(super) async fn respawn(
     model: &str,
     force: bool,
 ) -> Result<u64, String> {
-    let Some(client) = state.client.as_mut() else {
+    if state.client.is_none() {
         return Err("session slot missing".to_string());
-    };
-    let host_exited = client.host_exited();
+    }
+    let host_exited = state
+        .client
+        .as_mut()
+        .map(|client| client.host_exited())
+        .unwrap_or(true);
     if !force && !slot_must_replace(state.acp_alive, &state.model, model, host_exited) {
         return Ok(state.generation);
     }
@@ -141,9 +147,11 @@ pub(super) async fn respawn(
         &state.state_dir,
         &state.qualified_handle,
     );
-    let _ = client.cancel();
-    let (new_client, report) =
-        spawn_acp(state.agent, worktree_path, model, resume_id.as_deref()).await?;
+    let agent = state.agent;
+    let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
+    if let Some(old_client) = state.client.as_mut() {
+        let _ = old_client.cancel();
+    }
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
 }

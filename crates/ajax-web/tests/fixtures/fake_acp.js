@@ -12,6 +12,8 @@ const resumeMode = process.argv.includes('--resume') || process.argv.includes('-
 const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
+const cursorLiveModels = process.argv.includes('--cursor-live-models');
+const acceptUnadvertisedGrokHigh = process.argv.includes('--accept-unadvertised-grok-high');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
 const modelRefuse = process.argv.includes('--model-refuse');
@@ -46,7 +48,11 @@ function spawnModelFromArgv() {
   const idx = process.argv.indexOf('--model');
   if (idx >= 0 && idx + 1 < process.argv.length) {
     const model = process.argv[idx + 1];
-    // Live Cursor ACP ignores Ajax catalog ids on spawn argv.
+    // Live Cursor accepts cursor-grok catalog ids on spawn argv; other cursor-
+    // prefixed catalog ids are ignored until in-band apply.
+    if (model.startsWith('cursor-grok-')) {
+      return model;
+    }
     if (model.startsWith('cursor-')) {
       return null;
     }
@@ -64,13 +70,19 @@ function modelConfigOptions() {
     { value: 'composer-2.5', name: 'Composer 2.5' },
     { value: 'gpt-5.6-sol[medium]', name: 'GPT-5.6-Sol (medium)' },
   ];
-  if (cursorModels) {
+  if (cursorModels || cursorLiveModels) {
     options.push(
       { value: 'composer-2.5[fast=true]', name: 'Composer Fast' },
-      { value: 'grok-4.6[effort=high,fast=false]', name: 'Grok High' },
-      { value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' },
       { value: 'gpt-5.6-sol[effort=high,fast=false]', name: 'GPT-5.6-Sol High' },
     );
+    if (cursorLiveModels) {
+      options.push({ value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' });
+    } else {
+      options.push(
+        { value: 'grok-4.6[effort=high,fast=false]', name: 'Grok High' },
+        { value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' },
+      );
+    }
   }
   return [{
     id: 'model',
@@ -157,9 +169,13 @@ function handleRequest(msg) {
   // request shape each harness family uses.
   if (method === 'session/set_model' || method === 'session/set_config_option') {
     const requested = params?.modelId ?? params?.value ?? '';
+    const unadvertisedGrokHigh =
+      acceptUnadvertisedGrokHigh &&
+      requested === 'grok-4.6[effort=high,fast=false]';
     const refuseInBand =
       requested &&
       requested !== currentModel &&
+      !unadvertisedGrokHigh &&
       (modelRefuse || (refuseInBandOnce && firstSpawnAttempt));
     if (refuseInBand) {
       send({

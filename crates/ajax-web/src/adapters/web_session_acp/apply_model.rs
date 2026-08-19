@@ -4,14 +4,15 @@
 use super::catalog::parse_session_new_catalog;
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigSelect, SessionConfigSelectOptions,
-    SetSessionConfigOptionRequest,
+    SessionConfigValueId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{Agent, ConnectionTo};
 use ajax_core::adapters::{
-    cursor_catalog_to_acp_spawn_token, cursor_model_intents_match, parse_cursor_model_intent,
-    parse_model_selection, ModelSelection, CURSOR_DEFAULT_MODEL,
+    cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
+    cursor_model_intents_match, cursor_unspecified_spawn_satisfied, parse_cursor_model_intent,
+    parse_model_selection, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::client::HANDSHAKE_TIMEOUT;
 
@@ -37,13 +38,7 @@ pub fn operator_pin_satisfied(
         if !model_pins_at_spawn {
             return true;
         }
-        let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) else {
-            return false;
-        };
-        let Some(applied_intent) = parse_cursor_model_intent(applied_model) else {
-            return false;
-        };
-        return cursor_model_intents_match(&default_intent, &applied_intent);
+        return cursor_unspecified_spawn_satisfied(applied_model);
     }
     let Some(selection) = parse_model_selection(operator_pin.trim()) else {
         return false;
@@ -56,19 +51,115 @@ pub fn read_applied_model(
     session_result: &Value,
     config_options: Option<&[SessionConfigOption]>,
 ) -> String {
-    if let Some(options) = config_options {
-        if let Some(option) = options
+    read_applied_model_from_config_options(config_options).unwrap_or_else(|| {
+        parse_session_new_catalog(session_result)
+            .default_model
+            .unwrap_or_default()
+    })
+}
+
+fn read_applied_model_from_config_options(
+    config_options: Option<&[SessionConfigOption]>,
+) -> Option<String> {
+    let option = config_options?
+        .iter()
+        .find(|option| option.id.0.as_ref() == "model")?;
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    Some(select.current_value.0.to_string())
+}
+
+/// Live Cursor includes a Codex-style `models` block on `session/new`, but the ACP
+/// SDK keeps only `configOptions`. Mirror model ids into `session_new_result` so
+/// handshake readers and LiveSession snapshots stay aligned ([#979]).
+pub(super) fn enrich_session_new_value(
+    session_result: &mut Value,
+    config_options: Option<&[SessionConfigOption]>,
+) {
+    if session_result
+        .get("models")
+        .and_then(|models| models.get("availableModels"))
+        .and_then(Value::as_array)
+        .is_some_and(|models| !models.is_empty())
+    {
+        return;
+    }
+    let Some(config_options) = config_options else {
+        return;
+    };
+    let Some(option) = config_options
+        .iter()
+        .find(|option| option.id.0.as_ref() == "model")
+    else {
+        return;
+    };
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return;
+    };
+    let available_models: Vec<Value> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options
             .iter()
-            .find(|option| option.id.0.as_ref() == "model")
-        {
-            if let SessionConfigKind::Select(select) = &option.kind {
-                return select.current_value.0.to_string();
-            }
+            .map(|option| {
+                json!({
+                    "modelId": option.value.0.as_ref(),
+                    "name": option.name,
+                })
+            })
+            .collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .map(|option| {
+                json!({
+                    "modelId": option.value.0.as_ref(),
+                    "name": option.name,
+                })
+            })
+            .collect(),
+        _ => return,
+    };
+    if available_models.is_empty() {
+        return;
+    }
+    let Some(map) = session_result.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "models".to_string(),
+        json!({
+            "currentModelId": select.current_value.0.as_ref(),
+            "availableModels": available_models,
+        }),
+    );
+}
+
+pub(super) fn sync_live_model_config(
+    session_result: &mut Value,
+    config_options: &mut [SessionConfigOption],
+    applied_model: &str,
+) {
+    if applied_model.is_empty() {
+        return;
+    }
+    if let Some(option) = config_options
+        .iter_mut()
+        .find(|option| option.id.0.as_ref() == "model")
+    {
+        if let SessionConfigKind::Select(select) = &mut option.kind {
+            select.current_value = SessionConfigValueId::from(applied_model.to_string());
         }
     }
-    parse_session_new_catalog(session_result)
-        .default_model
-        .unwrap_or_default()
+    enrich_session_new_value(session_result, Some(config_options));
+    if let Some(models) = session_result
+        .get_mut("models")
+        .and_then(Value::as_object_mut)
+    {
+        models.insert(
+            "currentModelId".to_string(),
+            Value::String(applied_model.to_string()),
+        );
+    }
 }
 
 fn model_matches_pin(applied: &str, selection: &ModelSelection, spawn_pinned: bool) -> bool {
@@ -165,6 +256,94 @@ fn resolve_cursor_pin_for_apply(
     })
 }
 
+fn config_option_advertised(
+    config_options: Option<&[SessionConfigOption]>,
+    config_id: &str,
+) -> bool {
+    config_options.is_some_and(|options| {
+        options
+            .iter()
+            .any(|option| option.id.0.as_ref() == config_id)
+    })
+}
+
+/// In-band apply attempts for spawn-pinned Cursor catalog ids when the handshake
+/// omits the non-Fast bracket token (live Cursor often advertises only
+/// `grok-4.6[effort=high,fast=true]`).
+fn cursor_unadvertised_apply_candidates(
+    catalog_id: &str,
+    session_result: &Value,
+    config_options: Option<&[SessionConfigOption]>,
+) -> Vec<ModelSelection> {
+    let Some(desired) = parse_cursor_model_intent(catalog_id) else {
+        return Vec::new();
+    };
+    if desired.fast.unwrap_or(false) {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let bracket = cursor_catalog_to_acp_in_band_token(catalog_id);
+    if !selection_fully_advertised(
+        session_result,
+        config_options,
+        &ModelSelection {
+            model: bracket.clone(),
+            options: Vec::new(),
+        },
+    ) {
+        candidates.push(ModelSelection {
+            model: bracket,
+            options: Vec::new(),
+        });
+    }
+
+    if config_option_advertised(config_options, "fast") {
+        let advertised = advertised_model_ids(session_result, config_options);
+        if let Some(fast_variant) = advertised.into_iter().find(|id| {
+            parse_cursor_model_intent(id).is_some_and(|applied| {
+                applied.base == desired.base
+                    && applied.effort == desired.effort
+                    && applied.fast.unwrap_or(false)
+            })
+        }) {
+            candidates.push(ModelSelection {
+                model: fast_variant,
+                options: vec![("fast".to_string(), "false".to_string())],
+            });
+        }
+    }
+
+    candidates
+}
+
+async fn try_unadvertised_cursor_apply(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    catalog_id: &str,
+    session_result: &Value,
+    config_options: Option<&[SessionConfigOption]>,
+    selection: &ModelSelection,
+    model_pins_at_spawn: bool,
+) -> Option<ApplyModelOutcome> {
+    if !model_pins_at_spawn {
+        return None;
+    }
+    for candidate in
+        cursor_unadvertised_apply_candidates(catalog_id, session_result, config_options)
+    {
+        if let Ok(applied) = apply_in_band(connection, session_id, &candidate).await {
+            if model_matches_pin(&applied, selection, model_pins_at_spawn) {
+                return Some(ApplyModelOutcome {
+                    applied_model: applied,
+                    error: None,
+                });
+            }
+        }
+    }
+    None
+}
+
 fn model_config_advertised(
     session_result: &Value,
     config_options: Option<&[SessionConfigOption]>,
@@ -207,12 +386,25 @@ async fn set_config_option(
     .await
     .map_err(|_| format!("session/set_config_option {config_id} timed out"))?
     .map_err(|error| format!("session/set_config_option {config_id} failed: {error}"))?;
-    let value = serde_json::to_value(response)
-        .ok()
-        .filter(|value| !value.is_null())
-        .map(|value| read_applied_model(&value, None))
-        .filter(|model| !model.is_empty());
-    Ok(value)
+    Ok(read_applied_model_after_set_config(&response, config_id))
+}
+
+fn read_applied_model_after_set_config(
+    response: &SetSessionConfigOptionResponse,
+    config_id: &str,
+) -> Option<String> {
+    if config_id == "model" {
+        if let Some(applied) =
+            read_applied_model_from_config_options(Some(&response.config_options))
+        {
+            if !applied.is_empty() {
+                return Some(applied);
+            }
+        }
+    }
+    let value = serde_json::to_value(response).ok()?;
+    let applied = read_applied_model(&value, Some(&response.config_options));
+    (!applied.is_empty()).then_some(applied)
 }
 
 async fn apply_in_band(
@@ -307,19 +499,13 @@ pub async fn apply_model_pin(
     let mut applied = read_applied_model(session_result, config_options);
 
     if is_unspecified_model(desired_model) {
-        if model_pins_at_spawn {
-            if let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) {
-                if let Some(applied_intent) = parse_cursor_model_intent(&applied) {
-                    if !cursor_model_intents_match(&default_intent, &applied_intent) {
-                        return ApplyModelOutcome {
-                            applied_model: applied.clone(),
-                            error: Some(format!(
-                                "session model defaulted to {applied} — Ajax expects {CURSOR_DEFAULT_MODEL}"
-                            )),
-                        };
-                    }
-                }
-            }
+        if model_pins_at_spawn && !cursor_unspecified_spawn_satisfied(&applied) {
+            return ApplyModelOutcome {
+                applied_model: applied.clone(),
+                error: Some(format!(
+                    "session model defaulted to {applied} — Ajax expects {CURSOR_DEFAULT_SPAWN_MODEL} (non-Fast)"
+                )),
+            };
         }
         return ApplyModelOutcome {
             applied_model: applied,
@@ -347,6 +533,14 @@ pub async fn apply_model_pin(
         selection_fully_advertised(session_result, config_options, &selection)
             .then_some(selection.clone())
     });
+
+    if model_matches_pin(&applied, &selection, model_pins_at_spawn) {
+        return ApplyModelOutcome {
+            applied_model: applied,
+            error: None,
+        };
+    }
+
     if model_config_advertised(session_result, config_options) {
         if let Some(apply_selection) = apply_selection {
             match apply_in_band(connection, session_id, &apply_selection).await {
@@ -366,6 +560,20 @@ pub async fn apply_model_pin(
             applied_model: applied,
             error: None,
         };
+    }
+
+    if let Some(outcome) = try_unadvertised_cursor_apply(
+        connection,
+        session_id,
+        raw,
+        session_result,
+        config_options,
+        &selection,
+        model_pins_at_spawn,
+    )
+    .await
+    {
+        return outcome;
     }
 
     ApplyModelOutcome {
@@ -518,20 +726,20 @@ mod tests {
         ));
     }
 
-    // Regression for #954 / #979: only the non-Fast advertised id matches a
-    // non-Fast catalog pin; Fast must not count as success.
+    // Regression for #979: High pin must not accept High Fast or Composer Fast.
     #[test]
-    fn catalog_pin_matches_non_fast_advertised_acp_id_issue_954_979() {
+    fn catalog_pin_rejects_grok_high_fast_for_non_fast_high_pin_issue_979() {
         use ajax_core::adapters::parse_model_selection;
 
         let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
-        assert!(!model_matches_pin(
-            "grok-4.6[effort=high,fast=true]",
+        assert!(model_matches_pin(
+            "grok-4.6[effort=high,fast=false]",
             &pin,
             true
         ));
-        assert!(model_matches_pin(
-            "grok-4.6[effort=high,fast=false]",
+        assert!(model_matches_pin("cursor-grok-4.6-high", &pin, true));
+        assert!(!model_matches_pin(
+            "grok-4.6[effort=high,fast=true]",
             &pin,
             true
         ));
@@ -539,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cursor_pin_prefers_mapped_non_fast_spawn_token_issue_979() {
+    fn resolve_cursor_pin_prefers_non_fast_grok_when_advertised_issue_979() {
         use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
 
         let options = vec![SessionConfigOption::select(
@@ -548,15 +756,97 @@ mod tests {
             "composer-2.5[fast=true]",
             vec![
                 SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
-                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High Fast"),
                 SessionConfigSelectOption::new("grok-4.6[effort=high,fast=false]", "Grok High"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High Fast"),
             ],
         )];
         let handshake = json!({ "sessionId": "s1" });
         let resolved =
             resolve_cursor_pin_for_apply(&handshake, Some(&options), "cursor-grok-4.6-high")
-                .expect("mapped non-Fast token is advertised");
+                .expect("non-Fast Grok token is advertised");
         assert_eq!(resolved.model, "grok-4.6[effort=high,fast=false]");
+    }
+
+    #[test]
+    fn resolve_cursor_pin_rejects_live_grok_high_fast_for_non_fast_pin_issue_979() {
+        use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+
+        let options = vec![SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5[fast=true]",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High"),
+            ],
+        )];
+        let handshake = json!({ "sessionId": "s1" });
+        assert!(
+            resolve_cursor_pin_for_apply(&handshake, Some(&options), "cursor-grok-4.6-high")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cursor_unadvertised_apply_candidates_try_non_fast_bracket_issue_979() {
+        use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+
+        let options = vec![SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5[fast=true]",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High"),
+            ],
+        )];
+        let handshake = json!({ "sessionId": "s1" });
+        let candidates = cursor_unadvertised_apply_candidates(
+            "cursor-grok-4.6-high",
+            &handshake,
+            Some(&options),
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].model, "grok-4.6[effort=high,fast=false]");
+        assert!(candidates[0].options.is_empty());
+    }
+
+    #[test]
+    fn cursor_unadvertised_apply_candidates_empty_for_explicit_fast_catalog_issue_979() {
+        let handshake = json!({ "sessionId": "s1" });
+        assert!(cursor_unadvertised_apply_candidates(
+            "cursor-grok-4.6-high-fast",
+            &handshake,
+            None,
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn enrich_session_new_value_mirrors_config_options_models_block_issue_979() {
+        use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+
+        let options = vec![SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5[fast=true]",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High"),
+            ],
+        )];
+        let mut handshake = json!({ "sessionId": "s1" });
+        enrich_session_new_value(&mut handshake, Some(&options));
+        assert_eq!(
+            handshake
+                .pointer("/models/currentModelId")
+                .and_then(Value::as_str),
+            Some("composer-2.5[fast=true]")
+        );
+        assert!(handshake
+            .pointer("/models/availableModels")
+            .and_then(Value::as_array)
+            .is_some_and(|models| models.len() == 2));
     }
 
     #[test]
@@ -566,7 +856,17 @@ mod tests {
         let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
         assert!(operator_pin_satisfied(
             "cursor-grok-4.6-high",
+            "cursor-grok-4.6-high",
+            true
+        ));
+        assert!(operator_pin_satisfied(
+            "cursor-grok-4.6-high",
             "grok-4.6[effort=high,fast=false]",
+            true
+        ));
+        assert!(!operator_pin_satisfied(
+            "cursor-grok-4.6-high",
+            "grok-4.6[effort=high,fast=true]",
             true
         ));
         assert!(!operator_pin_satisfied(
@@ -576,6 +876,11 @@ mod tests {
         ));
         assert!(model_matches_pin(
             "grok-4.6[effort=high,fast=false]",
+            &pin,
+            true
+        ));
+        assert!(!model_matches_pin(
+            "grok-4.6[effort=high,fast=true]",
             &pin,
             true
         ));
@@ -611,21 +916,17 @@ mod tests {
 
     #[test]
     fn unspecified_cursor_default_rejects_composer_fast_issue_979() {
-        let handshake = json!({
-            "sessionId": "s1",
-            "configOptions": [{
-                "id": "model",
-                "currentValue": "composer-2.5[fast=true]",
-                "options": [{ "value": "composer-2.5[fast=true]", "name": "Composer Fast" }]
-            }]
-        });
-        let applied = read_applied_model(&handshake, None);
-        if let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) {
-            let applied_intent = parse_cursor_model_intent(&applied).expect("applied intent");
-            assert!(!cursor_model_intents_match(
-                &default_intent,
-                &applied_intent
-            ));
-        }
+        assert!(!cursor_unspecified_spawn_satisfied(
+            "composer-2.5[fast=true]"
+        ));
+        assert!(cursor_unspecified_spawn_satisfied(
+            CURSOR_DEFAULT_SPAWN_MODEL
+        ));
+        assert!(cursor_unspecified_spawn_satisfied(
+            "grok-4.6[effort=high,fast=false]"
+        ));
+        assert!(!cursor_unspecified_spawn_satisfied(
+            "grok-4.6[effort=high,fast=true]"
+        ));
     }
 }

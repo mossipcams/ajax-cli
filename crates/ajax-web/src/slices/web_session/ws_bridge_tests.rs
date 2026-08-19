@@ -286,6 +286,53 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+// Regression for #979: Switch to Grok High must keep the child alive and apply mapped ACP id.
+#[test]
+fn apply_client_message_set_model_grok_high_keeps_child_alive_issue_979() {
+    use ajax_core::adapters::cursor_catalog_to_acp_in_band_token;
+
+    let dir = scratch_dir("set-model-grok-high-979");
+    let handle = "web/set-model-grok-high";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+    let mapped = cursor_catalog_to_acp_in_band_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cursor-live-models", "--cli-default-model"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            let before = directory.child_id(handle).expect("child");
+            let mut generation = directory.generation(handle);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: catalog_id.to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("set model");
+
+            assert_eq!(directory.child_id(handle), Some(before));
+            directory.pump(handle);
+            let attach = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                catalog_id.to_string(),
+                None,
+            ));
+            assert_eq!(attach.snapshot.model, mapped);
+            assert_ne!(attach.snapshot.model, "composer-2.5[fast=true]");
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // In-band refusal falls back to one respawn; child id changes only on that path.
 #[test]
 fn apply_client_message_set_model_respawns_when_in_band_refused() {

@@ -4,6 +4,12 @@ use crate::models::AgentClient;
 /// Default Cursor Agent model for Ajax-started tasks (not Fast).
 pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
+/// Cursor ACP spawn argv when the operator leaves model unspecified / Auto.
+///
+/// Pro+ defaults Grok 4.6 to Fast when `--model` is omitted; this id selects
+/// the standard non-Fast tier on the harness command line ([#979]).
+pub const CURSOR_DEFAULT_SPAWN_MODEL: &str = "grok-4.6";
+
 /// Effort suffixes on Cursor catalog ids (`gpt-5.6-sol-high`, `cursor-grok-4.6-xhigh`, …).
 const CURSOR_EFFORT_SUFFIXES: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];
 
@@ -86,25 +92,52 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     })
 }
 
-/// True when `applied` is the same Cursor model family as `desired`.
-///
-/// Bracket `fast` must agree: a non-Fast catalog pin must not match an
-/// advertised `fast=true` handshake id ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+/// True when `applied` satisfies `desired`, including the Fast bracket flag.
 pub fn cursor_model_intents_match(
     desired: &CursorModelIntent,
     applied: &CursorModelIntent,
 ) -> bool {
-    desired.base == applied.base
-        && desired.effort == applied.effort
-        && desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
+    if desired.base != applied.base || desired.effort != applied.effort {
+        return false;
+    }
+    desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
 /// Map an Ajax catalog id to the ACP spawn token Cursor accepts on `--model`.
 ///
-/// Catalog ids such as `cursor-grok-4.6-high` are ignored by `agent acp`; the
-/// bracket form is required ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-/// Ajax prefers non-Fast variants when the catalog id has no `-fast` suffix.
+/// `cursor-grok-*` catalog ids pass through unchanged: live Cursor honors them on
+/// spawn argv while bracket ids such as `grok-4.6[effort=high,fast=true]` are
+/// ignored until in-band apply ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+/// Other effort-suffixed ids map to bracket tokens, preferring non-Fast when the
+/// catalog id has no `-fast` suffix.
 pub fn cursor_catalog_to_acp_spawn_token(catalog_id: &str) -> String {
+    let Some(intent) = parse_cursor_model_intent(catalog_id) else {
+        return catalog_id.to_string();
+    };
+    if catalog_id.starts_with("cursor-grok-") && !catalog_id.contains('[') {
+        return catalog_id.to_string();
+    }
+    let uses_acp_brackets = intent.effort.is_some()
+        || catalog_id.starts_with("composer-")
+        || catalog_id.contains("-thinking-")
+        || catalog_id.contains('[');
+    if !uses_acp_brackets {
+        return catalog_id.to_string();
+    }
+    let fast = intent.fast.unwrap_or(false);
+    let mut options = Vec::new();
+    if let Some(effort) = &intent.effort {
+        options.push(format!("effort={effort}"));
+    }
+    options.push(format!("fast={fast}"));
+    format!("{}[{}]", intent.base, options.join(","))
+}
+
+/// Map an Ajax catalog id to the bracket ACP model id for in-band apply.
+///
+/// Unlike [`cursor_catalog_to_acp_spawn_token`], Grok catalog ids map to bracket
+/// tokens here because `session/set_config_option` never accepts catalog ids ([#954]).
+pub fn cursor_catalog_to_acp_in_band_token(catalog_id: &str) -> String {
     let Some(intent) = parse_cursor_model_intent(catalog_id) else {
         return catalog_id.to_string();
     };
@@ -295,14 +328,14 @@ pub fn is_unspecified_acp_model(raw: Option<&str>) -> bool {
 /// Model id to place on a spawn-pinned harness argv, or `None` for bridge harnesses
 /// with no operator pin.
 ///
-/// Cursor with no operator pick still receives [`CURSOR_DEFAULT_MODEL`] on argv so
+/// Cursor with no operator pick still receives [`CURSOR_DEFAULT_SPAWN_MODEL`] on argv so
 /// the CLI default Composer Fast is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub fn acp_spawn_model_for_argv(launch: AcpLaunch, model: Option<&str>) -> Option<String> {
     if launch.model_pins_at_spawn() {
         let raw = if is_unspecified_acp_model(model) {
-            launch.default_model?
+            CURSOR_DEFAULT_SPAWN_MODEL
         } else {
-            model?.trim()
+            model.map(str::trim)?
         };
         return Some(cursor_catalog_to_acp_spawn_token(raw));
     }
@@ -341,6 +374,26 @@ pub fn acp_args_for_candidate(
         }
     }
     args
+}
+
+/// True when a harness-reported model satisfies an unspecified / Auto Cursor attach.
+pub fn cursor_unspecified_spawn_satisfied(applied_model: &str) -> bool {
+    let Some(applied_intent) = parse_cursor_model_intent(applied_model) else {
+        return false;
+    };
+    if applied_intent.base.starts_with("composer-") && applied_intent.fast.unwrap_or(false) {
+        return false;
+    }
+    if applied_intent.base.starts_with("grok-") && applied_intent.fast.unwrap_or(false) {
+        return false;
+    }
+    if let Some(spawn_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_SPAWN_MODEL) {
+        if cursor_model_intents_match(&spawn_intent, &applied_intent) {
+            return true;
+        }
+    }
+    parse_cursor_model_intent(CURSOR_DEFAULT_MODEL)
+        .is_some_and(|catalog_intent| cursor_model_intents_match(&catalog_intent, &applied_intent))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
