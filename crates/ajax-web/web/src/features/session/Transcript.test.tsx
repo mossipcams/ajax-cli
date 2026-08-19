@@ -1,15 +1,13 @@
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import Transcript from "./Transcript";
 import { thoughtSnippet, type ConversationItem, type ToolCall } from "./sessionThread";
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
-);
+const here = dirname(fileURLToPath(import.meta.url));
+const stylesSource = readOrderedStylesSource(join(here, "../.."));
 
 beforeEach(() => {
   vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));

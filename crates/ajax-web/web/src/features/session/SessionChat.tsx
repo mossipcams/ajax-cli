@@ -510,7 +510,29 @@ export default function SessionChat({
                     </Button>
                   </div>
 
-                  <div className="session-details-body">
+                  <div
+                    className="session-sheet-tools session-sheet-tools-primary"
+                    data-testid="session-primary-tools"
+                  >
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      data-testid="session-ajax-terminal"
+                      onClick={() => {
+                        setDetailsOpen(false);
+                        onOpenTerminal?.();
+                      }}
+                    >
+                      Ajax terminal
+                    </Button>
+                    {onOpenDiff ? (
+                      <Button type="button" variant="secondary" onClick={onOpenDiff}>
+                        Show diff
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <div className="session-details-body" data-testid="session-details-body">
                     {detail ? (
                       <header
                         className="session-task-identity"
@@ -551,28 +573,6 @@ export default function SessionChat({
                         onChange={(id) => setModel(id)}
                       />
                     ) : null}
-
-                    <div
-                      className="session-sheet-tools session-sheet-tools-primary"
-                      data-testid="session-primary-tools"
-                    >
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        data-testid="session-ajax-terminal"
-                        onClick={() => {
-                          setDetailsOpen(false);
-                          onOpenTerminal?.();
-                        }}
-                      >
-                        Ajax terminal
-                      </Button>
-                      {onOpenDiff ? (
-                        <Button type="button" variant="secondary" onClick={onOpenDiff}>
-                          Show diff
-                        </Button>
-                      ) : null}
-                    </div>
 
                     {detail ? (
                       <TaskMetaDetails

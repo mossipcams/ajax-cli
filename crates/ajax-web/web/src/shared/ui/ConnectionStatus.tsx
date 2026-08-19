@@ -47,6 +47,10 @@ export default function ConnectionStatus({
             if (reloadLatchRef.current) return;
             reloadLatchRef.current = true;
             onReload?.();
+            // ponytail: same-turn duplicate guard only; parent reloadOnce owns async latch.
+            queueMicrotask(() => {
+              reloadLatchRef.current = false;
+            });
           }}
         >
           Reload

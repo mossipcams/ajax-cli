@@ -277,6 +277,104 @@ mod tests {
     }
 
     #[test]
+    fn vite_build_contract_emits_single_app_css() {
+        let vite = std::fs::read_to_string("web/vite.config.mts").unwrap();
+        assert!(
+            vite.contains("cssCodeSplit: false"),
+            "Vite must keep cssCodeSplit disabled so the shell ships one CSS asset"
+        );
+        assert!(
+            vite.contains("if (name.endsWith(\".css\")) return \"app.css\""),
+            "Vite must name the sole CSS bundle app.css for the Rust embed contract"
+        );
+    }
+
+    #[test]
+    fn web_src_stylesheet_graph_uses_manifest_and_owned_modules() {
+        let mut css_files = Vec::new();
+        collect_css_files(Path::new("web/src"), &mut css_files);
+        css_files.sort();
+        assert_eq!(
+            css_files,
+            vec![
+                PathBuf::from("web/src/styles/app-shell/interact.css"),
+                PathBuf::from("web/src/styles/app-shell/layout.css"),
+                PathBuf::from("web/src/styles/app-shell/motion.css"),
+                PathBuf::from("web/src/styles/app-shell/narrow.css"),
+                PathBuf::from("web/src/styles/app-shell/nav.css"),
+                PathBuf::from("web/src/styles/app-shell/page-lead.css"),
+                PathBuf::from("web/src/styles/app-shell/primitives.css"),
+                PathBuf::from("web/src/styles/app-shell/shell-layout.css"),
+                PathBuf::from("web/src/styles/app-shell/skeleton.css"),
+                PathBuf::from("web/src/styles/app-shell-continuation.css"),
+                PathBuf::from("web/src/styles/app-shell-layout.css"),
+                PathBuf::from("web/src/styles/app-shell.css"),
+                PathBuf::from("web/src/styles/diff-review.css"),
+                PathBuf::from("web/src/styles/foundation.css"),
+                PathBuf::from("web/src/styles/session/activity.css"),
+                PathBuf::from("web/src/styles/session/composer.css"),
+                PathBuf::from("web/src/styles/session/live-head.css"),
+                PathBuf::from("web/src/styles/session/sheets.css"),
+                PathBuf::from("web/src/styles/session/shell.css"),
+                PathBuf::from("web/src/styles/session/transcript.css"),
+                PathBuf::from("web/src/styles/session.css"),
+                PathBuf::from("web/src/styles/settings.css"),
+                PathBuf::from("web/src/styles/task/detail.css"),
+                PathBuf::from("web/src/styles/task/list.css"),
+                PathBuf::from("web/src/styles/task/meta.css"),
+                PathBuf::from("web/src/styles/task/new-task.css"),
+                PathBuf::from("web/src/styles/task/test-in-dev.css"),
+                PathBuf::from("web/src/styles/task.css"),
+                PathBuf::from("web/src/styles/terminal.css"),
+                PathBuf::from("web/src/styles.css"),
+            ],
+            "T3 extraction keeps one JS manifest plus owned foundation, shell, settings, session, app-shell continuation, task, terminal, shell-layout, and diff-review modules"
+        );
+    }
+
+    #[test]
+    fn main_entry_imports_only_the_styles_manifest() {
+        let main_tsx = std::fs::read_to_string("web/src/app/main.tsx").unwrap();
+        let css_imports = main_tsx
+            .lines()
+            .filter(|line| line.contains("import") && line.contains(".css"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            css_imports,
+            vec!["import \"../styles.css\";"],
+            "main.tsx must remain the sole JS-side CSS entry point"
+        );
+    }
+
+    #[test]
+    fn static_asset_adapter_embeds_only_app_css() {
+        let assets = std::fs::read_to_string("src/adapters/assets.rs").unwrap();
+        assert!(
+            assets.contains("include_bytes!(\"../../web/dist/app.css\")"),
+            "embedded shell must ship dist/app.css"
+        );
+        assert!(
+            assets.contains("/app.css\" => Some(StaticAsset"),
+            "static asset lookup must expose /app.css"
+        );
+        assert!(
+            !assets.contains("include_bytes!(\"../../web/dist/styles.css\")"),
+            "source manifest must not be embedded as a second CSS asset"
+        );
+    }
+
+    fn collect_css_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_css_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "css") {
+                files.push(path);
+            }
+        }
+    }
+
+    #[test]
     fn guarded_modules_match_declared_modules() {
         let declared_adapters = declared_modules("src/adapters/mod.rs");
         let guarded_adapters: std::collections::BTreeSet<String> =

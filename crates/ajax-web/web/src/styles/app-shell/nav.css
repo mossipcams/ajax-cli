@@ -1,0 +1,65 @@
+/* BOTTOM NAV -------------------------------------------------------------- */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  /* Hugs the bottom edge: no safe-area-inset-bottom pad. In standalone PWA the
+     inset is a constant ~34px, which floated the buttons above a dead band. */
+  padding: 8px max(16px, env(safe-area-inset-left)) 8px
+    max(16px, env(safe-area-inset-right));
+  border-top: 1px solid var(--rule);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
+}
+
+.bottom-nav button {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.bottom-nav button:focus-visible,
+.bottom-nav button:hover {
+  background: var(--paper-raised);
+  color: var(--ink);
+  outline: none;
+}
+
+.bottom-nav button[data-bottom-action="new-task"] {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.bottom-nav button[data-bottom-action="new-task"]:hover,
+.bottom-nav button[data-bottom-action="new-task"]:focus-visible {
+  background: var(--accent-bright);
+  color: var(--paper);
+}
+
+.bottom-nav button[aria-current="page"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-deep) 55%, var(--paper-tint));
+  color: var(--ink);
+}
+
+.bottom-nav button[aria-current="page"]:hover,
+.bottom-nav button[aria-current="page"]:focus-visible {
+  border-color: var(--accent-bright);
+  background: color-mix(in srgb, var(--accent-deep) 45%, var(--paper-raised));
+  color: var(--ink);
+}

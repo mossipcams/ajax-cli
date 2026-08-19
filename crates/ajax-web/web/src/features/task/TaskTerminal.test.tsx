@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import taskTerminalSource from "./TaskTerminal.tsx?raw";
 import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
 import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
@@ -12,9 +12,8 @@ import terminalPasteSource from "./terminalPaste.ts?raw";
 const taskTerminalFeatureSource =
   `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
+const stylesSource = readOrderedStylesSource(
+  join(dirname(fileURLToPath(import.meta.url)), "../.."),
 );
 
 function extractBlock(source: string, startPattern: RegExp, endPattern: RegExp): string {

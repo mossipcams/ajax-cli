@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { StrictMode } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import NewTaskSheet from "./NewTaskSheet";
 import newTaskSheetSource from "./NewTaskSheet.tsx?raw";
 import * as api from "@/shared/lib/api";
 import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const stylesSource = readFileSync(join(here, "../../styles.css"), "utf8");
+const stylesSource = readOrderedStylesSource(join(here, "../.."));
 
 const repos = [{ name: "web" }, { name: "api" }];
 

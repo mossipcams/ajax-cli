@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, fireEvent, screen } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import ConnectionStatus from "./ConnectionStatus";
 import connectionStatusSource from "./ConnectionStatus.tsx?raw";
 
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
-  return readFileSync(join(testDir, "../../styles.css"), "utf8");
+  return readOrderedStylesSource(join(testDir, "../.."));
 }
 
 describe("ConnectionStatus", () => {
@@ -55,6 +55,21 @@ describe("ConnectionStatus", () => {
     expect(onRetry).toHaveBeenCalledOnce();
     expect(onReload).toHaveBeenCalledOnce();
     expect(onCopyDiagnostics).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a later Reload click after a failed recoverable reload callback", async () => {
+    const onReload = vi.fn();
+    render(<ConnectionStatus state="disconnected" onReload={onReload} />);
+    const reload = screen.getByText("Reload");
+
+    fireEvent.click(reload);
+    expect(onReload).toHaveBeenCalledOnce();
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    fireEvent.click(reload);
+    expect(onReload).toHaveBeenCalledTimes(2);
   });
 
   it("latches Retry and Reload under same-turn multi-click", () => {

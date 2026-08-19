@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen, waitFor, act, within } from "@testing-library/react";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import App from "./App";
 import appSource from "./App.tsx?raw";
 import appViewportSource from "./AppViewport.tsx?raw";
@@ -25,7 +25,7 @@ function taskTerminalMobileBlock(stylesSource: string): string {
 
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
-  return readFileSync(join(testDir, "../styles.css"), "utf8");
+  return readOrderedStylesSource(join(testDir, ".."));
 }
 
 // Hard file-scope stub: late microtasks (detail loads settling between a

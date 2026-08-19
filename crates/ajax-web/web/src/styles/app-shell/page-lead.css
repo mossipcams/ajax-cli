@@ -1,0 +1,45 @@
+/* PAGE LEAD / UPDATE BANNER ----------------------------------------------- */
+.page-lead {
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.page-lead:empty,
+.page-lead:has(.update-banner[hidden]) {
+  padding: 0;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 10px 0 12px;
+  padding: 11px 16px;
+  background: var(--accent-deep);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.update-banner::after {
+  content: "⟳";
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.update-banner:hover,
+.update-banner:focus-visible {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+  outline: none;
+}

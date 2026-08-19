@@ -1,0 +1,53 @@
+/* TEST IN DEV PANEL ------------------------------------------------------- */
+.test-in-dev {
+  margin: 0 0 12px;
+}
+
+.test-in-dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-in-dev .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.test-in-dev .pill {
+  min-height: 24px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  padding: 2px 8px;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.test-in-dev .pill:hover,
+.test-in-dev .pill:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.test-in-dev .pill:disabled {
+  opacity: 0.55;
+}
+
+.test-in-dev .error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(188, 92, 62, 0.12);
+  color: var(--terracotta-bright);
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 160px;
+  overflow: auto;
+}

@@ -1,14 +1,13 @@
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { act, render, fireEvent, screen, within } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import TaskList from "./TaskList";
 import type { BrowserCockpitView } from "@/shared/lib/types";
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
+const stylesSource = readOrderedStylesSource(
+  join(dirname(fileURLToPath(import.meta.url)), "../.."),
 );
 
 const NOW_SECS = Math.floor(Date.now() / 1000);
