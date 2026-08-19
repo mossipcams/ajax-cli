@@ -204,6 +204,37 @@ describe("TaskMetaDetails", () => {
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
+  it("leads the footer Task details body with Ajax chat before metadata", () => {
+    render(
+      <TaskMetaDetails
+        detail={detail({ session_capable: true })}
+        showAjaxChat
+        onOpenChat={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("Task details"));
+    const footerDisclosure = screen.getByRole("group");
+    const body = footerDisclosure.querySelector(".meta-details-body")!;
+    const children = [...body.children];
+    const chatIndex = children.findIndex((el) => el.getAttribute("data-testid") === "task-ajax-chat-action");
+    const gridIndex = children.findIndex((el) => el.classList.contains("detail-grid"));
+    expect(chatIndex).toBe(0);
+    expect(gridIndex).toBeGreaterThan(chatIndex);
+  });
+
+  it("does not duplicate Ajax chat inside embedded task metadata", () => {
+    render(
+      <TaskMetaDetails
+        detail={detail({ session_capable: true })}
+        embedded
+        showAjaxChat
+        onOpenChat={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
+  });
+
   it("hides Ajax chat when showAjaxChat is false", () => {
     render(
       <TaskMetaDetails detail={detail({ session_capable: true })} onOpenChat={vi.fn()} />,

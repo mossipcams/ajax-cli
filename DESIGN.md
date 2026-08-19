@@ -326,6 +326,11 @@ and Ajax terminal without scrolling past the model list. Deeper registry fields
 reuse the shared `TaskMetaDetails` grid; Rust Debug annotation strings are shown
 as human Notes lines, not raw struct dumps.
 
+On the terminal task route (`#/t/<handle>`), the header Details sheet and footer
+Task details disclosure lead with **Ajax chat** in the same first-viewport primary
+tools row pattern when orchestration chat is enabled and the task is
+session-capable — the chat analog to Ajax terminal on the session route.
+
 ## 6. Do's and Don'ts
 
 ### Do:

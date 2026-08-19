@@ -156,6 +156,18 @@ export default function TaskMetaDetails({
 
   const body = (
     <div className="meta-details-body" data-testid={embedded ? "task-meta-details-embedded" : undefined}>
+      {showAjaxChat && !embedded ? (
+        <div className="session-sheet-tools" data-testid="task-ajax-chat-action">
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="task-ajax-chat"
+            onClick={() => onOpenChat?.()}
+          >
+            Ajax chat
+          </Button>
+        </div>
+      ) : null}
       {detail.repo === "ajax-cli" ? (
         <TestInDevPanel taskHandle={detail.qualified_handle} onResult={onResult} />
       ) : null}
@@ -223,18 +235,6 @@ export default function TaskMetaDetails({
         </>
       ) : null}
 
-      {showAjaxChat ? (
-        <div className="session-sheet-tools" data-testid="task-ajax-chat-action">
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="task-ajax-chat"
-            onClick={() => onOpenChat?.()}
-          >
-            Ajax chat
-          </Button>
-        </div>
-      ) : null}
     </div>
   );
 

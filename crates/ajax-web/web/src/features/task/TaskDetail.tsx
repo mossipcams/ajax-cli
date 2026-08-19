@@ -162,16 +162,25 @@ export default function TaskDetail({
                   </div>
 
                   <div className="session-details-body">
-                    <TaskMetaDetails
-                      detail={detail}
-                      onResult={onResult}
-                      embedded
-                      showAjaxChat={showAjaxChat}
-                      onOpenChat={() => {
-                        setDetailsOpen(false);
-                        onOpenChat?.();
-                      }}
-                    />
+                    {showAjaxChat ? (
+                      <div
+                        className="session-sheet-tools session-sheet-tools-primary"
+                        data-testid="task-primary-tools"
+                      >
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          data-testid="task-ajax-chat"
+                          onClick={() => {
+                            setDetailsOpen(false);
+                            onOpenChat?.();
+                          }}
+                        >
+                          Ajax chat
+                        </Button>
+                      </div>
+                    ) : null}
+                    <TaskMetaDetails detail={detail} onResult={onResult} embedded />
                   </div>
                 </div>
               </div>
