@@ -153,15 +153,13 @@ describe("TaskDetail", () => {
     fireEvent.click(screen.getByTestId("task-details"));
     const sheet = screen.getByTestId("task-details-sheet");
     const primaryTools = within(sheet).getByTestId("task-primary-tools");
-    const body = sheet.querySelector(".session-details-body")!;
-    expect(body.contains(primaryTools)).toBe(false);
+    const body = within(sheet).getByTestId("session-details-body");
+    const meta = within(sheet).getByTestId("task-meta-details-embedded");
+    expect(body).not.toContainElement(primaryTools);
     expect(primaryTools).toHaveClass("session-sheet-tools-primary");
-    expect(
-      [...sheet.children].some((el) => el.getAttribute("data-testid") === "task-primary-tools"),
-    ).toBe(true);
-    expect(
-      [...body.children].some((el) => el.getAttribute("data-testid") === "task-meta-details-embedded"),
-    ).toBe(true);
+    expect(primaryTools.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(body).toContainElement(meta);
+    expect(within(sheet).queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
   });
 
   it("keeps the header Details control reachable while terminal-expanded", () => {

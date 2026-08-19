@@ -47,7 +47,7 @@ Change the workflows and that script together.
 
 | Event | Runs |
 | --- | --- |
-| Normal PR opened or updated | full CI suite once per head; superseded runs cancelled; CodeQL |
+| Normal PR opened or updated | path-filtered CI lanes once per head; superseded runs cancelled; CodeQL |
 | Normal PR merged to `main` | Release Please only; no CI run |
 | Release Please updates its PR | Release Candidate job only; superseded runs cancelled; CodeQL |
 | Release Please PR merged | tag and GitHub release; no test run |
@@ -78,9 +78,23 @@ CodeQL uses GitHub default setup and cannot exclude the release branch. The
 duplicate release-PR scan is accepted; excluding it would require a manually
 maintained advanced-setup workflow.
 
-The Web job runs in the pinned Playwright container image matching
-`@playwright/test` in `package-lock.json` and fails when committed
-`crates/ajax-web/web/dist` is stale after `npm run web:build`.
+The Web lane runs in the pinned Playwright container image matching
+`@playwright/test` in `package-lock.json`. `web-unit` runs tsc, eslint,
+ast-grep, vitest, and fails when committed `crates/ajax-web/web/dist` is stale
+after `npm run web:build`. `web-e2e` runs the full mobile-webkit Playwright
+suite with four CI workers and two retries.
+
+Normal PR jobs:
+
+- `pr-title`, `changes`, `file-loc`, and `invariants` always run.
+- `scripts/ci-changed-paths.mjs` emits `rust`, `web`, `lockfile`, and `full`
+  from the PR diff. CI-script or workflow diffs, missing SHAs, and
+  `workflow_dispatch` set `full=true`.
+- `rust-lint`, `rust-test`, and `rust-docs` run when `rust` or `full`.
+- `web-unit` and `web-e2e` run when `web` or `full`.
+- `audit` runs when `lockfile` or `full`.
+- The aggregate `CI` job fails when a needed lane job is skipped or not
+  success. Docs/agent-only diffs skip the expensive lanes.
 
 ## Who opens the PR
 
@@ -102,8 +116,8 @@ Husky on the PR-creating commit only:
 4. Strips Cursor attribution lines from the commit message (`commit-msg`).
 
 Install Husky with `npm prepare` or `npx husky` so those hooks run. Do not use
-`--no-verify` or `--no-gpg-sign` to skip them. CI runs the full suite
-(clippy, nextest, web tests, Playwright, audit) and fails if `dist/` is stale.
+`--no-verify` or `--no-gpg-sign` to skip them. CI runs the path-filtered lanes
+that the diff can affect and fails if `dist/` is stale.
 
 Focused tests for the code you touched still belong in the worktree before the
 PR commit. They do not replace CI.

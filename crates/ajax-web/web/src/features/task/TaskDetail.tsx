@@ -180,7 +180,7 @@ export default function TaskDetail({
                     </div>
                   ) : null}
 
-                  <div className="session-details-body">
+                  <div className="session-details-body" data-testid="session-details-body">
                     <TaskMetaDetails detail={detail} onResult={onResult} embedded />
                   </div>
                 </div>
