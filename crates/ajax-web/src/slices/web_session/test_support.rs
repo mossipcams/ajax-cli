@@ -60,6 +60,10 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.cancel(handle, keep_queue))
     }
 
+    pub fn cleanup_session(&self, handle: &str) {
+        self.rt.block_on(self.inner.cleanup_session(handle));
+    }
+
     pub fn answer_permission(
         &self,
         handle: &str,

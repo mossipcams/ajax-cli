@@ -9,7 +9,11 @@ use crate::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
         stt_provider::MoonshineProvider,
     },
-    slices::{dev_deploy, push::PushHub, web_session::TaskSessionDirectory},
+    slices::{
+        dev_deploy,
+        push::PushHub,
+        web_session::{owned_session_handles, TaskSessionDirectory},
+    },
     WebError,
 };
 use ajax_core::{
@@ -272,6 +276,7 @@ impl<C, B> WebAppState<C, B> {
         let state_dir = Arc::new(state_dir.clone());
         let hub_dir = state_dir.as_ref().clone();
         let task_session_directory = TaskSessionDirectory::new(hub_dir);
+        task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -336,6 +341,7 @@ impl<C, B> WebAppState<C, B> {
         let hub_dir = state_dir.clone();
         let state_dir = Arc::new(state_dir);
         let task_session_directory = TaskSessionDirectory::new(hub_dir);
+        task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,

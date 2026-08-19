@@ -554,6 +554,9 @@ where
     let log_task_key = task_key.clone();
     let log_action = action.clone();
     let error_request_id = request_id.clone();
+    let cleanup_after_drop = action == "drop";
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle_for_cleanup = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
@@ -601,6 +604,10 @@ where
             outcome = "ok",
             "operate end"
         );
+    }
+
+    if cleanup_after_drop && response.status_code < 400 {
+        directory.cleanup_session(&handle_for_cleanup).await;
     }
 
     response.into_axum_response()

@@ -166,6 +166,41 @@ fn encode_handle(handle: &str) -> String {
     handle.replace('%', "%25").replace('/', "%2F")
 }
 
+fn decode_handle(encoded: &str) -> String {
+    encoded.replace("%2F", "/").replace("%25", "%")
+}
+
+/// Qualified handles with a persisted JSONL transcript under `state_dir`.
+pub fn list_persisted_handles(state_dir: &Path) -> Vec<String> {
+    let dir = state_dir.join(WEB_SESSION_DIR);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .strip_suffix(".jsonl")
+                .map(decode_handle)
+        })
+        .collect()
+}
+
+/// Remove the persisted transcript for `handle`. Returns true when a file was deleted.
+pub fn delete_session(state_dir: &Path, handle: &str) -> bool {
+    let path = session_path(state_dir, handle);
+    match fs::remove_file(&path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            tracing::warn!(%error, handle, "failed to delete web session transcript");
+            false
+        }
+    }
+}
+
 pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
     state_dir
         .join(WEB_SESSION_DIR)
