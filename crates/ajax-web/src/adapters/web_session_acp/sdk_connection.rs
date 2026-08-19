@@ -1,6 +1,8 @@
 //! Official ACP SDK connection actor behind the synchronous Web Session hub.
 
-use super::apply_model::{apply_model_pin, ApplyModelOutcome};
+use super::apply_model::{
+    apply_model_pin, enrich_session_new_value, sync_live_model_config, ApplyModelOutcome,
+};
 use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
 use agent_client_protocol::{
     on_receive_notification, on_receive_request,
@@ -304,8 +306,12 @@ async fn initialize_session(
         }
     }
 
-    let (session_id, session_new_result) = match session_id {
-        Some(session_id) => (session_id, Value::Null),
+    let (session_id, mut session_new_result) = match session_id {
+        Some(session_id) => {
+            let mut value = serde_json::json!({ "sessionId": session_id });
+            enrich_session_new_value(&mut value, config_options.as_deref());
+            (session_id, value)
+        }
         None => {
             let response = tokio::time::timeout(
                 HANDSHAKE_TIMEOUT,
@@ -329,6 +335,7 @@ async fn initialize_session(
             (response.session_id.to_string(), value)
         }
     };
+    enrich_session_new_value(&mut session_new_result, config_options.as_deref());
     apply_permission_config(connection, agent, &session_id, config_options.as_deref()).await;
     let model_pins_at_spawn =
         acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
@@ -455,19 +462,13 @@ async fn command_loop(
     events: Sender<AcpClientEvent>,
     busy: Arc<AtomicBool>,
     permissions: PendingPermissions,
-    live: LiveSession,
+    mut live: LiveSession,
 ) {
-    let LiveSession {
-        session_id,
-        session_result,
-        config_options,
-        agent,
-    } = live;
     while let Some(command) = commands.recv().await {
         match command {
             ClientCommand::Prompt { id, text, result } => {
                 let request = PromptRequest::new(
-                    session_id.clone(),
+                    live.session_id.clone(),
                     vec![ContentBlock::Text(TextContent::new(text))],
                 );
                 let sent = connection.send_request(request);
@@ -498,7 +499,7 @@ async fn command_loop(
             ClientCommand::Cancel { result } => {
                 let cancelled = cancel_permissions(&permissions);
                 let sent =
-                    connection.send_notification(CancelNotification::new(session_id.clone()));
+                    connection.send_notification(CancelNotification::new(live.session_id.clone()));
                 let _ = result.send(match sent {
                     Ok(()) => Ok(cancelled),
                     Err(error) => Err(error.to_string()),
@@ -516,17 +517,33 @@ async fn command_loop(
                 desired_model,
                 result,
             } => {
-                let model_pins_at_spawn =
-                    acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
+                let model_pins_at_spawn = acp_launch_for_agent(live.agent)
+                    .is_some_and(|launch| launch.model_pins_at_spawn());
                 let outcome = apply_model_pin(
                     &connection,
-                    &session_id,
-                    &session_result,
-                    config_options.as_deref(),
+                    &live.session_id,
+                    &live.session_result,
+                    live.config_options.as_deref(),
                     Some(&desired_model),
                     model_pins_at_spawn,
                 )
                 .await;
+                if outcome.error.is_none() {
+                    if let Some(options) = live.config_options.as_mut() {
+                        sync_live_model_config(
+                            &mut live.session_result,
+                            options,
+                            &outcome.applied_model,
+                        );
+                    } else if let Value::Object(ref mut map) = live.session_result {
+                        if let Some(models) = map.get_mut("models").and_then(Value::as_object_mut) {
+                            models.insert(
+                                "currentModelId".to_string(),
+                                Value::String(outcome.applied_model.clone()),
+                            );
+                        }
+                    }
+                }
                 let _ = result.send(Ok(outcome));
             }
             ClientCommand::Shutdown => break,

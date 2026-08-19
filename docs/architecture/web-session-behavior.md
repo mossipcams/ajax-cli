@@ -41,19 +41,31 @@ existing paths.
   `configOptions` or `models.availableModels` advertises a model control **and**
   the pin resolves to an exact advertised handshake value (Ajax maps effort-suffixed
   catalog ids such as `cursor-grok-4.6-high` and `gpt-5.6-sol-high` to ACP ids such as
-  `grok-4.6[effort=high,fast=false]` and `gpt-5.6-sol[effort=high,fast=false]` before
-  spawn or in-band apply; catalog ids
+  `cursor-grok-4.6-high` (spawn argv pass-through for explicit Grok catalog pins) and
+  `grok-4.6` (unspecified / Auto spawn default), plus
+  `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]` (in-band
+  bracket tokens) before spawn or in-band apply; catalog ids
   must never be sent through `session/set_config_option`
   ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
-  Unspecified / Auto for Cursor still places a mapped
-  [`CURSOR_DEFAULT_MODEL`] spawn token on argv so the CLI default Composer Fast
-  is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-  Verification treats harness-reported ACP ids as matching the catalog pin when
-  they name the same model family (base + effort), even when bracket options
-  differ. When spawn, resume/load, and in-band apply still leave a different
+  When the handshake omits the non-Fast bracket token (live Cursor often advertises
+  only `grok-4.6[effort=high,fast=true]`), Ajax still attempts in-band apply of the
+  mapped non-Fast bracket id and, when present, a separate advertised `fast` config
+  option set to `false` before treating the pin as refused ([#979]).
+  Unspecified / Auto for Cursor still places
+  [`CURSOR_DEFAULT_SPAWN_MODEL`] (`grok-4.6`) on spawn argv so the CLI default
+  Composer Fast is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+  The Ajax catalog default [`CURSOR_DEFAULT_MODEL`] (`cursor-grok-4.6-high`) remains
+  the attach-plan and UI default; explicit operator pins still replace `--model` on
+  the same launch line.
+  Verification requires matching Fast bracket flags: a non-Fast catalog pin such as
+  `cursor-grok-4.6-high` must not be satisfied by `grok-4.6[effort=high,fast=true]`
+  or Composer Fast. When spawn, resume/load, and in-band apply still leave a different
   model running (e.g. Composer Fast while Grok High was pinned), the host drops
   the child and respawns once with the mapped ACP spawn token (no resume), then
   applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+  The ACP SDK keeps only `configOptions` from live Cursor `session/new`; Ajax
+  mirrors that catalog into `models.availableModels` on the stored handshake
+  snapshot so apply/recover can resolve advertised ids ([#979]).
   After
   a successful recover, `snapshot.model` is the recovered applied id and no typed
   `error` is emitted for the failed first attempt. If recovery still fails, the host

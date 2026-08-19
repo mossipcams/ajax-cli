@@ -73,7 +73,7 @@ harness to its ACP entry point and to how it accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` on the spawn argv with effort-suffixed catalog ids mapped to ACP bracket tokens (including mapped `CURSOR_DEFAULT_MODEL` when Auto/unspecified) |
+| Cursor | `agent acp` (native) | `--model` on the spawn argv: `grok-4.6` when Auto/unspecified; effort-suffixed catalog ids mapped to ACP bracket tokens for other pins |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
 | Pi | `pi-acp` | `session/set_config_option` |
@@ -104,9 +104,10 @@ attempted, because an unknown argument is a prompt to some CLIs. A harness with
 no mapping keeps the tmux send-keys launch, and when no candidate program can be
 spawned the host reports an install hint rather than a spawn error.
 
-A session with no operator-chosen model runs the harness default: Cursor uses
-`CURSOR_DEFAULT_MODEL`, the same model an interactive Cursor task launches with,
-and a bridge harness is left to pick for itself.
+A session with no operator-chosen model runs the harness default: Cursor ACP spawn
+uses [`CURSOR_DEFAULT_SPAWN_MODEL`] (`agent --model grok-4.6 acp`); the Ajax catalog
+default [`CURSOR_DEFAULT_MODEL`] remains the attach-plan and UI default for Cursor.
+Bridge harnesses are left to pick for themselves.
 
 A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
 offered for every mapped harness, and session attach admits any task whose agent
