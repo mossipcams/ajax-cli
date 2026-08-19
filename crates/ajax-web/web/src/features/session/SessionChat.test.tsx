@@ -71,6 +71,13 @@ function send(event: webSessionTransport.WebSessionServerEvent) {
   flushRaf();
 }
 
+/** Type into the composer and press Enter — send, queue, or stop-and-send,
+ * whichever the current turn state makes it. */
+function type(text: string) {
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: text } });
+  fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -114,6 +121,7 @@ describe("SessionChat smoke", () => {
     mountChat();
     send({ type: "message", role: "user", text: "Prior question", itemId: "u1" });
     send({ type: "message", role: "agent", text: "Prior answer", itemId: "a1" });
+    send({ type: "turn_end", stopReason: "end_turn" });
 
     act(() => ready?.("auto"));
 
@@ -284,6 +292,9 @@ describe("SessionChat smoke", () => {
           text: "Earlier reply",
           itemId: "a1",
         });
+        // Replay carries the turn boundary too; a settled answer is what the
+        // conversation shows, not a paragraph-gated live tail.
+        callbacks.onEvent({ type: "turn_end", stopReason: "end_turn" });
         callbacks.onReady("auto");
         return transport;
       },
@@ -347,11 +358,13 @@ describe("SessionChat smoke", () => {
       "Last update 1m ago",
     );
 
+    // Queueing a follow-up is not ACP activity: the agent has still gone quiet.
     fireEvent.change(screen.getByLabelText("Message"), {
       target: { value: "One more thing" },
     });
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("No recent activity");
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
     send({ type: "message", role: "thought", text: "Checking files", itemId: "t1" });
     expect(screen.getByTestId("session-head")).toHaveTextContent("Working");
@@ -362,22 +375,81 @@ describe("SessionChat smoke", () => {
     vi.useRealTimers();
   });
 
-  it("sends one host-queued prompt while busy without a browser follow-up latch", () => {
+  it("queues one editable follow-up instead of sending it into a live turn", () => {
     mountChat();
 
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "First" } });
-    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    type("First");
     transport.sendPrompt.mockClear();
+    type("Next");
 
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Next" } });
-    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+    const queued = screen.getByTestId("session-queued");
+    expect(queued).toHaveTextContent("Queued");
+    expect(queued).toHaveTextContent("Next");
+    expect(queued).toHaveTextContent("Press Enter again to stop and send now");
+    expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
+  });
+
+  it("sends the queued follow-up by itself when the turn ends normally", () => {
+    mountChat();
+
+    type("First");
+    transport.sendPrompt.mockClear();
+    type("Next");
+    send({ type: "turn_end", stopReason: "end_turn" });
 
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
     expect(transport.sendCancel).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Message")).toHaveAttribute(
-      "placeholder",
-      "Sends after this turn…",
-    );
+    expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("session-message-user").at(-1)).toHaveTextContent("Next");
+  });
+
+  // The cancelled prompt and the follow-up must never be in flight together, so
+  // the send waits for the host to resolve the turn it just cancelled.
+  it("stops the turn on a second Enter and only then sends the follow-up", () => {
+    mountChat();
+
+    type("First");
+    transport.sendPrompt.mockClear();
+    type("Next");
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+
+    expect(transport.sendCancel).toHaveBeenCalledOnce();
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
+
+    send({ type: "turn_end", stopReason: "cancelled" });
+
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
+    expect(screen.getByTestId("session-note-info")).toHaveTextContent("Stopped");
+  });
+
+  it("lets the operator edit or drop the queued follow-up", () => {
+    mountChat();
+
+    type("First");
+    type("Next");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Message")).toHaveValue("Next");
+    expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
+
+    send({ type: "turn_end", stopReason: "end_turn" });
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("First");
+  });
+
+  it("names what Enter will do next on the composer action", () => {
+    mountChat();
+
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    type("First");
+    expect(screen.getByRole("button", { name: "Queue" })).toBeInTheDocument();
+    type("Next");
+    expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
   });
 
   it("opens Diff Review on a left swipe", async () => {
