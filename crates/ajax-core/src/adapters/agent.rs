@@ -21,11 +21,28 @@ pub struct CursorModelIntent {
     pub fast: Option<bool>,
 }
 
-/// Parse a Cursor catalog id or ACP bracket id into comparable intent.
+/// Parse a Cursor catalog id, pipe-form selection, or ACP bracket id into intent.
 pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     let raw = raw.trim();
     if raw.is_empty() || raw == "auto" {
         return None;
+    }
+    if raw.contains('|') {
+        let selection = parse_model_selection(raw)?;
+        let mut effort = None;
+        let mut fast = None;
+        for (key, value) in &selection.options {
+            match key.as_str() {
+                "effort" => effort = Some(value.clone()),
+                "fast" => fast = Some(value == "true"),
+                _ => {}
+            }
+        }
+        return Some(CursorModelIntent {
+            base: selection.model,
+            effort,
+            fast,
+        });
     }
     if let Some((base, bracket)) = raw.split_once('[') {
         let bracket = bracket.strip_suffix(']')?;
@@ -103,12 +120,26 @@ pub fn cursor_model_intents_match(
     desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
+fn cursor_grok_spawn_token(intent: &CursorModelIntent) -> Option<String> {
+    let version = intent.base.strip_prefix("grok-")?;
+    let mut token = format!("cursor-grok-{version}");
+    if let Some(effort) = &intent.effort {
+        token.push_str(&format!("-{effort}"));
+    }
+    if intent.fast.unwrap_or(false) {
+        token.push('-');
+        token.push_str("fast");
+    }
+    Some(token)
+}
+
 /// Map an Ajax catalog id to the ACP spawn token Cursor accepts on `--model`.
 ///
 /// `cursor-grok-*` catalog ids pass through unchanged: live Cursor honors them on
 /// spawn argv while bracket ids such as `grok-4.6[effort=high,fast=true]` are
 /// ignored until in-band apply ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-/// Other effort-suffixed ids map to bracket tokens, preferring non-Fast when the
+/// Pipe-form Grok selections reconstruct `cursor-grok-*` spawn tokens. Other
+/// effort-suffixed ids map to bracket tokens, preferring non-Fast when the
 /// catalog id has no `-fast` suffix.
 pub fn cursor_catalog_to_acp_spawn_token(catalog_id: &str) -> String {
     let Some(intent) = parse_cursor_model_intent(catalog_id) else {
@@ -116,6 +147,11 @@ pub fn cursor_catalog_to_acp_spawn_token(catalog_id: &str) -> String {
     };
     if catalog_id.starts_with("cursor-grok-") && !catalog_id.contains('[') {
         return catalog_id.to_string();
+    }
+    if catalog_id.contains('|') {
+        if let Some(token) = cursor_grok_spawn_token(&intent) {
+            return token;
+        }
     }
     let uses_acp_brackets = intent.effort.is_some()
         || catalog_id.starts_with("composer-")

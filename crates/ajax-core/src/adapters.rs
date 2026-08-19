@@ -632,6 +632,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_cursor_model_intent_accepts_pipe_form_issue_979() {
+        use crate::adapters::agent::parse_cursor_model_intent;
+
+        let intent = parse_cursor_model_intent("grok-4.6|effort=high|fast=false").unwrap();
+        assert_eq!(intent.base, "grok-4.6");
+        assert_eq!(intent.effort.as_deref(), Some("high"));
+        assert_eq!(intent.fast, Some(false));
+
+        let fast = parse_cursor_model_intent("grok-4.6|effort=high|fast=true").unwrap();
+        assert_eq!(fast.fast, Some(true));
+    }
+
+    #[test]
+    fn cursor_catalog_pipe_form_reconstructs_grok_spawn_token_issue_979() {
+        use crate::adapters::agent::{
+            cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
+        };
+
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("grok-4.6|effort=high|fast=false"),
+            "cursor-grok-4.6-high"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("grok-4.6|effort=high|fast=true"),
+            "cursor-grok-4.6-high-fast"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_in_band_token("grok-4.6|effort=high|fast=false"),
+            "grok-4.6[effort=high,fast=false]"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("composer-2.5|fast=false"),
+            "composer-2.5[fast=false]"
+        );
+    }
+
     // Regression for #984: effort-suffixed Sol catalog ids must map to ACP bracket tokens.
     #[test]
     fn cursor_catalog_maps_sol_high_to_acp_spawn_token_issue_984() {

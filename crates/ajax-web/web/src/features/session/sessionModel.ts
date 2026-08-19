@@ -57,6 +57,10 @@ export function useSessionModelPreference(): [string, (model: string) => void] {
 export interface SessionModelOption {
   id: string;
   label: string;
+  /** Reasoning levels for this Cursor base (slim catalog from the API). */
+  efforts?: string[];
+  /** True when a Fast sibling exists for this Cursor base. */
+  hasFast?: boolean;
 }
 
 /** A second axis beside the models, e.g. the reasoning level. */
@@ -142,6 +146,33 @@ function stripFastSuffix(id: string): { stem: string; fast: boolean } {
   return { stem: id, fast: false };
 }
 
+/** Encode a Cursor picker selection as pipe-form session_model. */
+export function encodeCursorSelection(
+  base: string,
+  effort: string | undefined,
+  fast: boolean,
+  row: Pick<CursorDisplayModel, "efforts" | "hasFast">,
+): string {
+  if (base === DEFAULT_SESSION_MODEL || base === "auto") return base;
+  const options: Record<string, string> = {};
+  if (effort) options.effort = effort;
+  if (row.hasFast) options.fast = fast ? "true" : "false";
+  return encodeModelSelection(base, options);
+}
+
+/** Parse pipe-form or legacy exploded Cursor ids into picker state. */
+export function decodeCursorPipeOrCatalogId(raw: string): CursorModelIntent | null {
+  if (raw.includes("|")) {
+    const { model, options } = decodeModelSelection(raw);
+    if (!model || model === DEFAULT_SESSION_MODEL) return null;
+    return {
+      base: model,
+      effort: options.effort,
+      fast: options.fast === "true",
+    };
+  }
+  return parseCursorCatalogId(raw);
+}
 /** Parse a Cursor Ajax catalog id into comparable base / effort / fast pieces. */
 export function parseCursorCatalogId(raw: string): CursorModelIntent | null {
   const trimmed = raw.trim();
@@ -210,6 +241,14 @@ export function composeCursorCatalogId(
 
 /** Collapse Cursor catalog rows that differ only by `-fast` or effort into one shortlist slot. */
 export function collapseCursorCatalogModels(models: SessionModelOption[]): SessionModelOption[] {
+  const slim = models.some(
+    (option) =>
+      option.id !== DEFAULT_SESSION_MODEL &&
+      option.id !== "auto" &&
+      (option.efforts !== undefined || option.hasFast !== undefined),
+  );
+  if (slim) return models;
+
   const auto = models.filter(
     (option) => option.id === DEFAULT_SESSION_MODEL || option.id === "auto",
   );
@@ -233,6 +272,17 @@ export function buildCursorDisplayModels(models: SessionModelOption[]): CursorDi
   >();
 
   for (const option of models) {
+    if (option.id === DEFAULT_SESSION_MODEL || option.id === "auto") continue;
+
+    if (option.efforts !== undefined || option.hasFast !== undefined) {
+      grouped.set(option.id, {
+        label: option.label,
+        efforts: new Set(option.efforts ?? []),
+        hasFast: option.hasFast ?? false,
+      });
+      continue;
+    }
+
     const intent = parseCursorCatalogId(option.id);
     if (!intent) continue;
     const entry = grouped.get(intent.base) ?? {
@@ -254,12 +304,12 @@ export function buildCursorDisplayModels(models: SessionModelOption[]): CursorDi
   }));
 }
 
-/** Decode a persisted Cursor catalog id into picker state. */
+/** Decode a persisted Cursor pipe-form or legacy catalog id into picker state. */
 export function decodeCursorSelection(
-  catalogId: string,
+  raw: string,
   displayModels: CursorDisplayModel[],
 ): { base: string; effort?: string; fast: boolean } | null {
-  const intent = parseCursorCatalogId(catalogId);
+  const intent = decodeCursorPipeOrCatalogId(raw);
   if (!intent) return null;
   const row = displayModels.find((model) => model.base === intent.base);
   if (!row) return null;
@@ -276,7 +326,7 @@ export function defaultCursorEffort(
 ): string | undefined {
   if (row.efforts.length === 0) return undefined;
   if (row.efforts.length === 1) return row.efforts[0];
-  const fromDefault = catalogDefault ? parseCursorCatalogId(catalogDefault) : null;
+  const fromDefault = catalogDefault ? decodeCursorPipeOrCatalogId(catalogDefault) : null;
   if (fromDefault?.base === row.base && fromDefault.effort && row.efforts.includes(fromDefault.effort)) {
     return fromDefault.effort;
   }
@@ -309,7 +359,12 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
     throw new Error(`session models request failed (${response.status})`);
   }
   const body = (await response.json()) as {
-    models?: SessionModelOption[];
+    models?: Array<{
+      id?: string;
+      label?: string;
+      efforts?: string[];
+      hasFast?: boolean;
+    }>;
     default?: string;
     reasoning?: SessionModelGroup;
     error?: string;
@@ -320,9 +375,14 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
       : fallbackCatalog(harness);
   }
   return {
-    models: body.models.filter(
-      (m) => m && typeof m.id === "string" && typeof m.label === "string",
-    ),
+    models: body.models
+      .filter((m) => m && typeof m.id === "string" && typeof m.label === "string")
+      .map((m) => ({
+        id: m.id as string,
+        label: m.label as string,
+        ...(Array.isArray(m.efforts) ? { efforts: m.efforts.filter((e) => typeof e === "string") } : {}),
+        ...(typeof m.hasFast === "boolean" ? { hasFast: m.hasFast } : {}),
+      })),
     default: typeof body.default === "string" ? body.default : "",
     ...(body.reasoning && Array.isArray(body.reasoning.options)
       ? { reasoning: body.reasoning }
