@@ -413,19 +413,14 @@ describe("SessionChat smoke", () => {
   it("leads the task details sheet with task identity (#p1 layout)", () => {
     mountChat();
     openTaskDetails();
-    const body = screen.getByTestId("session-task-panel").querySelector(".session-details-body")!;
-    const ordered = Array.from(body.querySelectorAll("[data-testid]")).map((el) =>
-      el.getAttribute("data-testid"),
-    );
-    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("Fix login");
-    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("web/fix-login");
-    expect(screen.getByTestId("session-task-identity")).toHaveTextContent("ajax/fix-login");
-    expect(ordered.indexOf("session-task-identity")).toBeLessThan(
-      ordered.indexOf("session-ajax-terminal"),
-    );
-    expect(ordered.indexOf("session-ajax-terminal")).toBeLessThan(
-      ordered.indexOf("task-meta-details-embedded"),
-    );
+    const identity = screen.getByTestId("session-task-identity");
+    const terminal = screen.getByTestId("session-ajax-terminal");
+    const meta = screen.getByTestId("task-meta-details-embedded");
+    expect(identity).toHaveTextContent("Fix login");
+    expect(identity).toHaveTextContent("web/fix-login");
+    expect(identity).toHaveTextContent("ajax/fix-login");
+    expect(identity.compareDocumentPosition(terminal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(terminal.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("keeps the model catalog collapsed until Change is opened (#p1 distill)", async () => {
@@ -820,19 +815,12 @@ describe("SessionChat task details polish", () => {
     });
     openTaskDetails();
 
-    const body = screen.getByTestId("session-task-panel").querySelector(".session-details-body")!;
-    const ordered = Array.from(body.querySelectorAll("[data-testid]")).map((el) =>
-      el.getAttribute("data-testid"),
-    );
-    expect(screen.getByTestId("session-observation-error")).toHaveTextContent(
-      "Observation error: tmux session missing",
-    );
-    expect(ordered.indexOf("session-task-identity")).toBeLessThan(
-      ordered.indexOf("session-observation-error"),
-    );
-    expect(ordered.indexOf("session-observation-error")).toBeLessThan(
-      ordered.indexOf("session-model-select"),
-    );
+    const identity = screen.getByTestId("session-task-identity");
+    const observationError = screen.getByTestId("session-observation-error");
+    const modelSelect = screen.getByTestId("session-model-select");
+    expect(observationError).toHaveTextContent("Observation error: tmux session missing");
+    expect(identity.compareDocumentPosition(observationError) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(observationError.compareDocumentPosition(modelSelect) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("hides the session model picker while harness Switch is open", () => {

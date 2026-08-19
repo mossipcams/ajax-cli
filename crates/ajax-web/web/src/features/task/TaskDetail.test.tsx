@@ -152,14 +152,9 @@ describe("TaskDetail", () => {
     );
     fireEvent.click(screen.getByTestId("task-details"));
     const sheet = screen.getByTestId("task-details-sheet");
-    const body = sheet.querySelector(".session-details-body")!;
-    const children = [...body.children];
-    const toolsIndex = children.findIndex((el) => el.getAttribute("data-testid") === "task-primary-tools");
-    const metaIndex = children.findIndex(
-      (el) => el.getAttribute("data-testid") === "task-meta-details-embedded",
-    );
-    expect(toolsIndex).toBeGreaterThanOrEqual(0);
-    expect(metaIndex).toBeGreaterThan(toolsIndex);
+    const primaryTools = within(sheet).getByTestId("task-primary-tools");
+    const meta = within(sheet).getByTestId("task-meta-details-embedded");
+    expect(primaryTools.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(sheet).queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
   });
 

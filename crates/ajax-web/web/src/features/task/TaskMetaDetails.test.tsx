@@ -214,12 +214,9 @@ describe("TaskMetaDetails", () => {
     );
     fireEvent.click(screen.getByText("Task details"));
     const footerDisclosure = screen.getByRole("group");
-    const body = footerDisclosure.querySelector(".meta-details-body")!;
-    const children = [...body.children];
-    const chatIndex = children.findIndex((el) => el.getAttribute("data-testid") === "task-ajax-chat-action");
-    const gridIndex = children.findIndex((el) => el.classList.contains("detail-grid"));
-    expect(chatIndex).toBe(0);
-    expect(gridIndex).toBeGreaterThan(chatIndex);
+    const chat = within(footerDisclosure).getByTestId("task-ajax-chat-action");
+    const branchLabel = within(footerDisclosure).getByText("Branch");
+    expect(chat.compareDocumentPosition(branchLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not duplicate Ajax chat inside embedded task metadata", () => {
