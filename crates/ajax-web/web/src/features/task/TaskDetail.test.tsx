@@ -142,7 +142,7 @@ describe("TaskDetail", () => {
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
-  it("leads the header Details sheet with Ajax chat before embedded metadata", () => {
+  it("pins Ajax chat primary tools outside the scrolling session details body", () => {
     render(
       <TaskDetail
         detail={detail({ session_capable: true })}
@@ -153,9 +153,29 @@ describe("TaskDetail", () => {
     fireEvent.click(screen.getByTestId("task-details"));
     const sheet = screen.getByTestId("task-details-sheet");
     const primaryTools = within(sheet).getByTestId("task-primary-tools");
+    const body = within(sheet).getByTestId("session-details-body");
     const meta = within(sheet).getByTestId("task-meta-details-embedded");
+    expect(body).not.toContainElement(primaryTools);
+    expect(primaryTools).toHaveClass("session-sheet-tools-primary");
     expect(primaryTools.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(body).toContainElement(meta);
     expect(within(sheet).queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
+  });
+
+  it("keeps the header Details control reachable while terminal-expanded", () => {
+    document.documentElement.classList.add("terminal-expanded");
+    render(
+      <TaskDetail
+        detail={detail({ session_capable: true })}
+        orchestrationChat
+        onOpenChat={vi.fn()}
+      />,
+    );
+    const details = screen.getByTestId("task-details");
+    expect(details).toBeInTheDocument();
+    fireEvent.click(details);
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+    document.documentElement.classList.remove("terminal-expanded");
   });
 
   it("reaches Ajax chat via Details without opening the footer Task details disclosure", () => {
@@ -467,5 +487,40 @@ describe("TaskDetail projection surface", () => {
     const wrapBody = openMetaWrap![1];
     expect(wrapBody).toMatch(/min-height:\s*120px/);
     expect(wrapBody).toMatch(/(?:height|max-height):/);
+  });
+
+  it("bounds session details sheets with a contained scroller for iOS-safe reachability", () => {
+    const sheetBlock =
+      stylesSource.match(/\.session-details-sheet\s*\{([^}]*)\}/)?.[1] ?? "";
+    const bodyBlock =
+      stylesSource.match(/\.session-details-body\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(sheetBlock).toMatch(/max-height:\s*calc\(100% - 24px\)/);
+    expect(sheetBlock).toMatch(/overflow:\s*hidden/);
+    expect(bodyBlock).toMatch(/flex:\s*1\s+1\s+auto/);
+    expect(bodyBlock).toMatch(/min-height:\s*0/);
+    expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {
+    expect(stylesSource).not.toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s*\{[^}]*display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?pointer-events:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.detail-header-controls[\s\S]*?pointer-events:\s*auto/,
+    );
+
+    const expandedDetailsCss =
+      stylesSource.match(
+        /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.session-head-details\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(expandedDetailsCss).toMatch(/background:\s*var\(--paper-raised\)/);
+    expect(expandedDetailsCss).toMatch(/color:\s*var\(--ink\)/);
+    expect(expandedDetailsCss).toMatch(/min-height:\s*44px/);
+    expect(expandedDetailsCss).toMatch(/border:\s*1px solid var\(--rule-strong\)/);
+    expect(expandedDetailsCss).toMatch(/border-radius:\s*999px/);
   });
 });

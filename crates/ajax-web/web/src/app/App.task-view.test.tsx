@@ -147,6 +147,25 @@ describe("App task view preference", () => {
     expect(screen.getByTestId("session-chat")).toBeInTheDocument();
   });
 
+  it("returns to Ajax chat from the header Details sheet and clears terminal preference", async () => {
+    localStorage.setItem(TASK_TERMINAL_PREFERENCE_STORAGE_KEY, JSON.stringify(["web/fix-login"]));
+    stubFetch();
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    setHash(taskHash("web/fix-login"));
+    await screen.findByTestId("outlet-task");
+    fireEvent.click(screen.getByTestId("task-details"));
+    fireEvent.click(
+      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
+    );
+
+    await waitFor(() => expect(window.location.hash).toBe(sessionHash("web/fix-login")));
+    expect(readTaskTerminalPreferred("web/fix-login")).toBe(false);
+    expect(screen.getByTestId("session-chat")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
+  });
+
   it("routes Diff Review back through terminal preference in App onBack", () => {
     const diffBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
     expect(diffBlock).toMatch(/readTaskTerminalPreferred\(route\.handle\)/);

@@ -218,8 +218,20 @@ describe("App shell", () => {
     expect(mobileBlock).not.toMatch(
       /html\.keyboard-open[^{]*\.task-detail\s+\.interact-panel[^{]*\{[^}]*display:\s*none/,
     );
+    expect(stylesSource).not.toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s*\{[^}]*display:\s*none/,
+    );
     expect(stylesSource).toMatch(
-      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?pointer-events:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.detail-header-controls[\s\S]*?pointer-events:\s*auto/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.back[\s\S]*?display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.session-head-details\s*\{([^}]*)\}/,
     );
     expect(stylesSource).toMatch(
       /html\.terminal-expanded\s+\.task-detail\s+\.interact-panel[\s\S]*?display:\s*none/,

@@ -39,8 +39,12 @@ session-capable tasks that prefer chat; **Ajax terminal** in task details switch
 to `#/t/<handle>` and remembers that choice in browser localStorage
 (`ajax.web.taskView.terminal`). **Ajax chat** in the footer Task details
 disclosure (`TaskMetaDetails`, summary "Task details") and the header Details
-sheet (primary tools row, same pattern as Ajax terminal on the session Details
-sheet) clears the preference and returns to `#/session/<handle>`. Diff Review remains swipe-left.
+sheet (pinned primary tools row outside the scrolling body, same reachability
+pattern as Ajax terminal on the session Details sheet) clears the preference and
+returns to `#/session/<handle>`. The Details sheet is iOS-safe: `.session-details-sheet`
+contains overflow and `.session-details-body` scrolls. While the terminal is
+fullscreen (`html.terminal-expanded`), the header Details control stays
+reachable without permanently reserving terminal band space. Diff Review remains swipe-left.
 The browser still does not own transcript/queue.
 
 When that mode is enabled, agent conversation runs over ACP stdio via the
