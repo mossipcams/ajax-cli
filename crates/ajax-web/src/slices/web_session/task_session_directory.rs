@@ -207,6 +207,17 @@ impl TaskSessionDirectory {
         }
     }
 
+    /// Shut down any live slot and delete the persisted transcript for `handle`.
+    pub async fn cleanup_session(&self, handle: &str) {
+        self.drop_session(handle).await;
+        web_session_store::delete_session(&self.state_dir, handle);
+    }
+
+    /// Delete persisted transcripts with no registry owner at process start.
+    pub fn prune_stale_persisted(&self, owned: &std::collections::HashSet<String>) {
+        super::session_cleanup::prune_stale_persisted_sessions(&self.state_dir, owned);
+    }
+
     pub async fn submit_prompt_with_id(
         &self,
         handle: &str,

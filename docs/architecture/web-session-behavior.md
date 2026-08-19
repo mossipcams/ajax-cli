@@ -95,6 +95,13 @@ existing paths.
 
 - Dropping a task or changing harness shuts down the live `TaskSession` before a
   new attach creates one for that handle.
+- A task owns its orchestration session only while it exists in the registry and
+  is not in the `Removed` lifecycle ([#977](https://github.com/mossipcams/ajax-cli/issues/977)).
+  Sessions with no such owner are stale: Web Cockpit initialization deletes
+  their persisted JSONL transcript, and a successful Drop performs the same
+  cleanup (live ACP slot plus transcript) before the qualified handle can be
+  reused. Ownership is derived from registry task handles only, not browser
+  routes, `localStorage`, or ACP slot state.
 - Idle LRU eviction sends `Shutdown` only to slots with zero subscribers, no
   in-flight turn, and an empty host queue; evictable slots must not hold pending
   work.

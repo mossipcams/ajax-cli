@@ -6,6 +6,7 @@ pub(crate) mod acp_usage;
 mod normalize;
 mod protocol;
 mod replay;
+mod session_cleanup;
 mod task_session;
 mod task_session_directory;
 mod task_session_spawn;
@@ -16,6 +17,7 @@ pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
+pub(crate) use session_cleanup::{is_session_owned, owned_session_handles};
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
@@ -368,6 +370,9 @@ mod acp_usage_tests;
 
 #[cfg(test)]
 mod ws_bridge_tests;
+
+#[cfg(test)]
+mod session_cleanup_tests;
 
 #[cfg(test)]
 pub(crate) mod test_support;
