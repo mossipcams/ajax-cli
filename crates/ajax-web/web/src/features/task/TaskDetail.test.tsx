@@ -135,10 +135,32 @@ describe("TaskDetail", () => {
     );
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-details"));
-    fireEvent.click(
-      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
-    );
+    const sheet = screen.getByTestId("task-details-sheet");
+    const primaryTools = within(sheet).getByTestId("task-primary-tools");
+    expect(primaryTools).toHaveClass("session-sheet-tools-primary");
+    fireEvent.click(within(primaryTools).getByRole("button", { name: "Ajax chat" }));
     expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("leads the header Details sheet with Ajax chat before embedded metadata", () => {
+    render(
+      <TaskDetail
+        detail={detail({ session_capable: true })}
+        orchestrationChat
+        onOpenChat={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("task-details"));
+    const sheet = screen.getByTestId("task-details-sheet");
+    const body = sheet.querySelector(".session-details-body")!;
+    const children = [...body.children];
+    const toolsIndex = children.findIndex((el) => el.getAttribute("data-testid") === "task-primary-tools");
+    const metaIndex = children.findIndex(
+      (el) => el.getAttribute("data-testid") === "task-meta-details-embedded",
+    );
+    expect(toolsIndex).toBeGreaterThanOrEqual(0);
+    expect(metaIndex).toBeGreaterThan(toolsIndex);
+    expect(within(sheet).queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
   });
 
   it("reaches Ajax chat via Details without opening the footer Task details disclosure", () => {
