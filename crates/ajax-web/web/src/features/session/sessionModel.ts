@@ -160,6 +160,26 @@ export function encodeCursorSelection(
   return encodeModelSelection(base, options);
 }
 
+/** Parse a Cursor ACP bracket id such as `gpt-5.6-sol[effort=high,fast=false]`. */
+function parseCursorBracketId(raw: string): CursorModelIntent | null {
+  const bracketStart = raw.indexOf("[");
+  if (bracketStart <= 0) return null;
+  const base = raw.slice(0, bracketStart);
+  if (!base || !raw.endsWith("]")) return null;
+  const bracket = raw.slice(bracketStart + 1, -1);
+  if (!base || !bracket.includes("=")) return null;
+  const intent: CursorModelIntent = { base, fast: false };
+  for (const part of bracket.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === "effort" || key === "reasoning") intent.effort = value;
+    else if (key === "fast") intent.fast = value === "true";
+  }
+  return intent;
+}
+
 /** Parse pipe-form or legacy exploded Cursor ids into picker state. */
 export function decodeCursorPipeOrCatalogId(raw: string): CursorModelIntent | null {
   if (raw.includes("|")) {
@@ -167,9 +187,13 @@ export function decodeCursorPipeOrCatalogId(raw: string): CursorModelIntent | nu
     if (!model || model === DEFAULT_SESSION_MODEL) return null;
     return {
       base: model,
-      effort: options.effort,
+      effort: options.effort ?? options.reasoning,
       fast: options.fast === "true",
     };
+  }
+  if (raw.includes("[")) {
+    const bracket = parseCursorBracketId(raw);
+    if (bracket) return bracket;
   }
   return parseCursorCatalogId(raw);
 }

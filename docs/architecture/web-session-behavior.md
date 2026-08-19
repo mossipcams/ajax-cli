@@ -41,13 +41,15 @@ existing paths.
   `configOptions` or `models.availableModels` advertises a model control **and**
   the pin resolves to an exact advertised handshake value. Ajax advertises
   `clientCapabilities._meta.parameterizedModelPicker: true` on ACP `initialize`
-  so Cursor exposes separate `model` / `effort` / `fast` config options instead
-  of Fast-only exploded variants ([#979]).
+  so Cursor exposes separate `model` / `reasoning` (or legacy `effort`) / `fast`
+  config options instead of Fast-only exploded variants ([#979],
+  [#989](https://github.com/mossipcams/ajax-cli/issues/989)).
   When those split options are advertised, non-Fast pins such as
   `grok-4.6|effort=high|fast=false` (or legacy `cursor-grok-4.6-high`) apply as
-  `model=<base>`, `effort=<level>` when present, and `fast=false` unless Fast is
-  on; Ajax reconstructs the applied id from those options (e.g.
-  `grok-4.6[effort=high,fast=false]`) for `snapshot.model` and pin matching. Bare
+  `model=<base>`, `reasoning=<level>` or `effort=<level>` using the exact config
+  id the harness advertises, and `fast=false` unless Fast is on; Ajax
+  reconstructs the applied id from those options with normalized `effort=` tokens
+  (e.g. `grok-4.6[effort=high,fast=false]`) for `snapshot.model` and pin matching. Bare
   `grok-4.6` must not satisfy `grok-4.6|effort=high|fast=false`. Explicit operator
   pins and legacy exploded catalog ids pass unchanged on spawn `--model` (e.g.
   `claude-opus-5-medium`, `gpt-5.6-sol-high`, `cursor-grok-4.6-high`); pipe-form
@@ -243,7 +245,9 @@ existing paths.
   row when the catalog encodes multiple levels on that base, and a **Fast** Off/On
   row (default Off). Selection persists as pipe-form `session_model` such as
   `grok-4.6|effort=high|fast=false` or `composer-2.5|fast=false`; Auto stays
-  `auto`. Legacy exploded catalog ids such as `cursor-grok-4.6-high` still decode
+  `auto`. ACP bracket-form live snapshots such as `gpt-5.6-sol[fast=false]` decode
+  to the matching catalog base and expose effort controls; choosing a level emits
+  pipe-form with `effort=`. Legacy exploded catalog ids such as `cursor-grok-4.6-high` still decode
   in the picker and apply on the backend. Switch opens with the current harness and live session model preselected; Apply on the
   same harness persists `session_model` and applies the pin in-band on a live slot
   (no slot: persist only). Cross-harness Apply persists and resets backend context

@@ -148,6 +148,36 @@ describe("ModelPicker", () => {
     );
   });
 
+  it("decodes ACP bracket snapshot and exposes effort controls (#989)", async () => {
+    const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "gpt-5.6-sol", label: "GPT 5.6 Sol", efforts: ["medium", "high"], hasFast: true },
+      ],
+      default: "gpt-5.6-sol-high",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="gpt-5.6-sol[fast=false]"
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "GPT 5.6 Sol" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+    expect(screen.getByTestId("model-effort")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "High" }));
+    expect(onChange).toHaveBeenCalledWith("gpt-5.6-sol|effort=high|fast=false");
+  });
+
   it("still decodes legacy exploded Cursor catalog ids (#979)", async () => {
     const onChange = vi.fn();
     stubCatalog({

@@ -158,6 +158,23 @@ describe("sessionModel", () => {
     ).toBe("gpt-5.6-sol-medium");
   });
 
+  it("decodes Cursor ACP bracket-form snapshot ids (#989)", () => {
+    expect(decodeCursorPipeOrCatalogId("gpt-5.6-sol[fast=false]")).toEqual({
+      base: "gpt-5.6-sol",
+      fast: false,
+    });
+    expect(decodeCursorPipeOrCatalogId("gpt-5.6-sol[effort=high,fast=false]")).toEqual({
+      base: "gpt-5.6-sol",
+      effort: "high",
+      fast: false,
+    });
+    expect(decodeCursorPipeOrCatalogId("gpt-5.6-sol[reasoning=high,fast=false]")).toEqual({
+      base: "gpt-5.6-sol",
+      effort: "high",
+      fast: false,
+    });
+  });
+
   it("encodes and decodes pipe-form Cursor session_model (#979)", () => {
     expect(
       encodeCursorSelection("grok-4.6", "high", false, { efforts: ["high"], hasFast: true }),
