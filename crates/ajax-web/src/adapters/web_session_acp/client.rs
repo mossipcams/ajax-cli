@@ -1,7 +1,7 @@
 //! Task-scoped process facade over the official ACP Rust SDK connection actor.
 
 use ajax_core::{
-    adapters::{acp_args_for_candidate, acp_launch_for_agent, AcpLaunch},
+    adapters::{acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv, AcpLaunch},
     models::AgentClient,
 };
 use serde_json::Value;
@@ -378,22 +378,17 @@ fn stderr_hint(stderr_tail: &Mutex<String>) -> String {
     }
 }
 
-/// True when `--model` should be omitted (Cursor default / Auto).
-pub(crate) fn model_uses_cli_default(model: Option<&str>) -> bool {
-    match model.map(str::trim) {
-        None | Some("") | Some("auto") => true,
-        Some(_) => false,
-    }
-}
-
 /// Build argv for one candidate program of this harness's ACP launch.
 pub(crate) fn acp_args_for_program(
     launch: AcpLaunch,
     base_args: &[&str],
     model: Option<&str>,
 ) -> Vec<String> {
-    let model = (!model_uses_cli_default(model)).then_some(model).flatten();
-    acp_args_for_candidate(launch, base_args, model)
+    acp_args_for_candidate(
+        launch,
+        base_args,
+        acp_spawn_model_for_argv(launch, model).as_deref(),
+    )
 }
 
 /// Candidate list for this harness, native endpoint first.
@@ -479,6 +474,13 @@ fn spawn_acp_process(
         let extra_args = TEST_ACP_EXTRA_ARGS.with(|slot| slot.borrow().clone());
         let mut command = std::process::Command::new("node");
         command.arg(program);
+        if let Some(launch) = acp_launch_for_agent(agent) {
+            if launch.model_pins_at_spawn() {
+                if let Some(spawn_model) = acp_spawn_model_for_argv(launch, model) {
+                    command.arg("--model").arg(spawn_model);
+                }
+            }
+        }
         command.args(extra_args);
         command
             .current_dir(worktree_path)

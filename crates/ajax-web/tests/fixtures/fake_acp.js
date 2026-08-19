@@ -9,23 +9,47 @@ const permissionMode = process.argv.includes('--permission');
 const resumeMode = process.argv.includes('--resume') || process.argv.includes('--resume-fail');
 const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
+const cursorModels = process.argv.includes('--cursor-models');
 const sessionId = 'fake-sess-1';
-let currentModel = 'harness-default';
+const cliDefaultModel = process.argv.includes('--cli-default-model')
+  ? 'composer-2.5[fast=true]'
+  : null;
+function spawnModelFromArgv() {
+  const idx = process.argv.indexOf('--model');
+  if (idx >= 0 && idx + 1 < process.argv.length) {
+    const model = process.argv[idx + 1];
+    // Live Cursor ACP ignores Ajax catalog ids on spawn argv.
+    if (model.startsWith('cursor-')) {
+      return null;
+    }
+    return model;
+  }
+  return null;
+}
+let currentModel = cliDefaultModel ?? spawnModelFromArgv() ?? 'harness-default';
 const modelRefuse = process.argv.includes('--model-refuse');
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
 function modelConfigOptions() {
+  const options = [
+    { value: 'harness-default', name: 'Harness default' },
+    { value: 'composer-2.5', name: 'Composer 2.5' },
+    { value: 'gpt-5.6-sol[medium]', name: 'GPT-5.6-Sol (medium)' },
+  ];
+  if (cursorModels) {
+    options.push(
+      { value: 'composer-2.5[fast=true]', name: 'Composer Fast' },
+      { value: 'grok-4.6[effort=high,fast=false]', name: 'Grok High' },
+      { value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' },
+    );
+  }
   return [{
     id: 'model',
     name: 'Model',
     type: 'select',
     currentValue: currentModel,
-    options: [
-      { value: 'harness-default', name: 'Harness default' },
-      { value: 'composer-2.5', name: 'Composer 2.5' },
-      { value: 'gpt-5.6-sol[medium]', name: 'GPT-5.6-Sol (medium)' },
-    ],
+    options,
   }];
 }
 

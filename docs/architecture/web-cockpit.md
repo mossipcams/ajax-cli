@@ -73,7 +73,7 @@ harness to its ACP entry point and to how it accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` on the spawn argv |
+| Cursor | `agent acp` (native) | `--model` on the spawn argv with catalog ids mapped to ACP bracket tokens (including mapped `CURSOR_DEFAULT_MODEL` when Auto/unspecified) |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
 | Pi | `pi-acp` | `session/set_config_option` |

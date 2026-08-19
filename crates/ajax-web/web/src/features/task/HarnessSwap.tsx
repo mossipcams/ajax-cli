@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/shared/ui/button";
 import ModelPicker from "@/features/session/ModelPicker";
+import { DEFAULT_SESSION_MODEL } from "@/features/session/sessionModel";
 import { useSwapTaskAgentMutation } from "./useSwapTaskAgentMutation";
 import { AGENTS, agentLabel } from "./agents";
 
@@ -8,9 +9,10 @@ interface Props {
   handle: string;
   /** Harness the task runs on now, as reported by the task detail. */
   currentAgent: string;
+  /** Live session model from the host snapshot (catalog id or `auto`). */
+  currentModel?: string;
+  disabled?: boolean;
   onSwapped?: () => void;
-  /** Fires when the inline switch panel opens or closes. */
-  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -18,28 +20,35 @@ interface Props {
  * the backend refuses a task whose agent is live in its tmux pane, because
  * rewriting the registry under it would not stop that process.
  */
-export default function HarnessSwap({ handle, currentAgent, onSwapped, onOpenChange }: Props) {
+export default function HarnessSwap({
+  handle,
+  currentAgent,
+  currentModel = DEFAULT_SESSION_MODEL,
+  disabled = false,
+  onSwapped,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [agent, setAgent] = useState(currentAgent);
-  const [model, setModel] = useState("");
+  const [model, setModel] = useState(currentModel);
   const [error, setError] = useState<string | null>(null);
 
-  function setOpenState(next: boolean) {
-    setOpen(next);
-    onOpenChange?.(next);
-  }
-
   const swapMutation = useSwapTaskAgentMutation(handle, () => {
-    setOpenState(false);
+    setOpen(false);
     onSwapped?.();
   });
+
+  function persistedModel(selection: string): string | undefined {
+    const trimmed = selection.trim();
+    if (!trimmed || trimmed === DEFAULT_SESSION_MODEL) return undefined;
+    return trimmed;
+  }
 
   async function apply() {
     setError(null);
     try {
       const result = await swapMutation.mutateAsync({
         agent,
-        model: model || undefined,
+        model: persistedModel(model),
       });
       if (!result.ok) {
         setError(result.error?.message ?? "Could not switch harness");
@@ -59,9 +68,10 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped, onOpenCha
           data-testid="harness-swap-open"
           onClick={() => {
             setAgent(currentAgent);
-            setModel("");
-            setOpenState(true);
+            setModel(currentModel);
+            setOpen(true);
           }}
+          disabled={disabled}
         >
           Switch
         </button>
@@ -99,6 +109,7 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped, onOpenCha
         agent={agent}
         agentLabel={agentLabel(agent)}
         value={model}
+        disabled={disabled || swapMutation.isPending}
         onChange={setModel}
         onCatalog={(catalog) => setModel((current) => current || catalog.default)}
       />
@@ -110,13 +121,13 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped, onOpenCha
       ) : null}
 
       <div className="sheet-actions">
-        <Button type="button" variant="secondary" onClick={() => setOpenState(false)}>
+        <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
           Cancel
         </Button>
         <Button
           type="button"
           variant="default"
-          disabled={swapMutation.isPending}
+          disabled={disabled || swapMutation.isPending}
           onClick={() => void apply()}
           data-testid="harness-swap-apply"
         >

@@ -7,7 +7,9 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionRequest,
 };
 use agent_client_protocol::{Agent, ConnectionTo};
-use ajax_core::adapters::{parse_model_selection, ModelSelection};
+use ajax_core::adapters::{
+    cursor_model_intents_match, parse_cursor_model_intent, parse_model_selection, ModelSelection,
+};
 use serde_json::Value;
 
 use super::client::HANDSHAKE_TIMEOUT;
@@ -44,9 +46,17 @@ pub fn read_applied_model(
         .unwrap_or_default()
 }
 
-fn model_matches_pin(applied: &str, selection: &ModelSelection) -> bool {
+fn model_matches_pin(applied: &str, selection: &ModelSelection, spawn_pinned: bool) -> bool {
     if applied.is_empty() {
         return false;
+    }
+    if spawn_pinned {
+        if let (Some(desired), Some(applied_intent)) = (
+            parse_cursor_model_intent(&selection.model),
+            parse_cursor_model_intent(applied),
+        ) {
+            return cursor_model_intents_match(&desired, &applied_intent);
+        }
     }
     if applied != selection.model {
         return false;
@@ -58,6 +68,74 @@ fn model_matches_pin(applied: &str, selection: &ModelSelection) -> bool {
         }
     }
     true
+}
+
+fn advertised_model_ids(
+    session_result: &Value,
+    config_options: Option<&[SessionConfigOption]>,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    if let Some(config_options) = config_options {
+        if let Some(option) = config_options
+            .iter()
+            .find(|option| option.id.0.as_ref() == "model")
+        {
+            if let SessionConfigKind::Select(select) = &option.kind {
+                match &select.options {
+                    SessionConfigSelectOptions::Ungrouped(options) => {
+                        ids.extend(options.iter().map(|option| option.value.0.to_string()));
+                    }
+                    SessionConfigSelectOptions::Grouped(groups) => {
+                        for group in groups {
+                            ids.extend(
+                                group
+                                    .options
+                                    .iter()
+                                    .map(|option| option.value.0.to_string()),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(models) = session_result
+        .get("models")
+        .and_then(|models| models.get("availableModels"))
+        .and_then(Value::as_array)
+    {
+        for entry in models {
+            if let Some(id) = entry.get("modelId").and_then(Value::as_str) {
+                if !ids.iter().any(|existing| existing == id) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// Pick the advertised handshake id that best matches a Cursor catalog pin.
+fn resolve_cursor_pin_for_apply(
+    session_result: &Value,
+    config_options: Option<&[SessionConfigOption]>,
+    catalog_id: &str,
+) -> Option<ModelSelection> {
+    let desired = parse_cursor_model_intent(catalog_id)?;
+    let mut matches: Vec<(bool, String)> = advertised_model_ids(session_result, config_options)
+        .into_iter()
+        .filter_map(|id| {
+            let applied = parse_cursor_model_intent(&id)?;
+            cursor_model_intents_match(&desired, &applied)
+                .then_some((applied.fast.unwrap_or(true), id))
+        })
+        .collect();
+    matches.sort_by_key(|(fast, _)| *fast);
+    matches.into_iter().next().map(|(_, id)| ModelSelection {
+        model: id,
+        options: Vec::new(),
+    })
 }
 
 fn model_config_advertised(
@@ -218,26 +296,31 @@ pub async fn apply_model_pin(
         };
     };
 
-    let pin_advertised = selection_fully_advertised(session_result, config_options, &selection);
-    if model_config_advertised(session_result, config_options) && pin_advertised {
-        match apply_in_band(connection, session_id, &selection).await {
-            Ok(next) => applied = next,
-            Err(error) => {
-                return ApplyModelOutcome {
-                    applied_model: applied,
-                    error: Some(format!("session model {raw} was refused — {error}")),
-                };
+    let apply_selection = (if model_pins_at_spawn {
+        resolve_cursor_pin_for_apply(session_result, config_options, raw)
+    } else {
+        None
+    })
+    .filter(|selection| selection_fully_advertised(session_result, config_options, selection))
+    .or_else(|| {
+        selection_fully_advertised(session_result, config_options, &selection)
+            .then_some(selection.clone())
+    });
+    if model_config_advertised(session_result, config_options) {
+        if let Some(apply_selection) = apply_selection {
+            match apply_in_band(connection, session_id, &apply_selection).await {
+                Ok(next) => applied = next,
+                Err(error) => {
+                    return ApplyModelOutcome {
+                        applied_model: applied,
+                        error: Some(format!("session model {raw} was refused — {error}")),
+                    };
+                }
             }
         }
-    } else if model_pins_at_spawn && model_config_advertised(session_result, config_options) {
-        // Cursor pins on spawn argv; handshake ids may differ from Ajax catalog ids.
-        return ApplyModelOutcome {
-            applied_model: applied,
-            error: None,
-        };
     }
 
-    if model_matches_pin(&applied, &selection) {
+    if model_matches_pin(&applied, &selection, model_pins_at_spawn) {
         return ApplyModelOutcome {
             applied_model: applied,
             error: None,
@@ -247,7 +330,13 @@ pub async fn apply_model_pin(
     ApplyModelOutcome {
         applied_model: applied.clone(),
         error: Some(if applied.is_empty() {
-            format!("session model {raw} could not be verified — harness did not report an applied model")
+            if model_pins_at_spawn {
+                format!(
+                    "session model {raw} could not be verified — harness did not report an applied model after spawn argv pin"
+                )
+            } else {
+                format!("session model {raw} could not be verified — harness did not report an applied model")
+            }
         } else {
             format!("session model {raw} was refused — harness is running {applied}")
         }),
@@ -361,6 +450,48 @@ mod tests {
             &handshake,
             Some(&options),
             &catalog
+        ));
+    }
+
+    // Regression for #979: spawn-pinned catalog ids must not silently accept a CLI default.
+    #[test]
+    fn spawn_pinned_catalog_mismatch_errors_issue_979() {
+        use ajax_core::adapters::parse_model_selection;
+
+        let handshake = json!({
+            "sessionId": "s1",
+            "configOptions": [{
+                "id": "model",
+                "currentValue": "composer-2.5[fast=true]",
+                "options": [
+                    { "value": "composer-2.5", "name": "Composer" },
+                    { "value": "composer-2.5[fast=true]", "name": "Composer Fast" }
+                ]
+            }]
+        });
+        let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
+        assert!(!model_matches_pin(
+            &read_applied_model(&handshake, None),
+            &pin,
+            true
+        ));
+    }
+
+    // Regression for #954: handshake ids in a different string form still match.
+    #[test]
+    fn catalog_pin_matches_advertised_acp_id_issue_954() {
+        use ajax_core::adapters::parse_model_selection;
+
+        let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
+        assert!(model_matches_pin(
+            "grok-4.6[effort=high,fast=true]",
+            &pin,
+            true
+        ));
+        assert!(model_matches_pin(
+            "grok-4.6[effort=high,fast=false]",
+            &pin,
+            true
         ));
     }
 }

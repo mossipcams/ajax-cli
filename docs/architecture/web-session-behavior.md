@@ -39,13 +39,22 @@ existing paths.
 - Cursor takes its model on the spawn argv when the harness pins at spawn; every
   harness (including Cursor) also applies an operator pin in-band when
   `configOptions` or `models.availableModels` advertises a model control **and**
-  the pin is an exact advertised handshake value (not an Ajax catalog id in a
-  different id space ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
-  When Cursor pins at spawn and the desired catalog id is not advertised,
-  in-band apply is skipped and no refusal is emitted. A refused or unprovable
-  pin on a ConfigOption-only harness keeps the session, emits a typed `error`
-  event, and leaves `snapshot.model` on the harness-reported id (or empty), not
-  the rejected pin.
+  the pin resolves to an exact advertised handshake value (Ajax maps catalog ids
+  such as `cursor-grok-4.6-high` to ACP ids such as
+  `grok-4.6[effort=high,fast=false]` before spawn or in-band apply; catalog ids
+  must never be sent through `session/set_config_option`
+  ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
+  Unspecified / Auto for Cursor still places a mapped
+  [`CURSOR_DEFAULT_MODEL`] spawn token on argv so the CLI default Composer Fast
+  is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+  Verification treats harness-reported ACP ids as matching the catalog pin when
+  they name the same model family (base + effort), even when bracket options
+  differ. When spawn and apply still leave a different model running (e.g.
+  Composer Fast while Grok High was pinned), the host emits a typed `error`
+  event and leaves `snapshot.model` on the harness-reported id. A refused or
+  unprovable pin on a ConfigOption-only harness keeps the session, emits a typed
+  `error` event, and leaves `snapshot.model` on the harness-reported id (or
+  empty), not the rejected pin.
 - Changing the model while connected persists `session_model` on the task through
   a core-owned operation before the host replaces the ACP child; a persistence
   failure returns a typed `error` event and leaves the running child unchanged.
@@ -147,8 +156,13 @@ existing paths.
   WebSocket URL; task `session_model` metadata and the host attach plan decide
   the model. The preference may still be updated from `ready` so it seeds the
   New Task picker for the next task only.
-- New Task and task-details model pickers list the full harness catalog from
-  `GET /api/session/models`. A failed catalog read shows an operator-visible
+- New Task lists the full harness catalog from `GET /api/session/models`. In
+  orchestration chat, task details expose **Switch** (harness + model) as the
+  in-session model control; there is no separate task-details model picker
+  ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Switch opens
+  with the current harness and live session model preselected; Apply on the
+  same harness persists `session_model` and drops the live ACP slot so the next
+  attach runs the chosen model. A failed catalog read shows an operator-visible
   error with retry; it must not fall back to Auto plus the live session model
   ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
