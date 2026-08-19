@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import LiveHead, { headState, headTone } from "./LiveHead";
+import LiveHead, { formatTurnUsage, headState, headTone } from "./LiveHead";
 
 const noop = vi.fn();
 
@@ -18,6 +18,7 @@ function mountHead(
       planStep={null}
       thoughtSnippet={null}
       usage={null}
+      turnUsage={null}
       activityAgeMs={0}
       connected
       onBack={noop}
@@ -88,6 +89,61 @@ describe("LiveHead context usage", () => {
   it("warns when context pressure is at or above 90%", () => {
     mountHead({ state: "idle", usage: { used: 92, size: 100 } });
     expect(screen.getByTestId("session-usage")).toHaveClass("is-tight");
+  });
+});
+
+describe("LiveHead turn usage", () => {
+  it("shows present token fields in the quiet line", () => {
+    mountHead({
+      state: "idle",
+      turnUsage: { inputTokens: 1200, outputTokens: 450, totalTokens: 1650 },
+    });
+    const row = screen.getByTestId("session-turn-usage");
+    expect(row).toHaveTextContent("Turn tokens:");
+    expect(row).toHaveTextContent("input 1,200");
+    expect(row).toHaveTextContent("output 450");
+    expect(row).toHaveTextContent("total 1,650");
+  });
+
+  it("omits missing token fields instead of showing zero", () => {
+    mountHead({
+      state: "working",
+      tone: "running",
+      turnUsage: { inputTokens: 800, totalTokens: 800 },
+    });
+    const row = screen.getByTestId("session-turn-usage");
+    expect(row).toHaveTextContent("input 800");
+    expect(row).toHaveTextContent("total 800");
+    expect(row.textContent).not.toMatch(/output\s+0/);
+    expect(row.textContent).not.toMatch(/cache read\s+0/);
+    expect(row.textContent).not.toMatch(/cache write\s+0/);
+  });
+
+  it("does not render a row when turnUsage is absent", () => {
+    mountHead({ state: "idle", turnUsage: null });
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
+  });
+
+  it("does not render a row when turnUsage has no token counts", () => {
+    mountHead({ state: "idle", turnUsage: { requestId: "req-1" } });
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
+  });
+
+  it("shows context usage and turn usage separately", () => {
+    mountHead({
+      state: "idle",
+      usage: { used: 30, size: 100 },
+      turnUsage: { inputTokens: 500, totalTokens: 500 },
+    });
+    expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 30% full");
+    expect(screen.getByTestId("session-turn-usage")).toHaveTextContent("Turn tokens:");
+  });
+});
+
+describe("formatTurnUsage", () => {
+  it("returns null when no token fields are present", () => {
+    expect(formatTurnUsage({})).toBeNull();
+    expect(formatTurnUsage({ requestId: "x" })).toBeNull();
   });
 });
 
