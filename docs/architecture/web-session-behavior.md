@@ -39,9 +39,10 @@ existing paths.
 - Cursor takes its model on the spawn argv when the harness pins at spawn; every
   harness (including Cursor) also applies an operator pin in-band when
   `configOptions` or `models.availableModels` advertises a model control **and**
-  the pin resolves to an exact advertised handshake value (Ajax maps catalog ids
-  such as `cursor-grok-4.6-high` to ACP ids such as
-  `grok-4.6[effort=high,fast=false]` before spawn or in-band apply; catalog ids
+  the pin resolves to an exact advertised handshake value (Ajax maps effort-suffixed
+  catalog ids such as `cursor-grok-4.6-high` and `gpt-5.6-sol-high` to ACP ids such as
+  `grok-4.6[effort=high,fast=false]` and `gpt-5.6-sol[effort=high,fast=false]` before
+  spawn or in-band apply; catalog ids
   must never be sent through `session/set_config_option`
   ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
   Unspecified / Auto for Cursor still places a mapped
@@ -61,12 +62,29 @@ existing paths.
   emits a typed `error` event, and leaves `snapshot.model` on the harness-reported
   id (or empty), not the rejected pin.
 - Changing the model while connected persists `session_model` on the task through
-  a core-owned operation before the host replaces the ACP child; a persistence
-  failure returns a typed `error` event and leaves the running child unchanged.
+  a core-owned operation before the host applies the pin on the live ACP session;
+  a persistence failure returns a typed `error` event and leaves the running child
+  unchanged. Same-harness Switch and WebSocket `set_model` send
+  `session/set_config_option` `{ sessionId, configId: "model", value }` with the
+  mapped advertised ACP id when a live slot exists; the ACP process, `sessionId`,
+  and JSONL transcript stay put and `snapshot.model` updates from the
+  harness-reported applied id. With no live slot, persist only — the next attach
+  uses the pin. Cross-harness Switch resets backend context on the same public
+  Ajax session: cancel any in-flight turn, discard the host queue, shut down the
+  old ACP child, clear the stored resume id, spawn the new harness with
+  `session/new` (no resume/load, no transcript replay), append a host note
+  (`Client switched harness. Context reset.`), and keep the TaskSession slot,
+  JSONL transcript, and WebSocket identity. With no live slot, persist only and
+  clear the stored resume id so the next attach uses empty context. In-band apply
+  unadvertised or refused triggers one respawn fallback (`session/new`, no resume);
+  if that still fails, the host emits a typed `error` and leaves `snapshot.model`
+  on the harness-reported id.
   Persist `None` for Auto/unspecified; never store the literal string `auto` as
   a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
-- Moving a task to another harness is refused unless it was launched over ACP,
-  and drops the live ACP slot so the next attach spawns the new harness.
+- Moving a task to another harness is refused unless it was launched over ACP.
+  Cross-harness Switch resets backend context on the live slot when present, or
+  clears the stored resume id when idle, so the next attach spawns the new harness
+  with empty context.
 - Ajax orchestration sessions are trusted local automation, and the Settings
   toggle discloses that supported agents run with full tool access and without
   approval prompts. After session creation or restore, the host reads only ACP
@@ -107,8 +125,8 @@ existing paths.
 
 ## Shutdown and slot retention
 
-- Dropping a task or changing harness shuts down the live `TaskSession` before a
-  new attach creates one for that handle.
+- Dropping a task or cross-harness Switch shuts down the live ACP child; the
+  TaskSession slot and JSONL transcript stay unless the task is dropped.
 - A task owns its orchestration session only while it exists in the registry and
   is not in the `Removed` lifecycle ([#977](https://github.com/mossipcams/ajax-cli/issues/977)).
   Sessions with no such owner are stale: Web Cockpit initialization deletes
@@ -124,13 +142,16 @@ existing paths.
 - `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
   children do not survive process exit.
 
-## Model switching across ACP process replacement
+## Model switching on the live ACP session
 
-- `set_model` while idle persists the desired model on the task, then respawns the
-  ACP child with the new model pin. An explicit operator choice always replaces
-  the running child even when slot metadata already matches.
+- `set_model` persists the desired model on the task, then applies it in-band on
+  the live ACP session via `session/set_config_option` when a slot exists and the
+  harness advertises a model control. The ACP process, `sessionId`, and JSONL
+  transcript stay put; `snapshot.model` updates from the harness-reported applied
+  id. One respawn fallback (`session/new`, no resume) runs when in-band apply is
+  unadvertised or refused and still fails to match the pin.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
-  status/note events.
+  status/note events and typed model-change errors.
 - A live `ready` event on an established socket must not reset browser reducer
   state; only reconnect-after-drop may clear and replay.
 - Each attach delivers one protocol v2 `snapshot` wire frame to the browser
@@ -173,10 +194,12 @@ existing paths.
   in-session model control; there is no separate task-details model picker
   ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Switch opens
   with the current harness and live session model preselected; Apply on the
-  same harness persists `session_model` and drops the live ACP slot so the next
-  attach runs the chosen model. A failed catalog read shows an operator-visible
-  error with retry; it must not fall back to Auto plus the live session model
-  ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
+  same harness persists `session_model` and applies the pin in-band on a live slot
+  (no slot: persist only). Cross-harness Apply persists and resets backend context
+  on the live slot (or clears the stored resume id when idle) so the new harness
+  starts with empty context while prior chat turns stay visible. A failed catalog read shows an
+  operator-visible error with retry; it must not fall back to Auto plus the live
+  session model ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
   Message, thought, tool, plan, mode, configuration, session-info, usage,
   turn_usage, and status-like updates have explicit mappings; unsupported

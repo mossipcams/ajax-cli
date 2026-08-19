@@ -324,9 +324,32 @@ where
     };
     let handle = percent_decode_model(&handle);
     let directory = Arc::clone(&state.task_session_directory);
-    let handle_for_drop = handle.clone();
-    let drop_session = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let drop_flag = std::sync::Arc::clone(&drop_session);
+    let handle_for_apply = handle.clone();
+    let apply_in_band = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let apply_flag = std::sync::Arc::clone(&apply_in_band);
+    let reset_harness = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reset_flag = std::sync::Arc::clone(&reset_harness);
+    let worktree_for_apply = std::sync::Arc::new(std::sync::Mutex::new(None::<std::path::PathBuf>));
+    let worktree_slot = std::sync::Arc::clone(&worktree_for_apply);
+    let model_for_apply = request.model.clone();
+    let agent_for_reset = request.agent.clone();
+    let same_harness = {
+        let guard = state.shared();
+        guard
+            .context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == handle)
+            .map(|task| {
+                *worktree_slot.lock().unwrap() = Some(task.worktree_path.clone());
+                !crate::slices::web_session::model_change::swap_resets_harness_context(
+                    task.selected_agent,
+                    &request.agent,
+                )
+            })
+            .unwrap_or(false)
+    };
 
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
@@ -342,7 +365,11 @@ where
                 );
                 match result {
                     Ok(outcome) => {
-                        drop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        if same_harness {
+                            apply_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        } else {
+                            reset_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
                         let _ = bridge.persist_registry_snapshot(context);
                         let response = match operation_success_response(outcome, context) {
                             Ok(response) => response,
@@ -383,8 +410,54 @@ where
             None,
         )
     });
-    if drop_session.load(std::sync::atomic::Ordering::SeqCst) {
-        directory.drop_session(&handle_for_drop).await;
+    let worktree_path = worktree_for_apply.lock().unwrap().clone();
+    if apply_in_band.load(std::sync::atomic::Ordering::SeqCst) {
+        if let Some(worktree) = worktree_path {
+            if let Err(error) = crate::slices::web_session::model_change::apply_persisted_model(
+                &directory,
+                &handle_for_apply,
+                &worktree,
+                model_for_apply.as_deref(),
+            )
+            .await
+            {
+                return match crate::runtime::json_response(
+                    409,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": error,
+                        "code": "command_failed",
+                    }),
+                ) {
+                    Ok(response) => response.into_axum_response(),
+                    Err(error) => response_from_web_error(error, None).into_axum_response(),
+                };
+            }
+        }
+    } else if reset_harness.load(std::sync::atomic::Ordering::SeqCst) {
+        if let Some(worktree) = worktree_path {
+            if let Err(error) = crate::slices::web_session::model_change::apply_cross_harness_reset(
+                &directory,
+                &handle_for_apply,
+                &worktree,
+                crate::slices::web_session::model_change::agent_client_from_name(&agent_for_reset),
+                model_for_apply.as_deref(),
+            )
+            .await
+            {
+                return match crate::runtime::json_response(
+                    409,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": error,
+                        "code": "command_failed",
+                    }),
+                ) {
+                    Ok(response) => response.into_axum_response(),
+                    Err(error) => response_from_web_error(error, None).into_axum_response(),
+                };
+            }
+        }
     }
     response.into_axum_response()
 }

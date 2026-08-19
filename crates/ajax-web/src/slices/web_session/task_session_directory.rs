@@ -259,6 +259,51 @@ impl TaskSessionDirectory {
         .await?
     }
 
+    pub async fn apply_model(
+        &self,
+        handle: &str,
+        worktree_path: &Path,
+        model: &str,
+    ) -> Result<u64, String> {
+        let tx = match self.command_tx(handle) {
+            Ok(tx) => tx,
+            Err(_) => return Ok(0),
+        };
+        let worktree_path = worktree_path.to_path_buf();
+        let model = model.to_string();
+        send_command(&tx, |reply| TaskSessionCommand::ApplyModel {
+            worktree_path,
+            model,
+            reply,
+        })
+        .await?
+    }
+
+    pub async fn reset_harness_context(
+        &self,
+        handle: &str,
+        worktree_path: &Path,
+        agent: AgentClient,
+        model: &str,
+    ) -> Result<(), String> {
+        if self.has_live_entry(handle) {
+            let tx = self.command_tx(handle)?;
+            let worktree_path = worktree_path.to_path_buf();
+            let model = model.to_string();
+            send_command(&tx, |reply| TaskSessionCommand::ResetHarness {
+                worktree_path,
+                model,
+                agent,
+                reply,
+            })
+            .await??;
+            Ok(())
+        } else {
+            web_session_store::clear_acp_session_id(&self.state_dir, handle);
+            Ok(())
+        }
+    }
+
     pub async fn respawn(
         &self,
         handle: &str,
@@ -409,6 +454,10 @@ impl TaskSessionDirectory {
             .map(|entry| entry.command_tx.clone())
             .ok_or_else(|| "session slot missing".to_string())
     }
+
+    pub(crate) fn has_live_entry(&self, handle: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(handle)
+    }
 }
 
 async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, String> {
@@ -451,11 +500,10 @@ pub(crate) async fn apply_client_message(
             if let Some(persist) = persist_session_model {
                 persist(&model)?;
             }
-            // Operator explicitly picked a model: always re-pin the ACP child even
-            // when slot metadata already matches (the running process may not).
-            let next_generation = directory
-                .respawn(handle, worktree_path, &model, true)
-                .await?;
+            if !directory.has_live_entry(handle) {
+                return Err("session slot missing".to_string());
+            }
+            let next_generation = directory.apply_model(handle, worktree_path, &model).await?;
             *generation = next_generation;
             Ok(ApplyClientMessageOutcome::ModelChanged)
         }

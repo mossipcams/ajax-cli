@@ -311,6 +311,202 @@ async fn post_task_without_an_agent_body_is_still_not_found() {
     assert_json_not_found(response, "not found").await;
 }
 
+#[test]
+fn post_task_same_harness_swap_keeps_live_child() {
+    use crate::adapters::web_session_acp::with_test_acp_program;
+    use ajax_core::models::AgentClient;
+    use std::sync::Arc;
+
+    let worktree = scratch_dir("same-harness-swap-worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = AgentClient::Cursor;
+    task.worktree_path = worktree.clone();
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let script =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js");
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "same-harness-swap");
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle = "web/fix-login";
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+
+    with_test_acp_program(&script, || {
+        rt.block_on(async {
+            directory
+                .acquire(handle, &worktree, "auto", AgentClient::Cursor)
+                .await
+                .expect("acquire");
+            let child_before = directory.child_id(handle).await;
+            assert!(directory.has_live_entry(handle));
+
+            let response = post_json(
+                &app,
+                &cookie,
+                "/api/tasks/web%2Ffix-login",
+                r#"{"agent":"cursor","model":"composer-2.5"}"#,
+            )
+            .await;
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(directory.has_live_entry(handle));
+            assert_eq!(directory.child_id(handle).await, child_before);
+        });
+    });
+}
+
+#[test]
+fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
+    use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+    use crate::adapters::web_session_store;
+    use ajax_core::models::AgentClient;
+    use std::sync::Arc;
+
+    let worktree = scratch_dir("cross-harness-swap-worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = AgentClient::Cursor;
+    task.worktree_path = worktree.clone();
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let script =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js");
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "cross-harness-swap-reset");
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle = "web/fix-login";
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--resume"], || {
+            rt.block_on(async {
+                directory
+                    .acquire(handle, &worktree, "auto", AgentClient::Cursor)
+                    .await
+                    .expect("acquire");
+                directory
+                    .record(
+                        handle,
+                        crate::slices::web_session::SessionServerEvent::Message {
+                            role: "user".to_string(),
+                            text: "prior turn".to_string(),
+                            item_id: "prior-user".to_string(),
+                            message_id: None,
+                        },
+                    )
+                    .await;
+                let child_before = directory.child_id(handle).await;
+                web_session_store::save_meta(
+                    &state.state_dir,
+                    handle,
+                    Some("old-resume-id"),
+                    "auto",
+                );
+                assert!(directory.has_live_entry(handle));
+
+                let response = post_json(
+                    &app,
+                    &cookie,
+                    "/api/tasks/web%2Ffix-login",
+                    r#"{"agent":"claude","model":"claude-opus-5"}"#,
+                )
+                .await;
+
+                assert_eq!(response.status(), StatusCode::OK);
+                assert!(directory.has_live_entry(handle));
+                let child_after = directory.child_id(handle).await;
+                assert_ne!(child_after, child_before);
+                directory.pump(handle).await;
+                let (events, _) = directory.read_from(handle, 0).await;
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    crate::slices::web_session::SessionServerEvent::Message { text, .. }
+                        if text == "prior turn"
+                )));
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    crate::slices::web_session::SessionServerEvent::Message { role, text, .. }
+                        if role == "note" && text == "Client switched harness. Context reset."
+                )));
+                assert!(!events.iter().any(|event| matches!(
+                    event,
+                    crate::slices::web_session::SessionServerEvent::Message { text, .. }
+                        if text == "replayed"
+                )));
+                let session_after = web_session_store::load::<
+                    crate::slices::web_session::SessionServerEvent,
+                >(&state.state_dir, handle)
+                .acp_session_id;
+                assert_eq!(session_after.as_deref(), Some("fake-sess-1"));
+            });
+        });
+    });
+}
+
+#[test]
+fn post_task_same_harness_swap_surfaces_apply_failure_with_live_slot() {
+    use crate::adapters::web_session_acp::{
+        set_test_acp_command, with_test_acp_extra_args, with_test_acp_program,
+    };
+    use ajax_core::models::AgentClient;
+    use std::sync::Arc;
+
+    let worktree = scratch_dir("swap-apply-fail-worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = AgentClient::Cursor;
+    task.worktree_path = worktree.clone();
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let script =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js");
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "swap-apply-fail");
+    let directory = Arc::clone(&state.task_session_directory);
+    let handle = "web/fix-login";
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--model-refuse"], || {
+            rt.block_on(async {
+                directory
+                    .acquire(handle, &worktree, "auto", AgentClient::Cursor)
+                    .await
+                    .expect("acquire");
+                assert!(directory.has_live_entry(handle));
+                set_test_acp_command(Some((
+                    std::path::Path::new("/no/such/acp-program"),
+                    &[] as &[&str],
+                )));
+
+                let response = post_json(
+                    &app,
+                    &cookie,
+                    "/api/tasks/web%2Ffix-login",
+                    r#"{"agent":"cursor","model":"composer-2.5"}"#,
+                )
+                .await;
+
+                set_test_acp_command(None);
+                assert_eq!(response.status(), StatusCode::CONFLICT);
+                let body = json_of(response).await;
+                assert_eq!(body["ok"], false);
+                assert_eq!(body["code"], "command_failed");
+            });
+        });
+    });
+}
+
 #[tokio::test]
 async fn axum_task_snapshot_route_is_not_supported() {
     let (_state, cookie, app) = app_with(

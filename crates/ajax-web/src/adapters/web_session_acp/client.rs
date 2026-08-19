@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::apply_model::operator_pin_satisfied;
+use super::apply_model::{operator_pin_satisfied, ApplyModelOutcome};
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
 use agent_client_protocol::schema::v1::SessionNotification;
 
@@ -257,6 +257,7 @@ impl AcpStdioClient {
         let ConnectionReady {
             session_id,
             session_new_result,
+            config_options: _,
             load_session_advertised,
             resumed,
             applied_model,
@@ -390,6 +391,20 @@ impl AcpStdioClient {
     /// models it can run. Empty until a session has been created.
     pub fn session_new_result(&self) -> &Value {
         &self.session_new_result
+    }
+
+    /// Apply an operator model pin on the live ACP session without respawning.
+    pub fn apply_model_pin(&self, desired_model: &str) -> Result<ApplyModelOutcome, String> {
+        let (result_tx, result_rx) = mpsc::channel();
+        self.commands
+            .send(ClientCommand::ApplyModelPin {
+                desired_model: desired_model.to_string(),
+                result: result_tx,
+            })
+            .map_err(|_| "ACP connection is closed".to_string())?;
+        result_rx
+            .recv_timeout(HANDSHAKE_TIMEOUT)
+            .map_err(|_| "ACP apply model timed out".to_string())?
     }
 
     fn command_result(

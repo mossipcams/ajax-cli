@@ -2,10 +2,10 @@
 
 use super::task_session::TaskSessionState;
 use super::transcript::{
-    already_noted, context_reset_needed, context_reset_note, slot_must_replace,
+    already_noted, context_reset_needed, context_reset_note, harness_switch_note, slot_must_replace,
 };
-use super::SessionServerEvent;
-use crate::adapters::web_session_acp::{AcpStdioClient, SpawnReport};
+use super::{apply_cancel_to_queue, SessionServerEvent};
+use crate::adapters::web_session_acp::{AcpStdioClient, ApplyModelOutcome, SpawnReport};
 use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
@@ -84,6 +84,44 @@ pub(super) async fn acquire(
     Ok(())
 }
 
+pub(super) async fn apply_model(
+    state: &mut TaskSessionState,
+    worktree_path: &Path,
+    model: &str,
+) -> Result<u64, String> {
+    let Some(client) = state.client.as_mut() else {
+        state.model = model.to_string();
+        return Ok(state.generation);
+    };
+
+    if client.host_exited() {
+        return respawn(state, worktree_path, model, true).await;
+    }
+
+    let generation_before = state.generation;
+    let apply_result = tokio::task::block_in_place(|| client.apply_model_pin(model));
+    let needs_respawn = matches!(
+        &apply_result,
+        Err(_) | Ok(ApplyModelOutcome { error: Some(_), .. })
+    );
+
+    if !needs_respawn {
+        let outcome = apply_result.expect("checked Ok without error");
+        state.model = model.to_string();
+        state.applied_model = outcome.applied_model.clone();
+        web_session_store::save_meta(
+            &state.state_dir,
+            &state.qualified_handle,
+            Some(client.session_id()),
+            &state.applied_model,
+        );
+        state.pending_model_snapshot = Some(outcome.applied_model);
+        return Ok(generation_before);
+    }
+
+    respawn(state, worktree_path, model, true).await
+}
+
 pub(super) async fn respawn(
     state: &mut TaskSessionState,
     worktree_path: &Path,
@@ -107,6 +145,57 @@ pub(super) async fn respawn(
     let (new_client, report) =
         spawn_acp(state.agent, worktree_path, model, resume_id.as_deref()).await?;
     install_replaced_client(state, new_client, &report, model)?;
+    Ok(state.generation)
+}
+
+pub(super) async fn reset_harness_context(
+    state: &mut TaskSessionState,
+    worktree_path: &Path,
+    model: &str,
+    agent: AgentClient,
+) -> Result<u64, String> {
+    if let Some(client) = state.client.as_mut() {
+        apply_cancel_to_queue(&mut state.queued, false);
+        let cancelled = client.cancel()?;
+        let resolved: Vec<SessionServerEvent> = cancelled
+            .into_iter()
+            .map(|request_id| SessionServerEvent::PermissionResolved {
+                request_id,
+                approved: false,
+            })
+            .collect();
+        state.append_to_log(resolved);
+        state.client = None;
+    } else {
+        apply_cancel_to_queue(&mut state.queued, false);
+    }
+
+    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
+
+    let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
+
+    let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
+    state.append_to_log(vec![note]);
+
+    web_session_store::save_meta(
+        &state.state_dir,
+        &state.qualified_handle,
+        Some(new_client.session_id()),
+        &report.applied_model,
+    );
+    state.client = Some(new_client);
+    state.model = model.to_string();
+    state.applied_model = report.applied_model.clone();
+    state.agent = agent;
+    state.generation = state.generation.saturating_add(1);
+    state.acp_alive = true;
+    state.stream_normalizer = super::normalize::StreamNormalizer::default();
+    state.usage_deduper = super::acp_usage::UsageDeduper::default();
+    if let Some(error) = &report.model_apply_error {
+        state.append_to_log(vec![SessionServerEvent::Error {
+            message: error.clone(),
+        }]);
+    }
     Ok(state.generation)
 }
 

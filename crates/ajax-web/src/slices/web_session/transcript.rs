@@ -115,6 +115,15 @@ pub(crate) fn context_reset_note() -> SessionServerEvent {
     }
 }
 
+pub(crate) fn harness_switch_note(item_id: String) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "note".to_string(),
+        text: "Client switched harness. Context reset.".to_string(),
+        item_id,
+        message_id: None,
+    }
+}
+
 pub(crate) fn context_reset_needed(resumed: bool, log: &TranscriptLog) -> bool {
     !resumed && !log.events.is_empty()
 }

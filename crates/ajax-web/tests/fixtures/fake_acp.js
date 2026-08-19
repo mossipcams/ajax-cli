@@ -69,6 +69,7 @@ function modelConfigOptions() {
       { value: 'composer-2.5[fast=true]', name: 'Composer Fast' },
       { value: 'grok-4.6[effort=high,fast=false]', name: 'Grok High' },
       { value: 'grok-4.6[effort=high,fast=true]', name: 'Grok High Fast' },
+      { value: 'gpt-5.6-sol[effort=high,fast=false]', name: 'GPT-5.6-Sol High' },
     );
   }
   return [{
