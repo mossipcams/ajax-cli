@@ -150,3 +150,29 @@ fn handle_with_slash_encodes_to_single_filename() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn delete_session_removes_the_transcript_file() {
+    let dir = scratch_dir("delete");
+    let handle = "web/fix-login";
+    append_events(&dir, handle, &[note("gone")]);
+    assert!(session_path(&dir, handle).is_file());
+    assert!(delete_session(&dir, handle));
+    assert!(!session_path(&dir, handle).exists());
+    assert!(!delete_session(&dir, handle));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_persisted_handles_decodes_slashy_handles() {
+    let dir = scratch_dir("list");
+    append_events(&dir, "web/fix/login", &[note("ok")]);
+    append_events(&dir, "web/other", &[note("also")]);
+    let mut handles = list_persisted_handles(&dir);
+    handles.sort();
+    assert_eq!(
+        handles,
+        vec!["web/fix/login".to_string(), "web/other".to_string()]
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

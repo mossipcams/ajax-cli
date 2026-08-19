@@ -136,6 +136,16 @@ fn idle_eviction_reclaims_finished_disconnected_sessions() {
             })
         });
 
+        // The first pong/TurnEnd snapshot can still have `prompt_in_flight`
+        // set on the agent client, so production reports `evictable == false`.
+        // Wait until the session has drained to a true idle state before
+        // asserting eligibility, instead of racing on the first event.
+        pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+            directory
+                .eviction_snapshot(handle_a)
+                .is_some_and(|snapshot| snapshot.evictable)
+        });
+
         let snapshot = directory.eviction_snapshot(handle_a).expect("snapshot");
         assert!(
             snapshot.evictable,
