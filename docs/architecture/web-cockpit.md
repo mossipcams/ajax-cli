@@ -37,8 +37,9 @@ chosen harness. When the flag is on,
 `#/session/<handle>` renders SessionChat (live head + transcript + composer) for
 session-capable tasks that prefer chat; **Ajax terminal** in task details switches
 to `#/t/<handle>` and remembers that choice in browser localStorage
-(`ajax.web.taskView.terminal`). **Ajax chat** in terminal task details clears
-the preference and returns to `#/session/<handle>`. Diff Review remains swipe-left.
+(`ajax.web.taskView.terminal`). **Ajax chat** in the footer Task details
+disclosure (`TaskMetaDetails`, summary "Task details") and the header Details
+sheet clears the preference and returns to `#/session/<handle>`. Diff Review remains swipe-left.
 The browser still does not own transcript/queue.
 
 When that mode is enabled, agent conversation runs over ACP stdio via the

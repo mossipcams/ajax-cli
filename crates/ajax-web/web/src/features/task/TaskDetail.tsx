@@ -127,7 +127,12 @@ export default function TaskDetail({
       </div>
 
       <div className="task-meta-chrome">
-        <TaskMetaDetails detail={detail} onResult={onResult} />
+        <TaskMetaDetails
+          detail={detail}
+          onResult={onResult}
+          showAjaxChat={showAjaxChat}
+          onOpenChat={onOpenChat}
+        />
       </div>
 
       {detailsOpen ? (
@@ -157,23 +162,16 @@ export default function TaskDetail({
                   </div>
 
                   <div className="session-details-body">
-                    <TaskMetaDetails detail={detail} onResult={onResult} embedded />
-
-                    {showAjaxChat ? (
-                      <div className="session-sheet-tools" data-testid="task-ajax-chat-action">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          data-testid="task-ajax-chat"
-                          onClick={() => {
-                            setDetailsOpen(false);
-                            onOpenChat?.();
-                          }}
-                        >
-                          Ajax chat
-                        </Button>
-                      </div>
-                    ) : null}
+                    <TaskMetaDetails
+                      detail={detail}
+                      onResult={onResult}
+                      embedded
+                      showAjaxChat={showAjaxChat}
+                      onOpenChat={() => {
+                        setDetailsOpen(false);
+                        onOpenChat?.();
+                      }}
+                    />
                   </div>
                 </div>
               </div>
