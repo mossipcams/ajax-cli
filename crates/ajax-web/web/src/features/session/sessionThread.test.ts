@@ -440,6 +440,15 @@ describe("explainAcpError", () => {
     const message = "Lost the session connection. Reopen the task to try again.";
     expect(explainAcpError(message)).toBe(message);
   });
+
+  it("maps opaque persist/runtime blocking failures (#962)", () => {
+    expect(
+      explainAcpError(
+        "Cannot block the current thread from within a runtime. This happens because a function attempted to block the current thread while the thread is being used to drive asynchronous tasks.",
+      ),
+    ).toMatch(/Could not save the selected model/i);
+    expect(explainAcpError("session task stopped")).toMatch(/session worker stopped/i);
+  });
 });
 
 describe("explainOpenFailure", () => {

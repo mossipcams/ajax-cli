@@ -257,6 +257,56 @@ async fn run_optimistic_keeps_conflict_when_cas_loss_is_not_durable() {
     assert_eq!(reload_calls.load(Ordering::SeqCst), 0);
 }
 
+// Regression for issue #962: set_model persist runs on the WebSocket Tokio worker;
+// blocking_lock on control_lane must not panic the runtime thread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persist_task_session_model_from_async_worker_issue_962() {
+    use ajax_core::registry::Registry as _;
+
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, _cookie, _app) =
+        app_with(context, TestBridge::default(), "persist-session-model-962");
+    let state_for_worker = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_worker.persist_task_session_model("web/fix-login", "composer-2.5")
+    })
+    .await
+    .expect("persist worker should not panic");
+
+    assert!(result.is_ok(), "expected persist ok, got {result:?}");
+    let guard = state.shared();
+    let task = guard
+        .context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+        .expect("task");
+    assert_eq!(task.session_model(), Some("composer-2.5"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persist_task_session_model_failure_from_async_worker_issue_962() {
+    let context = crate::test_support::context_with_fix_login_task();
+    let (state, _cookie, _app) = app_with(
+        context,
+        TestBridge::default(),
+        "persist-session-model-fail-962",
+    );
+    let state_for_worker = state.clone();
+    let join = tokio::spawn(async move {
+        state_for_worker.persist_task_session_model("web/missing-task", "composer-2.5")
+    });
+    let result = join
+        .await
+        .expect("persist worker join should succeed without panic");
+    let error = result.expect_err("expected persist failure");
+    assert!(
+        error.contains("task not found") || error.contains("Task not found"),
+        "unexpected error: {error}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn run_optimistic_installs_operate_clone_when_durable_cas_loss_has_no_disk_reload() {
     use ajax_core::models::TaskId;
