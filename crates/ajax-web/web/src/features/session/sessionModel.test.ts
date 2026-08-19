@@ -3,6 +3,8 @@ import {
   DEFAULT_SESSION_MODEL,
   SESSION_MODEL_STORAGE_KEY,
   composeCursorCatalogId,
+  encodeCursorSelection,
+  decodeCursorPipeOrCatalogId,
   fetchSessionModels,
   isSessionModelChangeFailure,
   normalizeSessionAgent,
@@ -154,5 +156,27 @@ describe("sessionModel", () => {
         catalog,
       ),
     ).toBe("gpt-5.6-sol-medium");
+  });
+
+  it("encodes and decodes pipe-form Cursor session_model (#979)", () => {
+    expect(
+      encodeCursorSelection("grok-4.6", "high", false, { efforts: ["high"], hasFast: true }),
+    ).toBe("grok-4.6|effort=high|fast=false");
+    expect(
+      encodeCursorSelection("grok-4.6", "high", true, { efforts: ["high"], hasFast: true }),
+    ).toBe("grok-4.6|effort=high|fast=true");
+    expect(
+      encodeCursorSelection("composer-2.5", undefined, false, { efforts: [], hasFast: true }),
+    ).toBe("composer-2.5|fast=false");
+    expect(decodeCursorPipeOrCatalogId("grok-4.6|effort=high|fast=false")).toEqual({
+      base: "grok-4.6",
+      effort: "high",
+      fast: false,
+    });
+    expect(decodeCursorPipeOrCatalogId("cursor-grok-4.6-high")).toEqual({
+      base: "grok-4.6",
+      effort: "high",
+      fast: false,
+    });
   });
 });

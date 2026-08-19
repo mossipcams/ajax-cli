@@ -43,18 +43,16 @@ existing paths.
   `clientCapabilities._meta.parameterizedModelPicker: true` on ACP `initialize`
   so Cursor exposes separate `model` / `effort` / `fast` config options instead
   of Fast-only exploded variants ([#979]).
-  When those split options are advertised, non-Fast catalog pins such as
-  `cursor-grok-4.6-high` apply as `model=<base>`, `effort=<level>` when present,
-  and `fast=false` unless the catalog id is Fast; Ajax reconstructs the applied
-  id from those options (e.g. `grok-4.6[effort=high,fast=false]`) for
-  `snapshot.model` and pin matching. Bare `grok-4.6` must not satisfy
-  `cursor-grok-4.6-high`. (Ajax also maps effort-suffixed catalog ids to ACP ids
-  such as `cursor-grok-4.6-high` (spawn argv pass-through for explicit Grok
-  catalog pins) and `grok-4.6` (unspecified / Auto spawn default), plus
-  `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]`
-  (in-band bracket tokens) when the harness still advertises exploded variants;
-  catalog ids must never be sent through `session/set_config_option`
-  ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
+  When those split options are advertised, non-Fast pins such as
+  `grok-4.6|effort=high|fast=false` (or legacy `cursor-grok-4.6-high`) apply as
+  `model=<base>`, `effort=<level>` when present, and `fast=false` unless Fast is
+  on; Ajax reconstructs the applied id from those options (e.g.
+  `grok-4.6[effort=high,fast=false]`) for `snapshot.model` and pin matching. Bare
+  `grok-4.6` must not satisfy `grok-4.6|effort=high|fast=false`. Pipe-form Grok
+  selections reconstruct `cursor-grok-*` spawn argv tokens; legacy exploded ids
+  keep their existing spawn/in-band mappings ([#979]). Catalog ids must never be
+  sent through `session/set_config_option`
+  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)).
   When the handshake omits the non-Fast bracket token (variants mode often
   advertises only `grok-4.6[effort=high,fast=true]`), Ajax still attempts
   in-band apply of the mapped non-Fast bracket id and, when present, a separate
@@ -231,9 +229,10 @@ existing paths.
   `ModelPicker`. Bridge harnesses keep the reasoning picker from `catalog.reasoning`.
   Cursor shows one row per model base (Fast catalog variants collapsed), an **Effort**
   row when the catalog encodes multiple levels on that base, and a **Fast** Off/On
-  row (default Off). Selection persists as a composed Ajax catalog id such as
-  `cursor-grok-4.6-high` or `composer-2.5-fast`, not as pipe-form `grok-4.6|fast=false`.
-  Switch opens with the current harness and live session model preselected; Apply on the
+  row (default Off). Selection persists as pipe-form `session_model` such as
+  `grok-4.6|effort=high|fast=false` or `composer-2.5|fast=false`; Auto stays
+  `auto`. Legacy exploded catalog ids such as `cursor-grok-4.6-high` still decode
+  in the picker and apply on the backend. Switch opens with the current harness and live session model preselected; Apply on the
   same harness persists `session_model` and applies the pin in-band on a live slot
   (no slot: persist only). Cross-harness Apply persists and resets backend context
   on the live slot (or clears the stored resume id when idle) so the new harness

@@ -86,15 +86,74 @@ describe("ModelPicker", () => {
     expect(screen.queryByRole("radio", { name: /Auto/i })).not.toBeInTheDocument();
   });
 
-  it("collapses Cursor Fast variants and emits composed catalog ids (#979)", async () => {
+  it("collapses Cursor Fast variants and emits pipe-form session_model (#979)", async () => {
     const onChange = vi.fn();
     stubCatalog({
       models: [
         { id: "auto", label: "Auto" },
-        { id: "composer-2.5", label: "Composer 2.5" },
-        { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
-        { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
-        { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=high|fast=false"
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toHaveAttribute("aria-checked", "true");
+    });
+    expect(screen.getByTestId("model-fast")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("radio", { name: "On" }));
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=high|fast=true");
+
+    onChange.mockClear();
+    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
+    expect(onChange).toHaveBeenCalledWith("composer-2.5|fast=false");
+  });
+
+  it("shows unknown current option when snapshot id base is not in catalog (#979)", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="cursor-grok-5.0-high"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "cursor-grok-5.0-high" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+    expect(screen.queryByRole("radio", { name: "Grok 4.6" })).not.toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("still decodes legacy exploded Cursor catalog ids (#979)", async () => {
+    const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
       ],
       default: "cursor-grok-4.6-high",
     });
@@ -110,15 +169,6 @@ describe("ModelPicker", () => {
     await waitFor(() => {
       expect(screen.getByRole("radio", { name: "Grok 4.6" })).toHaveAttribute("aria-checked", "true");
     });
-    expect(screen.queryByRole("radio", { name: /Composer 2.5 Fast/i })).not.toBeInTheDocument();
-    expect(screen.getByTestId("model-fast")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
-
-    fireEvent.click(screen.getByRole("radio", { name: "On" }));
-    expect(onChange).toHaveBeenCalledWith("cursor-grok-4.6-high-fast");
-
-    onChange.mockClear();
-    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
-    expect(onChange).toHaveBeenCalledWith("composer-2.5");
   });
 });
