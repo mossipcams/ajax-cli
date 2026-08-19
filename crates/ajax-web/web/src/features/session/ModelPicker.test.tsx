@@ -53,7 +53,7 @@ describe("ModelPicker", () => {
         agent="codex"
         agentLabel="Codex"
         value="model-11"
-        onChange={() => {}}
+        onChange={vi.fn()}
       />,
     );
 
