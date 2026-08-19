@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent, screen, act, waitFor } from "@testing-library/react";
+import { render, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
 import SessionChat from "./SessionChat";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import * as useTaskTerminalSpeechModule from "@/features/task/useTaskTerminalSpeech";
@@ -408,14 +408,50 @@ describe("SessionChat smoke", () => {
   it("leads the task details sheet with task identity (#p1 layout)", () => {
     mountChat();
     openTaskDetails();
+    const sheet = screen.getByTestId("session-task-panel");
     const identity = screen.getByTestId("session-task-identity");
     const terminal = screen.getByTestId("session-ajax-terminal");
     const meta = screen.getByTestId("task-meta-details-embedded");
     expect(identity).toHaveTextContent("Fix login");
     expect(identity).toHaveTextContent("web/fix-login");
     expect(identity).toHaveTextContent("ajax/fix-login");
-    expect(identity.compareDocumentPosition(terminal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(terminal.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(terminal.compareDocumentPosition(identity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(identity.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(sheet).getByTestId("session-details-body")).toContainElement(identity);
+  });
+
+  it("#976 pins Ajax terminal outside the scrolling body with iOS-safe sheet insets", () => {
+    const scrimBlock =
+      stylesSource.match(/\.session-sheet-scrim\s*\{([^}]*)\}/)?.[1] ?? "";
+    const sheetBlock =
+      stylesSource.match(/\.session-details-sheet\s*\{([^}]*)\}/)?.[1] ?? "";
+    const bodyBlock =
+      stylesSource.match(/\.session-details-body\s*\{([^}]*)\}/)?.[1] ?? "";
+    const modelPickerBlock =
+      stylesSource.match(
+        /\.session-details-sheet \.session-model-catalog \.model-picker[\s\S]*?\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(scrimBlock).toMatch(/flex-direction:\s*column/);
+    expect(scrimBlock).toMatch(/justify-content:\s*flex-end/);
+    expect(scrimBlock).toMatch(/overflow:\s*hidden/);
+    expect(sheetBlock).toMatch(/flex:\s*0\s+1\s+auto/);
+    expect(sheetBlock).toMatch(/env\(safe-area-inset-top/);
+    expect(sheetBlock).not.toMatch(/max-height:\s*calc\(100% - 24px\)/);
+    expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
+    expect(modelPickerBlock).toMatch(/max-height:\s*none/);
+    expect(modelPickerBlock).toMatch(/overflow:\s*visible/);
+
+    mountChat();
+    openTaskDetails();
+    const sheet = screen.getByTestId("session-task-panel");
+    const primaryTools = within(sheet).getByTestId("session-primary-tools");
+    const body = within(sheet).getByTestId("session-details-body");
+    const identity = within(sheet).getByTestId("session-task-identity");
+    expect(body).not.toContainElement(primaryTools);
+    expect(primaryTools).toHaveClass("session-sheet-tools-primary");
+    expect(primaryTools.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(body).toContainElement(identity);
   });
 
   it("keeps the model catalog collapsed until Change is opened (#p1 distill)", async () => {
