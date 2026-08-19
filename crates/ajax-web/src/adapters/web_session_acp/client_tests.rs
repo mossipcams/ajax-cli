@@ -386,6 +386,30 @@ fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
+#[test]
+fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
+    let dir = scratch_dir("model-cursor-unspecified-979");
+    let script = fake_acp_fixture();
+    let mapped = cursor_catalog_to_acp_spawn_token(CURSOR_DEFAULT_MODEL);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
+            assert!(
+                report.model_apply_error.is_none(),
+                "unspecified spawn must run {mapped:?}, not Composer Fast: {:?}",
+                report.model_apply_error
+            );
+            assert_eq!(report.applied_model, mapped);
+            assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // Regression for #954: ConfigOption-only harnesses still refuse unadvertised pins.
 #[test]
 fn bridge_errors_when_pin_not_advertised_issue_954() {

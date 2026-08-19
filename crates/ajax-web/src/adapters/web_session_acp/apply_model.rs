@@ -8,7 +8,8 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Agent, ConnectionTo};
 use ajax_core::adapters::{
-    cursor_model_intents_match, parse_cursor_model_intent, parse_model_selection, ModelSelection,
+    cursor_catalog_to_acp_spawn_token, cursor_model_intents_match, parse_cursor_model_intent,
+    parse_model_selection, ModelSelection, CURSOR_DEFAULT_MODEL,
 };
 use serde_json::Value;
 
@@ -122,19 +123,21 @@ fn resolve_cursor_pin_for_apply(
     config_options: Option<&[SessionConfigOption]>,
     catalog_id: &str,
 ) -> Option<ModelSelection> {
+    let spawn_token = cursor_catalog_to_acp_spawn_token(catalog_id);
+    let advertised = advertised_model_ids(session_result, config_options);
+    if advertised.iter().any(|id| id == &spawn_token) {
+        return Some(ModelSelection {
+            model: spawn_token,
+            options: Vec::new(),
+        });
+    }
     let desired = parse_cursor_model_intent(catalog_id)?;
-    let mut matches: Vec<(bool, String)> = advertised_model_ids(session_result, config_options)
-        .into_iter()
-        .filter_map(|id| {
-            let applied = parse_cursor_model_intent(&id)?;
-            cursor_model_intents_match(&desired, &applied)
-                .then_some((applied.fast.unwrap_or(true), id))
+    advertised.into_iter().find_map(|id| {
+        let applied = parse_cursor_model_intent(&id)?;
+        cursor_model_intents_match(&desired, &applied).then_some(ModelSelection {
+            model: id,
+            options: Vec::new(),
         })
-        .collect();
-    matches.sort_by_key(|(fast, _)| *fast);
-    matches.into_iter().next().map(|(_, id)| ModelSelection {
-        model: id,
-        options: Vec::new(),
     })
 }
 
@@ -280,6 +283,20 @@ pub async fn apply_model_pin(
     let mut applied = read_applied_model(session_result, config_options);
 
     if is_unspecified_model(desired_model) {
+        if model_pins_at_spawn {
+            if let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) {
+                if let Some(applied_intent) = parse_cursor_model_intent(&applied) {
+                    if !cursor_model_intents_match(&default_intent, &applied_intent) {
+                        return ApplyModelOutcome {
+                            applied_model: applied.clone(),
+                            error: Some(format!(
+                                "session model defaulted to {applied} — Ajax expects {CURSOR_DEFAULT_MODEL}"
+                            )),
+                        };
+                    }
+                }
+            }
+        }
         return ApplyModelOutcome {
             applied_model: applied,
             error: None,
@@ -477,13 +494,14 @@ mod tests {
         ));
     }
 
-    // Regression for #954: handshake ids in a different string form still match.
+    // Regression for #954 / #979: only the non-Fast advertised id matches a
+    // non-Fast catalog pin; Fast must not count as success.
     #[test]
-    fn catalog_pin_matches_advertised_acp_id_issue_954() {
+    fn catalog_pin_matches_non_fast_advertised_acp_id_issue_954_979() {
         use ajax_core::adapters::parse_model_selection;
 
         let pin = parse_model_selection("cursor-grok-4.6-high").unwrap();
-        assert!(model_matches_pin(
+        assert!(!model_matches_pin(
             "grok-4.6[effort=high,fast=true]",
             &pin,
             true
@@ -493,5 +511,47 @@ mod tests {
             &pin,
             true
         ));
+        assert!(!model_matches_pin("composer-2.5[fast=true]", &pin, true));
+    }
+
+    #[test]
+    fn resolve_cursor_pin_prefers_mapped_non_fast_spawn_token_issue_979() {
+        use agent_client_protocol::schema::v1::{SessionConfigOption, SessionConfigSelectOption};
+
+        let options = vec![SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5[fast=true]",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High Fast"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=false]", "Grok High"),
+            ],
+        )];
+        let handshake = json!({ "sessionId": "s1" });
+        let resolved =
+            resolve_cursor_pin_for_apply(&handshake, Some(&options), "cursor-grok-4.6-high")
+                .expect("mapped non-Fast token is advertised");
+        assert_eq!(resolved.model, "grok-4.6[effort=high,fast=false]");
+    }
+
+    #[test]
+    fn unspecified_cursor_default_rejects_composer_fast_issue_979() {
+        let handshake = json!({
+            "sessionId": "s1",
+            "configOptions": [{
+                "id": "model",
+                "currentValue": "composer-2.5[fast=true]",
+                "options": [{ "value": "composer-2.5[fast=true]", "name": "Composer Fast" }]
+            }]
+        });
+        let applied = read_applied_model(&handshake, None);
+        if let Some(default_intent) = parse_cursor_model_intent(CURSOR_DEFAULT_MODEL) {
+            let applied_intent = parse_cursor_model_intent(&applied).expect("applied intent");
+            assert!(!cursor_model_intents_match(
+                &default_intent,
+                &applied_intent
+            ));
+        }
     }
 }

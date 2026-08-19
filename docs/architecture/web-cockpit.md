@@ -136,13 +136,13 @@ sheet as the dashboard (orchestration chat pre-selected when the flag is on);
 the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
-`POST /api/tasks/{handle}` with `{ "agent", "model" }` moves an existing task to
-another harness, exposed as the Harness switch in the Ajax chat (SessionChat)
-task-details modal. It is
-refused for a task that was launched interactively, because that task's agent is
-live in its tmux pane and the registry must not name a harness that is not the
-running process. On success the host drops the task's ACP slot so the next attach
-spawns the new harness.
+`POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
+model for an existing task, exposed as **Switch** in the Ajax chat (SessionChat)
+task-details modal. Same-harness model changes persist `session_model` and drop
+the live ACP slot so the next attach runs the chosen model; cross-harness
+changes spawn the new harness on the next attach. Switch is refused for a task
+that was launched interactively, because that task's agent is live in its tmux
+pane and the registry must not name a harness that is not the running process.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The

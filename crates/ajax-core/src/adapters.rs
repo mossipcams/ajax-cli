@@ -626,6 +626,19 @@ mod tests {
     }
 
     #[test]
+    fn cursor_model_intents_match_requires_matching_fast_issue_979() {
+        use crate::adapters::{cursor_model_intents_match, parse_cursor_model_intent};
+
+        let desired = parse_cursor_model_intent("cursor-grok-4.6-high").unwrap();
+        let non_fast = parse_cursor_model_intent("grok-4.6[effort=high,fast=false]").unwrap();
+        let fast = parse_cursor_model_intent("grok-4.6[effort=high,fast=true]").unwrap();
+        let composer_fast = parse_cursor_model_intent("composer-2.5[fast=true]").unwrap();
+        assert!(cursor_model_intents_match(&desired, &non_fast));
+        assert!(!cursor_model_intents_match(&desired, &fast));
+        assert!(!cursor_model_intents_match(&desired, &composer_fast));
+    }
+
+    #[test]
     fn acp_args_for_candidate_pins_cursor_default_on_unspecified() {
         use crate::adapters::agent::{
             acp_args_for_candidate, acp_launch_for_agent, cursor_catalog_to_acp_spawn_token,

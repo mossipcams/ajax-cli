@@ -75,13 +75,15 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
 
 /// True when `applied` is the same Cursor model family as `desired`.
 ///
-/// Handshake ids may differ in bracket options (e.g. `fast`) from the catalog
-/// pin ([#954](https://github.com/mossipcams/ajax-cli/issues/954)).
+/// Bracket `fast` must agree: a non-Fast catalog pin must not match an
+/// advertised `fast=true` handshake id ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub fn cursor_model_intents_match(
     desired: &CursorModelIntent,
     applied: &CursorModelIntent,
 ) -> bool {
-    desired.base == applied.base && desired.effort == applied.effort
+    desired.base == applied.base
+        && desired.effort == applied.effort
+        && desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
 /// Map an Ajax catalog id to the ACP spawn token Cursor accepts on `--model`.

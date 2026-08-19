@@ -26,7 +26,7 @@ function spawnModelFromArgv() {
   }
   return null;
 }
-let currentModel = cliDefaultModel ?? spawnModelFromArgv() ?? 'harness-default';
+let currentModel = spawnModelFromArgv() ?? cliDefaultModel ?? 'harness-default';
 const modelRefuse = process.argv.includes('--model-refuse');
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
