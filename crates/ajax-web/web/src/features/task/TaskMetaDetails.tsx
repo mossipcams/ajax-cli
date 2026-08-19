@@ -1,6 +1,7 @@
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { formatDuration, relativeTime } from "@/shared/lib/state";
 import { copyText } from "@/shared/lib/clipboard";
+import { Button } from "@/shared/ui/button";
 import TestInDevPanel from "./TestInDevPanel";
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
   /** When the sheet identity header already shows branch. */
   hideBranch?: boolean;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
+  showAjaxChat?: boolean;
+  onOpenChat?: () => void;
 }
 
 const ANNOTATION_KIND_LABELS: Record<string, string> = {
@@ -138,6 +141,8 @@ export default function TaskMetaDetails({
   embedded = false,
   hideBranch = false,
   onResult,
+  showAjaxChat = false,
+  onOpenChat,
 }: Props) {
   const nowSecs = () => Math.floor(Date.now() / 1000);
 
@@ -216,6 +221,19 @@ export default function TaskMetaDetails({
             ))}
           </ul>
         </>
+      ) : null}
+
+      {showAjaxChat ? (
+        <div className="session-sheet-tools" data-testid="task-ajax-chat-action">
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="task-ajax-chat"
+            onClick={() => onOpenChat?.()}
+          >
+            Ajax chat
+          </Button>
+        </div>
       ) : null}
     </div>
   );

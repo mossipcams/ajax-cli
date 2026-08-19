@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, fireEvent, screen, act } from "@testing-library/react";
+import { render, fireEvent, screen, act, within } from "@testing-library/react";
 import TaskDetail from "./TaskDetail";
 import taskDetailSource from "./TaskDetail?raw";
 import taskTerminalSource from "./TaskTerminal?raw";
@@ -133,9 +133,11 @@ describe("TaskDetail", () => {
         onOpenChat={onOpenChat}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-details"));
-    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
+    fireEvent.click(
+      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
+    );
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
@@ -153,7 +155,27 @@ describe("TaskDetail", () => {
     fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     expect(footerDisclosure).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
+    fireEvent.click(
+      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
+    );
+    expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("shows Ajax chat in the footer Task details disclosure when orchestration chat is enabled and the task is session-capable", () => {
+    const onOpenChat = vi.fn();
+    render(
+      <TaskDetail
+        detail={detail({ session_capable: true })}
+        orchestrationChat
+        onOpenChat={onOpenChat}
+      />,
+    );
+    const footerDisclosure = screen.getByRole("group");
+    expect(footerDisclosure).not.toHaveAttribute("open");
+
+    fireEvent.click(screen.getByText("Task details"));
+    expect(footerDisclosure).toHaveAttribute("open");
+    fireEvent.click(within(footerDisclosure).getByRole("button", { name: "Ajax chat" }));
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 

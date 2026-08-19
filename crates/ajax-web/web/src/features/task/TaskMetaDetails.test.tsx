@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import TaskMetaDetails, { humanizeTaskAnnotation } from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
@@ -184,6 +184,32 @@ describe("TaskMetaDetails", () => {
     expect(screen.getByTestId("task-meta-details-embedded")).toBeInTheDocument();
     expect(screen.queryByText("Branch")).not.toBeInTheDocument();
     expect(screen.getByText("Base")).toBeInTheDocument();
+  });
+
+  it("shows Ajax chat in the footer Task details disclosure when enabled", () => {
+    const onOpenChat = vi.fn();
+    render(
+      <TaskMetaDetails
+        detail={detail({ session_capable: true })}
+        showAjaxChat
+        onOpenChat={onOpenChat}
+      />,
+    );
+    const footerDisclosure = screen.getByRole("group");
+    expect(footerDisclosure).not.toHaveAttribute("open");
+
+    fireEvent.click(screen.getByText("Task details"));
+    expect(footerDisclosure).toHaveAttribute("open");
+    fireEvent.click(within(footerDisclosure).getByRole("button", { name: "Ajax chat" }));
+    expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("hides Ajax chat when showAjaxChat is false", () => {
+    render(
+      <TaskMetaDetails detail={detail({ session_capable: true })} onOpenChat={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByText("Task details"));
+    expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
   });
 
   it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {
