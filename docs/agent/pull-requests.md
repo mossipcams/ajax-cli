@@ -85,9 +85,10 @@ The Web job runs in the pinned Playwright container image matching
 ## Who opens the PR
 
 The model-router-selected delegate runs `scripts/gh-pr-create`, not raw
-`gh pr create` and not the orchestrator. The wrapper creates the PR, strips
-Cursor footer / co-author lines from the body, and prints the URL. The
-orchestrator reviews the delta and reports that URL.
+`gh pr create`. After an explicit parent-local bypass, the active agent runs
+the same wrapper. The wrapper creates the PR, strips Cursor footer /
+co-author lines from the body, and prints the URL. The orchestrator reviews
+the delta and reports that URL.
 
 ## Local verification gate before a PR
 

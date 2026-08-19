@@ -116,9 +116,14 @@ Call `model-router` for every implementation write. Dispatch through acpx
 Missing `acpx` is stop, not a license to Task or parent-local writes. Do not
 duplicate model rankings or exact model IDs in this file.
 
+If the user explicitly approved bypassing delegation for this request, the
+active agent may implement, commit, push, and open pull requests in-process.
+That approval is per-request; it does not change the default.
+
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, commits, pushes, and runs `scripts/gh-pr-create`; the
-orchestrator reports the PR URL after reviewing the delta. Delegates must not
+orchestrator reports the PR URL after reviewing the delta. After an explicit
+bypass, the active agent does that same PR path in-process. Delegates must not
 merge, rebase, force-push, or switch branches unless the user explicitly
 authorizes that behavior.
 

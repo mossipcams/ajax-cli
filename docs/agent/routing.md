@@ -12,8 +12,9 @@ Always use the `model-router` skill for implementation writes. Do not spawn
 native harness subagents (Cursor Task, best-of-n, Claude/Codex task children,
 or pstack explorers) instead of the router. It emits one `EXECUTION` decision
 (agent, model, risk, scope, verify, fallback), then execute and verify. Skip
-it only for pure Q&A or exploration with no file changes. The orchestrator
-plans and does not implement.
+it only for pure Q&A or exploration with no file changes, or when the user
+explicitly approved a parent-local bypass for this request. Without that
+approval the orchestrator plans and does not implement.
 
 Do not duplicate provider model rankings or exact model IDs in repository
 documentation; the router registry is their source of truth.
