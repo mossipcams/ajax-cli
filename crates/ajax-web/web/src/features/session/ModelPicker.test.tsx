@@ -32,7 +32,7 @@ describe("ModelPicker", () => {
         agent="cursor"
         agentLabel="Cursor"
         value="model-3"
-        onChange={() => {}}
+        onChange={vi.fn()}
       />,
     );
 
@@ -50,7 +50,7 @@ describe("ModelPicker", () => {
         agent="cursor"
         agentLabel="Cursor"
         value="composer-2.5"
-        onChange={() => {}}
+        onChange={vi.fn()}
       />,
     );
 
