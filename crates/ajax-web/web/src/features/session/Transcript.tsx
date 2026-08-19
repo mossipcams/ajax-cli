@@ -9,7 +9,7 @@ import { memo, useState } from "react";
 import Markdown from "./Markdown";
 import ToolCard, { ActivityRow } from "./ToolCard";
 import { thoughtSnippet, type ConversationItem, type PlanEntry } from "./sessionThread";
-import { elapsedMs, formatElapsed } from "./toolPresentation";
+import { cleanTitle, elapsedMs, formatElapsed } from "./toolPresentation";
 
 /** Reasoning is the agent's account of its own turn: worth keeping, never worth
  * outranking the answer. Collapsed to one line until asked for, except while it
@@ -26,6 +26,9 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
       <ActivityRow
         className="session-thinking-toggle"
         mark="∴"
+        // Reasoning is prose: holding its last characters aside turns the row
+        // into "…eed to move t…". Only the head ellipsizes here.
+        tailChars={0}
         target={thoughtSnippet(text, 90)}
         aria-label={`Thinking — ${thoughtSnippet(text, 90)}`}
         aria-expanded={expanded}
@@ -90,10 +93,13 @@ function ActivityRun({ items, live }: { items: ConversationItem[]; live: boolean
   const expanded = open ?? (live || unsettled);
   // One row summarising one row is worse than the row.
   const summarised = items.length > 1;
+  // Once the operator collapses a run by hand, its one remaining row is all
+  // that says a call inside it failed — so that row carries the tone.
+  const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
 
   return (
     <div
-      className="session-activity"
+      className={`session-activity${failed ? " has-failure" : ""}`}
       data-testid="session-activity"
       data-expanded={expanded ? "true" : "false"}
     >
@@ -173,6 +179,9 @@ const Row = memo(function Row({ item, live }: { item: ConversationItem; live: bo
 
     // The buttons are in the head, which cannot scroll away. This row is the
     // history: it says the agent asked here, and how it ended.
+    // Uppercase belongs to the chrome label, never to the title: the title is
+    // usually a command, and `rm -rf` shouted back as `RM -RF` is a path the
+    // operator can no longer trust or retype.
     case "permission":
       return (
         <div
@@ -180,9 +189,10 @@ const Row = memo(function Row({ item, live }: { item: ConversationItem; live: bo
           data-testid="session-permission-marker"
           data-resolved={item.resolved ? "true" : "false"}
         >
-          <span className="session-note-text">
-            {item.resolved ? `Answered · ${item.title}` : `Permission requested · ${item.title}`}
+          <span className="session-note-label">
+            {item.resolved ? "Answered" : "Permission requested"}
           </span>
+          <span className="session-note-text">{cleanTitle(item.title)}</span>
         </div>
       );
 

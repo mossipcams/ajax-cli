@@ -32,13 +32,18 @@ export function ActivityRow({
   mark,
   target,
   meta,
+  tailChars,
   ...rest
 }: {
   mark: string;
   target: string;
   meta?: string | null;
+  /** Characters held back from ellipsis. Paths and commands are distinguished by
+   * their end, so they keep the default; prose is not, and passes 0 rather than
+   * ending on a severed word. */
+  tailChars?: number;
 } & React.ComponentProps<"button">) {
-  const [head, tail] = middleSplit(target);
+  const [head, tail] = middleSplit(target, tailChars);
   return (
     <button type="button" {...rest} className={`session-row ${rest.className ?? ""}`}>
       <span className="session-row-mark" aria-hidden="true">
