@@ -61,7 +61,7 @@ existing paths.
   `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]`
   when the harness still advertises exploded variants; catalog ids must never be
   sent through `session/set_config_option`
-  ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
+  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)).
   When the handshake omits the non-Fast bracket token (variants mode often
   advertises only `grok-4.6[effort=high,fast=true]`), Ajax still attempts
   in-band apply of the mapped non-Fast bracket id and, when present, a separate

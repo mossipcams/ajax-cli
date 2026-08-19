@@ -3,11 +3,9 @@ import { buildModelShortlist, SHORTLIST_CAP } from "./modelShortlist";
 
 const cursorCatalog = [
   { id: "auto", label: "Auto" },
-  { id: "composer-2.5", label: "Composer 2.5" },
-  { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
-  { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
-  { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
-  { id: "gpt-5.6-sol-medium", label: "GPT 5.6" },
+  { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+  { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+  { id: "gpt-5.6-sol", label: "GPT 5.6", efforts: ["medium", "high"] },
   { id: "claude-opus-4.6", label: "Opus 4.6" },
   { id: "claude-sonnet-4.6", label: "Sonnet 4.6" },
   { id: "gemini-3.7-flash", label: "Gemini Flash" },
@@ -25,7 +23,7 @@ describe("buildModelShortlist", () => {
     expect(shortlist.length).toBeLessThanOrEqual(SHORTLIST_CAP + 1);
     expect(hasMore).toBe(true);
     expect(shortlist.map((option) => option.id)).toEqual(
-      expect.arrayContaining(["auto", "composer-2.5", "cursor-grok-4.6-high"]),
+      expect.arrayContaining(["auto", "composer-2.5", "grok-4.6"]),
     );
   });
 
@@ -58,7 +56,14 @@ describe("buildModelShortlist", () => {
   });
 
   it("does not list Fast and non-Fast Cursor variants as two shortlist slots (#979)", () => {
-    const { shortlist } = buildModelShortlist(cursorCatalog, "cursor", {
+    const exploded = [
+      { id: "auto", label: "Auto" },
+      { id: "composer-2.5", label: "Composer 2.5" },
+      { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+      { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+      { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+    ];
+    const { shortlist } = buildModelShortlist(exploded, "cursor", {
       catalogDefault: "cursor-grok-4.6-high",
     });
     const ids = shortlist.map((option) => option.id);

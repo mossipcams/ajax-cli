@@ -9,7 +9,10 @@
 //! reuse the stored catalog when it matches, and re-read the catalog only after
 //! the harness has been updated.
 
-use ajax_core::{adapters::CURSOR_DEFAULT_MODEL, models::AgentClient};
+use ajax_core::{
+    adapters::{parse_cursor_model_intent, CURSOR_DEFAULT_MODEL},
+    models::AgentClient,
+};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Mutex};
 
@@ -17,6 +20,12 @@ use std::{collections::HashMap, sync::Mutex};
 pub struct SessionModelOption {
     pub id: String,
     pub label: String,
+    /// Reasoning levels advertised for this Cursor base (slim catalog only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
+    /// True when a Fast sibling exists for this Cursor base (slim catalog only).
+    #[serde(rename = "hasFast", skip_serializing_if = "Option::is_none")]
+    pub has_fast: Option<bool>,
 }
 
 /// A second axis beside the model list — the reasoning level, which Cursor
@@ -145,12 +154,15 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
     if client == AgentClient::Cursor {
-        let models = fetch_models_from_agent().unwrap_or_else(|| {
+        let raw = fetch_models_from_agent().unwrap_or_else(|| {
             vec![SessionModelOption {
                 id: "auto".to_string(),
                 label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
             }]
         });
+        let models = collapse_cursor_catalog(raw);
         return SessionModelsResponse {
             models,
             default: CURSOR_DEFAULT_MODEL.to_string(),
@@ -182,7 +194,12 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let models = catalog
         .models
         .into_iter()
-        .map(|(id, label)| SessionModelOption { id, label })
+        .map(|(id, label)| SessionModelOption {
+            id,
+            label,
+            efforts: None,
+            has_fast: None,
+        })
         .collect::<Vec<_>>();
     let default = catalog
         .default_model
@@ -206,7 +223,12 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
             options: group
                 .options
                 .into_iter()
-                .map(|(id, label)| SessionModelOption { id, label })
+                .map(|(id, label)| SessionModelOption {
+                    id,
+                    label,
+                    efforts: None,
+                    has_fast: None,
+                })
                 .collect(),
         }),
         harness_version: String::new(),
@@ -267,6 +289,8 @@ pub fn parse_agent_models_output(stdout: &str) -> Vec<SessionModelOption> {
         models.push(SessionModelOption {
             id: id.to_string(),
             label: label.to_string(),
+            efforts: None,
+            has_fast: None,
         });
     }
     if !models.iter().any(|m| m.id == "auto") {
@@ -275,10 +299,82 @@ pub fn parse_agent_models_output(stdout: &str) -> Vec<SessionModelOption> {
             SessionModelOption {
                 id: "auto".to_string(),
                 label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
             },
         );
     }
     models
+}
+
+const CURSOR_EFFORT_RANK: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];
+
+fn strip_fast_label(label: &str) -> String {
+    label
+        .trim_end_matches(" Fast")
+        .trim_end_matches(" fast")
+        .trim()
+        .to_string()
+}
+
+fn effort_rank(effort: &str) -> usize {
+    CURSOR_EFFORT_RANK
+        .iter()
+        .position(|candidate| *candidate == effort)
+        .unwrap_or(CURSOR_EFFORT_RANK.len())
+}
+
+/// Collapse exploded Cursor `agent models` ids into unique bases with axis metadata.
+pub fn collapse_cursor_catalog(models: Vec<SessionModelOption>) -> Vec<SessionModelOption> {
+    let mut auto = Vec::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut grouped: HashMap<String, (String, Vec<String>, bool)> = HashMap::new();
+
+    for model in models {
+        if model.id == "auto" {
+            auto.push(model);
+            continue;
+        }
+        let Some(intent) = parse_cursor_model_intent(&model.id) else {
+            if !grouped.contains_key(&model.id) {
+                order.push(model.id.clone());
+                grouped.insert(model.id.clone(), (model.label.clone(), Vec::new(), false));
+            }
+            continue;
+        };
+        if !grouped.contains_key(&intent.base) {
+            order.push(intent.base.clone());
+            grouped.insert(
+                intent.base.clone(),
+                (strip_fast_label(&model.label), Vec::new(), false),
+            );
+        }
+        let entry = grouped.get_mut(&intent.base).expect("base inserted above");
+        if !intent.fast.unwrap_or(false) {
+            entry.0 = strip_fast_label(&model.label);
+        }
+        if let Some(effort) = intent.effort {
+            if !entry.1.iter().any(|existing| existing == &effort) {
+                entry.1.push(effort);
+            }
+        }
+        if intent.fast.unwrap_or(false) {
+            entry.2 = true;
+        }
+    }
+
+    let mut collapsed = auto;
+    for base in order {
+        let (label, mut efforts, has_fast) = grouped.remove(&base).expect("base tracked in order");
+        efforts.sort_by_key(|effort| effort_rank(effort));
+        collapsed.push(SessionModelOption {
+            id: base,
+            label,
+            efforts: (!efforts.is_empty()).then_some(efforts),
+            has_fast: has_fast.then_some(true),
+        });
+    }
+    collapsed
 }
 
 #[cfg(test)]
@@ -333,13 +429,111 @@ mod tests {
                 SessionModelOption {
                     id: "auto".to_string(),
                     label: "Auto (default)".to_string(),
+                    efforts: None,
+                    has_fast: None,
                 },
                 SessionModelOption {
                     id: "composer-2.5".to_string(),
                     label: "Composer 2.5".to_string(),
+                    efforts: None,
+                    has_fast: None,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn collapse_cursor_catalog_emits_unique_bases_with_axes() {
+        let collapsed = collapse_cursor_catalog(vec![
+            SessionModelOption {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "composer-2.5".to_string(),
+                label: "Composer 2.5".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "composer-2.5-fast".to_string(),
+                label: "Composer 2.5 Fast".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high-fast".to_string(),
+                label: "Grok 4.6 Fast".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "gpt-5.6-sol-medium".to_string(),
+                label: "GPT 5.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "gpt-5.6-sol-high".to_string(),
+                label: "GPT 5.6 High".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+        ]);
+        assert_eq!(collapsed.len(), 4);
+        assert_eq!(collapsed[0].id, "auto");
+        let composer = collapsed.iter().find(|m| m.id == "composer-2.5").unwrap();
+        assert_eq!(composer.has_fast, Some(true));
+        assert_eq!(composer.efforts, None);
+        let grok = collapsed.iter().find(|m| m.id == "grok-4.6").unwrap();
+        assert_eq!(
+            grok.efforts.as_deref(),
+            Some(["high".to_string()].as_slice())
+        );
+        assert_eq!(grok.has_fast, Some(true));
+        let sol = collapsed.iter().find(|m| m.id == "gpt-5.6-sol").unwrap();
+        assert_eq!(
+            sol.efforts.as_deref(),
+            Some(["high".to_string(), "medium".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn collapse_cursor_catalog_preserves_first_seen_base_order() {
+        let collapsed = collapse_cursor_catalog(vec![
+            SessionModelOption {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "gpt-5.6-sol-medium".to_string(),
+                label: "GPT 5.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+        ]);
+        let base_ids: Vec<_> = collapsed
+            .iter()
+            .filter(|model| model.id != "auto")
+            .map(|model| model.id.as_str())
+            .collect();
+        assert_eq!(base_ids, ["grok-4.6", "gpt-5.6-sol"]);
     }
 
     #[test]
