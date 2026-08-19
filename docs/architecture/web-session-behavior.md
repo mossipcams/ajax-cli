@@ -113,9 +113,20 @@ existing paths.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
-- The browser keeps only an unacknowledged-prompt outbox for resend; it does not
-  maintain a second FIFO queue. Submitting while busy sends one host-queued prompt;
-  Stop owns cancellation.
+- The browser keeps an unacknowledged-prompt outbox for resend and at most **one**
+  editable follow-up held in the composer; it does not maintain a second FIFO
+  queue. Submitting while a turn is in flight queues that follow-up in the
+  browser rather than dispatching a second `session/prompt`:
+  - the queued message renders as a muted user message labelled `Queued`, and
+    stays editable and removable until it is dispatched;
+  - when the active turn resolves normally, the browser dispatches it as the next
+    prompt;
+  - a second submit while it is queued sends `session/cancel`, shows `Stopping…`,
+    waits for the active prompt to resolve as cancelled, appends a `Stopped`
+    divider, and only then dispatches the queued prompt. The cancelled prompt and
+    the queued prompt are never in flight together.
+  Everything that reaches the host is still one prompt at a time; Stop owns
+  cancellation.
 - Each live `TaskSession` Tokio task continues draining its ACP child and host
   queue after the last socket closes, so an in-flight or queued turn does not
   depend on browser presence.
@@ -266,9 +277,36 @@ existing paths.
   ACP v1 has no portable stalled-state signal. The head must not invent
   thinking content from that timer — the tool row and any in-progress plan step
   may appear together; with no tool or plan step the head shows the latest ACP
-  `thought` text, else `Thinking…` before the first of those arrives). Reasoning
-  in the transcript auto-expands while it is the live tail of a busy turn and
-  collapses when a later item arrives or the turn settles.
+  `thought` text, else `Thinking…` before the first of those arrives).
+
+## Transcript composition
+
+The transcript is a conversation, not the ACP event stream. It contains only
+user messages, assistant responses, one activity disclosure per turn,
+permission asks the operator still owes an answer to, errors, and hairline
+dividers for cancellations, reconnects, harness switches and context resets.
+
+- A turn chapter is the user message, its activity disclosure, and the assistant
+  response. Items are keyed by host `itemId` / `toolCallId`, so replay after a
+  reconnect updates existing rows instead of appending duplicates.
+- Assistant responses are revealed by completed paragraph, never token by token,
+  and never split inside a fenced block. The whole response renders once the turn
+  ends.
+- The activity disclosure carries thoughts, plans, tool calls, command output and
+  diffs. Collapsed, it shows the current operation while the turn runs (replacing
+  it, never appending) and a counted summary once the turn settles
+  (`Read 6 files · edited 2 files · ran 4 commands · 38s`). A completed tool call
+  leaves the collapsed row as soon as ACP reports completion — there is no
+  collapse timeout.
+- It expands itself for failed, blocked and approval-required activity; a manual
+  open or close by the operator wins from then on.
+- Reasoning is a row on the activity grid inside that disclosure, never an italic
+  message in the conversation.
+- The transcript opens positioned at its latest content, follows new content only
+  while the operator is already at the bottom, offers `Jump to latest` otherwise,
+  and never animates a scroll.
+- Conversation text and tool labels are proportional; monospace is reserved for
+  code, commands, paths and output.
 
 ## Duplicate process and prompt prevention
 

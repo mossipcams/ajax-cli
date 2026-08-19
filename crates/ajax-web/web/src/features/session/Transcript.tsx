@@ -1,18 +1,43 @@
-// Turn-as-chapter conversation: operator bubble, collapsed work, agent answer.
+// Turn-as-chapter conversation: what the operator said, one line for what the
+// agent did, what the agent answered.
 //
-// Only the last agent row streams while busy; earlier rows stay settled so this
-// list can hold scroll position.
+// REVISION (mobile chat): the transcript is a conversation, not the ACP event
+// stream. Thoughts, plans, tool calls, their output and their diffs are the
+// substance of a turn but they are not the turn's message — they live behind
+// one disclosure per turn and are reachable in one tap. What stays in the
+// column is the operator's message, the agent's answer, an ask the operator
+// still owes an answer to, an error, and a hairline divider for the events that
+// changed the session out from under them.
+//
+// Reveal is by paragraph, never by token: a live answer shows the paragraphs it
+// has finished and nothing else, so the column never reflows under a reader.
 
 import { memo, useState } from "react";
 import Markdown from "./Markdown";
 import ToolCard, { ActivityRow } from "./ToolCard";
-import { flattenTurnItems, groupConversationTurns } from "./sessionTurns";
-import { thoughtSnippet, type ConversationItem, type PlanEntry } from "./sessionThread";
-import { cleanTitle, elapsedMs, formatElapsed } from "./toolPresentation";
+import { groupConversationTurns } from "./sessionTurns";
+import {
+  activePlanStep,
+  thoughtSnippet,
+  type ConversationItem,
+  type PlanEntry,
+  type ToolCall,
+} from "./sessionThread";
+import { cleanTitle, elapsedMs, formatElapsed, toolTarget } from "./toolPresentation";
 
-function Thinking({ text, live }: { text: string; live: boolean }) {
-  const [manualOpen, setManualOpen] = useState(false);
-  const expanded = live || manualOpen;
+/** Complete paragraphs only. A partial sentence arriving word by word is the
+ * protocol leaking into the conversation, so a live answer is cut back to its
+ * last paragraph break — and never inside a fence, where the break is content. */
+export function settledText(text: string): string {
+  const cut = text.lastIndexOf("\n\n");
+  if (cut < 0) return "";
+  const head = text.slice(0, cut);
+  if ((head.match(/```/g) ?? []).length % 2 === 0) return head;
+  return head.slice(0, head.lastIndexOf("```")).trimEnd();
+}
+
+function Thought({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="session-thinking" data-testid="session-thinking">
       <ActivityRow
@@ -21,87 +46,14 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
         tailChars={0}
         target={thoughtSnippet(text, 90)}
         aria-label={`Thinking — ${thoughtSnippet(text, 90)}`}
-        aria-expanded={expanded}
-        onClick={() => setManualOpen(!manualOpen)}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
       />
-      {expanded ? (
+      {open ? (
         <p className="session-thinking-body" data-testid="session-thinking-body">
           {text}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-const ACTIVITY_KINDS = ["tool", "thought"];
-
-function isActivity(item: ConversationItem): boolean {
-  return ACTIVITY_KINDS.includes(item.kind);
-}
-
-export function activityRuns(items: ConversationItem[]): ConversationItem[][] {
-  const runs: ConversationItem[][] = [];
-  for (const item of items) {
-    const last = runs[runs.length - 1];
-    if (last && isActivity(item) && isActivity(last[0])) last.push(item);
-    else runs.push([item]);
-  }
-  return runs;
-}
-
-function runSummary(items: ConversationItem[]): string {
-  const calls = items.flatMap((item) => (item.kind === "tool" ? [item.call] : []));
-  const failed = calls.filter((call) => call.status === "failed").length;
-  const parts = [
-    calls.length
-      ? `${calls.length} ${calls.length === 1 ? "tool" : "tools"}`
-      : `${items.length} thoughts`,
-  ];
-  if (failed) parts.push(`${failed} failed`);
-  const first = calls.find((call) => call.startedAt !== undefined);
-  const last = [...calls].reverse().find((call) => call.endedAt !== undefined);
-  const span = formatElapsed(
-    first && last ? elapsedMs({ startedAt: first.startedAt, endedAt: last.endedAt }) : undefined,
-  );
-  if (span) parts.push(span);
-  return parts.join(" · ");
-}
-
-function isLiveTail(items: ConversationItem[], item: ConversationItem): boolean {
-  return items[items.length - 1]?.id === item.id;
-}
-
-function ActivityRun({ items, live }: { items: ConversationItem[]; live: boolean }) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const unsettled = items.some(
-    (item) => item.kind === "tool" && item.call.status !== "completed",
-  );
-  const expanded = open ?? (live || unsettled);
-  const summarised = items.length > 1;
-  const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
-
-  return (
-    <div
-      className={`session-activity${failed ? " has-failure" : ""}`}
-      data-testid="session-activity"
-      data-expanded={expanded ? "true" : "false"}
-    >
-      {summarised ? (
-        <ActivityRow
-          className="session-activity-summary"
-          data-testid="session-activity-summary"
-          mark="⚙"
-          target={runSummary(items)}
-          meta={expanded ? "⌃" : "⌄"}
-          aria-expanded={expanded}
-          onClick={() => setOpen(!expanded)}
-        />
-      ) : null}
-      {!summarised || expanded
-        ? items.map((item) => (
-            <Row key={item.id} item={item} live={live && isLiveTail(items, item)} />
-          ))
-        : null}
     </div>
   );
 }
@@ -131,25 +83,165 @@ function PlanChecklist({ entries }: { entries: PlanEntry[] }) {
   );
 }
 
+/** What the row says while the call is happening, in the operator's words —
+ * "Running cargo test…", not `execute`. */
+const OPERATION_VERBS: Record<string, string> = {
+  read: "Reading",
+  edit: "Editing",
+  delete: "Deleting",
+  move: "Moving",
+  search: "Searching",
+  execute: "Running",
+  think: "Thinking about",
+  fetch: "Fetching",
+};
+
+function tools(items: ConversationItem[]): ToolCall[] {
+  return items.flatMap((item) => (item.kind === "tool" ? [item.call] : []));
+}
+
+/** The one operation in flight. The card replaces this line rather than growing
+ * a row per call: on a phone the log is the disclosure's job, not the turn's. */
+export function currentOperation(items: ConversationItem[]): string {
+  const running = tools(items)
+    .filter((call) => call.status === "pending" || call.status === "in_progress")
+    .pop();
+  if (running) {
+    return `${OPERATION_VERBS[running.kind] ?? "Working on"} ${toolTarget(running)}…`;
+  }
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item.kind === "plan") {
+      const step = activePlanStep(item.entries);
+      if (step) return `${step}…`;
+    }
+    if (item.kind === "thought") return `${thoughtSnippet(item.text, 60)}`;
+  }
+  return "Working…";
+}
+
+function count(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/** What the turn did, once it is done doing it: "Read 6 files · edited 2 files
+ * · ran 4 commands · 38s". Named work first, failures next, wall time last. */
+export function activitySummary(items: ConversationItem[]): string {
+  const calls = tools(items);
+  const kinds = (...wanted: string[]) =>
+    calls.filter((call) => wanted.includes(call.kind)).length;
+
+  const parts: string[] = [];
+  const read = kinds("read");
+  const edited = kinds("edit", "move", "delete");
+  const ran = kinds("execute");
+  const other = calls.length - read - edited - ran;
+  if (read) parts.push(`read ${count(read, "file", "files")}`);
+  if (edited) parts.push(`edited ${count(edited, "file", "files")}`);
+  if (ran) parts.push(`ran ${count(ran, "command", "commands")}`);
+  if (other) parts.push(count(other, "other step", "other steps"));
+
+  if (!parts.length) {
+    if (items.some((item) => item.kind === "plan")) parts.push("planning");
+    else if (items.some((item) => item.kind === "thought")) parts.push("reasoning");
+    else parts.push(count(items.length, "step", "steps"));
+  }
+
+  const failed = calls.filter((call) => call.status === "failed").length;
+  if (failed) parts.push(`${failed} failed`);
+
+  const first = calls.find((call) => call.startedAt !== undefined);
+  const last = [...calls].reverse().find((call) => call.endedAt !== undefined);
+  const span = formatElapsed(
+    first && last ? elapsedMs({ startedAt: first.startedAt, endedAt: last.endedAt }) : undefined,
+  );
+  if (span) parts.push(span);
+
+  const line = parts.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+function WorkRow({ item }: { item: ConversationItem }) {
+  switch (item.kind) {
+    case "thought":
+      return <Thought text={item.text} />;
+    case "tool":
+      return <ToolCard call={item.call} />;
+    case "plan":
+      return <PlanChecklist entries={item.entries} />;
+    default:
+      return <Row item={item} live={false} />;
+  }
+}
+
+/** One disclosure per turn. Collapsed it is the current operation while the turn
+ * runs and the summary once it settles; a completed call is inside the moment
+ * ACP says so, because the collapsed row never lists calls at all. States that
+ * want the operator — a failure, an ask — open themselves, and a tap in either
+ * direction sticks for the rest of the session. */
+function TurnActivity({
+  items,
+  live,
+  attention,
+}: {
+  items: ConversationItem[];
+  live: boolean;
+  attention: boolean;
+}) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  if (items.length === 0) return null;
+
+  const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
+  const expanded = open ?? (failed || attention);
+
+  return (
+    <div
+      className={`session-turn-work${failed ? " has-failure" : ""}`}
+      data-testid="session-turn-work"
+      data-expanded={expanded ? "true" : "false"}
+      data-live={live ? "true" : undefined}
+    >
+      <ActivityRow
+        className="session-turn-work-summary"
+        data-testid="session-turn-work-summary"
+        mark="⚙"
+        tailChars={0}
+        target={live && !expanded ? currentOperation(items) : activitySummary(items)}
+        meta={expanded ? "⌃" : "⌄"}
+        aria-expanded={expanded}
+        onClick={() => setOpen(!expanded)}
+      />
+      {expanded ? items.map((item) => <WorkRow key={item.id} item={item} />) : null}
+    </div>
+  );
+}
+
 const Row = memo(function Row({ item, live }: { item: ConversationItem; live: boolean }) {
   switch (item.kind) {
-    case "prose":
-      return item.role === "user" ? (
-        <article className="session-said" data-testid="session-message-user">
-          {item.text}
-        </article>
-      ) : (
+    case "prose": {
+      if (item.role === "user") {
+        return (
+          <article className="session-said" data-testid="session-message-user">
+            {item.text}
+          </article>
+        );
+      }
+      // Paragraph-complete only while the turn runs; the whole answer once done.
+      const shown = live ? settledText(item.text) : item.text;
+      if (!shown) return null;
+      return (
         <article
-          className={live ? "session-reply is-live" : "session-reply"}
+          className="session-reply"
           data-testid="session-message-agent"
           {...(live ? { "data-live": "true" } : {})}
         >
-          <Markdown source={item.text} live={live} />
+          <Markdown source={shown} />
         </article>
       );
+    }
 
     case "thought":
-      return <Thinking text={item.text} live={live} />;
+      return <Thought text={item.text} />;
 
     case "tool":
       return <ToolCard call={item.call} />;
@@ -172,125 +264,19 @@ const Row = memo(function Row({ item, live }: { item: ConversationItem; live: bo
       );
 
     case "note":
-      return (
-        <div
-          className={`session-note tone-${item.tone === "error" ? "error" : "muted"}`}
-          data-testid={`session-note-${item.tone}`}
-        >
+      // An error is something to act on and keeps its own row; anything else
+      // the host says happened to the session is a hairline divider.
+      return item.tone === "error" ? (
+        <div className="session-note tone-error" data-testid="session-note-error">
           <span className="session-note-text">{item.text}</span>
         </div>
+      ) : (
+        <p className="session-divider" data-testid="session-note-info">
+          <span>{item.text}</span>
+        </p>
       );
   }
 });
-
-function workSummary(items: ConversationItem[]): string {
-  const calls = items.flatMap((item) => (item.kind === "tool" ? [item.call] : []));
-  const edits = calls.filter((call) => call.kind === "edit").length;
-  const executes = calls.filter((call) => call.kind === "execute").length;
-  const failed = calls.filter((call) => call.status === "failed").length;
-  const parts: string[] = [];
-
-  if (edits) parts.push(`Edited ${edits} ${edits === 1 ? "file" : "files"}`);
-  if (executes) parts.push(executes === 1 ? "ran command" : `ran ${executes} commands`);
-  if (!edits && !executes) {
-    if (calls.length) parts.push(`${calls.length} ${calls.length === 1 ? "tool" : "tools"}`);
-    else {
-      const thoughts = items.filter((item) => item.kind === "thought").length;
-      if (thoughts) parts.push(`${thoughts} ${thoughts === 1 ? "thought" : "thoughts"}`);
-    }
-  }
-  if (failed) parts.push(`${failed} failed`);
-
-  const first = calls.find((call) => call.startedAt !== undefined);
-  const last = [...calls].reverse().find((call) => call.endedAt !== undefined);
-  const span = formatElapsed(
-    first && last ? elapsedMs({ startedAt: first.startedAt, endedAt: last.endedAt }) : undefined,
-  );
-  if (span) parts.push(span);
-
-  if (parts.length === 0) {
-    const plans = items.some((item) => item.kind === "plan");
-    const permissions = items.some((item) => item.kind === "permission");
-    if (plans && permissions) return "Plan · permission";
-    if (plans) return "Plan";
-    if (permissions) return "Permission";
-    return `${items.length} steps`;
-  }
-  return parts.join(" · ");
-}
-
-function WorkRow({ item, live }: { item: ConversationItem; live: boolean }) {
-  switch (item.kind) {
-    case "thought":
-      return <Thinking text={item.text} live={live} />;
-    case "tool":
-      return <ToolCard call={item.call} />;
-    case "plan":
-      return <PlanChecklist entries={item.entries} />;
-    case "permission":
-      return <Row item={item} live={false} />;
-    default:
-      return <Row item={item} live={false} />;
-  }
-}
-
-function TurnChapter({ items, live }: { items: ConversationItem[]; live: boolean }) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  if (items.length === 0) return null;
-
-  const unsettled = items.some(
-    (item) => item.kind === "tool" && item.call.status !== "completed",
-  );
-  const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
-  const expanded = open ?? (live || unsettled);
-  const summarised = items.length > 1 || (items.length === 1 && items[0].kind !== "tool");
-
-  if (!summarised) {
-    return <WorkRow item={items[0]} live={live} />;
-  }
-
-  return (
-    <div
-      className={`session-turn-work${failed ? " has-failure" : ""}`}
-      data-testid="session-turn-work"
-      data-expanded={expanded ? "true" : "false"}
-    >
-      <ActivityRow
-        className="session-turn-work-summary"
-        data-testid="session-turn-work-summary"
-        mark="⚙"
-        target={workSummary(items)}
-        meta={expanded ? "⌃" : "⌄"}
-        aria-expanded={expanded}
-        onClick={() => setOpen(!expanded)}
-      />
-      {expanded
-        ? items.map((item, index) => (
-            <WorkRow
-              key={item.id}
-              item={item}
-              live={live && index === items.length - 1 && item.kind === "thought"}
-            />
-          ))
-        : null}
-    </div>
-  );
-}
-
-function renderLegacySegment(
-  items: ConversationItem[],
-  busy: boolean,
-  lastAgentProseId: string | null,
-) {
-  const runs = activityRuns(items);
-  return runs.map((run, index) =>
-    isActivity(run[0]) ? (
-      <ActivityRun key={run[0].id} items={run} live={busy && index === runs.length - 1} />
-    ) : (
-      <Row key={run[0].id} item={run[0]} live={busy && run[0].id === lastAgentProseId} />
-    ),
-  );
-}
 
 export default function Transcript({
   items,
@@ -313,22 +299,18 @@ export default function Transcript({
     <>
       {turns.map((turn, turnIndex) => {
         const isLiveTurn = busy && turnIndex === turns.length - 1;
-
-        if (!turn.user) {
-          return (
-            <div key={turn.id} className="session-turn" data-testid="session-turn-preamble">
-              {renderLegacySegment(flattenTurnItems(turn), busy && isLiveTurn, lastAgentProseId)}
-            </div>
-          );
-        }
-
-        const lastWork = turn.work[turn.work.length - 1];
-        const workLive = isLiveTurn && lastWork?.kind === "thought";
+        const awaiting = turn.other.some(
+          (item) => item.kind === "permission" && !item.resolved,
+        );
 
         return (
-          <div key={turn.id} className="session-turn" data-testid="session-turn">
-            <Row item={turn.user} live={false} />
-            <TurnChapter items={turn.work} live={workLive} />
+          <div
+            key={turn.id}
+            className="session-turn"
+            data-testid={turn.user ? "session-turn" : "session-turn-preamble"}
+          >
+            {turn.user ? <Row item={turn.user} live={false} /> : null}
+            <TurnActivity items={turn.work} live={isLiveTurn} attention={awaiting} />
             {turn.other.map((item) => (
               <Row key={item.id} item={item} live={false} />
             ))}
@@ -347,5 +329,3 @@ export default function Transcript({
     </>
   );
 }
-
-export { workSummary };

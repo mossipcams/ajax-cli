@@ -5,11 +5,13 @@ import { dirname, join } from "node:path";
 
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
-  /** Sum of styles.css + imported module bytes after T5 measured optimization. */
-  sourceStylesCssBytes: 93_899,
-  builtAppCssBytes: 82_902,
-  builtAppCssGzipBytes: 15_072,
-  classSelectorLines: 514,
+  /** Sum of styles.css + imported module bytes after T5 measured optimization.
+   * Re-measured when the session transcript became a mobile chat surface
+   * (queued follow-up, turn disclosure, system divider). */
+  sourceStylesCssBytes: 97_013,
+  builtAppCssBytes: 84_201,
+  builtAppCssGzipBytes: 15_238,
+  classSelectorLines: 525,
   hasSelectors: 19,
 } as const;
 
@@ -59,6 +61,7 @@ export const LOCKED_MAJOR_SECTIONS = [
   "SESSION ORCHESTRATION CHAT",
   "Live head",
   "Transcript",
+  "Queued follow-up",
   "Markdown inside agent prose",
   "Activity grid",
   "Reasoning",

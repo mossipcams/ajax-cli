@@ -113,6 +113,12 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     transportRef.current?.sendCancel();
   }, []);
 
+  /** A stop the operator asked for is session history, not an ACP event: the
+   * host has no update that says "the human interrupted here". */
+  const markStopped = useCallback(() => {
+    dispatch({ type: "event", event: { type: "message", role: "system", text: "Stopped" } });
+  }, []);
+
   const setModel = useCallback((model: string) => {
     const trimmed = model.trim() || DEFAULT_SESSION_MODEL;
     pendingModelRef.current = trimmed;
@@ -143,6 +149,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     sendCancel,
+    markStopped,
     setModel,
     respondPermission,
     onMutated: handleMutated,

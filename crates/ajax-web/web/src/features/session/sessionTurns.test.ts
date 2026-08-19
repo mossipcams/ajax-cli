@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flattenTurnItems, groupConversationTurns } from "./sessionTurns";
+import { groupConversationTurns } from "./sessionTurns";
 import type { ConversationItem } from "./sessionThread";
 
 const userProse = (id: string, text: string): ConversationItem => ({
@@ -36,7 +36,7 @@ describe("groupConversationTurns", () => {
     expect(turns[1].agents.map((item) => item.id)).toEqual(["a2"]);
   });
 
-  it("keeps preamble items without a user prompt in legacy order", () => {
+  it("keeps preamble items without a user prompt in one turn", () => {
     const items: ConversationItem[] = [
       { kind: "note", id: "n1", tone: "info", text: "Reconnecting" },
       agentProse("a1", "Hello"),
@@ -44,6 +44,20 @@ describe("groupConversationTurns", () => {
     const turns = groupConversationTurns(items);
     expect(turns).toHaveLength(1);
     expect(turns[0].user).toBeNull();
-    expect(flattenTurnItems(turns[0]).map((item) => item.id)).toEqual(["n1", "a1"]);
+    expect(turns[0].other.map((item) => item.id)).toEqual(["n1"]);
+    expect(turns[0].agents.map((item) => item.id)).toEqual(["a1"]);
+  });
+
+  // An ask the operator still owes an answer to is an action, so it stays in
+  // the conversation; once answered it is history and joins the timeline.
+  it("routes permissions by whether they still need an answer", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Clean up"),
+      { kind: "permission", id: "q1", requestId: "r1", title: "Delete?", resolved: false },
+      { kind: "permission", id: "q2", requestId: "r2", title: "Run tests?", resolved: true },
+    ];
+    const [turn] = groupConversationTurns(items);
+    expect(turn.other.map((item) => item.id)).toEqual(["q1"]);
+    expect(turn.work.map((item) => item.id)).toEqual(["q2"]);
   });
 });
