@@ -1,6 +1,11 @@
-// A tool call in the conversation. The header is always readable at a glance —
-// mark, kind, title, path, state — and the body holds what the call actually
-// produced: the text a command printed, the diff an edit wrote.
+// A tool call in the conversation: one row on the shared activity grid — mark,
+// target, elapsed — over the body holding what the call actually produced, the
+// text a command printed or the diff an edit wrote.
+//
+// The row states the target, not the tool: "Read File" is identical on every
+// read, and the path is the only reason to look. Success spends no words — the
+// mark carries it — so the right column is free for the states that want the
+// operator.
 //
 // Default collapse follows status, not preference: a call that succeeded needs
 // one line, a call that failed or is still running is why the operator opened
@@ -8,7 +13,45 @@
 
 import { useState } from "react";
 import type { ToolCall, ToolContent } from "./sessionThread";
-import { diffLines, shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
+import {
+  cleanTitle,
+  diffLines,
+  elapsedMs,
+  formatElapsed,
+  middleSplit,
+  shortPath,
+  toolMark,
+  toolStatusNote,
+  toolTarget,
+  TOOL_TONES,
+} from "./toolPresentation";
+
+/** The one row shape every activity line uses: mark, target, right-hand meta.
+ * One grid, so a column of them reads as a column and not as loose paragraphs. */
+export function ActivityRow({
+  mark,
+  target,
+  meta,
+  ...rest
+}: {
+  mark: string;
+  target: string;
+  meta?: string | null;
+} & React.ComponentProps<"button">) {
+  const [head, tail] = middleSplit(target);
+  return (
+    <button type="button" {...rest} className={`session-row ${rest.className ?? ""}`}>
+      <span className="session-row-mark" aria-hidden="true">
+        {mark}
+      </span>
+      <span className="session-row-target">
+        <span className="session-row-head">{head}</span>
+        {tail ? <span className="session-row-tail">{tail}</span> : null}
+      </span>
+      {meta ? <span className="session-row-meta">{meta}</span> : null}
+    </button>
+  );
+}
 
 function DiffBlock({ path, oldText, newText }: { path: string; oldText: string; newText: string }) {
   const lines = diffLines(oldText, newText);
@@ -68,7 +111,8 @@ export default function ToolCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const expanded = (open ?? !settled) && call.content.length > 0;
   const tone = TOOL_TONES[call.kind] ?? "muted";
-  const location = call.locations[0];
+  const target = toolTarget(call);
+  const label = cleanTitle(call.title) || target;
 
   return (
     <section
@@ -77,25 +121,21 @@ export default function ToolCard({ call }: { call: ToolCall }) {
       data-status={call.status}
       data-kind={call.kind || "other"}
     >
-      <button
-        type="button"
+      <ActivityRow
         className="session-toolcard-head"
+        mark={toolMark(call.kind)}
+        target={target}
+        // Elapsed is the resting right column; a word replaces it only when the
+        // call is running, queued, or broken.
+        meta={toolStatusNote(call.status) ?? formatElapsed(elapsedMs(call))}
+        // The row shows the target; the accessible name keeps what ran.
+        aria-label={target === label ? label : `${label} · ${target}`}
+        title={call.locations[0] ?? label}
         // Nothing to show, nothing to toggle — but the row still states what ran.
         disabled={call.content.length === 0}
         aria-expanded={expanded}
         onClick={() => setOpen(!expanded)}
-      >
-        <span className="session-tool-mark" aria-hidden="true">
-          {toolMark(call.kind)}
-        </span>
-        <span className="session-tool-title">{call.title || call.callId}</span>
-        {location ? (
-          <span className="session-tool-path" title={location}>
-            {shortPath(location)}
-          </span>
-        ) : null}
-        <span className="session-toolcard-status">{toolStatusLabel(call.status)}</span>
-      </button>
+      />
 
       {expanded ? (
         <div className="session-toolcard-body">

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { WebSessionServerEvent } from "@/shared/lib/webSessionTransport";
 import {
   activePlanStep,
@@ -180,6 +180,28 @@ describe("sessionReducer", () => {
     const state = run([agentMsg("Hello again", "i-m1", "m1")]);
     expect(state.items).toHaveLength(1);
     expect(state.items[0]).toMatchObject({ text: "Hello again", id: "i-m1" });
+  });
+
+  it("times a call from the client clock the wire does not carry", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      let state = sessionReducer(initialSessionState, { type: "event", event: toolCall("c1") });
+      vi.setSystemTime(3_500);
+      state = sessionReducer(state, {
+        type: "event",
+        event: toolCall("c1", { status: "completed" }),
+      });
+      // The completing update must not restart the clock, or every call reports
+      // the duration of its last status hop instead of its own work.
+      expect(activeTool(state)).toMatchObject({ startedAt: 1_000, endedAt: 3_500 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a running call open-ended until it settles", () => {
+    expect(activeTool(run([toolCall("c1", { status: "in_progress" })]))?.endedAt).toBeUndefined();
   });
 
   it("merges tool_call_update into the open call instead of appending a row", () => {
