@@ -9,7 +9,7 @@
 import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
-import type { Decision, ToolCall, Usage } from "./sessionThread";
+import type { Decision, ToolCall, TurnUsage, Usage } from "./sessionThread";
 import { cleanTitle, shortPath, toolMark, toolStatusLabel, TOOL_TONES } from "./toolPresentation";
 
 export { shortPath } from "./toolPresentation";
@@ -66,6 +66,36 @@ function UsageMeter({ usage }: { usage: Usage }) {
   );
 }
 
+const TURN_USAGE_FIELDS: { key: keyof TurnUsage; label: string }[] = [
+  { key: "inputTokens", label: "input" },
+  { key: "outputTokens", label: "output" },
+  { key: "cacheReadTokens", label: "cache read" },
+  { key: "cacheWriteTokens", label: "cache write" },
+  { key: "totalTokens", label: "total" },
+];
+
+/** Per-turn token counts from ACP prompt results. Only present fields are
+ * shown — missing counts are omitted, never rendered as zero. */
+export function formatTurnUsage(turnUsage: TurnUsage): string | null {
+  const parts = TURN_USAGE_FIELDS.flatMap(({ key, label }) => {
+    const value = turnUsage[key];
+    if (typeof value !== "number") return [];
+    return [`${label} ${value.toLocaleString()}`];
+  });
+  if (parts.length === 0) return null;
+  return `Turn tokens: ${parts.join(" · ")}`;
+}
+
+function TurnUsageLine({ turnUsage }: { turnUsage: TurnUsage }) {
+  const text = formatTurnUsage(turnUsage);
+  if (!text) return null;
+  return (
+    <p className="session-head-quiet session-turn-usage" data-testid="session-turn-usage">
+      {text}
+    </p>
+  );
+}
+
 function ToolRow({ call }: { call: ToolCall }) {
   const tone = TOOL_TONES[call.kind] ?? "muted";
   const location = call.locations[0];
@@ -102,6 +132,8 @@ interface Props {
   thoughtSnippet: string | null;
   /** Latest context pressure, or null when the harness does not report it. */
   usage: Usage | null;
+  /** Latest per-turn token usage, or null when the harness does not report it. */
+  turnUsage: TurnUsage | null;
   activityAgeMs: number;
   connected: boolean;
   /** The task's own actions, rendered by the caller so the head stays free of
@@ -128,6 +160,7 @@ export default function LiveHead({
   planStep,
   thoughtSnippet,
   usage,
+  turnUsage,
   activityAgeMs,
   connected,
   actions,
@@ -254,6 +287,7 @@ export default function LiveHead({
       ) : null}
 
       {usage ? <UsageMeter usage={usage} /> : null}
+      {turnUsage ? <TurnUsageLine turnUsage={turnUsage} /> : null}
     </section>
   );
 }
