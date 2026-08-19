@@ -6,6 +6,7 @@ use std::{collections::HashSet, path::Path};
 use crate::adapters::web_session_store;
 
 /// A task owns its session while it exists in the registry and is not `Removed`.
+#[cfg(test)]
 pub fn is_session_owned<R: Registry>(context: &CommandContext<R>, handle: &str) -> bool {
     context.registry.list_tasks().into_iter().any(|task| {
         task.qualified_handle() == handle && task.lifecycle_status != LifecycleStatus::Removed

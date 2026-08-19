@@ -17,7 +17,7 @@ pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
-pub(crate) use session_cleanup::{is_session_owned, owned_session_handles};
+pub(crate) use session_cleanup::owned_session_handles;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
