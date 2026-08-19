@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, fireEvent, screen } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import ConnectionStatus from "./ConnectionStatus";
 import connectionStatusSource from "./ConnectionStatus.tsx?raw";
 
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
-  return readFileSync(join(testDir, "../../styles.css"), "utf8");
+  return readOrderedStylesSource(join(testDir, "../.."));
 }
 
 describe("ConnectionStatus", () => {

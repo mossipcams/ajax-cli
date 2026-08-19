@@ -1,0 +1,7 @@
+/* NARROW PHONES (shared chrome) ------------------------------------------- */
+/* DESIGN.md-documented narrow-phone steps: 14px body, 16px title. */
+@media (max-width: 380px) {
+  body { font-size: 14px; }
+  header .bar h1 { font-size: 16px; }
+  .status-line { font-size: var(--text-label); }
+}
