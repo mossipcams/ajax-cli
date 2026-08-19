@@ -355,6 +355,7 @@ export default function SessionChat({
         planStep={headPlanStep}
         thoughtSnippet={headThought}
         usage={state.usage}
+        turnUsage={state.turnUsage}
         activityAgeMs={state_ === "working" ? activityAgeMs : 0}
         connected={connected}
         actions={

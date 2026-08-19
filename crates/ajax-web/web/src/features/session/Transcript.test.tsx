@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
 import Transcript from "./Transcript";
-import type { ConversationItem, ToolCall } from "./sessionThread";
+import { thoughtSnippet, type ConversationItem, type ToolCall } from "./sessionThread";
+
+const stylesSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
+  "utf8",
+);
 
 beforeEach(() => {
   vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
@@ -164,6 +172,49 @@ describe("Transcript", () => {
 
     expect(screen.getByTestId("session-activity-summary")).toHaveTextContent("1 failed");
     expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+    // Collapsed by hand, the summary row is all that reports the failure, so it
+    // carries the tone rather than staying uniform grey.
+    expect(screen.getByTestId("session-activity")).toHaveClass("has-failure");
+  });
+
+  // #970 A: the row uppercased label and payload alike, so `rm -rf` reached the
+  // operator as `RM -RF` at the moment they were asked to approve it.
+  it("keeps a permission title in its own case, apart from the chrome label", () => {
+    const items: ConversationItem[] = [
+      {
+        kind: "permission",
+        id: "e1",
+        requestId: "r1",
+        title: "Run `rm -rf target/debug`",
+        resolved: false,
+      },
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    // Label and title are separate runs: the uppercase tracked cadence is
+    // chrome, and case-folding the title would turn a command the operator has
+    // to trust into `RM -RF TARGET/DEBUG`.
+    expect(screen.getByText("Permission requested")).toHaveClass("session-note-label");
+    expect(screen.getByText("Run rm -rf target/debug")).toHaveClass("session-note-text");
+    expect(stylesSource).toMatch(
+      /\.session-note-label\s*\{[^}]*text-transform:\s*uppercase/,
+    );
+    expect(stylesSource.match(/\.session-note-text\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
+      /text-transform/,
+    );
+  });
+
+  // #970 B: the row held its last 14 characters aside — right for two paths that
+  // differ only at the end, wrong for prose, which came out as
+  // "The port is read in config.… eed to move t…" across two spans.
+  it("renders a collapsed reasoning line as one unbroken run of prose", () => {
+    const text =
+      "The port is read in config.ts and again in the listener bootstrap, so both need to move together or the dev server binds twice.";
+    render(<Transcript items={[{ kind: "thought", id: "e1", text }]} busy={false} />);
+
+    // getByText does not match across element boundaries, so this passes only
+    // while the whole snippet lives in a single run.
+    expect(screen.getByText(thoughtSnippet(text, 90))).toBeInTheDocument();
   });
 
   it("shows a single call as its own row rather than a summary of one", () => {

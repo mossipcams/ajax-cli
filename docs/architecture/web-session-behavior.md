@@ -178,7 +178,11 @@ existing paths.
   emit a summed total. Duplicate usage for the same request, generation, or turn
   id is dropped. Cursor does not emit standard `usage_update` events, so context
   pressure stays unknown unless another harness reports it — per-turn tokens must
-  not populate the context meter.
+  not populate the context meter. When the host emits `turn_usage`, the live head
+  shows a quiet line (`Turn tokens: input N · …`) listing only the counts that
+  were present on the wire; missing input, output, cache, or total fields are
+  omitted rather than shown as zero. Context pressure and per-turn tokens may
+  both appear; they stay separate indicators.
 - `messageId` is optional in ACP v1. It is carried when present and refines both
   host-side coalescing and browser-side grouping; with it absent, role adjacency
   decides message boundaries as before.

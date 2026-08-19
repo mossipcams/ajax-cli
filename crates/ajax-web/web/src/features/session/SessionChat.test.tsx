@@ -145,6 +145,33 @@ describe("SessionChat smoke", () => {
     expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
   });
 
+  it("shows per-turn token usage in the head from turn_usage events", () => {
+    mountChat();
+    send({ type: "turn_usage", inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
+    const row = screen.getByTestId("session-turn-usage");
+    expect(row).toHaveTextContent("Turn tokens:");
+    expect(row).toHaveTextContent("input 1,200");
+    expect(row).toHaveTextContent("output 300");
+    expect(row).toHaveTextContent("total 1,500");
+  });
+
+  it("does not render turn usage when turn_usage carries no token counts", () => {
+    mountChat();
+    send({ type: "turn_usage", requestId: "req-only" });
+    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
+  });
+
+  it("keeps context usage separate from per-turn token usage", () => {
+    mountChat({
+      detail: { ...(taskDetail as BrowserTaskDetail), status: "running" },
+    });
+    send({ type: "usage", used: 40, size: 100 });
+    send({ type: "turn_usage", inputTokens: 900, totalTokens: 900 });
+    expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 40% full");
+    expect(screen.getByTestId("session-turn-usage")).toHaveTextContent("Turn tokens:");
+    expect(screen.getByTestId("session-turn-usage")).not.toHaveTextContent("Context");
+  });
+
   // Regression for #877: sticky inside the masked overflow scroller left the
   // composer stranded mid-viewport after the iOS keyboard dismissed.
   it("docks the composer below the transcript scroller, not inside it", () => {
