@@ -4,6 +4,9 @@ use crate::models::AgentClient;
 /// Default Cursor Agent model for Ajax-started tasks (not Fast).
 pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
+/// Effort suffixes on Cursor catalog ids (`gpt-5.6-sol-high`, `cursor-grok-4.6-xhigh`, …).
+const CURSOR_EFFORT_SUFFIXES: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];
+
 /// Semantic pieces shared by Ajax catalog ids and Cursor ACP handshake ids.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CursorModelIntent {
@@ -45,7 +48,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     };
 
     if let Some(rest) = stem.strip_prefix("cursor-grok-") {
-        for effort in ["xhigh", "high", "medium", "low"] {
+        for effort in CURSOR_EFFORT_SUFFIXES {
             if let Some(version) = rest.strip_suffix(&format!("-{effort}")) {
                 return Some(CursorModelIntent {
                     base: format!("grok-{version}"),
@@ -57,9 +60,19 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     }
 
     if let Some((prefix, effort)) = stem.rsplit_once('-') {
-        if prefix.ends_with("-thinking") && ["xhigh", "high", "medium", "low"].contains(&effort) {
+        if prefix.ends_with("-thinking") && CURSOR_EFFORT_SUFFIXES.contains(&effort) {
             return Some(CursorModelIntent {
                 base: prefix.strip_suffix("-thinking")?.to_string(),
+                effort: Some(effort.to_string()),
+                fast: Some(fast),
+            });
+        }
+    }
+
+    for effort in CURSOR_EFFORT_SUFFIXES {
+        if let Some(base) = stem.strip_suffix(&format!("-{effort}")) {
+            return Some(CursorModelIntent {
+                base: base.to_string(),
                 effort: Some(effort.to_string()),
                 fast: Some(fast),
             });
@@ -95,7 +108,8 @@ pub fn cursor_catalog_to_acp_spawn_token(catalog_id: &str) -> String {
     let Some(intent) = parse_cursor_model_intent(catalog_id) else {
         return catalog_id.to_string();
     };
-    let uses_acp_brackets = catalog_id.starts_with("cursor-grok-")
+    let uses_acp_brackets = intent.effort.is_some()
+        || catalog_id.starts_with("cursor-grok-")
         || catalog_id.starts_with("composer-")
         || catalog_id.contains("-thinking-")
         || catalog_id.contains('[');

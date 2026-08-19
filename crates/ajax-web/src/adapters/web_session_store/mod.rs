@@ -92,6 +92,16 @@ pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, m
     persist(state_dir, handle, &session);
 }
 
+/// Clear the stored ACP resume id so the next attach uses `session/new`.
+pub fn clear_acp_session_id(state_dir: &Path, handle: &str) {
+    let mut session = load::<serde_json::Value>(state_dir, handle);
+    if session.acp_session_id.is_none() {
+        return;
+    }
+    session.acp_session_id = None;
+    persist(state_dir, handle, &session);
+}
+
 pub fn append_events<T: Serialize + serde::de::DeserializeOwned>(
     state_dir: &Path,
     handle: &str,

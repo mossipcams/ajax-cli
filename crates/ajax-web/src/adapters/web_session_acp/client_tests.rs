@@ -202,7 +202,12 @@ fn cursor_acp_args_insert_model_before_acp() {
     );
     assert_eq!(
         acp_args_for_program(launch, &["agent", "acp"], Some("gpt-5.6-sol-medium")),
-        vec!["agent", "--model", "gpt-5.6-sol-medium", "acp"]
+        vec![
+            "agent",
+            "--model",
+            "gpt-5.6-sol[effort=medium,fast=false]",
+            "acp"
+        ]
     );
     assert_eq!(
         acp_args_for_program(launch, &["acp"], Some("auto")),
@@ -518,6 +523,34 @@ fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
             assert!(
                 report.model_apply_error.is_none(),
                 "unspecified spawn must run {mapped:?}, not Composer Fast: {:?}",
+                report.model_apply_error
+            );
+            assert_eq!(report.applied_model, mapped);
+            assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #984: Sol High catalog pin must spawn mapped ACP token, not passthrough or Composer Fast.
+#[test]
+fn cursor_spawn_catalog_pin_runs_sol_high_mapped_acp_model_issue_984() {
+    let dir = scratch_dir("model-cursor-sol-high-984");
+    let script = fake_acp_fixture();
+    let catalog_id = "gpt-5.6-sol-high";
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
+                    .expect("spawn");
+            assert_ne!(mapped, catalog_id, "catalog id must map before spawn");
+            assert_eq!(mapped, "gpt-5.6-sol[effort=high,fast=false]");
+            assert!(
+                report.model_apply_error.is_none(),
+                "mapped spawn must run {mapped:?}, not Composer Fast: {:?}",
                 report.model_apply_error
             );
             assert_eq!(report.applied_model, mapped);

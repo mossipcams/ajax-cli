@@ -37,6 +37,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 pub(super) struct ConnectionReady {
     pub session_id: String,
     pub session_new_result: Value,
+    pub config_options: Option<Vec<SessionConfigOption>>,
     pub load_session_advertised: bool,
     pub resumed: bool,
     pub applied_model: String,
@@ -59,7 +60,18 @@ pub(super) enum ClientCommand {
         approved: bool,
         result: Sender<Result<(), String>>,
     },
+    ApplyModelPin {
+        desired_model: String,
+        result: Sender<Result<ApplyModelOutcome, String>>,
+    },
     Shutdown,
+}
+
+struct LiveSession {
+    session_id: String,
+    session_result: Value,
+    config_options: Option<Vec<SessionConfigOption>>,
+    agent: AgentClient,
 }
 
 struct PendingPermission {
@@ -183,7 +195,12 @@ async fn run_async(options: RunOptions) {
                     return Ok(());
                 }
             };
-            let session_id = connection_ready.session_id.clone();
+            let live = LiveSession {
+                session_id: connection_ready.session_id.clone(),
+                session_result: connection_ready.session_new_result.clone(),
+                config_options: connection_ready.config_options.clone(),
+                agent,
+            };
             if ready.send(Ok(connection_ready)).is_err() {
                 return Ok(());
             }
@@ -193,7 +210,7 @@ async fn run_async(options: RunOptions) {
                 connection_events.clone(),
                 busy,
                 permissions,
-                session_id,
+                live,
             )
             .await;
             Ok(())
@@ -331,6 +348,7 @@ async fn initialize_session(
     Ok(ConnectionReady {
         session_id,
         session_new_result,
+        config_options,
         load_session_advertised,
         resumed,
         applied_model,
@@ -437,8 +455,14 @@ async fn command_loop(
     events: Sender<AcpClientEvent>,
     busy: Arc<AtomicBool>,
     permissions: PendingPermissions,
-    session_id: String,
+    live: LiveSession,
 ) {
+    let LiveSession {
+        session_id,
+        session_result,
+        config_options,
+        agent,
+    } = live;
     while let Some(command) = commands.recv().await {
         match command {
             ClientCommand::Prompt { id, text, result } => {
@@ -487,6 +511,23 @@ async fn command_loop(
             } => {
                 let response = respond_permission(&permissions, &request_id, approved);
                 let _ = result.send(response);
+            }
+            ClientCommand::ApplyModelPin {
+                desired_model,
+                result,
+            } => {
+                let model_pins_at_spawn =
+                    acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
+                let outcome = apply_model_pin(
+                    &connection,
+                    &session_id,
+                    &session_result,
+                    config_options.as_deref(),
+                    Some(&desired_model),
+                    model_pins_at_spawn,
+                )
+                .await;
+                let _ = result.send(Ok(outcome));
             }
             ClientCommand::Shutdown => break,
         }

@@ -581,6 +581,34 @@ mod tests {
         ));
     }
 
+    // Regression for #984: Sol High catalog pin matches mapped ACP id, not Composer Fast.
+    #[test]
+    fn operator_pin_satisfied_matches_sol_high_catalog_to_applied_acp_id_issue_984() {
+        use ajax_core::adapters::parse_model_selection;
+
+        let pin = parse_model_selection("gpt-5.6-sol-high").unwrap();
+        assert!(operator_pin_satisfied(
+            "gpt-5.6-sol-high",
+            "gpt-5.6-sol[effort=high,fast=false]",
+            true
+        ));
+        assert!(!operator_pin_satisfied(
+            "gpt-5.6-sol-high",
+            "composer-2.5[fast=true]",
+            true
+        ));
+        assert!(model_matches_pin(
+            "gpt-5.6-sol[effort=high,fast=false]",
+            &pin,
+            true
+        ));
+        assert!(!model_matches_pin(
+            "gpt-5.6-sol[effort=high,fast=true]",
+            &pin,
+            true
+        ));
+    }
+
     #[test]
     fn unspecified_cursor_default_rejects_composer_fast_issue_979() {
         let handshake = json!({

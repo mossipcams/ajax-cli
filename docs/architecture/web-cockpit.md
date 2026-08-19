@@ -73,7 +73,7 @@ harness to its ACP entry point and to how it accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` on the spawn argv with catalog ids mapped to ACP bracket tokens (including mapped `CURSOR_DEFAULT_MODEL` when Auto/unspecified) |
+| Cursor | `agent acp` (native) | `--model` on the spawn argv with effort-suffixed catalog ids mapped to ACP bracket tokens (including mapped `CURSOR_DEFAULT_MODEL` when Auto/unspecified) |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
 | Pi | `pi-acp` | `session/set_config_option` |
@@ -138,11 +138,15 @@ the duplicate Cursor-only Session Starter is removed
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
 model for an existing task, exposed as **Switch** in the Ajax chat (SessionChat)
-task-details modal. Same-harness model changes persist `session_model` and drop
-the live ACP slot so the next attach runs the chosen model; cross-harness
-changes spawn the new harness on the next attach. Switch is refused for a task
-that was launched interactively, because that task's agent is live in its tmux
-pane and the registry must not name a harness that is not the running process.
+task-details modal. Same-harness model changes persist `session_model` and apply
+the pin in-band on the live ACP session when a slot exists
+(`session/set_config_option`); with no live slot, persist only. Cross-harness
+changes persist and reset backend context on the live slot (cancel in-flight work,
+shut down the old ACP child, spawn the new harness with empty context) while
+keeping the TaskSession slot and JSONL transcript; with no live slot, persist and
+clear the stored resume id so the next attach uses `session/new`. Switch is refused
+for a task that was launched interactively, because that task's agent is live in its
+tmux pane and the registry must not name a harness that is not the running process.
 
 When spawn argv, resume/load, and in-band apply leave a model that does not match
 the operator pin (for example Cursor CLI default Composer Fast while Grok High or
@@ -190,7 +194,10 @@ queue empties, or idle retention evicts the slot.
 Reconnects do not send the browser `ajax.web.session.model` preference on the
 session WebSocket URL; task metadata remains authoritative
 ([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
-on the task through a core-owned operation before the host replaces the ACP child.
+on the task through a core-owned operation, then applies the pin in-band on the
+live ACP session when a slot exists (`session/set_config_option` with the mapped
+advertised ACP id). Cross-harness Switch resets backend context on the live slot
+instead of dropping it.
 Incoming ACP v1 notifications remain typed through the per-task command loop.
 Stable message, thought, tool, plan, mode, configuration, session-info, and usage
 updates are mapped explicitly; unsupported capability announcements are

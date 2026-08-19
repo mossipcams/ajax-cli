@@ -625,6 +625,31 @@ mod tests {
         );
     }
 
+    // Regression for #984: effort-suffixed Sol catalog ids must map to ACP bracket tokens.
+    #[test]
+    fn cursor_catalog_maps_sol_high_to_acp_spawn_token_issue_984() {
+        use crate::adapters::agent::{
+            cursor_catalog_to_acp_spawn_token, parse_cursor_model_intent,
+        };
+
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("gpt-5.6-sol-high"),
+            "gpt-5.6-sol[effort=high,fast=false]"
+        );
+        assert_eq!(
+            cursor_catalog_to_acp_spawn_token("gpt-5.6-sol-high-fast"),
+            "gpt-5.6-sol[effort=high,fast=true]"
+        );
+        assert_ne!(
+            cursor_catalog_to_acp_spawn_token("gpt-5.6-sol-high"),
+            "gpt-5.6-sol-high"
+        );
+        let intent = parse_cursor_model_intent("gpt-5.6-sol-high").unwrap();
+        assert_eq!(intent.base, "gpt-5.6-sol");
+        assert_eq!(intent.effort.as_deref(), Some("high"));
+        assert_eq!(intent.fast, Some(false));
+    }
+
     #[test]
     fn cursor_model_intents_match_requires_matching_fast_issue_979() {
         use crate::adapters::{cursor_model_intents_match, parse_cursor_model_intent};

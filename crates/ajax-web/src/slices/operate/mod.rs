@@ -277,7 +277,8 @@ pub fn supported_start_agent(agent: &str) -> bool {
 }
 
 /// Move an existing provisioned task to another harness, optionally pinning the
-/// model it should run. The caller drops any live ACP slot for the task.
+/// model it should run. The caller resets backend context on a live slot or
+/// clears the stored ACP resume id when idle.
 pub fn swap_task_agent<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,
@@ -304,7 +305,7 @@ pub fn swap_task_agent<R: Registry>(
 }
 
 /// Persist the desired session model on a provisioned task before the host
-/// replaces its ACP child.
+/// applies the pin on the live ACP session (or on the next attach when idle).
 pub fn set_task_session_model<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,

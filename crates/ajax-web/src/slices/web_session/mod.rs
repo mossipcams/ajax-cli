@@ -3,6 +3,7 @@
 mod acp_drain;
 mod acp_map;
 pub(crate) mod acp_usage;
+pub(crate) mod model_change;
 mod normalize;
 mod protocol;
 mod replay;

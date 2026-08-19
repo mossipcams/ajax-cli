@@ -89,10 +89,10 @@ fn apply_client_message_prompt_records_user_message_immediately() {
 }
 
 // Regression for issue #931: in-session set_model must persist on the task
-// before the host replaces its ACP child; persistence failure leaves the slot
+// before the host applies the pin in-band; persistence failure leaves the slot
 // unchanged and returns a typed error.
 #[test]
-fn apply_client_message_set_model_persists_before_respawn() {
+fn apply_client_message_set_model_persists_before_in_band_apply() {
     let dir = scratch_dir("set-model-persist");
     let handle = "web/set-model";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -105,6 +105,9 @@ fn apply_client_message_set_model_persists_before_respawn() {
             .acquire(handle, &dir, "auto", AgentClient::Cursor)
             .expect("acquire");
         let before = directory.child_id(handle).expect("child");
+        let session_before =
+            crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                .acp_session_id;
         let mut generation = directory.generation(handle);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let persist: super::PersistSessionModel = std::sync::Arc::new(move |model: &str| {
@@ -124,7 +127,18 @@ fn apply_client_message_set_model_persists_before_respawn() {
         .expect("set model");
 
         assert_eq!(persisted.lock().unwrap().as_deref(), Some("composer-2.5"));
-        assert_ne!(directory.child_id(handle), Some(before));
+        assert_eq!(directory.child_id(handle), Some(before));
+        let session_after =
+            crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                .acp_session_id;
+        assert_eq!(session_after, session_before);
+        directory.pump(handle);
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Message { text, .. }
+                if text.contains("model:session/set_config_option:composer-2.5")
+        )));
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -203,8 +217,8 @@ fn apply_client_message_set_model_surfaces_worker_stop_without_respawn_issue_962
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #942: set_model must replace the ACP child, publish the
-// new slot model on attach, and keep it after the next prompt.
+// Regression for issue #942: set_model must publish the applied model on attach
+// and keep it after the next prompt without replacing the ACP child in-band.
 #[test]
 fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
     let dir = scratch_dir("set-model-prompt-942");
@@ -231,14 +245,14 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
         ))
         .expect("set model");
 
-        assert_ne!(directory.child_id(handle), Some(before));
+        assert_eq!(directory.child_id(handle), Some(before));
         let attach = rt.block_on(directory.inner().attach_snapshot(
             handle,
             "composer-2.5".to_string(),
             None,
         ));
         assert_eq!(attach.snapshot.model, "composer-2.5");
-        assert!(attach.generation > 0);
+        assert_eq!(attach.generation, generation);
 
         rt.block_on(apply_client_message(
             directory.inner(),
@@ -267,6 +281,43 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
             None,
         ));
         assert_eq!(after_prompt.snapshot.model, "composer-2.5");
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// In-band refusal falls back to one respawn; child id changes only on that path.
+#[test]
+fn apply_client_message_set_model_respawns_when_in_band_refused() {
+    let dir = scratch_dir("set-model-respawn-fallback");
+    let handle = "web/set-model-respawn";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--refuse-in-band-once", "--cursor-models"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            let before = directory.child_id(handle).expect("child");
+            let mut generation = directory.generation(handle);
+            let generation_before = generation;
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: "composer-2.5".to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("set model");
+
+            assert_ne!(directory.child_id(handle), Some(before));
+            assert!(generation > generation_before);
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -301,6 +352,46 @@ fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
                     if message.contains("session model") && message.contains("composer-2.5")
             )));
         });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn swap_resets_context_only_for_cross_harness() {
+    use super::model_change::swap_resets_harness_context;
+
+    assert!(!swap_resets_harness_context(AgentClient::Cursor, "cursor"));
+    assert!(!swap_resets_harness_context(AgentClient::Codex, "codex"));
+    assert!(swap_resets_harness_context(AgentClient::Cursor, "claude"));
+    assert!(swap_resets_harness_context(AgentClient::Codex, "pi"));
+}
+
+#[test]
+fn apply_persisted_model_keeps_live_child_for_same_harness_swap() {
+    use super::model_change::apply_persisted_model;
+
+    let dir = scratch_dir("same-harness-apply-persisted");
+    let handle = "web/same-harness-swap";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let child_before = directory.child_id(handle).expect("child");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(apply_persisted_model(
+            directory.inner(),
+            handle,
+            &dir,
+            Some("composer-2.5"),
+        ))
+        .expect("apply persisted model");
+
+        assert_eq!(directory.child_id(handle), Some(child_before));
+        assert!(directory.inner().has_live_entry(handle));
     });
 
     let _ = std::fs::remove_dir_all(dir);

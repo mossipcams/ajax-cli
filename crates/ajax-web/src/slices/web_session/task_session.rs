@@ -59,10 +59,15 @@ pub(crate) enum TaskSessionCommand {
         reason: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    Respawn {
+    ApplyModel {
         worktree_path: PathBuf,
         model: String,
-        force: bool,
+        reply: oneshot::Sender<Result<u64, String>>,
+    },
+    ResetHarness {
+        worktree_path: PathBuf,
+        model: String,
+        agent: AgentClient,
         reply: oneshot::Sender<Result<u64, String>>,
     },
     AttachSnapshot {
@@ -142,6 +147,8 @@ pub(crate) struct TaskSessionState {
     pub(super) agent: AgentClient,
     pub(super) worktree_path: Option<PathBuf>,
     pub(super) usage_deduper: UsageDeduper,
+    /// Model-only snapshot after in-band apply (reset stays false).
+    pub(super) pending_model_snapshot: Option<String>,
 }
 
 impl TaskSessionState {
@@ -229,6 +236,7 @@ pub(crate) fn spawn_task_session(
             agent: AgentClient::Cursor,
             worktree_path: None,
             usage_deduper: UsageDeduper::default(),
+            pending_model_snapshot: None,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -295,13 +303,23 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let result = answer_permission(state, &request_id, approved, reason.as_deref());
             let _ = reply.send(result);
         }
-        TaskSessionCommand::Respawn {
+        TaskSessionCommand::ApplyModel {
             worktree_path,
             model,
-            force,
             reply,
         } => {
-            let result = task_session_spawn::respawn(state, &worktree_path, &model, force).await;
+            let result = task_session_spawn::apply_model(state, &worktree_path, &model).await;
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::ResetHarness {
+            worktree_path,
+            model,
+            agent,
+            reply,
+        } => {
+            let result =
+                task_session_spawn::reset_harness_context(state, &worktree_path, &model, agent)
+                    .await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {
@@ -472,6 +490,14 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             snapshot_applied_model(state),
             state.busy(),
             true,
+            pending_permission(&state.log),
+        ))
+    } else if let Some(model) = state.pending_model_snapshot.take() {
+        Some(SessionSnapshot::new(
+            state.log.absolute_next_cursor(),
+            model,
+            state.busy(),
+            false,
             pending_permission(&state.log),
         ))
     } else {
