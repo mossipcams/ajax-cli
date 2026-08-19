@@ -112,9 +112,7 @@ pub fn resolve_parameterized_apply(
     }
     let mut options = Vec::new();
     if let Some(effort) = &desired.effort {
-        let Some(config_id) = effort_config_id(config_options) else {
-            return None;
-        };
+        let config_id = effort_config_id(config_options)?;
         if !config_option_value_advertised(config_options, config_id, effort) {
             return None;
         }
