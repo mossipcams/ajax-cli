@@ -424,11 +424,12 @@ Before release-sensitive changes, run the strongest applicable local checks:
 
 ```sh
 cargo fmt --check
-cargo check --all-targets --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-features --test-threads=1
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo nextest run --all-features
 cargo test --doc
 npm run web:check
+npm run web:lint
+npm run web:sg
 npm run web:test -- --run
 ```
 
