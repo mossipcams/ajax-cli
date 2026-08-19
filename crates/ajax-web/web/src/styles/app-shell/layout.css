@@ -1,0 +1,205 @@
+/* MAIN LAYOUT — route-scroll is the only normal vertical scroll owner. ------- */
+[data-testid="route-scroll"] {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  padding: 16px calc(20px + env(safe-area-inset-right)) 48px
+    calc(20px + env(safe-area-inset-left));
+}
+
+[data-testid="route-scroll"]::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) > [data-outlet="task"] {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  /* Keep the whole chrome row (back + title + status pill) on-screen when
+     iOS focus/keyboard pans route-scroll; sticky within the scroll owner. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail .detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--paper);
+  }
+
+  /* Inline terminal takes the leftover column height so the collapsed
+     task-details line lands at the page bottom. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail > div:has([data-testid="task-terminal-panel"]) {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail .terminal-panel:not(.is-expanded) {
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+
+  /* Open meta: release the fill pin so route-scroll can grow and scroll. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.meta-details[open]) > [data-outlet="task"] {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) > div:has([data-testid="task-terminal-panel"]) {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) .terminal-panel:not(.is-expanded) {
+    flex: 0 0 auto;
+  }
+
+  [data-testid="route-scroll"] {
+    /* Clears .bottom-nav, which no longer pads by the safe-area inset. */
+    padding-bottom: 72px;
+  }
+
+  html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
+  /* Pin the whole task page to the visual-viewport band so the terminal
+     hotkey bar lands on the band bottom (flush above the iOS keyboard),
+     matching fullscreen geometry while keeping back/status visible.
+     Skip while terminal-expanded: the expanded panel owns the band, and a
+     fixed overflow parent becomes the containing block on iOS Safari so a
+     nested fixed panel is double-offset under the keyboard. */
+  html.keyboard-open:not(.terminal-expanded) .task-detail {
+    position: fixed;
+    /* Height from --app-top / --app-height (visualViewport). */
+    top: var(--app-top, var(--app-band-top, 0px));
+    left: 0;
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    height: var(--app-height, var(--app-band-height, 100dvh));
+    max-height: var(--app-height, var(--app-band-height, 100dvh));
+    min-height: 0;
+    margin: 0;
+    box-sizing: border-box;
+    /* Cockpit chrome (safe-area top owner) is display:none while keyboard-open;
+       pad here so the whole detail-header row (back + title + status) clears
+       the notch / status bar instead of sitting under it. */
+    padding-top: env(safe-area-inset-top);
+    overflow: hidden;
+    background: var(--paper);
+  }
+
+  html.keyboard-open:not(.terminal-expanded) .task-detail .detail-header,
+  html.keyboard-open:not(.terminal-expanded) .task-detail .interact-panel {
+    flex: none;
+  }
+
+  html.keyboard-open:not(.terminal-expanded) .task-detail > div:has([data-testid="task-terminal-panel"]) {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  html.keyboard-open:not(.terminal-expanded) .task-detail .terminal-panel:not(.is-expanded) {
+    flex: 1 1 0%;
+    min-height: 0;
+    margin-top: 0;
+  }
+
+  html.keyboard-open .task-detail .task-meta-chrome {
+    display: none;
+  }
+
+  html.terminal-expanded .task-detail .interact-panel,
+  html.terminal-expanded .task-detail .task-meta-chrome {
+    display: none;
+  }
+
+  /* Keep Details reachable in fullscreen terminal without reserving band space. */
+  html.terminal-expanded .task-detail .detail-header {
+    position: fixed;
+    top: calc(6px + env(safe-area-inset-top));
+    left: calc(6px + env(safe-area-inset-left));
+    z-index: 46;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    border: none;
+    pointer-events: none;
+  }
+
+  html.terminal-expanded .task-detail .detail-header .back,
+  html.terminal-expanded .task-detail .detail-header .detail-title,
+  html.terminal-expanded .task-detail .detail-header .interact-pill {
+    display: none;
+  }
+
+  html.terminal-expanded .task-detail .detail-header .detail-header-controls {
+    pointer-events: auto;
+  }
+
+  /* Match terminal-copy-overlay so Details stays visible on the dark xterm. */
+  html.terminal-expanded .task-detail .detail-header .session-head-details {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px 14px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    background: var(--paper-raised);
+    color: var(--ink);
+  }
+
+  html.keyboard-open .cockpit-chrome,
+  html.keyboard-open .bottom-nav,
+  html.terminal-expanded .cockpit-chrome,
+  html.terminal-expanded .bottom-nav {
+    display: none;
+  }
+
+  html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="session"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+}

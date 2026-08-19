@@ -3,16 +3,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import {
   FloatingContextMenu,
   floatingMenuShiftPadding,
   readFloatingMenuShiftPadding,
 } from "./FloatingContextMenu";
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
-);
+const webSrcRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const stylesSource = readOrderedStylesSource(webSrcRoot);
 
 const menuSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "FloatingContextMenu.tsx"),

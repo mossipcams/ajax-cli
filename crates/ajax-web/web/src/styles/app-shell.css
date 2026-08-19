@@ -1,0 +1,229 @@
+/* TOP CHROME — sticky header stack with iOS safe-area ---------------------- */
+.cockpit-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  /* Opaque paper: iOS restores backdrop-filter GPU layers as a black tile after
+     app-switch (#836). */
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+
+header {
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  padding: 14px 20px 12px;
+}
+
+header .bar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-height: 30px;
+}
+
+header .bar h1 {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 700;
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+  color: var(--ink);
+  flex: none;
+}
+
+.status-line {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-data);
+  color: var(--ink-muted);
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-link {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.settings-link:hover,
+.settings-link:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  align-self: center;
+  box-shadow: none;
+}
+
+/* Accent only when the fleet link is healthy — never while ConnectionStatus shouts. */
+.live-dot.is-live {
+  background: var(--accent);
+}
+
+/* CONNECTION STATUS — only shouts when something is wrong ------------------ */
+.connection-status {
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 10px;
+  color: var(--ink-muted);
+  font-size: var(--text-label);
+}
+
+.connection-status[data-state="checking"],
+.connection-status[data-state="connected"],
+.connection-status[data-state="reconnecting"] {
+  display: none;
+}
+
+.connection-status[data-state="backend unreachable"],
+.connection-status[data-state="disconnected"],
+.connection-status[data-state="stale session"] {
+  color: var(--ink);
+}
+
+.connection-status[data-state="backend unreachable"] .connection-label,
+.connection-status[data-state="disconnected"] .connection-label,
+.connection-status[data-state="stale session"] .connection-label {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.connection-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connection-actions button,
+.connection-actions a {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.connection-actions button:hover,
+.connection-actions button:focus-visible,
+.connection-actions a:hover,
+.connection-actions a:focus-visible {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.connection-actions button.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.connection-actions button.is-primary:hover,
+.connection-actions button.is-primary:focus-visible {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+  color: var(--paper);
+}
+
+/* RESULT PANEL ------------------------------------------------------------ */
+.result-panel {
+  /* Overlay toast — thumb-reachable above bottom nav (body clears 72px). Out of
+     flow so it never shifts the cockpit. Above chrome (10) / bottom-nav (20),
+     below the sheet (45). */
+  position: fixed;
+  left: 50%;
+  bottom: calc(72px + 12px);
+  transform: translateX(-50%);
+  width: min(var(--shell), calc(100% - 24px));
+  margin: 0;
+  z-index: 40;
+  padding: 12px 16px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* Nav hidden: sit just above the home indicator instead of a dead 72px band. */
+html.keyboard-open .result-panel,
+html.terminal-expanded .result-panel,
+.app-viewport:has(.app-shell--session) .result-panel {
+  bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+.result-panel.is-error {
+  background: rgba(215, 135, 135, 0.14);
+}
+
+.result-message {
+  margin: 0 0 8px;
+  font-size: var(--text-body-sm);
+  color: var(--ink);
+}
+
+.result-output {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+  scrollbar-width: none;
+  color: var(--ink-soft);
+}
+
+.result-output::-webkit-scrollbar {
+  display: none;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: stretch;
+}
+
+.result-actions .pill,
+.result-panel .pill {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 10px 14px;
+}

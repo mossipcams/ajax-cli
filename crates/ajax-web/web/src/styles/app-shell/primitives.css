@@ -1,0 +1,149 @@
+/* EMPTY STATE (App + TaskList) -------------------------------------------- */
+.empty {
+  margin: 72px 0;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+}
+
+/* STATUS DOT (TaskList + TaskCard) ---------------------------------------- */
+.status-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tone, var(--rule-strong));
+}
+
+/* ACTION BUTTONS (ActionBar + TaskCard "Open") ---------------------------- */
+.action {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 16px;
+  min-height: 44px;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.action:hover,
+.action:focus-visible {
+  border-color: var(--ink-soft);
+  outline: none;
+}
+
+.action.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.action.primary:hover,
+.action.primary:focus-visible {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+}
+
+.action.remediation-action {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.action.remediation-action.primary {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--paper);
+}
+
+.action[data-destructive="true"] {
+  color: var(--danger);
+  border-color: var(--danger-deep);
+  background: transparent;
+}
+
+/* If primary is ever combined with destructive, danger wins over accent fill. */
+.action.primary[data-destructive="true"] {
+  background: transparent;
+  border-color: var(--danger-deep);
+  color: var(--danger);
+}
+
+.action[data-destructive="true"]:hover,
+.action[data-destructive="true"]:focus-visible {
+  background: var(--danger);
+  border-color: var(--danger-bright);
+  color: var(--paper);
+}
+
+.action.confirming {
+  background: var(--danger);
+  border-color: var(--danger-bright);
+  color: var(--paper);
+  animation: nudge 140ms ease;
+}
+
+.action.is-running {
+  color: var(--ink-muted);
+  cursor: progress;
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* PILL BUTTONS (connection / result / sheet / settings / pane) ------------ */
+.pill {
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 8px 16px;
+  min-height: 34px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.pill:hover,
+.pill:focus-visible {
+  border-color: var(--ink-soft);
+  outline: none;
+}
+
+.pill.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.pill.is-primary:hover,
+.pill.is-primary:focus-visible {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+}
+
+.pill.is-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--paper);
+}
+
+.pill.is-danger:hover,
+.pill.is-danger:focus-visible {
+  background: var(--danger-bright);
+  border-color: var(--danger-bright);
+}
+
+.pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

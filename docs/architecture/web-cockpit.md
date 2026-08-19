@@ -504,7 +504,11 @@ storage, or PWA dependency.
 
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
 the HTML shell, the boot client JavaScript (`app.js`), the deferred terminal
-chunk (`terminal.js`), and the stylesheet from that directory.
+chunk (`terminal.js`), and one deterministic stylesheet artifact
+(`dist/app.css`) from that directory. Source CSS is authored as
+`web/src/styles.css` — the ordered manifest and Tailwind `@theme inline`
+bridge — which `@import`s owned modules under `web/src/styles/`; Vite bundles
+that graph into the sole shipped CSS file. The manifest is not a second asset.
 `ajax-web::runtime` owns HTTP transport wiring, local TLS setup, and shell asset
 delivery.
 `ajax-web::adapters::browser_session` owns browser-session token persistence,
@@ -919,8 +923,11 @@ Starter codes: `conflict`, `unsupported_action`, `unknown_action`, `needs_termin
 ### `ajax-web::slices::install`
 
 Owns the browser shell. It serves the HTML shell, the boot client JavaScript
-(`app.js`), the deferred terminal chunk (`terminal.js`), and the stylesheet. It
-must not serve a web manifest,
+(`app.js`), the deferred terminal chunk (`terminal.js`), and one deterministic
+stylesheet artifact (`dist/app.css`). Source styling lives in
+`web/src/styles.css` (ordered manifest + Tailwind bridge) and owned modules
+under `web/src/styles/`; the install slice embeds and serves only the built
+`app.css`. It must not serve a web manifest,
 service worker, install icon, or offline cache surface.
 
 ### `ajax-web::slices::terminal`

@@ -1,0 +1,223 @@
+/* Sheets ------------------------------------------------------------------ */
+/* Bottom-rising inside FullscreenLayer's app band, matching NewTaskSheet. */
+.session-sheet-scrim {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--soft-charcoal) 62%, transparent);
+}
+
+.session-details-sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  gap: 14px;
+  width: min(var(--shell), 100%);
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+    calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  animation: sheet-rise 220ms var(--ease-spring);
+}
+
+.session-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-sheet-header h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 700;
+}
+
+.session-details-sheet .field-label {
+  display: block;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-details-sheet .session-sheet-header .pill,
+.session-details-sheet .session-sheet-close {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
+.session-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-task-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-task-title {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.session-task-handle {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.session-task-branch {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.session-model-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-model-current-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.session-model-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.session-model-change,
+.session-model-done {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.session-model-change:hover:not(:disabled),
+.session-model-done:hover {
+  border-color: var(--ink-soft);
+}
+
+.session-model-change:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.session-model-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-sheet-tools-primary {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-sheet-warning {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--danger);
+}
+
+.session-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+/* Settings sheet: Ship/Drop stay secondary chrome, not primary fill. */
+.session-sheet-actions-muted .action.primary {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.session-sheet-actions-muted .action.primary:hover,
+.session-sheet-actions-muted .action.primary:focus-visible {
+  background: transparent;
+  border-color: var(--ink-soft);
+}
+
+.session-sheet-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The transcript owns scrolling, so every ancestor between the app viewport and
+   .session-thread must be a bounded flex column. The outlet section defaults to
+   display:block, which broke the chain and let the whole route scroll — that is
+   what floated the composer up over the transcript. */
+[data-testid="route-scroll"]:has([data-outlet="session"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  /* The generic route padding is dead space here: this route renders no bottom
+     nav and no page lead, so its 72px of nav clearance only stranded the
+     composer that far above the keyboard. The session page owns its own gutter;
+     only the landscape notch insets survive. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) .session-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+

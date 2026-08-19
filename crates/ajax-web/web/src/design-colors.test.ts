@@ -2,13 +2,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const webSrcRoot = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(webSrcRoot, "../../../..");
 const designMd = readFileSync(join(repoRoot, "DESIGN.md"), "utf8");
-const stylesCss = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "styles.css"),
-  "utf8",
-);
+const stylesCss = readOrderedStylesSource(webSrcRoot);
 
 /** Parse `colors:` hex map from DESIGN.md YAML frontmatter. */
 function designColors(): Record<string, string> {

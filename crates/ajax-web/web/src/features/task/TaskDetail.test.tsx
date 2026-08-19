@@ -10,7 +10,7 @@ import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
-import { readFileSync } from "node:fs";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
 vi.mock("@/shared/lib/swipeEnter", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/swipeEnter")>(
@@ -22,9 +22,8 @@ vi.mock("@/shared/lib/swipeEnter", async () => {
   };
 });
 
-const stylesSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"),
-  "utf8",
+const stylesSource = readOrderedStylesSource(
+  join(dirname(fileURLToPath(import.meta.url)), "../.."),
 );
 
 beforeEach(() => {
