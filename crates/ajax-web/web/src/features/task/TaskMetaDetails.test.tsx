@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen, waitFor, within } from "@testing-library/react";
-import TaskMetaDetails from "./TaskMetaDetails";
+import TaskMetaDetails, { humanizeTaskAnnotation } from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 
 const stylesSource = readFileSync(
@@ -113,6 +113,27 @@ describe("TaskMetaDetails", () => {
     expect(screen.getByTestId("task-annotations").textContent).toContain("check CI");
   });
 
+  it("humanizes Rust Debug annotation strings for operator notes", () => {
+    render(
+      <TaskMetaDetails
+        detail={detail({
+          annotations: [
+            "Annotation { kind: NeedsMe, severity: 1, evidence: LiveStatus(WaitingForApproval), suggests: Resume }",
+            "Annotation { kind: Reviewable, severity: 3, evidence: Lifecycle(Reviewable), suggests: Review }",
+          ],
+        })}
+      />,
+    );
+    const notes = screen.getByTestId("task-annotations");
+    expect(notes).toHaveTextContent("waiting for approval");
+    expect(notes).toHaveTextContent("reviewable · reviewable");
+    expect(notes.textContent).not.toContain("Annotation {");
+  });
+
+  it("returns null for blank annotation strings", () => {
+    expect(humanizeTaskAnnotation("   ")).toBeNull();
+  });
+
   it("omits the annotations block when the task has none", () => {
     render(<TaskMetaDetails detail={detail()} />);
     expect(screen.queryByTestId("task-annotations")).not.toBeInTheDocument();
@@ -158,10 +179,11 @@ describe("TaskMetaDetails", () => {
   });
 
   it("renders embedded task metadata without the footer disclosure wrapper", () => {
-    render(<TaskMetaDetails detail={detail()} embedded />);
+    render(<TaskMetaDetails detail={detail()} embedded hideBranch />);
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
     expect(screen.getByTestId("task-meta-details-embedded")).toBeInTheDocument();
-    expect(screen.getByText("Branch")).toBeInTheDocument();
+    expect(screen.queryByText("Branch")).not.toBeInTheDocument();
+    expect(screen.getByText("Base")).toBeInTheDocument();
   });
 
   it("shows Test in Dev inside Task details (not on the always-visible page) for ajax-cli tasks", async () => {

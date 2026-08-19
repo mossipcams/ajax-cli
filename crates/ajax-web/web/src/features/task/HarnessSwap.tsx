@@ -9,6 +9,8 @@ interface Props {
   /** Harness the task runs on now, as reported by the task detail. */
   currentAgent: string;
   onSwapped?: () => void;
+  /** Fires when the inline switch panel opens or closes. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -16,13 +18,19 @@ interface Props {
  * the backend refuses a task whose agent is live in its tmux pane, because
  * rewriting the registry under it would not stop that process.
  */
-export default function HarnessSwap({ handle, currentAgent, onSwapped }: Props) {
+export default function HarnessSwap({ handle, currentAgent, onSwapped, onOpenChange }: Props) {
   const [open, setOpen] = useState(false);
   const [agent, setAgent] = useState(currentAgent);
   const [model, setModel] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  function setOpenState(next: boolean) {
+    setOpen(next);
+    onOpenChange?.(next);
+  }
+
   const swapMutation = useSwapTaskAgentMutation(handle, () => {
-    setOpen(false);
+    setOpenState(false);
     onSwapped?.();
   });
 
@@ -52,7 +60,7 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped }: Props) 
           onClick={() => {
             setAgent(currentAgent);
             setModel("");
-            setOpen(true);
+            setOpenState(true);
           }}
         >
           Switch
@@ -102,7 +110,7 @@ export default function HarnessSwap({ handle, currentAgent, onSwapped }: Props) 
       ) : null}
 
       <div className="sheet-actions">
-        <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+        <Button type="button" variant="secondary" onClick={() => setOpenState(false)}>
           Cancel
         </Button>
         <Button

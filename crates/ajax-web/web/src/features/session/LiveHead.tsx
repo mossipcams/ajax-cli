@@ -112,6 +112,10 @@ interface Props {
   onReject: () => void;
   onStop: () => void;
   onOpenDetails: () => void;
+  /** When the task details sheet is open — drives Details disclosure a11y. */
+  detailsOpen?: boolean;
+  /** Panel id for `aria-controls` on the Details control. */
+  detailsPanelId?: string;
 }
 
 export default function LiveHead({
@@ -132,6 +136,8 @@ export default function LiveHead({
   onReject,
   onStop,
   onOpenDetails,
+  detailsOpen = false,
+  detailsPanelId,
 }: Props) {
   const quiet = state === "working" && activityAgeMs >= 60_000;
   const hasToolOrPlan = Boolean(tool || planStep);
@@ -176,6 +182,8 @@ export default function LiveHead({
             type="button"
             className="session-head-details"
             data-testid="session-details"
+            aria-expanded={detailsOpen}
+            {...(detailsPanelId ? { "aria-controls": detailsPanelId } : {})}
             onClick={onOpenDetails}
           >
             Details
