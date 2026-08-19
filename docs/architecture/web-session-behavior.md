@@ -49,10 +49,11 @@ existing paths.
   is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
   Verification treats harness-reported ACP ids as matching the catalog pin when
   they name the same model family (base + effort), even when bracket options
-  differ. When spawn and in-band apply still leave a different model running
-  (e.g. Composer Fast while Grok High was pinned), the host drops the child and
-  respawns once with the mapped ACP spawn token (no resume), then applies the pin
-  in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). After
+  differ. When spawn, resume/load, and in-band apply still leave a different
+  model running (e.g. Composer Fast while Grok High was pinned), the host drops
+  the child and respawns once with the mapped ACP spawn token (no resume), then
+  applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+  After
   a successful recover, `snapshot.model` is the recovered applied id and no typed
   `error` is emitted for the failed first attempt. If recovery still fails, the host
   emits a typed `error` event and leaves `snapshot.model` on the harness-reported

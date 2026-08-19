@@ -386,6 +386,49 @@ fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression for #979: resume with wrong applied model must recover like fresh attach.
+#[test]
+fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
+    let dir = scratch_dir("model-cursor-recover-resume-979");
+    let script = fake_acp_fixture();
+    let catalog_id = "cursor-grok-4.6-high";
+    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--resume",
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    Some("fake-sess-1"),
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert_eq!(report.applied_model, mapped);
+                assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+                assert!(
+                    !report.resumed,
+                    "recovery must respawn with session/new, not resume/load"
+                );
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // Regression for #979: respawn once when spawn argv and in-band apply both leave CLI default.
 #[test]
 fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {

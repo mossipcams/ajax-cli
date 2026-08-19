@@ -194,10 +194,6 @@ impl AcpStdioClient {
         if Self::pin_report_acceptable(operator_pin, &report, model_pins_at_spawn) {
             return Ok((client, report));
         }
-        // Resume/load keeps transcript continuity; recover only on fresh attach.
-        if resume_session_id.is_some() {
-            return Ok((client, report));
-        }
         drop(client);
         attempt(None)
     }
