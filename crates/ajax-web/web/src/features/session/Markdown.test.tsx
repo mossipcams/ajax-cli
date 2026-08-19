@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import Markdown, { parseBlocks } from "./Markdown";
 
 describe("parseBlocks", () => {
@@ -89,9 +89,17 @@ describe("Markdown", () => {
       "href",
       "https://example.com/docs",
     );
-    expect(screen.getByText("Quoted line").closest("blockquote")).toHaveClass("md-quote");
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByText("child").closest("ul")?.parentElement?.closest("ul")).toBeTruthy();
+    const quote = screen.getByRole("blockquote");
+    expect(quote).toHaveClass("md-quote");
+    expect(within(quote).getByText("Quoted line")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("md-table");
+    expect(within(table).getByRole("columnheader", { name: "Col A" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "one" })).toBeInTheDocument();
+    const [outerList, nestedList] = screen.getAllByRole("list");
+    expect(within(outerList).getByText("parent")).toBeInTheDocument();
+    expect(within(nestedList).getByText("child")).toBeInTheDocument();
+    expect(outerList).toContainElement(nestedList);
   });
 
   it("does not link javascript or other non-http schemes", () => {
