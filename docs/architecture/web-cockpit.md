@@ -120,9 +120,12 @@ task falls back to the terminal route rather than sitting on a refused socket.
 
 The **New task** sheet is two steps: repository/title/harness, then a model page
 presenting a shortlist of popular options for that harness, with **Show all** for
-the full catalog. Its reasoning level sits beside the model list when the harness
-has one. `GET /api/session/models?agent=` still serves the complete catalog —
-Cursor from `agent models`, the bridges from their own `session/new` handshake.
+the full catalog. Bridge harnesses show a reasoning level beside the model list
+when the handshake advertises one. Cursor collapses effort and Fast out of its
+catalog ids: one row per model base, an **Effort** row when multiple levels exist,
+and a **Fast** Off/On row (default Off; Auto is never Fast). `GET /api/session/models?agent=`
+still serves the complete catalog — Cursor from `agent models`, the bridges from
+their own `session/new` handshake.
 
 That handshake costs a short-lived bridge process, so the catalog is cached
 against the **harness CLI version** rather than a clock: each request reads
@@ -154,7 +157,12 @@ the operator pin (for example Cursor CLI default Composer Fast while Grok High o
 `CURSOR_DEFAULT_MODEL` was chosen), the session host drops the ACP child and
 respawns once with the mapped spawn token and a fresh `session/new` (no resume),
 then applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-After a successful recover, `snapshot.model` reflects the running model and no
+Ajax advertises `clientCapabilities._meta.parameterizedModelPicker: true` on ACP
+`initialize` (filesystem and terminal capabilities remain false). When Cursor
+advertises separate `model` / `effort` / `fast` options, non-Fast catalog pins
+apply through split `session/set_config_option` values rather than exploded
+Fast-only model ids; Composer Fast is not an acceptable substitute for a non-Fast
+pin. After a successful recover, `snapshot.model` reflects the running model and no
 error is logged for the failed first attempt. If recovery still fails, the host
 emits a typed error while `session_model` stays the operator pin and
 `snapshot.model` remains harness-reported evidence.

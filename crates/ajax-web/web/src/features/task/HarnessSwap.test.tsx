@@ -97,4 +97,36 @@ describe("HarnessSwap", () => {
     );
     expect(screen.getByTestId("harness-swap-apply")).toBeInTheDocument();
   });
+
+  it("submits composed Cursor catalog ids from Switch (#979)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+            { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+          ],
+          default: "composer-2.5",
+        }),
+      }),
+    );
+    const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    render(
+      <HarnessSwap
+        handle="web/fix-login"
+        currentAgent="cursor"
+        currentModel="composer-2.5"
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    fireEvent.click(await screen.findByRole("radio", { name: "On" }));
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith("web/fix-login", "cursor", "composer-2.5-fast");
+  });
 });

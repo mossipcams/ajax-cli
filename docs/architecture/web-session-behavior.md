@@ -39,21 +39,33 @@ existing paths.
 - Cursor takes its model on the spawn argv when the harness pins at spawn; every
   harness (including Cursor) also applies an operator pin in-band when
   `configOptions` or `models.availableModels` advertises a model control **and**
-  the pin resolves to an exact advertised handshake value (Ajax maps effort-suffixed
-  catalog ids such as `cursor-grok-4.6-high` and `gpt-5.6-sol-high` to ACP ids such as
-  `cursor-grok-4.6-high` (spawn argv pass-through for explicit Grok catalog pins) and
-  `grok-4.6` (unspecified / Auto spawn default), plus
-  `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]` (in-band
-  bracket tokens) before spawn or in-band apply; catalog ids
-  must never be sent through `session/set_config_option`
+  the pin resolves to an exact advertised handshake value. Ajax advertises
+  `clientCapabilities._meta.parameterizedModelPicker: true` on ACP `initialize`
+  so Cursor exposes separate `model` / `effort` / `fast` config options instead
+  of Fast-only exploded variants ([#979]).
+  When those split options are advertised, non-Fast catalog pins such as
+  `cursor-grok-4.6-high` apply as `model=<base>`, `effort=<level>` when present,
+  and `fast=false` unless the catalog id is Fast; Ajax reconstructs the applied
+  id from those options (e.g. `grok-4.6[effort=high,fast=false]`) for
+  `snapshot.model` and pin matching. Bare `grok-4.6` must not satisfy
+  `cursor-grok-4.6-high`. (Ajax also maps effort-suffixed catalog ids to ACP ids
+  such as `cursor-grok-4.6-high` (spawn argv pass-through for explicit Grok
+  catalog pins) and `grok-4.6` (unspecified / Auto spawn default), plus
+  `grok-4.6[effort=high,fast=false]` / `gpt-5.6-sol[effort=high,fast=false]`
+  (in-band bracket tokens) when the harness still advertises exploded variants;
+  catalog ids must never be sent through `session/set_config_option`
   ([#954](https://github.com/mossipcams/ajax-cli/issues/954))).
-  When the handshake omits the non-Fast bracket token (live Cursor often advertises
-  only `grok-4.6[effort=high,fast=true]`), Ajax still attempts in-band apply of the
-  mapped non-Fast bracket id and, when present, a separate advertised `fast` config
-  option set to `false` before treating the pin as refused ([#979]).
+  When the handshake omits the non-Fast bracket token (variants mode often
+  advertises only `grok-4.6[effort=high,fast=true]`), Ajax still attempts
+  in-band apply of the mapped non-Fast bracket id and, when present, a separate
+  advertised `fast` config option set to `false` before treating the pin as
+  refused ([#979]).
   Unspecified / Auto for Cursor still places
   [`CURSOR_DEFAULT_SPAWN_MODEL`] (`grok-4.6`) on spawn argv so the CLI default
   Composer Fast is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+  When parameterized `fast` is advertised and the handshake still reports Fast,
+  unspecified / Auto also in-band applies `fast=false` with the spawn default base
+  before treating the attach as refused ([#979]).
   The Ajax catalog default [`CURSOR_DEFAULT_MODEL`] (`cursor-grok-4.6-high`) remains
   the attach-plan and UI default; explicit operator pins still replace `--model` on
   the same launch line.
@@ -215,8 +227,13 @@ existing paths.
 - New Task lists the full harness catalog from `GET /api/session/models`. In
   orchestration chat, task details expose **Switch** (harness + model) as the
   in-session model control; there is no separate task-details model picker
-  ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Switch opens
-  with the current harness and live session model preselected; Apply on the
+  ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Both surfaces share
+  `ModelPicker`. Bridge harnesses keep the reasoning picker from `catalog.reasoning`.
+  Cursor shows one row per model base (Fast catalog variants collapsed), an **Effort**
+  row when the catalog encodes multiple levels on that base, and a **Fast** Off/On
+  row (default Off). Selection persists as a composed Ajax catalog id such as
+  `cursor-grok-4.6-high` or `composer-2.5-fast`, not as pipe-form `grok-4.6|fast=false`.
+  Switch opens with the current harness and live session model preselected; Apply on the
   same harness persists `session_model` and applies the pin in-band on a live slot
   (no slot: persist only). Cross-harness Apply persists and resets backend context
   on the live slot (or clears the stored resume id when idle) so the new harness

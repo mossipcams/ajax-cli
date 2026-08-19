@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   DEFAULT_SESSION_MODEL,
   SESSION_MODEL_STORAGE_KEY,
+  composeCursorCatalogId,
   fetchSessionModels,
   isSessionModelChangeFailure,
   normalizeSessionAgent,
+  parseCursorCatalogId,
   readSessionModel,
   writeSessionModel,
 } from "./sessionModel";
@@ -112,5 +114,45 @@ describe("sessionModel", () => {
     });
 
     await expect(fetchSessionModels("codex")).resolves.toEqual({ models: [], default: "" });
+  });
+
+  it("parses and composes Cursor catalog ids with effort and Fast (#979)", () => {
+    const catalog = [
+      "auto",
+      "composer-2.5",
+      "composer-2.5-fast",
+      "cursor-grok-4.6-high",
+      "cursor-grok-4.6-high-fast",
+      "gpt-5.6-sol-medium",
+      "gpt-5.6-sol-high",
+    ];
+
+    expect(parseCursorCatalogId("cursor-grok-4.6-high")).toEqual({
+      base: "grok-4.6",
+      effort: "high",
+      fast: false,
+    });
+    expect(parseCursorCatalogId("composer-2.5-fast")).toEqual({
+      base: "composer-2.5",
+      fast: true,
+    });
+    expect(
+      composeCursorCatalogId(
+        { base: "grok-4.6", effort: "high", fast: true },
+        catalog,
+      ),
+    ).toBe("cursor-grok-4.6-high-fast");
+    expect(
+      composeCursorCatalogId(
+        { base: "composer-2.5", fast: false },
+        catalog,
+      ),
+    ).toBe("composer-2.5");
+    expect(
+      composeCursorCatalogId(
+        { base: "gpt-5.6-sol", effort: "medium", fast: false },
+        catalog,
+      ),
+    ).toBe("gpt-5.6-sol-medium");
   });
 });

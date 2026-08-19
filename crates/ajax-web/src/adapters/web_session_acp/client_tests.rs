@@ -52,6 +52,19 @@ fn session_update_text(params: &SessionNotification) -> Option<&str> {
 }
 
 #[test]
+fn client_capabilities_advertise_parameterized_model_picker_issue_979() {
+    let capabilities = super::sdk_connection::client_capabilities();
+    assert_eq!(
+        capabilities
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("parameterizedModelPicker"))
+            .and_then(|value| value.as_bool()),
+        Some(true)
+    );
+}
+
+#[test]
 fn client_capabilities_do_not_claim_unimplemented_filesystem_or_terminal_support() {
     let capabilities = super::sdk_connection::client_capabilities();
     assert!(!capabilities.fs.read_text_file);

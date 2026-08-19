@@ -3,6 +3,7 @@
 mod apply_model;
 mod catalog;
 mod client;
+mod cursor_config;
 mod sdk_connection;
 
 #[cfg(test)]

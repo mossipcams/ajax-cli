@@ -99,8 +99,17 @@ pub(super) struct RunOptions {
 
 /// The host currently implements permission replies only. Keep filesystem and
 /// terminal capabilities false until their worktree-scoped handlers exist.
+///
+/// Advertise Cursor's parameterized model picker so the harness exposes separate
+/// `model` / `effort` / `fast` options instead of Fast-only exploded variants
+/// ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub(super) fn client_capabilities() -> ClientCapabilities {
-    ClientCapabilities::default()
+    let mut meta = agent_client_protocol::schema::v1::Meta::new();
+    meta.insert(
+        "parameterizedModelPicker".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    ClientCapabilities::new().meta(meta)
 }
 
 pub(super) fn run(options: RunOptions) {
