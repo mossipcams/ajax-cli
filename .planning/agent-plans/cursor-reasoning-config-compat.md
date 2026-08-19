@@ -34,7 +34,7 @@ The operator supplied a fresh failing repro after PR #992 was opened.
 - [x] Commit reasoning compatibility fix (`c1fa55c4`).
 - [x] Merge `origin/main` (PR #992 landed as `21db6dee` before `c1fa55c4` was pushed).
 - [x] Resolve `web-session-behavior.md` merge conflict (preserve #992 spawn contract + reasoning additions).
-- [ ] Push follow-up PR (PR #992 already merged; this branch carries the remaining #989 fix).
+- [x] Push follow-up PR #993 (PR #992 merged before this remaining #989 fix).
 
 ## Evidence and changed assumptions
 
