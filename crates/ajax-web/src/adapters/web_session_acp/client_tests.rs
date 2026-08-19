@@ -1,6 +1,7 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
+use super::operator_pin_satisfied;
 use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
@@ -11,7 +12,10 @@ use agent_client_protocol::schema::{
     },
     ProtocolVersion,
 };
-use ajax_core::adapters::{cursor_catalog_to_acp_spawn_token, CURSOR_DEFAULT_SPAWN_MODEL};
+use ajax_core::adapters::{
+    cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
+    CURSOR_DEFAULT_SPAWN_MODEL,
+};
 use ajax_core::models::AgentClient;
 use serde_json::{json, Value};
 use std::{
@@ -211,16 +215,11 @@ fn cursor_acp_args_insert_model_before_acp() {
     let launch = cursor_launch();
     assert_eq!(
         acp_args_for_program(launch, &["acp"], Some("composer-2.5")),
-        vec!["--model", "composer-2.5[fast=false]", "acp"]
+        vec!["--model", "composer-2.5", "acp"]
     );
     assert_eq!(
         acp_args_for_program(launch, &["agent", "acp"], Some("gpt-5.6-sol-medium")),
-        vec![
-            "agent",
-            "--model",
-            "gpt-5.6-sol[effort=medium,fast=false]",
-            "acp"
-        ]
+        vec!["agent", "--model", "gpt-5.6-sol-medium", "acp"]
     );
     assert_eq!(
         acp_args_for_program(launch, &["acp"], Some("auto")),
@@ -540,32 +539,92 @@ fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #984: Sol High catalog pin must spawn mapped ACP token, not passthrough or Composer Fast.
+// Regression for #984: Sol High catalog pin passes catalog id on spawn argv and
+// satisfies the pin via mapped in-band ACP apply ([#989] spawn passthrough).
 #[test]
 fn cursor_spawn_catalog_pin_runs_sol_high_mapped_acp_model_issue_984() {
     let dir = scratch_dir("model-cursor-sol-high-984");
     let script = fake_acp_fixture();
     let catalog_id = "gpt-5.6-sol-high";
-    let mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
+    let spawn_token = cursor_catalog_to_acp_spawn_token(catalog_id);
+    let in_band = cursor_catalog_to_acp_in_band_token(catalog_id);
+    let launch = cursor_launch();
+
+    assert_eq!(
+        spawn_token, catalog_id,
+        "spawn argv must keep catalog id unchanged"
+    );
+    assert_eq!(
+        acp_args_for_program(launch, &["acp"], Some(catalog_id)),
+        vec!["--model", catalog_id, "acp"]
+    );
+    assert_eq!(in_band, "gpt-5.6-sol[effort=high,fast=false]");
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
             let (_client, report) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
                     .expect("spawn");
-            assert_ne!(mapped, catalog_id, "catalog id must map before spawn");
-            assert_eq!(mapped, "gpt-5.6-sol[effort=high,fast=false]");
             assert!(
                 report.model_apply_error.is_none(),
-                "mapped spawn must run {mapped:?}, not Composer Fast: {:?}",
+                "Sol High pin must apply cleanly, not Composer Fast: {:?}",
                 report.model_apply_error
             );
-            assert_eq!(report.applied_model, mapped);
+            assert!(
+                operator_pin_satisfied(catalog_id, &report.applied_model, true),
+                "applied {:?} must satisfy Sol High pin {catalog_id}",
+                report.applied_model
+            );
             assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+            assert_ne!(
+                report.applied_model, "gpt-5.6-sol[effort=high,fast=true]",
+                "Sol High pin must not accept Fast variant"
+            );
         });
     });
 
     let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #991: pipe-form Cursor picks reconstruct catalog ids on spawn argv.
+#[test]
+fn cursor_spawn_pipe_form_reconstructs_catalog_id_on_argv_issue_991() {
+    let launch = cursor_launch();
+
+    let cases = [
+        ("grok-4.6|effort=high|fast=false", "cursor-grok-4.6-high"),
+        ("composer-2.5|fast=true", "composer-2.5-fast"),
+        (
+            "claude-opus-5|effort=medium|fast=false",
+            "claude-opus-5-medium",
+        ),
+        ("claude-opus-5|effort=high|fast=false", "claude-opus-5-high"),
+        ("gpt-5.6-sol|effort=high|fast=false", "gpt-5.6-sol-high"),
+    ];
+    for (pipe_form, catalog_id) in cases {
+        let spawn = cursor_catalog_to_acp_spawn_token(pipe_form);
+        assert_eq!(
+            spawn, catalog_id,
+            "pipe form {pipe_form} must reconstruct {catalog_id}"
+        );
+        assert!(
+            !spawn.contains("-thinking-"),
+            "spawn argv must not infer thinking variants for {pipe_form}"
+        );
+        assert_eq!(
+            acp_args_for_program(launch, &["acp"], Some(pipe_form)),
+            vec!["--model", catalog_id, "acp"]
+        );
+        assert!(
+            !catalog_id.contains('['),
+            "spawn argv must not synthesize bracket tokens for {pipe_form}"
+        );
+    }
+
+    assert_eq!(
+        cursor_catalog_to_acp_in_band_token("grok-4.6|effort=high|fast=false"),
+        "grok-4.6[effort=high,fast=false]"
+    );
 }
 
 // Regression for live Cursor handshake: try unadvertised non-Fast bracket apply.
