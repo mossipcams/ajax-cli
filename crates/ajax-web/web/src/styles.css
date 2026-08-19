@@ -1673,6 +1673,8 @@ html.keyboard-open .session-composer textarea {
   gap: 14px;
   width: min(var(--shell), 100%);
   max-height: calc(100% - 24px);
+  min-height: 0;
+  overflow: hidden;
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
@@ -1713,8 +1715,10 @@ html.keyboard-open .session-composer textarea {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .session-task-identity {
@@ -2067,10 +2071,44 @@ html.keyboard-open .session-composer textarea {
     display: none;
   }
 
-  html.terminal-expanded .task-detail .detail-header,
   html.terminal-expanded .task-detail .interact-panel,
   html.terminal-expanded .task-detail .task-meta-chrome {
     display: none;
+  }
+
+  /* Keep Details reachable in fullscreen terminal without reserving band space. */
+  html.terminal-expanded .task-detail .detail-header {
+    position: fixed;
+    top: calc(6px + env(safe-area-inset-top));
+    left: calc(6px + env(safe-area-inset-left));
+    z-index: 46;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    border: none;
+    pointer-events: none;
+  }
+
+  html.terminal-expanded .task-detail .detail-header .back,
+  html.terminal-expanded .task-detail .detail-header .detail-title,
+  html.terminal-expanded .task-detail .detail-header .interact-pill {
+    display: none;
+  }
+
+  html.terminal-expanded .task-detail .detail-header .detail-header-controls {
+    pointer-events: auto;
+  }
+
+  /* Match terminal-copy-overlay so Details stays visible on the dark xterm. */
+  html.terminal-expanded .task-detail .detail-header .session-head-details {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px 14px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    background: var(--paper-raised);
+    color: var(--ink);
   }
 
   html.keyboard-open .cockpit-chrome,
