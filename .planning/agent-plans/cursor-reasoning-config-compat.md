@@ -32,8 +32,8 @@ The operator supplied a fresh failing repro after PR #992 was opened.
 - [x] Run focused Rust and frontend tests.
 - [x] Run formatting and file-size checks.
 - [x] Commit reasoning compatibility fix (`c1fa55c4`).
-- [ ] Merge `origin/main` (PR #992 landed as `21db6dee` before `c1fa55c4` was pushed).
-- [ ] Resolve `web-session-behavior.md` merge conflict (preserve #992 spawn contract + reasoning additions).
+- [x] Merge `origin/main` (PR #992 landed as `21db6dee` before `c1fa55c4` was pushed).
+- [x] Resolve `web-session-behavior.md` merge conflict (preserve #992 spawn contract + reasoning additions).
 - [ ] Push follow-up PR (PR #992 already merged; this branch carries the remaining #989 fix).
 
 ## Evidence and changed assumptions
@@ -50,14 +50,16 @@ The operator supplied a fresh failing repro after PR #992 was opened.
 
 ## Validation
 
-Completed on branch before merge with main:
+Pre-merge (on branch before integrating `origin/main`):
 
 - `cargo fmt --check` — pass
-- `cargo nextest run -p ajax-web reasoning --no-fail-fast` — pass (6 tests)
-- `npm run web:test -- --run crates/ajax-web/web/src/features/session/sessionModel.test.ts crates/ajax-web/web/src/features/session/ModelPicker.test.tsx` — pass (44 tests)
+- `cargo nextest run -p ajax-web reasoning --no-fail-fast` — pass (5 tests)
+- `npm run web:test -- --run crates/ajax-web/web/src/features/session/sessionModel.test.ts crates/ajax-web/web/src/features/session/ModelPicker.test.tsx` — pass (18 tests)
 - `FILE_LOC_BASE=$(git rev-parse origin/main) FILE_LOC_HEAD=$(git rev-parse HEAD) node scripts/check-file-loc.mjs` — pass
 
-Pending after merge with `origin/main`:
+Post-merge (`e1db0c2` on `origin/main` at `21db6dee`):
 
-- Re-run the above verification on the merged branch.
-- Push and open follow-up PR via `scripts/gh-pr-create`.
+- `cargo fmt --check` — pass
+- `cargo nextest run -p ajax-web reasoning --no-fail-fast` — pass (5 tests)
+- `npm run web:test -- --run crates/ajax-web/web/src/features/session/sessionModel.test.ts crates/ajax-web/web/src/features/session/ModelPicker.test.tsx` — pass (18 tests)
+- `FILE_LOC_BASE=$(git rev-parse origin/main) FILE_LOC_HEAD=$(git rev-parse HEAD) node scripts/check-file-loc.mjs` — pass (4 changed source files, no threshold reached)
