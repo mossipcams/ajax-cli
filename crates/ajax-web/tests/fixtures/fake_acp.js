@@ -17,6 +17,7 @@ const cursorParameterizedModels = process.argv.includes('--cursor-parameterized-
 const acceptUnadvertisedGrokHigh = process.argv.includes('--accept-unadvertised-grok-high');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
+const exclusiveSessionNew = process.argv.includes('--exclusive-session-new');
 const modelRefuse = process.argv.includes('--model-refuse');
 const sessionId = 'fake-sess-1';
 const cliDefaultModel = process.argv.includes('--cli-default-model')
@@ -36,6 +37,41 @@ function spawnGeneration() {
 
 const spawnGen = spawnGeneration();
 const firstSpawnAttempt = spawnGen === 1;
+const exclusiveLockPath = path.join(process.cwd(), '.fake-acp-exclusive-lock');
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+function holdExclusiveLock() {
+  if (!exclusiveSessionNew) return;
+  fs.writeFileSync(exclusiveLockPath, String(process.pid));
+}
+
+function releaseExclusiveLock() {
+  if (!exclusiveSessionNew) return;
+  try {
+    const pid = parseInt(fs.readFileSync(exclusiveLockPath, 'utf8'), 10);
+    if (pid === process.pid) fs.unlinkSync(exclusiveLockPath);
+  } catch {}
+}
+
+function assertExclusiveSessionNew() {
+  if (!exclusiveSessionNew) return;
+  try {
+    const pid = parseInt(fs.readFileSync(exclusiveLockPath, 'utf8'), 10);
+    if (Number.isFinite(pid) && pid !== process.pid && pidAlive(pid)) {
+      // Live Cursor rejects a second ACP child with transport close during session/new.
+      process.exit(1);
+    }
+  } catch {}
+  holdExclusiveLock();
+}
 
 function spawnModelFromArgv() {
   if (ignoreSpawnModelOnce && firstSpawnAttempt) {
@@ -172,6 +208,7 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/new') {
+    assertExclusiveSessionNew();
     send({
       jsonrpc: '2.0',
       id,
@@ -318,4 +355,8 @@ rl.on('line', (line) => {
     handleRequest(msg);
   }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => {
+  releaseExclusiveLock();
+  process.exit(0);
+});
+process.on('exit', releaseExclusiveLock);

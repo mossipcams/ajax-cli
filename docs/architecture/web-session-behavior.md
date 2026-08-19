@@ -99,8 +99,9 @@ existing paths.
   JSONL transcript, and WebSocket identity. With no live slot, persist only and
   clear the stored resume id so the next attach uses empty context. In-band apply
   unadvertised or refused triggers one respawn fallback (`session/new`, no resume);
-  if that still fails, the host emits a typed `error` and leaves `snapshot.model`
-  on the harness-reported id.
+  the host shuts down the live ACP child before that spawn so stdio is not shared with a
+  replacement ([#989](https://github.com/mossipcams/ajax-cli/issues/989)). If that still fails,
+  the host emits a typed `error` and leaves `snapshot.model` on the harness-reported id.
   Persist `None` for Auto/unspecified; never store the literal string `auto` as
   a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - Moving a task to another harness is refused unless it was launched over ACP.
@@ -182,7 +183,9 @@ existing paths.
   harness advertises a model control. The ACP process, `sessionId`, and JSONL
   transcript stay put; `snapshot.model` updates from the harness-reported applied
   id. One respawn fallback (`session/new`, no resume) runs when in-band apply is
-  unadvertised or refused and still fails to match the pin.
+  unadvertised or refused; the host shuts down the live child before that spawn
+  ([#989](https://github.com/mossipcams/ajax-cli/issues/989)). If that respawn fallback still fails to match the pin,
+  the host emits a typed `error` and leaves `snapshot.model` on the harness-reported id.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events and typed model-change errors.
 - A live `ready` event on an established socket must not reset browser reducer
