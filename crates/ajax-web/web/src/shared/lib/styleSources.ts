@@ -6,12 +6,12 @@ import { dirname, join } from "node:path";
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when the session-details model-picker cap was added in
-   * styles/session/shell.css so Effort / Fast / Switch stay reachable (#1004). */
-  sourceStylesCssBytes: 97_272,
-  builtAppCssBytes: 84_405,
-  builtAppCssGzipBytes: 15_260,
-  classSelectorLines: 528,
+   * Re-measured when New Task's model step pinned Effort / Fast outside the
+   * scrolling catalog so the 46vh viewport cap could not hide them (#1004). */
+  sourceStylesCssBytes: 100_217,
+  builtAppCssBytes: 85_917,
+  builtAppCssGzipBytes: 15_459,
+  classSelectorLines: 549,
   hasSelectors: 18,
 } as const;
 

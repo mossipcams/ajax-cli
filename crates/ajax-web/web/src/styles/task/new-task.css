@@ -142,13 +142,64 @@
   margin-top: 6px;
 }
 
-/* A harness can list 30+ models. Cap the list inside the sheet so Back/Start
-   stay on screen instead of being pushed past the card. */
+/* A harness can list 30+ models. On the title step the whole card scrolls.
+   On the model step, 46vh is a viewport fraction and is taller than the
+   leftover card, so Effort / Fast fall into a second scroller you cannot
+   reach by flicking the list (#1004). Cap the list to leftover sheet space
+   instead and keep Effort, Fast, and Back/Start outside it. */
 .sheet-card .model-picker {
   max-height: 46vh;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.sheet-card.is-model-step {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sheet-card.is-model-step .model-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sheet-card.is-model-step .model-picker {
+  position: relative;
+  z-index: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  /* iOS -webkit-overflow-scrolling layers steal clicks from Effort / Fast
+     even when z-index paints those chips on top. Let empty list space fall
+     through; rows keep their own hits. */
+  pointer-events: none;
+  -webkit-overflow-scrolling: auto;
+}
+
+.sheet-card.is-model-step .model-option {
+  pointer-events: auto;
+}
+
+/* iOS promotes overflow:scroll into a layer that can steal taps from
+   siblings painted below the list. Keep Effort / Fast above that layer. */
+.model-picker-extras {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  flex: none;
+  background: var(--paper-raised);
+  pointer-events: auto;
+}
+
+.sheet-card.is-model-step .sheet-actions {
+  position: relative;
+  z-index: 1;
+  flex: none;
 }
 
 .model-option {
@@ -171,6 +222,18 @@
   background: var(--accent-deep);
   border-color: var(--accent);
   color: var(--ink);
+}
+
+.model-option:focus-visible,
+.reasoning-option:focus-visible {
+  outline: none;
+  border-color: var(--accent-bright);
+}
+
+.model-option:disabled,
+.reasoning-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .model-option-label {
@@ -205,6 +268,7 @@
   color: var(--ink-muted);
   border: 1px solid var(--rule-strong);
   border-radius: var(--radius-sm);
+  touch-action: manipulation;
 }
 
 .reasoning-option.is-selected {

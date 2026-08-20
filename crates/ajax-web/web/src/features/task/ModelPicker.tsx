@@ -24,6 +24,19 @@ import {
   thoughtLevelLiveOption,
 } from "@/shared/lib/liveSessionConfig";
 
+/** iOS often shows :active on Effort / Fast then drops the click because the
+ *  model list's overflow layer sits over those chips. Pointerdown on touch
+ *  applies before that cancellation; mouse still uses click. */
+function activateExtrasChip(
+  event: { pointerType: string; preventDefault: () => void; stopPropagation: () => void },
+  apply: () => void,
+) {
+  event.stopPropagation();
+  if (event.pointerType === "mouse") return;
+  event.preventDefault();
+  apply();
+}
+
 interface Props {
   /** Harness whose own catalog to list. */
   agent: string;
@@ -126,7 +139,7 @@ export default function ModelPicker({
   const displayModels = isCursor ? buildCursorDisplayModels(catalog.models) : [];
   const cursorSelection =
     isCursor && model && model !== DEFAULT_SESSION_MODEL
-      ? decodeCursorSelection(model, displayModels)
+      ? decodeCursorSelection(value, displayModels)
       : null;
   const selectedCursorRow =
     cursorSelection && displayModels.find((row) => row.base === cursorSelection.base);
@@ -170,6 +183,7 @@ export default function ModelPicker({
   }
 
   function selectCursorBase(base: string) {
+    if (cursorSelection?.base === base) return;
     const row = displayModels.find((entry) => entry.base === base);
     if (!row) return;
     emitCursorSelection(base, defaultCursorEffort(row, activeCatalog.default), false);
@@ -257,6 +271,7 @@ export default function ModelPicker({
         )}
       </div>
 
+      <div className="model-picker-extras">
       {applyEffortThroughLive && thoughtOption ? (
         <>
           <span className="field-label" id="live-thought-label">
@@ -268,7 +283,14 @@ export default function ModelPicker({
             aria-labelledby="live-thought-label"
             data-testid="live-thought-level"
           >
-            {mergedEfforts.map((choice) => (
+            {mergedEfforts.map((choice) => {
+              const apply = () =>
+                emitLive({
+                  model: cursorSelection?.base ?? model ?? undefined,
+                  thoughtLevel: choice.value,
+                  fast: selectedFast,
+                });
+              return (
               <button
                 key={choice.value}
                 type="button"
@@ -276,17 +298,13 @@ export default function ModelPicker({
                 role="radio"
                 aria-checked={selectedThought === choice.value}
                 disabled={disabled}
-                onClick={() =>
-                  emitLive({
-                    model: cursorSelection?.base ?? model ?? undefined,
-                    thoughtLevel: choice.value,
-                    fast: selectedFast,
-                  })
-                }
+                onPointerDown={(event) => activateExtrasChip(event, apply)}
+                onClick={apply}
               >
                 {choice.label}
               </button>
-            ))}
+              );
+            })}
           </div>
         </>
       ) : null}
@@ -302,7 +320,14 @@ export default function ModelPicker({
             aria-labelledby="model-effort-label"
             data-testid="model-effort"
           >
-            {selectedCursorRow.efforts.map((effort) => (
+            {selectedCursorRow.efforts.map((effort) => {
+              const apply = () =>
+                emitCursorSelection(
+                  selectedCursorRow.base,
+                  effort,
+                  cursorSelection?.fast ?? false,
+                );
+              return (
               <button
                 key={effort}
                 type="button"
@@ -310,17 +335,13 @@ export default function ModelPicker({
                 role="radio"
                 aria-checked={cursorSelection?.effort === effort}
                 disabled={disabled}
-                onClick={() =>
-                  emitCursorSelection(
-                    selectedCursorRow.base,
-                    effort,
-                    cursorSelection?.fast ?? false,
-                  )
-                }
+                onPointerDown={(event) => activateExtrasChip(event, apply)}
+                onClick={apply}
               >
                 {effortOptionLabel(effort)}
               </button>
-            ))}
+              );
+            })}
           </div>
         </>
       ) : null}
@@ -342,6 +363,12 @@ export default function ModelPicker({
             ].map((option) => {
               const fastOn = selectedFast ?? false;
               const selected = option.id === fastOn;
+              const apply = () =>
+                emitLive({
+                  model: cursorSelection?.base ?? model ?? undefined,
+                  thoughtLevel: selectedThought,
+                  fast: option.id,
+                });
               return (
                 <button
                   key={String(option.id)}
@@ -350,13 +377,8 @@ export default function ModelPicker({
                   role="radio"
                   aria-checked={selected}
                   disabled={disabled}
-                  onClick={() =>
-                    emitLive({
-                      model: cursorSelection?.base ?? model ?? undefined,
-                      thoughtLevel: selectedThought,
-                      fast: option.id,
-                    })
-                  }
+                  onPointerDown={(event) => activateExtrasChip(event, apply)}
+                  onClick={apply}
                 >
                   {option.label}
                 </button>
@@ -383,6 +405,13 @@ export default function ModelPicker({
             ].map((option) => {
               const fastOn = cursorSelection?.fast ?? false;
               const selected = option.id === "true" ? fastOn : !fastOn;
+              const apply = () =>
+                emitCursorSelection(
+                  selectedCursorRow.base,
+                  cursorSelection?.effort ??
+                    defaultCursorEffort(selectedCursorRow, catalog.default),
+                  option.id === "true",
+                );
               return (
                 <button
                   key={option.id}
@@ -391,14 +420,8 @@ export default function ModelPicker({
                   role="radio"
                   aria-checked={selected}
                   disabled={disabled}
-                  onClick={() =>
-                    emitCursorSelection(
-                      selectedCursorRow.base,
-                      cursorSelection?.effort ??
-                        defaultCursorEffort(selectedCursorRow, catalog.default),
-                      option.id === "true",
-                    )
-                  }
+                  onPointerDown={(event) => activateExtrasChip(event, apply)}
+                  onClick={apply}
                 >
                   {option.label}
                 </button>
@@ -445,6 +468,7 @@ export default function ModelPicker({
           </div>
         </>
       ) : null}
+      </div>
     </>
   );
 }

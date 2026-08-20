@@ -89,6 +89,26 @@ describe("NewTaskSheet", () => {
     expect(layerCss).not.toMatch(/bottom:\s*max/);
   });
 
+  it("keeps Effort and Fast outside the scrolling model list on the model step (#1004)", () => {
+    expect(newTaskSheetSource).toMatch(/is-model-step/);
+    const modelStep = stylesSource.match(/\.sheet-card\.is-model-step\s*\{([^}]*)\}/)?.[1] ?? "";
+    const modelList =
+      stylesSource.match(/\.sheet-card\.is-model-step \.model-picker\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(modelStep).toMatch(/overflow:\s*hidden/);
+    expect(modelStep).toMatch(/flex-direction:\s*column/);
+    expect(modelList).toMatch(/min-height:\s*0/);
+    expect(modelList).toMatch(/max-height:\s*none/);
+    expect(modelList).not.toMatch(/46vh/);
+    const extras = stylesSource.match(/\.model-picker-extras\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(extras).toMatch(/z-index:\s*1/);
+    expect(extras).toMatch(/position:\s*relative/);
+    expect(modelList).toMatch(/pointer-events:\s*none/);
+    expect(stylesSource).toMatch(
+      /\.sheet-card\.is-model-step \.model-option\s*\{[^}]*pointer-events:\s*auto/,
+    );
+    expect(extras).toMatch(/pointer-events:\s*auto/);
+  });
+
   it("offers every supported agent including pi", () => {
     render(<NewTaskSheet repos={repos} />);
     expect(screen.getByRole("radio", { name: "Codex" })).toBeInTheDocument();
@@ -226,6 +246,33 @@ describe("NewTaskSheet", () => {
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].model).toBe("grok-4.6|effort=high|fast=true");
+    vi.unstubAllGlobals();
+  });
+
+  it("lets Cursor Grok effort be chosen before Start (#1004)", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        {
+          id: "grok-4.6",
+          label: "Grok 4.6",
+          efforts: ["low", "medium", "high", "xhigh"],
+          hasFast: true,
+        },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Cursor" }));
+    await goToModelStep();
+
+    expect(await screen.findByTestId("model-effort")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("grok-4.6|effort=low|fast=false");
     vi.unstubAllGlobals();
   });
 

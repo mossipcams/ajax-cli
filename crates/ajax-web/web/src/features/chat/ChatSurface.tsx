@@ -69,6 +69,12 @@ import Transcript from "./Transcript";
 import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
 import { useTaskSession } from "./useTaskSession";
+import SessionModelControls, {
+  SessionModelNotice,
+  hasSessionModelControls,
+  sessionModelControlLabel,
+  useSessionModelNotice,
+} from "./SessionModelControls";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { useChatViewport } from "./viewport/useChatViewport";
 import { useChatSpeech } from "./speech/useChatSpeech";
@@ -129,6 +135,8 @@ export default function ChatSurface({
    * and what keeps a stop-and-send from racing the prompt it cancels. */
   const [queued, setQueued] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const { notice, showNotice, dismissNotice } = useSessionModelNotice();
 
   const {
     state,
@@ -140,8 +148,9 @@ export default function ChatSurface({
     sendPrompt,
     sendCancel,
     markStopped,
+    applyConfigOption,
     respondPermission,
-  } = useTaskSession({ handle, detail, onMutated });
+  } = useTaskSession({ handle, detail, onMutated, onConfigError: showNotice });
 
   useEffect(() => {
     onSessionActivity?.({ model: sessionModel, busy: state.busy, sessionConfigOptions });
@@ -333,6 +342,11 @@ export default function ChatSurface({
   // The action names what Enter does next, so the phone operator never has to
   // know the turn state to predict it.
   const submitLabel = queued !== null ? "Stop & send" : state.busy ? "Queue" : "Send";
+  const modelPanelId = handle ? `session-model-${handle}` : "session-model";
+  const showModelControl =
+    Boolean(sessionConfigOptions?.length) &&
+    hasSessionModelControls(detail?.agent, sessionConfigOptions ?? []);
+  const modelButtonLabel = sessionModelControlLabel(sessionModel, sessionConfigOptions);
 
   return (
     <section
@@ -412,6 +426,7 @@ export default function ChatSurface({
         aria-label="Session composer"
         onSubmit={submitComposer}
       >
+        {notice ? <SessionModelNotice message={notice} onDismiss={dismissNotice} /> : null}
         <div className="session-composer-row">
           <textarea
             rows={1}
@@ -444,6 +459,35 @@ export default function ChatSurface({
             }}
           />
           <div className="session-composer-actions">
+            {showModelControl ? (
+              <button
+                type="button"
+                className="session-composer-button session-composer-model"
+                data-testid="session-model-open"
+                aria-label="Choose model"
+                aria-expanded={modelSheetOpen}
+                aria-controls={modelPanelId}
+                title={`Choose model — ${modelButtonLabel}`}
+                disabled={!connected}
+                onClick={() => setModelSheetOpen(true)}
+              >
+                <svg
+                  className="session-composer-model-icon"
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  aria-hidden="true"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+                  <path d="M19 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
               className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}${speechModel.state === "connecting" ? " is-connecting" : ""}`}
@@ -482,6 +526,19 @@ export default function ChatSurface({
           Jump to latest
           {unseenTools ? ` · ${unseenTools} new ${unseenTools === 1 ? "step" : "steps"}` : ""}
         </button>
+      ) : null}
+
+      {showModelControl ? (
+        <SessionModelControls
+          open={modelSheetOpen}
+          onOpenChange={setModelSheetOpen}
+          panelId={modelPanelId}
+          agent={detail?.agent}
+          confirmedModel={sessionModel}
+          options={sessionConfigOptions!}
+          disabled={!connected}
+          onApply={applyConfigOption}
+        />
       ) : null}
     </section>
   );

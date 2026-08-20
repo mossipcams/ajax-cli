@@ -4,6 +4,7 @@ import {
   encodeDesiredPinWithLiveSelection,
   modelLiveOption,
   parseLiveConfigOptions,
+  thoughtLevelLiveOption,
 } from "./liveSessionConfig";
 
 const PARAMETERIZED = [
@@ -39,11 +40,32 @@ const PARAMETERIZED = [
   },
 ];
 
+const CURSOR_FAST_SELECT = [
+  PARAMETERIZED[0]!,
+  PARAMETERIZED[1]!,
+  {
+    id: "fast",
+    category: "model_config",
+    name: "Fast",
+    type: "select",
+    currentValue: "false",
+    choices: [
+      { value: "false", name: "Off" },
+      { value: "true", name: "Fast" },
+    ],
+  },
+];
+
 describe("liveSessionConfig", () => {
   it("parses sessionConfigOptions from snapshot JSON", () => {
     const options = parseLiveConfigOptions(PARAMETERIZED);
     expect(options).toHaveLength(3);
     expect(modelLiveOption(options!)).toMatchObject({ id: "model" });
+  });
+
+  it("prefers Cursor's writable effort descriptor over reasoning (#1010)", () => {
+    const effort = { ...PARAMETERIZED[1]!, id: "effort" };
+    expect(thoughtLevelLiveOption([PARAMETERIZED[1]!, effort])).toMatchObject({ id: "effort" });
   });
 
   it("encodes desired pin from live current values without bracket ids (#997)", () => {
@@ -60,6 +82,15 @@ describe("liveSessionConfig", () => {
         fast: true,
       }),
     ).toBe("composer-2.5|reasoning=low|fast=true");
+  });
+
+  it("encodes Fast from true/false select currentValue (#1014)", () => {
+    expect(encodeDesiredPinFromLiveOptions(CURSOR_FAST_SELECT)).toBe(
+      "grok-4.6|reasoning=high|fast=false",
+    );
+    expect(
+      encodeDesiredPinWithLiveSelection(CURSOR_FAST_SELECT, { fast: true }),
+    ).toBe("grok-4.6|reasoning=high|fast=true");
   });
 
   it("rejects malformed option payloads", () => {

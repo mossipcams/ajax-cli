@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import ModelPicker from "./ModelPicker";
 
 const FULL_CATALOG = {
@@ -353,5 +353,127 @@ describe("ModelPicker", () => {
     });
     expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Extra high" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "High" })).toHaveAttribute("aria-checked", "true");
+    expect(within(screen.getByTestId("model-fast")).getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("applies Effort and Fast on touch pointerdown so iOS cannot drop the click", async () => {
+    const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+    const view = render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=high|fast=false"
+        onChange={onChange}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("model-effort")).toBeInTheDocument();
+    });
+    expect(within(screen.getByTestId("model-effort")).getByRole("radio", { name: "High" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(within(screen.getByTestId("model-fast")).getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.pointerDown(
+      within(screen.getByTestId("model-effort")).getByRole("radio", { name: "Low" }),
+      { pointerType: "touch" },
+    );
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=low|fast=false");
+    onChange.mockClear();
+    view.rerender(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=low|fast=false"
+        onChange={onChange}
+      />,
+    );
+    expect(within(screen.getByTestId("model-effort")).getByRole("radio", { name: "Low" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.pointerDown(
+      within(screen.getByTestId("model-fast")).getByRole("radio", { name: "On" }),
+      { pointerType: "touch" },
+    );
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=low|fast=true");
+  });
+
+  it("does not reset Effort when the selected model row is tapped again", async () => {
+    const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=low|fast=true"
+        onChange={onChange}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toHaveAttribute("aria-checked", "true");
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Grok 4.6" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("model-effort")).getByRole("radio", { name: "Low" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(within(screen.getByTestId("model-fast")).getByRole("radio", { name: "On" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("renders ACP-aligned catalog labels returned by GET /api/session/models", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+        { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: ["high", "medium"], hasFast: true },
+        {
+          id: "claude-opus-5-thinking",
+          label: "Claude Opus 5 Thinking",
+          efforts: ["high"],
+        },
+      ],
+      default: "grok-4.6",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=high|fast=false"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("radio", { name: "GPT-5.6-Sol" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Claude Opus 5 Thinking" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Cursor Grok/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /1M High/i })).not.toBeInTheDocument();
   });
 });

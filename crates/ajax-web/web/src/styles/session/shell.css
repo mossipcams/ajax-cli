@@ -53,30 +53,18 @@
   text-overflow: ellipsis;
 }
 
-.session-model-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.session-details-sheet .session-model-catalog .model-picker,
-.session-details-sheet .model-picker {
-  /* Cap the list so Effort / Fast / Switch stay on screen (#1004). */
+.session-model-catalog .model-picker {
+  /* Cap only the advertised list so Effort / Fast stay reachable under it, and
+     the sheet body remains the single outer scroller. Empty overflow space
+     must not eat Effort / Fast taps on iOS. */
   max-height: 46vh;
   overflow-y: auto;
   overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  pointer-events: none;
+  -webkit-overflow-scrolling: auto;
 }
 
-.model-picker-toggle {
-  align-self: flex-start;
-  margin-top: 4px;
-  padding: 6px 0;
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--accent);
-  background: none;
-  border: none;
+.session-model-catalog .model-option {
+  pointer-events: auto;
 }
 

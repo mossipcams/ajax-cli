@@ -17,7 +17,7 @@ import {
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
 } from "./sessionChatSeed";
-import { isSessionModelChangeFailure } from "./sessionModel";
+import { isSessionModelChangeFailure, isSessionConfigChangeFailure } from "./sessionModel";
 
 type Dispatch = (action: SessionAction) => void;
 
@@ -38,6 +38,8 @@ interface Options {
   onSessionConfigOptions?: (options: LiveSessionConfigOption[] | undefined) => void;
   /** Revert an optimistic in-session model change after a host error. */
   onSessionModelRejected?: () => void;
+  /** Surface config-option apply failures as dismissable notices. */
+  onConfigError?: (message: string) => void;
 }
 
 /** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
@@ -55,6 +57,7 @@ export function useSessionTransport({
   onSessionModel,
   onSessionConfigOptions,
   onSessionModelRejected,
+  onConfigError,
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
@@ -88,6 +91,7 @@ export function useSessionTransport({
     };
 
     const applySnapshot = (snapshot: SessionSnapshot) => {
+      onSessionModel?.(snapshot.model);
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
     };
 
@@ -121,6 +125,9 @@ export function useSessionTransport({
             onActivity();
             if (event.type === "error" && isSessionModelChangeFailure(event.message)) {
               onSessionModelRejected?.();
+            }
+            if (event.type === "error" && isSessionConfigChangeFailure(event.message)) {
+              onConfigError?.(event.message);
             }
             // The socket cannot report why an upgrade was refused, so swap its
             // blank failure for the reason the task detail already carries.
