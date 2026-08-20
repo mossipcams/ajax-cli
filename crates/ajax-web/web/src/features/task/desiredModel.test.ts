@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   DEFAULT_SESSION_MODEL,
   SESSION_MODEL_STORAGE_KEY,
+  buildCursorDisplayModels,
   composeCursorCatalogId,
   encodeCursorSelection,
   decodeCursorPipeOrCatalogId,
   fetchSessionModels,
+  mergeCursorEffortChoices,
   normalizeSessionAgent,
   parseCursorCatalogId,
   readSessionModel,
@@ -179,5 +181,39 @@ describe("desiredModel", () => {
       effort: "high",
       fast: false,
     });
+  });
+
+  it("keeps thinking in the Cursor catalog base (#1004)", () => {
+    expect(parseCursorCatalogId("claude-opus-5-thinking-high")).toEqual({
+      base: "claude-opus-5-thinking",
+      effort: "high",
+      fast: false,
+    });
+    expect(parseCursorCatalogId("claude-opus-5-high")).toEqual({
+      base: "claude-opus-5",
+      effort: "high",
+      fast: false,
+    });
+
+    const display = buildCursorDisplayModels([
+      { id: "claude-opus-5-high", label: "Claude Opus 5 High" },
+      { id: "claude-opus-5-thinking-high", label: "Claude Opus 5 Thinking High" },
+    ]);
+    expect(display.map((row) => row.base)).toEqual([
+      "claude-opus-5",
+      "claude-opus-5-thinking",
+    ]);
+  });
+
+  it("merges catalog Grok efforts with sparse live thought_level choices (#1004)", () => {
+    expect(
+      mergeCursorEffortChoices(["low", "medium", "high", "xhigh"], [{ value: "high", name: "High" }]),
+    ).toEqual([
+      { value: "xhigh", label: "Extra high" },
+      { value: "high", label: "High" },
+      { value: "medium", label: "Medium" },
+      { value: "low", label: "Low" },
+    ]);
+    expect(mergeCursorEffortChoices(["high"], [{ value: "high", name: "High" }])).toEqual([]);
   });
 });

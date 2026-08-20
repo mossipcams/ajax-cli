@@ -437,8 +437,8 @@ describe("ChatSurface smoke", () => {
     expect(sheetBlock).toMatch(/env\(safe-area-inset-top/);
     expect(sheetBlock).not.toMatch(/max-height:\s*calc\(100% - 24px\)/);
     expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
-    expect(modelPickerBlock).toMatch(/max-height:\s*none/);
-    expect(modelPickerBlock).toMatch(/overflow:\s*visible/);
+    expect(modelPickerBlock).toMatch(/max-height:\s*46vh/);
+    expect(modelPickerBlock).toMatch(/overflow-y:\s*auto/);
 
     mountChat();
     openTaskDetails();

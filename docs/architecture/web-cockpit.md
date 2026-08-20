@@ -163,10 +163,12 @@ Bridge harnesses show a reasoning level beside the model list when the handshake
 advertises one. Cursor collapses effort and Fast out of its catalog ids:
 `GET /api/session/models?agent=cursor` serves unique model bases
 (`composer-2.5`, `grok-4.6`, …) with optional `efforts[]` and `hasFast` derived
-from exploded `agent models` siblings; the picker shows one row per base, an
-**Effort** row only when multiple levels exist (live `thought_level` when
-connected and advertised with more than one choice, otherwise catalog `efforts[]`
-when the selected base has more than one), and a **Fast** Off/On row when live
+from exploded `agent models` siblings; thinking ids such as `claude-opus-5-thinking`
+stay separate from their non-thinking base. The picker shows one row per base, an
+**Effort** row when multiple levels exist (live `thought_level` unioned with
+catalog `efforts[]` when connected so sparse live choices cannot hide advertised
+Grok levels, otherwise catalog `efforts[]` when the selected base has more than
+one), and a **Fast** Off/On row when live
 boolean Fast is advertised or the catalog row has `hasFast` (default Off; Auto is
 never Fast). New Task and Switch persist pipe-form `session_model` such as
 `grok-4.6|effort=high|fast=false`. The catalog endpoint serves the complete list —

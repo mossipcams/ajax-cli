@@ -276,4 +276,82 @@ describe("ModelPicker", () => {
     expect(screen.queryByTestId("live-thought-level")).not.toBeInTheDocument();
     expect(screen.queryByTestId("model-effort")).not.toBeInTheDocument();
   });
+
+  it("unions catalog Grok efforts when live thought_level advertises fewer choices (#1004)", async () => {
+    const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|reasoning=high|fast=false"
+        liveConfigOptions={[
+          {
+            id: "model",
+            category: "model",
+            name: "Model",
+            type: "select",
+            currentValue: "grok-4.6",
+            choices: [{ value: "grok-4.6", name: "Grok 4.6" }],
+          },
+          {
+            id: "reasoning",
+            category: "thought_level",
+            name: "Effort",
+            type: "select",
+            currentValue: "high",
+            choices: [{ value: "high", name: "High" }],
+          },
+          {
+            id: "fast",
+            category: "model_config",
+            name: "Fast",
+            type: "boolean",
+            currentValue: false,
+            choices: [],
+          },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("live-thought-level")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Medium" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Extra high" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|reasoning=low|fast=false");
+  });
+
+  it("shows catalog effort chips for Grok when disconnected (#1004)", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|effort=high|fast=false"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-effort")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Extra high" })).toBeInTheDocument();
+  });
 });

@@ -187,7 +187,7 @@ export function parseCursorCatalogId(raw: string): CursorModelIntent | null {
     const maybeEffort = stem.slice(lastDash + 1);
     if (prefix.endsWith("-thinking") && CURSOR_EFFORT_SUFFIXES.includes(maybeEffort as (typeof CURSOR_EFFORT_SUFFIXES)[number])) {
       return {
-        base: prefix.slice(0, prefix.length - "-thinking".length),
+        base: prefix,
         effort: maybeEffort,
         fast,
       };
@@ -326,6 +326,28 @@ export function defaultCursorEffort(
 export function effortOptionLabel(effort: string): string {
   if (effort === "xhigh") return "Extra high";
   return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+export interface CursorEffortChoice {
+  value: string;
+  label: string;
+}
+
+/** Union catalog efforts with live thought_level choices; prefer live labels when connected. */
+export function mergeCursorEffortChoices(
+  catalogEfforts: readonly string[],
+  liveChoices: ReadonlyArray<{ value: string; name: string }> = [],
+): CursorEffortChoice[] {
+  const values = new Set<string>();
+  for (const effort of catalogEfforts) values.add(effort);
+  for (const choice of liveChoices) values.add(choice.value);
+  if (values.size <= 1) return [];
+  return [...values]
+    .sort((a, b) => effortRank(a) - effortRank(b))
+    .map((value) => {
+      const live = liveChoices.find((choice) => choice.value === value);
+      return { value, label: live?.name ?? effortOptionLabel(value) };
+    });
 }
 
 /** Cursor always has Auto; a bridge harness with no answer has nothing to
