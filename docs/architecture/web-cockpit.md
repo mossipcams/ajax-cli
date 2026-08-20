@@ -158,17 +158,20 @@ keeps its agent in tmux and opens its terminal instead; a session URL for such a
 task falls back to the terminal route rather than sitting on a refused socket.
 
 The **New task** sheet is two steps: repository/title/harness, then a model page
-presenting a shortlist of popular options for that harness, with **Show all** for
-the full catalog. Bridge harnesses show a reasoning level beside the model list
-when the handshake advertises one. Cursor collapses effort and Fast out of its
-catalog ids: `GET /api/session/models?agent=cursor` serves unique model bases
+listing the full `GET /api/session/models?agent=` catalog for that harness.
+Bridge harnesses show a reasoning level beside the model list when the handshake
+advertises one. Cursor collapses effort and Fast out of its catalog ids:
+`GET /api/session/models?agent=cursor` serves unique model bases
 (`composer-2.5`, `grok-4.6`, …) with optional `efforts[]` and `hasFast` derived
 from exploded `agent models` siblings; the picker shows one row per base, an
-**Effort** row when multiple levels exist, and a **Fast** Off/On row (default Off;
-Auto is never Fast). New Task and Switch persist pipe-form `session_model` such as
-`grok-4.6|effort=high|fast=false`. `GET /api/session/models?agent=`
-still serves the complete catalog — Cursor from collapsed `agent models`, the bridges from
-their own `session/new` handshake.
+**Effort** row only when multiple levels exist (live `thought_level` when
+connected and advertised with more than one choice, otherwise catalog `efforts[]`
+when the selected base has more than one), and a **Fast** Off/On row when live
+boolean Fast is advertised or the catalog row has `hasFast` (default Off; Auto is
+never Fast). New Task and Switch persist pipe-form `session_model` such as
+`grok-4.6|effort=high|fast=false`. The catalog endpoint serves the complete list —
+Cursor from collapsed `agent models`, the bridges from their own `session/new`
+handshake.
 
 That handshake costs a short-lived bridge process, so the catalog is cached
 against the **harness CLI version** rather than a clock: each request reads
@@ -206,9 +209,11 @@ operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
 Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
 `_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
 capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` so
-the connected picker binds to live advertised choices; `snapshot.model` is the
-model option's `currentValue` only. In-band refusal leaves `session_model` as the
-operator pin and `snapshot.model` on harness-reported evidence.
+the connected picker seeds the current pin and encodes in-band apply with
+advertised config ids; the model list still comes from `GET /api/session/models`.
+`snapshot.model` is the model option's `currentValue` only. In-band refusal
+leaves `session_model` as the operator pin and `snapshot.model` on
+harness-reported evidence.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The

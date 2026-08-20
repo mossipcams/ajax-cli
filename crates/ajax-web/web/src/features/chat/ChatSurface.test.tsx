@@ -700,8 +700,7 @@ describe("ChatSurface smoke", () => {
     expect(swapSpy).toHaveBeenCalledWith("web/fix-login", "claude", "opus|effort=low");
   });
 
-  // Regression for #948: Switch shows a shortlist first, with Show all for the rest.
-  it("shows a model shortlist with Show all in Switch (#948, #979)", async () => {
+  it("lists the full model catalog in Switch without a shortlist (#948, #979, #997)", async () => {
     const catalog = {
       models: Array.from({ length: 12 }, (_, index) => ({
         id: `model-${index}`,
@@ -723,18 +722,15 @@ describe("ChatSurface smoke", () => {
     openSwitchPanel();
 
     await waitFor(() => {
-      expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
+      expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
+        catalog.models.length,
+      );
     });
-    expect(screen.queryByRole("radio", { name: "Catalog Model 11" })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Catalog Model 2" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
-    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
-    fireEvent.click(screen.getByTestId("model-picker-toggle"));
-    expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
-      catalog.models.length,
-    );
+    expect(screen.queryByTestId("model-picker-toggle")).not.toBeInTheDocument();
   });
 
   // Regression for #952: Switch must reflect snapshot applied model, not task
