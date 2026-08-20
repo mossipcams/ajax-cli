@@ -153,9 +153,9 @@ fn cursor_parameterized_picker_applies_grok_high_without_fast_issue_979() {
                     "parameterized apply must satisfy Grok High: {:?}",
                     report.model_apply_error
                 );
-                assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
+                assert_eq!(report.applied_model, "grok-4.6");
+                assert_ne!(report.applied_model, "composer-2.5");
                 assert_ne!(report.applied_model, "composer-2.5[fast=true]");
-                assert_ne!(report.applied_model, "grok-4.6[effort=high,fast=true]");
                 let deadline = Instant::now() + Duration::from_secs(5);
                 while Instant::now() < deadline {
                     if let Some(AcpClientEvent::SessionUpdate(update)) =
@@ -166,7 +166,7 @@ fn cursor_parameterized_picker_applies_grok_high_without_fast_issue_979() {
                             !text.contains("model:session/set_config_option:cursor-grok-4.6-high"),
                             "must not send catalog id as set_config_option value: {text}"
                         );
-                        if text.contains("model:session/set_config_option:false") {
+                        if text.contains("fast:false") || text.contains("\"value\":false") {
                             return;
                         }
                     }

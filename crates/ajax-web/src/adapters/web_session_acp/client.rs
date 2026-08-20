@@ -21,7 +21,7 @@ use std::{
 
 use super::apply_model::{operator_pin_satisfied, ApplyModelOutcome};
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
-use agent_client_protocol::schema::v1::SessionNotification;
+use agent_client_protocol::schema::v1::{SessionConfigOption, SessionNotification};
 
 #[cfg(test)]
 use std::{cell::RefCell, path::PathBuf};
@@ -44,7 +44,9 @@ pub(crate) fn with_test_acp_program<F, R>(path: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let _guard = TEST_ACP_LOCK.lock().unwrap();
+    let _guard = TEST_ACP_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     TEST_ACP_PROGRAM.with(|slot| {
         *slot.borrow_mut() = Some(path.to_path_buf());
         *TEST_ACP_COMMAND.lock().unwrap() = Some((
@@ -119,6 +121,10 @@ fn drain_stderr(stderr: impl std::io::Read + Send + 'static, sink: Arc<Mutex<Str
 
 #[derive(Debug, Clone)]
 pub enum AcpClientEvent {
+    ConfigOptionsUpdated {
+        applied_model: String,
+        config_options: Vec<SessionConfigOption>,
+    },
     SessionUpdate(Box<SessionNotification>),
     UnknownSessionUpdate(Value),
     ClientRequest {
@@ -141,6 +147,7 @@ pub struct SpawnReport {
     /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     pub applied_model: String,
     pub model_apply_error: Option<String>,
+    pub config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
 }
 
 pub struct AcpStdioClient {
@@ -203,8 +210,12 @@ impl AcpStdioClient {
         report: &SpawnReport,
         model_pins_at_spawn: bool,
     ) -> bool {
-        operator_pin_satisfied(operator_pin, &report.applied_model, model_pins_at_spawn)
-            && report.model_apply_error.is_none()
+        let satisfied = if let Some(options) = report.config_options.as_deref() {
+            super::config_options::pin_satisfied(Some(options), operator_pin, model_pins_at_spawn)
+        } else {
+            operator_pin_satisfied(operator_pin, &report.applied_model, model_pins_at_spawn)
+        };
+        satisfied && report.model_apply_error.is_none()
     }
 
     fn spawn_internal(
@@ -281,6 +292,7 @@ impl AcpStdioClient {
             resumed,
             applied_model,
             model_apply_error,
+            config_options: ready.config_options,
         };
         Ok((client, report))
     }
