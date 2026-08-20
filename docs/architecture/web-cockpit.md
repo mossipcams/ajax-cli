@@ -11,13 +11,48 @@ Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
-Web Cockpit is a first-class browser operator surface that is dashboard-first,
-with an authenticated raw xterm.js/tmux terminal bridge for existing Ajax task tmux
-sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
-task-operation contracts; neither surface owns task truth. The browser
-experience should lead with task state, required decisions, and next actions,
-then open the embedded raw terminal for the selected task on both mobile and
-desktop.
+Web Cockpit is a first-class browser operator surface that is dashboard-first.
+Opening a task enters one **Task Workspace** — shared task header and task
+details, **Ajax Chat**, **Ajax Terminal**, and Diff Review navigation — not a
+single-surface terminal page by default. Native Cockpit and Web Cockpit consume
+shared Cockpit projections and task-operation contracts; neither surface owns
+task truth. The dashboard still leads with task state, required decisions, and
+next actions; the workspace then composes the peer modes below.
+
+### Task Workspace (product boundary)
+
+The Task Workspace is the browser product boundary for a selected task handle.
+Public hashes remain `#/session/<handle>` (Ajax Chat) and `#/t/<handle>` (Ajax
+Terminal). Bare `#/session` is the New Task sheet, not a workspace.
+
+| Surface | Role |
+| --- | --- |
+| **Task Workspace composition** | Mode selection, per-task view preference, capability fallback, Back and Diff routing, one shared task header, one shared task-details sheet, and composition of task actions, metadata, and harness switching |
+| **Ajax Chat** | Multi-harness ACP orchestration chat (Cursor native; Codex, Claude, and Pi via their ACP bridges). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
+| **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
+
+**Frontend import boundaries (production):** cross-feature coupling goes only
+through each feature's `public.ts` (`features/task-workspace/public.ts`,
+`features/chat/public.ts`, `features/terminal/public.ts`,
+`features/task/public.ts`, `features/settings/public.ts`). Task owns the
+reusable desired-model catalog and `ModelPicker` used by New Task and harness
+Switch; Chat owns applying a selected model to the live ACP session. Settings
+owns orchestration-chat enablement storage (`orchestrationChatPreference.ts`);
+App passes the value to New Task and Task Workspace. ESLint
+(`npm run web:lint`) enforces these paths on production files; tests may import
+fixtures across boundaries.
+
+Chat and Terminal are peer views of the same task. Neither owns task metadata,
+task actions, harness switching, mode preference, or Diff routing. Those stay
+with workspace composition (`TaskDetailsSheet`, head-action composition, and
+terminal header Details wiring in `features/task-workspace`; terminal footer
+`Task details` disclosure remains in `TaskMetaDetails`).
+
+Interactive tasks (tmux send-keys launch) and tasks whose projection is not
+`session_capable` open Terminal (`#/t/<handle>`) instead of Chat. A per-task
+browser preference (`ajax.web.taskView.terminal` in localStorage) selects
+Terminal for session-capable tasks until cleared from task details. Diff Review
+Back returns to the mode the workspace selected.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
@@ -30,11 +65,13 @@ only unacknowledged prompt IDs, the last applied transcript cursor, and
 transient UI state. They do not own the transcript, prompt queue, or ACP process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
-default **on**) gates `#/session`, discloses full tool access without approval
+default **on**, storage in `features/settings/orchestrationChatPreference.ts`)
+gates `#/session`, discloses full tool access without approval
 prompts for supported agents, and makes task creation provisioned: with it on,
 the New task sheet calls `startTask` with `orchestration_chat: true` for the
 chosen harness. When the flag is on,
-`#/session/<handle>` renders SessionChat (live head + transcript + composer) for
+`#/session/<handle>` renders the Task Workspace in chat mode: the shared task
+header, then ChatSurface (live head + transcript + composer) for
 session-capable tasks that prefer chat; **Ajax terminal** in task details switches
 to `#/t/<handle>` and remembers that choice in browser localStorage
 (`ajax.web.taskView.terminal`). **Ajax chat** in the footer Task details
@@ -141,7 +178,7 @@ the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
 `POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
-model for an existing task, exposed as **Switch** in the Ajax chat (SessionChat)
+model for an existing task, exposed as **Switch** in the Ajax chat (ChatSurface)
 task-details modal. Same-harness model changes persist `session_model` and apply
 the pin in-band on the live ACP session when a slot exists
 (`session/set_config_option`); with no live slot, persist only. Cross-harness
@@ -917,11 +954,12 @@ capabilities return typed adapter capability outcomes rather than duplicated
 lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
 when the operator needs full interactive attach.
 
-Opening a task in the browser is the resume gesture: entering a task route
-dispatches the `resume` operation (acknowledging attention through core, exactly
-like Enter in the native Cockpit) before attaching the terminal. The browser
-renders no separate resume control; the implicit open=resume acknowledgment is
-best-effort and never derives task truth in JavaScript. Confirmed operator
+Opening a task in the browser is the resume gesture: entering a task workspace
+route dispatches the `resume` operation (acknowledging attention through core,
+exactly like Enter in the native Cockpit) before mounting Ajax Chat or Ajax
+Terminal. The browser renders no separate resume control; the implicit
+open=resume acknowledgment is best-effort and never derives task truth in
+JavaScript. Confirmed operator
 actions must echo the exact `branch_adoption` plan core attached to the action;
 the slice forwards that payload to core without recomputing branch policy or
 comparing branches in the browser.

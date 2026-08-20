@@ -1,8 +1,32 @@
 # Web Session Behavior Contract
 
-Falsifiable invariants for the optional flag-gated Cursor ACP orchestration chat
-mode in Web Cockpit. Later PRs implement against this ledger; nothing here is
-implementation how-to.
+Falsifiable invariants for the optional flag-gated **Ajax Chat** orchestration
+session mode in Web Cockpit. Ajax Chat is multi-harness: Cursor speaks ACP
+natively; Codex, Claude, and Pi reach ACP through their bridge packages. Later
+PRs implement against this ledger; nothing here is implementation how-to.
+
+## Task Workspace and Ajax Chat default
+
+Ajax Chat is one peer surface inside the Task Workspace; it is not the whole
+workspace and does not own task metadata, actions, harness switching, mode
+preference, or Diff routing.
+
+- Public workspace hashes stay `#/session/<handle>` for Ajax Chat and
+  `#/t/<handle>` for Ajax Terminal. Bare `#/session` opens New Task only.
+- When orchestration chat is enabled, provisioned tasks whose projection reports
+  `session_capable` default to Ajax Chat (`#/session/<handle>`) unless the
+  operator has set the per-task Terminal preference.
+- Interactive tasks (tmux send-keys launch) and tasks that are not
+  `session_capable` fall back to Ajax Terminal; a session URL for such a task
+  redirects to `#/t/<handle>` rather than opening a refused ACP socket.
+- **Ajax terminal** in task details navigates to `#/t/<handle>` and stores the
+  per-task preference; **Ajax chat** in task details clears that preference and
+  returns to `#/session/<handle>`.
+- Diff Review Back follows the same mode selection: Terminal preference or
+  non-chat-capable tasks return to `#/t/<handle>`; otherwise `#/session/<handle>`.
+- Terminal mode preserves the raw xterm.js/tmux contract documented in
+  [`web-cockpit.md`](web-cockpit.md); Terminal is not the default Task Workspace
+  surface for session-capable provisioned tasks.
 
 ## Flag-off parity
 
@@ -231,7 +255,7 @@ existing paths.
   orchestration chat, task details expose **Switch** (harness + model) as the
   in-session model control; there is no separate task-details model picker
   ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Both surfaces share
-  `ModelPicker`. Bridge harnesses keep the reasoning picker from `catalog.reasoning`.
+  `ModelPicker` (`features/task`). Bridge harnesses keep the reasoning picker from `catalog.reasoning`.
   Cursor shows one row per model base (Fast catalog variants collapsed), an **Effort**
   row when the catalog encodes multiple levels on that base, and a **Fast** Off/On
   row (default Off). Selection persists as a composed Ajax catalog id such as
