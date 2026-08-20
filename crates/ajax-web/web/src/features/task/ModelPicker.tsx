@@ -3,15 +3,15 @@ import { Button } from "@/shared/ui/button";
 import {
   buildCursorDisplayModels,
   collapseCursorCatalogModels,
-  composeCursorCatalogId,
+  decodeCursorPipeOrCatalogId,
   decodeCursorSelection,
   decodeModelSelection,
   defaultCursorEffort,
   effortOptionLabel,
+  encodeCursorSelection,
   encodeModelSelection,
   DEFAULT_SESSION_MODEL,
   normalizeSessionAgent,
-  parseCursorCatalogId,
   type SessionModelCatalog,
 } from "./desiredModel";
 import { buildModelShortlist } from "./modelShortlist";
@@ -98,8 +98,12 @@ export default function ModelPicker({
 
   const reasoning = catalog.reasoning;
   const catalogIds = new Set(catalog.models.map((option) => option.id));
+  const cursorIntent = isCursor && model ? decodeCursorPipeOrCatalogId(model) : null;
   const isKnownSelection =
-    !model || model === DEFAULT_SESSION_MODEL || catalogIds.has(model);
+    !model ||
+    model === DEFAULT_SESSION_MODEL ||
+    catalogIds.has(model) ||
+    (isCursor && cursorIntent !== null && catalogIds.has(cursorIntent.base));
   const unknownModel = model && !isKnownSelection;
 
   const displayModels = isCursor ? buildCursorDisplayModels(catalog.models) : [];
@@ -122,8 +126,8 @@ export default function ModelPicker({
 
   const visibleCursorBases = new Set(
     visibleCatalog
-      .map((option) => parseCursorCatalogId(option.id)?.base)
-      .filter((base): base is string => !!base),
+      .map((option) => option.id)
+      .filter((id) => id !== DEFAULT_SESSION_MODEL && id !== "auto"),
   );
   if (cursorSelection) visibleCursorBases.add(cursorSelection.base);
   const visibleDisplayModels = isCursor
@@ -135,8 +139,9 @@ export default function ModelPicker({
   );
 
   function emitCursorSelection(base: string, effort: string | undefined, fast: boolean) {
-    const composed = composeCursorCatalogId({ base, effort, fast }, catalogIds);
-    if (composed) onChange(composed);
+    const row = displayModels.find((entry) => entry.base === base);
+    if (!row) return;
+    onChange(encodeCursorSelection(base, effort, fast, row));
   }
 
   function selectCursorBase(base: string) {

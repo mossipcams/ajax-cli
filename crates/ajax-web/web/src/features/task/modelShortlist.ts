@@ -1,5 +1,6 @@
 import {
   collapseCursorCatalogModels,
+  decodeCursorPipeOrCatalogId,
   DEFAULT_SESSION_MODEL,
   normalizeSessionAgent,
   parseCursorCatalogId,
@@ -15,7 +16,7 @@ const CURSOR_RANK: Matcher[] = [
   (id) => id === DEFAULT_SESSION_MODEL || id === "auto",
   (id) => id.includes("composer-2.5"),
   (id) => id.includes("composer"),
-  (id) => id.includes("cursor-grok-4.6-high") || id.includes("grok-4.6-high"),
+  (id) => id.includes("grok-4.6") || id.includes("cursor-grok-4.6"),
   (id) => id.includes("cursor-grok") || id.includes("grok"),
   (id) => id.includes("gpt-5.6") || id.includes("gpt-5-6"),
   (id) => id.includes("gpt-5"),
@@ -92,10 +93,12 @@ export function buildModelShortlist(
   add(findById(catalog, pins.catalogDefault));
   if (pins.currentModelId) {
     if (normalizeSessionAgent(agent) === "cursor") {
-      const currentIntent = parseCursorCatalogId(pins.currentModelId);
+      const currentIntent =
+        decodeCursorPipeOrCatalogId(pins.currentModelId) ??
+        parseCursorCatalogId(pins.currentModelId);
       const pinned = currentIntent
-        ? catalog.find((option) => parseCursorCatalogId(option.id)?.base === currentIntent.base)
-        : findById(models, pins.currentModelId);
+        ? catalog.find((option) => option.id === currentIntent.base)
+        : findById(catalog, pins.currentModelId);
       add(pinned);
     } else {
       add(findById(catalog, pins.currentModelId));

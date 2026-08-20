@@ -159,9 +159,13 @@ The **New task** sheet is two steps: repository/title/harness, then a model page
 presenting a shortlist of popular options for that harness, with **Show all** for
 the full catalog. Bridge harnesses show a reasoning level beside the model list
 when the handshake advertises one. Cursor collapses effort and Fast out of its
-catalog ids: one row per model base, an **Effort** row when multiple levels exist,
-and a **Fast** Off/On row (default Off; Auto is never Fast). `GET /api/session/models?agent=`
-still serves the complete catalog — Cursor from `agent models`, the bridges from
+catalog ids: `GET /api/session/models?agent=cursor` serves unique model bases
+(`composer-2.5`, `grok-4.6`, …) with optional `efforts[]` and `hasFast` derived
+from exploded `agent models` siblings; the picker shows one row per base, an
+**Effort** row when multiple levels exist, and a **Fast** Off/On row (default Off;
+Auto is never Fast). New Task and Switch persist pipe-form `session_model` such as
+`grok-4.6|effort=high|fast=false`. `GET /api/session/models?agent=`
+still serves the complete catalog — Cursor from collapsed `agent models`, the bridges from
 their own `session/new` handshake.
 
 That handshake costs a short-lived bridge process, so the catalog is cached

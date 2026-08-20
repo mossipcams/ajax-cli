@@ -207,14 +207,12 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("submits composed Cursor catalog ids with Fast off by default (#979)", async () => {
+  it("submits pipe-form Cursor session_model with Fast off by default (#979)", async () => {
     stubCatalog({
       models: [
         { id: "auto", label: "Auto" },
-        { id: "composer-2.5", label: "Composer 2.5" },
-        { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
-        { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
-        { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
       ],
       default: "cursor-grok-4.6-high",
     });
@@ -227,7 +225,7 @@ describe("NewTaskSheet", () => {
     fireEvent.click(await screen.findByRole("radio", { name: "On" }));
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0][0].model).toBe("cursor-grok-4.6-high-fast");
+    expect(spy.mock.calls[0][0].model).toBe("grok-4.6|effort=high|fast=true");
     vi.unstubAllGlobals();
   });
 

@@ -1,8 +1,11 @@
 //! Spawn-level ACP reliability: optional live Cursor smoke.
 
-use super::client::{AcpClientEvent, AcpStdioClient};
+use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
-use ajax_core::adapters::{cursor_unspecified_spawn_satisfied, CURSOR_DEFAULT_SPAWN_MODEL};
+use ajax_core::adapters::{
+    acp_launch_for_agent, cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
+    cursor_unspecified_spawn_satisfied, CURSOR_DEFAULT_SPAWN_MODEL,
+};
 use ajax_core::models::AgentClient;
 use std::{
     fs,
@@ -34,6 +37,10 @@ fn cursor_agent_present() -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn cursor_launch() -> ajax_core::adapters::AcpLaunch {
+    acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp launch")
 }
 
 #[test]
@@ -244,4 +251,45 @@ fn spawn_with_operator_pin_recovery_waits_for_prior_child_shutdown_issue_989() {
     });
 
     let _ = fs::remove_dir_all(dir);
+}
+
+// Regression for #991: pipe-form Cursor picks reconstruct catalog ids on spawn argv.
+#[test]
+fn cursor_spawn_pipe_form_reconstructs_catalog_id_on_argv_issue_991() {
+    let launch = cursor_launch();
+
+    let cases = [
+        ("grok-4.6|effort=high|fast=false", "cursor-grok-4.6-high"),
+        ("composer-2.5|fast=true", "composer-2.5-fast"),
+        (
+            "claude-opus-5|effort=medium|fast=false",
+            "claude-opus-5-medium",
+        ),
+        ("claude-opus-5|effort=high|fast=false", "claude-opus-5-high"),
+        ("gpt-5.6-sol|effort=high|fast=false", "gpt-5.6-sol-high"),
+    ];
+    for (pipe_form, catalog_id) in cases {
+        let spawn = cursor_catalog_to_acp_spawn_token(pipe_form);
+        assert_eq!(
+            spawn, catalog_id,
+            "pipe form {pipe_form} must reconstruct {catalog_id}"
+        );
+        assert!(
+            !spawn.contains("-thinking-"),
+            "spawn argv must not infer thinking variants for {pipe_form}"
+        );
+        assert_eq!(
+            acp_args_for_program(launch, &["acp"], Some(pipe_form)),
+            vec!["--model", catalog_id, "acp"]
+        );
+        assert!(
+            !catalog_id.contains('['),
+            "spawn argv must not synthesize bracket tokens for {pipe_form}"
+        );
+    }
+
+    assert_eq!(
+        cursor_catalog_to_acp_in_band_token("grok-4.6|effort=high|fast=false"),
+        "grok-4.6[effort=high,fast=false]"
+    );
 }

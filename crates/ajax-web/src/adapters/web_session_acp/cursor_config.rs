@@ -22,6 +22,28 @@ fn config_option_advertised(
     })
 }
 
+/// Config id Cursor uses for the semantic effort axis (`reasoning` or legacy `effort`).
+fn effort_config_id(config_options: Option<&[SessionConfigOption]>) -> Option<&'static str> {
+    if config_option_advertised(config_options, "reasoning") {
+        Some("reasoning")
+    } else if config_option_advertised(config_options, "effort") {
+        Some("effort")
+    } else {
+        None
+    }
+}
+
+fn read_effort_level(config_options: Option<&[SessionConfigOption]>) -> Option<String> {
+    read_config_option_current_value(config_options, "reasoning")
+        .or_else(|| read_config_option_current_value(config_options, "effort"))
+        .filter(|value| !value.is_empty())
+}
+
+fn effort_option_advertised(config_options: Option<&[SessionConfigOption]>, value: &str) -> bool {
+    effort_config_id(config_options)
+        .is_some_and(|id| config_option_value_advertised(config_options, id, value))
+}
+
 pub fn read_config_option_current_value(
     config_options: Option<&[SessionConfigOption]>,
     config_id: &str,
@@ -49,9 +71,7 @@ pub fn reconstruct_applied_model(config_options: Option<&[SessionConfigOption]>)
         return Some(model);
     }
     let mut options = Vec::new();
-    if let Some(effort) = read_config_option_current_value(Some(config_options), "effort")
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(effort) = read_effort_level(Some(config_options)) {
         options.push(("effort".to_string(), effort));
     }
     if let Some(fast) = read_config_option_current_value(Some(config_options), "fast")
@@ -92,13 +112,11 @@ pub fn resolve_parameterized_apply(
     }
     let mut options = Vec::new();
     if let Some(effort) = &desired.effort {
-        if config_option_advertised(config_options, "effort")
-            && config_option_value_advertised(config_options, "effort", effort)
-        {
-            options.push(("effort".to_string(), effort.clone()));
-        } else {
+        let config_id = effort_config_id(config_options)?;
+        if !config_option_value_advertised(config_options, config_id, effort) {
             return None;
         }
+        options.push((config_id.to_string(), effort.clone()));
     }
     let fast = desired.fast.unwrap_or(false);
     if config_option_advertised(config_options, "fast") {
@@ -123,10 +141,12 @@ pub fn parameterized_selection_advertised(
     if !config_option_value_advertised(config_options, "model", &selection.model) {
         return false;
     }
-    selection
-        .options
-        .iter()
-        .all(|(config_id, value)| config_option_value_advertised(config_options, config_id, value))
+    selection.options.iter().all(|(config_id, value)| {
+        if config_id == "effort" || config_id == "reasoning" {
+            return effort_option_advertised(config_options, value);
+        }
+        config_option_value_advertised(config_options, config_id, value)
+    })
 }
 
 fn select_value_advertised(
@@ -208,7 +228,7 @@ pub fn parameterized_applied_id(selection: &ModelSelection) -> String {
     let effort = selection
         .options
         .iter()
-        .find(|(key, _)| key == "effort")
+        .find(|(key, _)| key == "effort" || key == "reasoning")
         .map(|(_, value)| value.as_str());
     format_cursor_bracket_id(&selection.model, effort, fast)
 }
@@ -332,6 +352,79 @@ mod tests {
             vec![("fast".to_string(), "false".to_string())]
         );
         assert_eq!(parameterized_applied_id(&resolved), "grok-4.6[fast=false]");
+    }
+
+    fn parameterized_options_with_reasoning(
+        current_model: &str,
+        reasoning: &str,
+        fast: &str,
+    ) -> Vec<SessionConfigOption> {
+        vec![
+            SessionConfigOption::select(
+                "model",
+                "Model",
+                current_model.to_string(),
+                vec![
+                    SessionConfigSelectOption::new("composer-2.5", "Composer"),
+                    SessionConfigSelectOption::new("gpt-5.6-sol", "GPT 5.6 Sol"),
+                ],
+            ),
+            SessionConfigOption::select(
+                "reasoning",
+                "Reasoning",
+                reasoning.to_string(),
+                vec![
+                    SessionConfigSelectOption::new("high", "High"),
+                    SessionConfigSelectOption::new("medium", "Medium"),
+                ],
+            ),
+            SessionConfigOption::select(
+                "fast",
+                "Fast",
+                fast.to_string(),
+                vec![
+                    SessionConfigSelectOption::new("true", "Fast"),
+                    SessionConfigSelectOption::new("false", "Standard"),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn reconstruct_applied_model_reads_reasoning_config_issue_989() {
+        let options = parameterized_options_with_reasoning("gpt-5.6-sol", "high", "false");
+        assert_eq!(
+            reconstruct_applied_model(Some(&options)).as_deref(),
+            Some("gpt-5.6-sol[effort=high,fast=false]")
+        );
+    }
+
+    #[test]
+    fn resolve_parameterized_apply_gpt_sol_high_with_reasoning_config_issue_989() {
+        let options = parameterized_options_with_reasoning("gpt-5.6-sol", "high", "false");
+        let resolved =
+            resolve_parameterized_apply("gpt-5.6-sol-high", Some(&options)).expect("apply");
+        assert_eq!(resolved.model, "gpt-5.6-sol");
+        assert!(resolved
+            .options
+            .contains(&("reasoning".to_string(), "high".to_string())));
+        assert!(resolved
+            .options
+            .contains(&("fast".to_string(), "false".to_string())));
+        assert_eq!(
+            parameterized_applied_id(&resolved),
+            "gpt-5.6-sol[effort=high,fast=false]"
+        );
+    }
+
+    #[test]
+    fn parameterized_selection_advertised_accepts_effort_when_reasoning_advertised_issue_989() {
+        let options = parameterized_options_with_reasoning("gpt-5.6-sol", "high", "false");
+        let selection = parse_model_selection("gpt-5.6-sol|effort=high|fast=false").unwrap();
+        assert!(parameterized_selection_advertised(
+            Some(&options),
+            &selection
+        ));
     }
 
     #[test]

@@ -98,7 +98,7 @@ describe("HarnessSwap", () => {
     expect(screen.getByTestId("harness-swap-apply")).toBeInTheDocument();
   });
 
-  it("submits composed Cursor catalog ids from Switch (#979)", async () => {
+  it("submits pipe-form Cursor session_model from Switch (#979)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -106,8 +106,7 @@ describe("HarnessSwap", () => {
         json: async () => ({
           models: [
             { id: "auto", label: "Auto" },
-            { id: "composer-2.5", label: "Composer 2.5" },
-            { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+            { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
           ],
           default: "composer-2.5",
         }),
@@ -118,7 +117,7 @@ describe("HarnessSwap", () => {
       <HarnessSwap
         handle="web/fix-login"
         currentAgent="cursor"
-        currentModel="composer-2.5"
+        currentModel="composer-2.5|fast=false"
       />,
     );
 
@@ -127,6 +126,6 @@ describe("HarnessSwap", () => {
     fireEvent.click(screen.getByTestId("harness-swap-apply"));
 
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy).toHaveBeenCalledWith("web/fix-login", "cursor", "composer-2.5-fast");
+    expect(spy).toHaveBeenCalledWith("web/fix-login", "cursor", "composer-2.5|fast=true");
   });
 });
