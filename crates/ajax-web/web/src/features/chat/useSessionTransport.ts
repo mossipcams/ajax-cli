@@ -2,8 +2,18 @@ import { useEffect, type MutableRefObject, type RefObject } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import {
   connectWebSessionTransport,
-  type WebSessionTransport,
+  parseServerEvent,
+  parseServerFrame,
+  PROMPT_TOO_LONG,
+  MAX_FRAME_BYTES,
+  readSessionCursor,
+  writeSessionCursor,
+  type WebSessionTransportCallbacks,
+  type WebSessionTransportPlatform,
+  type WebSessionSocket,
+  type SessionSnapshot,
 } from "@/shared/lib/webSessionTransport";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import { MessageBuffer } from "./messageBuffer";
 import {
   explainOpenFailure,
@@ -32,6 +42,8 @@ interface Options {
   onSessionInvalidated?: () => void;
   /** Host snapshot model for the live session (task metadata, not localStorage). */
   onSessionModel?: (model: string) => void;
+  /** Live advertised ACP config options from the host snapshot. */
+  onSessionConfigOptions?: (options: LiveSessionConfigOption[] | undefined) => void;
   /** Revert an optimistic in-session model change after a host error. */
   onSessionModelRejected?: () => void;
 }
@@ -49,6 +61,7 @@ export function useSessionTransport({
   setEverOpened,
   onSessionInvalidated,
   onSessionModel,
+  onSessionConfigOptions,
   onSessionModelRejected,
 }: Options): void {
   useEffect(() => {
@@ -82,6 +95,10 @@ export function useSessionTransport({
       }, delay);
     };
 
+    const applySnapshot = (snapshot: SessionSnapshot) => {
+      onSessionConfigOptions?.(snapshot.sessionConfigOptions);
+    };
+
     const open = () => {
       transportRef.current?.dispose();
       transportRef.current = undefined;
@@ -93,6 +110,7 @@ export function useSessionTransport({
           onCursorAdvance: (cursor) => {
             nextToReadCursor = cursor;
           },
+          onSnapshot: applySnapshot,
           onReady: (nextModel) => {
             // The `ready` event already flushes via onEvent; this is a
             // belt-and-suspenders flush for any replayed text that arrived

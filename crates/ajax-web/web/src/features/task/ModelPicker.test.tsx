@@ -201,4 +201,55 @@ describe("ModelPicker", () => {
     });
     expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
   });
+
+  it("binds to live sessionConfigOptions instead of the catalog (#997)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const onChange = vi.fn();
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|reasoning=high|fast=false"
+        liveConfigOptions={[
+          {
+            id: "model",
+            category: "model",
+            name: "Model",
+            type: "select",
+            currentValue: "grok-4.6",
+            choices: [
+              { value: "grok-4.6", name: "Grok 4.6" },
+              { value: "composer-2.5", name: "Composer 2.5" },
+            ],
+          },
+          {
+            id: "reasoning",
+            category: "thought_level",
+            name: "Effort",
+            type: "select",
+            currentValue: "high",
+            choices: [
+              { value: "high", name: "High" },
+              { value: "low", name: "Low" },
+            ],
+          },
+          {
+            id: "fast",
+            category: "model_config",
+            name: "Fast",
+            type: "boolean",
+            currentValue: false,
+            choices: [],
+          },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.getByTestId("live-model-picker")).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
+    expect(onChange).toHaveBeenCalledWith("composer-2.5|reasoning=high|fast=false");
+    fetchSpy.mockRestore();
+  });
 });

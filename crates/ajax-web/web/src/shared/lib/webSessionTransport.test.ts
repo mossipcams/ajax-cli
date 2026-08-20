@@ -459,6 +459,36 @@ describe("parseServerFrame", () => {
     });
     expect(
       parseServerFrame(
+        JSON.stringify({
+          type: "snapshot",
+          protocolVersion: 2,
+          cursor: 1,
+          model: "grok-4.6",
+          turnState: "idle",
+          reset: false,
+          sessionConfigOptions: [
+            {
+              id: "model",
+              category: "model",
+              name: "Model",
+              type: "select",
+              currentValue: "grok-4.6",
+              choices: [{ value: "grok-4.6", name: "Grok 4.6" }],
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      kind: "snapshot",
+      snapshot: expect.objectContaining({
+        model: "grok-4.6",
+        sessionConfigOptions: [
+          expect.objectContaining({ id: "model", currentValue: "grok-4.6" }),
+        ],
+      }),
+    });
+    expect(
+      parseServerFrame(
         eventJson(0, {
           type: "message",
           role: "agent",

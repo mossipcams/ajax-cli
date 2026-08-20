@@ -2,6 +2,40 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import HarnessSwap from "./HarnessSwap";
 import * as api from "@/shared/lib/api";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+
+const LIVE_OPTIONS: LiveSessionConfigOption[] = [
+  {
+    id: "model",
+    category: "model",
+    name: "Model",
+    type: "select",
+    currentValue: "grok-4.6",
+    choices: [
+      { value: "grok-4.6", name: "Grok 4.6" },
+      { value: "composer-2.5", name: "Composer 2.5" },
+    ],
+  },
+  {
+    id: "reasoning",
+    category: "thought_level",
+    name: "Effort",
+    type: "select",
+    currentValue: "high",
+    choices: [
+      { value: "high", name: "High" },
+      { value: "low", name: "Low" },
+    ],
+  },
+  {
+    id: "fast",
+    category: "model_config",
+    name: "Fast",
+    type: "boolean",
+    currentValue: false,
+    choices: [],
+  },
+];
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -127,5 +161,55 @@ describe("HarnessSwap", () => {
 
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy).toHaveBeenCalledWith("web/fix-login", "cursor", "composer-2.5|fast=true");
+  });
+
+  it("seeds the live picker from sessionConfigOptions and applies the full pin without chip clicks", async () => {
+    const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    render(
+      <HarnessSwap
+        handle="web/fix-login"
+        currentAgent="cursor"
+        currentModel="composer-2.5"
+        liveConfigOptions={LIVE_OPTIONS}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    expect(await screen.findByRole("radio", { name: "High" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith(
+      "web/fix-login",
+      "cursor",
+      "grok-4.6|reasoning=high|fast=false",
+    );
+  });
+
+  it("keeps a live chip selection as the pending pin through Apply", async () => {
+    const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
+    render(
+      <HarnessSwap
+        handle="web/fix-login"
+        currentAgent="cursor"
+        currentModel="grok-4.6"
+        liveConfigOptions={LIVE_OPTIONS}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    fireEvent.click(await screen.findByRole("radio", { name: "Low" }));
+    expect(screen.getByRole("radio", { name: "Low" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("harness-swap-apply"));
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith(
+      "web/fix-login",
+      "cursor",
+      "grok-4.6|reasoning=low|fast=false",
+    );
   });
 });

@@ -3,13 +3,24 @@
 mod apply_model;
 mod catalog;
 mod client;
+mod config_option_descriptors;
 mod config_options;
 mod sdk_connection;
 
+pub use config_option_descriptors::{config_option_descriptors, ConfigOptionDescriptor};
 pub use config_options::is_unspecified_model;
 
 #[cfg(test)]
+mod apply_model_tests;
+
+#[cfg(test)]
+mod client_spawn_model_tests;
+
+#[cfg(test)]
 mod client_tests;
+
+#[cfg(test)]
+mod config_options_tests;
 
 #[cfg(test)]
 mod spawn_tests;

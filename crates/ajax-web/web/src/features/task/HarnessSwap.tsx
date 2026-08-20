@@ -4,6 +4,8 @@ import ModelPicker from "./ModelPicker";
 import { DEFAULT_SESSION_MODEL } from "./desiredModel";
 import { useSwapTaskAgentMutation } from "./useSwapTaskAgentMutation";
 import { AGENTS, agentLabel } from "./agents";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import { encodeDesiredPinFromLiveOptions } from "@/shared/lib/liveSessionConfig";
 
 interface Props {
   handle: string;
@@ -11,6 +13,8 @@ interface Props {
   currentAgent: string;
   /** Live session model from the host snapshot (catalog id or `auto`). */
   currentModel?: string;
+  /** Advertised ACP config options for the connected session (same harness only). */
+  liveConfigOptions?: LiveSessionConfigOption[];
   disabled?: boolean;
   onSwapped?: () => void;
 }
@@ -24,6 +28,7 @@ export default function HarnessSwap({
   handle,
   currentAgent,
   currentModel = DEFAULT_SESSION_MODEL,
+  liveConfigOptions,
   disabled = false,
   onSwapped,
 }: Props) {
@@ -68,7 +73,11 @@ export default function HarnessSwap({
           data-testid="harness-swap-open"
           onClick={() => {
             setAgent(currentAgent);
-            setModel(currentModel);
+            setModel(
+              (liveConfigOptions?.length ?? 0) > 0
+                ? encodeDesiredPinFromLiveOptions(liveConfigOptions!)
+                : currentModel,
+            );
             setOpen(true);
           }}
         >
@@ -77,6 +86,9 @@ export default function HarnessSwap({
       </div>
     );
   }
+
+  const useLivePicker =
+    agent === currentAgent && (liveConfigOptions?.length ?? 0) > 0;
 
   return (
     <div className="harness-swap is-open" data-testid="harness-swap">
@@ -108,6 +120,7 @@ export default function HarnessSwap({
         agent={agent}
         agentLabel={agentLabel(agent)}
         value={model}
+        liveConfigOptions={useLivePicker ? liveConfigOptions : undefined}
         disabled={disabled || swapMutation.isPending}
         onChange={setModel}
         onCatalog={(catalog) => setModel((current) => current || catalog.default)}

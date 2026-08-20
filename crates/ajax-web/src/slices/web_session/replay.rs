@@ -3,6 +3,7 @@
 use super::protocol::{PendingPermission, SessionEventEnvelope, SessionSnapshot};
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
+use crate::adapters::web_session_acp::ConfigOptionDescriptor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplayPlan {
@@ -38,10 +39,18 @@ pub(crate) fn build_attach(
     model: String,
     busy: bool,
     client_cursor: Option<usize>,
+    session_config_options: Option<Vec<ConfigOptionDescriptor>>,
 ) -> (SessionSnapshot, Vec<SessionEventEnvelope>) {
     let plan = plan_replay(client_cursor, log);
     let (replayed, next) = log.read_from_enveloped(plan.from);
-    let snapshot = SessionSnapshot::new(next, model, busy, plan.reset, pending_permission(log));
+    let snapshot = SessionSnapshot::new(
+        next,
+        model,
+        busy,
+        plan.reset,
+        pending_permission(log),
+        session_config_options,
+    );
     (snapshot, replayed)
 }
 

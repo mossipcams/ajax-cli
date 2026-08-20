@@ -110,7 +110,7 @@ harness to its ACP entry point and to how it accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` on the spawn argv: `grok-4.6` when Auto/unspecified; effort-suffixed catalog ids mapped to ACP bracket tokens for other pins |
+| Cursor | `agent acp` (native) | `--model` launch hint; live switch via advertised `configOptions` |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
 | Pi | `pi-acp` | `session/set_config_option` |
@@ -193,20 +193,20 @@ clear the stored resume id so the next attach uses `session/new`. Switch is refu
 for a task that was launched interactively, because that task's agent is live in its
 tmux pane and the registry must not name a harness that is not the running process.
 
-When spawn argv, resume/load, and in-band apply leave a model that does not match
-the operator pin (for example Cursor CLI default Composer Fast while Grok High or
-`CURSOR_DEFAULT_MODEL` was chosen), the session host drops the ACP child and
-respawns once with the mapped spawn token and a fresh `session/new` (no resume),
-then applies the pin in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
-Ajax advertises `clientCapabilities._meta.parameterizedModelPicker: true` on ACP
-`initialize` (filesystem and terminal capabilities remain false). When Cursor
-advertises separate `model` / `effort` / `fast` options, non-Fast catalog pins
-apply through split `session/set_config_option` values rather than exploded
-Fast-only model ids; Composer Fast is not an acceptable substitute for a non-Fast
-pin. After a successful recover, `snapshot.model` reflects the running model and no
-error is logged for the failed first attempt. If recovery still fails, the host
-emits a typed error while `session_model` stays the operator pin and
-`snapshot.model` remains harness-reported evidence.
+When spawn argv or resume/load leave a model that does not match the operator pin
+(for example Cursor CLI default Composer Fast while Grok High was chosen), the
+session host respawns only when the ACP child is dead or the harness advertises no
+model control: drop the child, `session/new` (no resume), then apply the pin
+in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+When in-band apply fails because a requested value is not advertised, the host
+emits a typed error, keeps the child running, and leaves `session_model` as the
+operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
+Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
+`_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
+capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` so
+the connected picker binds to live advertised choices; `snapshot.model` is the
+model option's `currentValue` only. In-band refusal leaves `session_model` as the
+operator pin and `snapshot.model` on harness-reported evidence.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
@@ -224,7 +224,8 @@ before persistence.
 
 Each attach sends one protocol v2 `snapshot` frame
 (`protocolVersion`, `cursor`, `model`, `turnState`, `reset`, optional
-`pendingPermission`) followed by cursor-bearing `event` envelopes whose
+`pendingPermission`, optional `sessionConfigOptions`) followed by cursor-bearing
+`event` envelopes whose
 `payload` is the existing typed session event union. The `model` field is the
 harness-reported applied id after handshake apply, not the task desired pin
 ([#952](https://github.com/mossipcams/ajax-cli/issues/952)). Every persisted row has a

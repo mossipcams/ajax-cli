@@ -51,7 +51,7 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         "usage_update" => extract_usage(update_body),
         // Capability announcements, not conversation: Cursor emits these on
         // every session/new and they carry nothing an operator can act on.
-        "available_commands_update" | "current_mode_update" => Vec::new(),
+        "available_commands_update" | "current_mode_update" | "config_option_update" => Vec::new(),
         other if !other.is_empty() => vec![SessionServerEvent::Artifact {
             kind: other.to_string(),
             title: None,
@@ -81,7 +81,7 @@ pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<Session
                 .collect(),
         }],
         SessionUpdate::CurrentModeUpdate(_) => Vec::new(),
-        SessionUpdate::ConfigOptionUpdate(update) => typed_artifact("config", update),
+        SessionUpdate::ConfigOptionUpdate(_) => Vec::new(),
         SessionUpdate::SessionInfoUpdate(update) => typed_artifact("session_info", update),
         SessionUpdate::UsageUpdate(update) => typed_usage_event(update),
         SessionUpdate::AvailableCommandsUpdate(_) => Vec::new(),

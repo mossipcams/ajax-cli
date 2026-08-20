@@ -16,6 +16,15 @@ import {
 } from "./desiredModel";
 import { buildModelShortlist } from "./modelShortlist";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import {
+  encodeDesiredPinWithLiveSelection,
+  modelConfigBooleanLiveOption,
+  modelLiveOption,
+  readLiveBooleanCurrent,
+  readLiveSelectCurrent,
+  thoughtLevelLiveOption,
+} from "@/shared/lib/liveSessionConfig";
 
 interface Props {
   /** Harness whose own catalog to list. */
@@ -23,6 +32,8 @@ interface Props {
   agentLabel: string;
   /** Composite selection: catalog id, or `opus|effort=high` for bridges. */
   value: string;
+  /** Live advertised ACP config options (connected session). */
+  liveConfigOptions?: LiveSessionConfigOption[];
   disabled?: boolean;
   onChange: (selection: string) => void;
   /** Called once with the harness default so callers can preselect it. */
@@ -34,7 +45,21 @@ interface Props {
  * separate choice. Cursor effort and Fast are split out of catalog ids; the
  * bridges expose reasoning as their own config option.
  */
-export default function ModelPicker({
+export default function ModelPicker(props: Props) {
+  if (props.liveConfigOptions?.length) {
+    return (
+      <LiveConfigModelPicker
+        options={props.liveConfigOptions}
+        value={props.value}
+        disabled={props.disabled ?? false}
+        onChange={props.onChange}
+      />
+    );
+  }
+  return <CatalogModelPicker {...props} />;
+}
+
+function CatalogModelPicker({
   agent,
   agentLabel,
   value,
@@ -346,6 +371,146 @@ export default function ModelPicker({
             })}
           </div>
         </>
+      ) : null}
+    </>
+  );
+}
+
+function LiveConfigModelPicker({
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  options: LiveSessionConfigOption[];
+  value: string;
+  disabled: boolean;
+  onChange: (selection: string) => void;
+}) {
+  const modelOption = modelLiveOption(options);
+  const thoughtOption = thoughtLevelLiveOption(options);
+  const fastOption = modelConfigBooleanLiveOption(options);
+  const parsed = decodeModelSelection(value);
+  const selectedModel =
+    parsed.model ||
+    (modelOption ? readLiveSelectCurrent(modelOption) : undefined) ||
+    undefined;
+  const selectedThought = thoughtOption
+    ? parsed.options[thoughtOption.id] ?? readLiveSelectCurrent(thoughtOption)
+    : undefined;
+  const selectedFast = fastOption
+    ? parsed.options[fastOption.id] === "true" ||
+      (parsed.options[fastOption.id] === undefined
+        ? readLiveBooleanCurrent(fastOption)
+        : false)
+    : undefined;
+
+  function emit(selection: {
+    model?: string;
+    thoughtLevel?: string;
+    fast?: boolean;
+  }) {
+    onChange(encodeDesiredPinWithLiveSelection(options, selection));
+  }
+
+  return (
+    <>
+      {modelOption && modelOption.choices.length ? (
+        <div
+          className="model-picker"
+          role="radiogroup"
+          aria-label={`${modelOption.name} models`}
+          data-testid="live-model-picker"
+        >
+          {modelOption.choices.map((choice) => (
+            <button
+              key={choice.value}
+              type="button"
+              className={`model-option${selectedModel === choice.value ? " is-selected" : ""}`}
+              role="radio"
+              aria-checked={selectedModel === choice.value}
+              disabled={disabled}
+              onClick={() => emit({ model: choice.value, thoughtLevel: selectedThought, fast: selectedFast })}
+            >
+              <span className="model-option-label">{choice.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {thoughtOption && thoughtOption.choices.length > 1 ? (
+        <>
+          <span className="field-label" id="live-thought-label">
+            {thoughtOption.name}
+          </span>
+          <div
+            className="reasoning-picker"
+            role="radiogroup"
+            aria-labelledby="live-thought-label"
+            data-testid="live-thought-level"
+          >
+            {thoughtOption.choices.map((choice) => (
+              <button
+                key={choice.value}
+                type="button"
+                className={`reasoning-option${selectedThought === choice.value ? " is-selected" : ""}`}
+                role="radio"
+                aria-checked={selectedThought === choice.value}
+                disabled={disabled}
+                onClick={() => emit({ model: selectedModel, thoughtLevel: choice.value, fast: selectedFast })}
+              >
+                {choice.name}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {fastOption ? (
+        <>
+          <span className="field-label" id="live-fast-label">
+            {fastOption.name}
+          </span>
+          <div
+            className="reasoning-picker"
+            role="radiogroup"
+            aria-labelledby="live-fast-label"
+            data-testid="live-model-fast"
+          >
+            {[
+              { id: false, label: "Off" },
+              { id: true, label: "On" },
+            ].map((option) => {
+              const fastOn = selectedFast ?? false;
+              const selected = option.id === fastOn;
+              return (
+                <button
+                  key={String(option.id)}
+                  type="button"
+                  className={`reasoning-option${selected ? " is-selected" : ""}`}
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  onClick={() =>
+                    emit({
+                      model: selectedModel,
+                      thoughtLevel: selectedThought,
+                      fast: option.id,
+                    })
+                  }
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
+      {value && !modelOption ? (
+        <p className="sheet-note" data-testid="live-model-fallback">
+          Applied model: {value}
+        </p>
       ) : null}
     </>
   );

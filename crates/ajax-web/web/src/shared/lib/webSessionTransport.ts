@@ -1,5 +1,8 @@
 // Authenticated orchestration-chat WebSocket transport (ACP-primary; not PTY).
 
+import type { LiveSessionConfigOption } from "./liveSessionConfig";
+import { parseLiveConfigOptions } from "./liveSessionConfig";
+
 const OPEN_READY_STATE = 1;
 export const SESSION_PROTOCOL_VERSION = 2;
 
@@ -71,6 +74,7 @@ export interface SessionSnapshot {
   protocolVersion: number;
   cursor: number;
   model: string;
+  sessionConfigOptions?: LiveSessionConfigOption[];
   turnState: "idle" | "busy";
   reset: boolean;
   pendingPermission?: {
@@ -87,6 +91,8 @@ export type ParsedServerFrame =
 export interface WebSessionTransportCallbacks {
   onReady: (model: string) => void;
   onEvent: (event: WebSessionServerEvent) => void;
+  /** Host snapshot refresh (initial attach or applied config/model change). */
+  onSnapshot?: (snapshot: SessionSnapshot) => void;
   /** Next event cursor to request on an in-page reconnect (not persisted). */
   onCursorAdvance?: (nextToRead: number) => void;
   onClosed: () => void;
@@ -409,6 +415,7 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
               }
             : null;
       if (payload.pendingPermission !== undefined && !pending) return null;
+      const sessionConfigOptions = parseLiveConfigOptions(payload.sessionConfigOptions);
       return {
         kind: "snapshot",
         snapshot: {
@@ -418,6 +425,7 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           model: payload.model,
           turnState: payload.turnState,
           reset: payload.reset,
+          ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
         },
       };
@@ -520,27 +528,32 @@ export function connectWebSessionTransport(
     if (!frame) return;
 
     if (frame.kind === "snapshot") {
-      ready = true;
-      replayEndCursor = frame.snapshot.cursor;
-      const readyEvent: WebSessionServerEvent = {
-        type: "ready",
-        model: frame.snapshot.model,
-        busy: frame.snapshot.turnState === "busy",
-        reset: frame.snapshot.reset,
-      };
-      replaySettledEvent = { ...readyEvent, reset: false };
-      callbacks.onEvent(readyEvent);
-      if (frame.snapshot.pendingPermission) {
-        const pending = frame.snapshot.pendingPermission;
-        callbacks.onEvent({
-          type: "permission_request",
-          requestId: pending.requestId,
-          ...(pending.title !== undefined ? { title: pending.title } : {}),
-          ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
-        });
+      callbacks.onSnapshot?.(frame.snapshot);
+      if (!ready) {
+        ready = true;
+        replayEndCursor = frame.snapshot.cursor;
+        const readyEvent: WebSessionServerEvent = {
+          type: "ready",
+          model: frame.snapshot.model,
+          busy: frame.snapshot.turnState === "busy",
+          reset: frame.snapshot.reset,
+        };
+        replaySettledEvent = { ...readyEvent, reset: false };
+        callbacks.onEvent(readyEvent);
+        if (frame.snapshot.pendingPermission) {
+          const pending = frame.snapshot.pendingPermission;
+          callbacks.onEvent({
+            type: "permission_request",
+            requestId: pending.requestId,
+            ...(pending.title !== undefined ? { title: pending.title } : {}),
+            ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
+          });
+        }
+        callbacks.onReady(frame.snapshot.model.trim() || "auto");
+        for (const prompt of pendingPrompts) sendPromptNow(prompt);
+      } else {
+        callbacks.onReady(frame.snapshot.model.trim() || "auto");
       }
-      callbacks.onReady(frame.snapshot.model.trim() || "auto");
-      for (const prompt of pendingPrompts) sendPromptNow(prompt);
       return;
     }
 

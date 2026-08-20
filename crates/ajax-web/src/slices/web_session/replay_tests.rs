@@ -23,7 +23,7 @@ fn invalid_cursor_before_compaction_resets_replay() {
     let plan = plan_replay(Some(0), &log);
     assert!(plan.reset);
     assert_eq!(plan.from, log.dropped);
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, Some(0));
+    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, Some(0), None);
     assert!(snapshot.reset);
 }
 
@@ -36,7 +36,7 @@ fn incremental_replay_after_one_new_event() {
     assert_eq!(plan.from, 1);
     let (events, _) = log.read_from(plan.from);
     assert_eq!(events, vec![note("two")]);
-    let (snapshot, replayed) = build_attach(&log, "auto".to_string(), false, Some(1));
+    let (snapshot, replayed) = build_attach(&log, "auto".to_string(), false, Some(1), None);
     assert!(!snapshot.reset);
     assert_eq!(replayed.len(), 1);
     assert_eq!(replayed[0].cursor, 1);

@@ -299,7 +299,7 @@ fn apply_client_message_set_model_grok_high_keeps_child_alive_issue_979() {
     let mapped = cursor_catalog_to_acp_in_band_token(catalog_id);
 
     with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--cursor-live-models", "--cli-default-model"], || {
+        with_test_acp_extra_args(&["--cursor-models", "--cli-default-model"], || {
             directory
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire");
@@ -350,7 +350,7 @@ fn apply_client_message_set_model_respawns_when_in_band_refused() {
             let mut generation = directory.generation(handle);
             let generation_before = generation;
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(apply_client_message(
+            let result = rt.block_on(apply_client_message(
                 directory.inner(),
                 handle,
                 &dir,
@@ -359,11 +359,11 @@ fn apply_client_message_set_model_respawns_when_in_band_refused() {
                 },
                 &mut generation,
                 None,
-            ))
-            .expect("set model");
+            ));
 
-            assert_ne!(directory.child_id(handle), Some(before));
-            assert!(generation > generation_before);
+            assert!(result.is_err());
+            assert_eq!(directory.child_id(handle), Some(before));
+            assert_eq!(generation, generation_before);
         });
     });
 
@@ -418,7 +418,6 @@ fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_n
         with_test_acp_extra_args(
             &[
                 "--exclusive-session-new",
-                "--refuse-in-band-once",
                 "--cursor-models",
                 "--cli-default-model",
             ],
@@ -439,9 +438,9 @@ fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_n
                     &mut generation,
                     None,
                 ))
-                .expect("set model must complete session/new without incoming_transport_closed");
+                .expect("set model");
 
-                assert_ne!(directory.child_id(handle), Some(before));
+                assert_eq!(directory.child_id(handle), Some(before));
                 assert!(directory.inner().has_live_entry(handle));
             },
         );
@@ -461,30 +460,27 @@ fn apply_client_message_set_model_codex_respawn_shuts_down_live_child_issue_989(
     let _ = std::fs::remove_file(&lock);
 
     with_test_acp_program(&script, || {
-        with_test_acp_extra_args(
-            &["--exclusive-session-new", "--refuse-in-band-once"],
-            || {
-                directory
-                    .acquire(handle, &dir, "auto", AgentClient::Codex)
-                    .expect("acquire");
-                let before = directory.child_id(handle).expect("child");
-                let mut generation = directory.generation(handle);
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(apply_client_message(
-                    directory.inner(),
-                    handle,
-                    &dir,
-                    SessionClientMessage::SetModel {
-                        model: "composer-2.5".to_string(),
-                    },
-                    &mut generation,
-                    None,
-                ))
-                .expect("codex set model respawn must finish session/new");
+        with_test_acp_extra_args(&["--exclusive-session-new"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Codex)
+                .expect("acquire");
+            let before = directory.child_id(handle).expect("child");
+            let mut generation = directory.generation(handle);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetModel {
+                    model: "composer-2.5".to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("codex set model");
 
-                assert_ne!(directory.child_id(handle), Some(before));
-            },
-        );
+            assert_eq!(directory.child_id(handle), Some(before));
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
