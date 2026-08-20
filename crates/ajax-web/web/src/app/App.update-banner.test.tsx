@@ -166,8 +166,7 @@ describe("App update banner", () => {
     postTapFetch = true;
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    expect(replace).toHaveBeenCalledOnce();
-    expect(replace).toHaveBeenCalledWith(`https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=42#/`);
+    expect(replace).toHaveBeenCalledExactlyOnceWith(`https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=42#/`);
     expect(reload).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });

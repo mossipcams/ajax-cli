@@ -12,8 +12,7 @@ describe("reloadCockpitDocument", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     reloadCockpitDocument(location);
 
-    expect(replace).toHaveBeenCalledOnce();
-    expect(replace).toHaveBeenCalledWith(
+    expect(replace).toHaveBeenCalledExactlyOnceWith(
       `https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=1700000000000#/settings`,
     );
     vi.restoreAllMocks();
