@@ -216,4 +216,29 @@ describe("desiredModel", () => {
     ]);
     expect(mergeCursorEffortChoices(["high"], [{ value: "high", name: "High" }])).toEqual([]);
   });
+
+  it("passes through ACP-aligned Cursor catalog labels from the session API", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+            { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: ["high"], hasFast: true },
+          ],
+          default: "grok-4.6",
+        }),
+      }),
+    );
+    await expect(fetchSessionModels("cursor")).resolves.toEqual({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+        { id: "gpt-5.6-sol", label: "GPT-5.6-Sol", efforts: ["high"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+  });
 });

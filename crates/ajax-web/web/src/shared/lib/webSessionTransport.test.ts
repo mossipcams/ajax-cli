@@ -114,6 +114,11 @@ describe("connectWebSessionTransport", () => {
       JSON.stringify({ type: "set_model", model: "gpt-5.6-sol-medium" }),
     );
 
+    transport.setConfigOption("model", "composer-2.5");
+    expect(socket.sent).toContainEqual(
+      JSON.stringify({ type: "set_config_option", configId: "model", value: "composer-2.5" }),
+    );
+
     transport.dispose();
     expect(socket.close).toHaveBeenCalled();
   });
