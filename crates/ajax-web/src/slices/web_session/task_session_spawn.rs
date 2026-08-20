@@ -5,7 +5,7 @@ use super::transcript::{
     already_noted, context_reset_needed, context_reset_note, harness_switch_note, slot_must_replace,
 };
 use super::{apply_cancel_to_queue, SessionServerEvent};
-use crate::adapters::web_session_acp::{AcpStdioClient, ApplyModelOutcome, SpawnReport};
+use crate::adapters::web_session_acp::{AcpStdioClient, SpawnReport};
 use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
@@ -100,26 +100,33 @@ pub(super) async fn apply_model(
 
     let generation_before = state.generation;
     let apply_result = tokio::task::block_in_place(|| client.apply_model_pin(model));
-    let needs_respawn = matches!(
-        &apply_result,
-        Err(_) | Ok(ApplyModelOutcome { error: Some(_), .. })
-    );
-
-    if !needs_respawn {
-        let outcome = apply_result.expect("checked Ok without error");
-        state.model = model.to_string();
-        state.applied_model = outcome.applied_model.clone();
-        web_session_store::save_meta(
-            &state.state_dir,
-            &state.qualified_handle,
-            Some(client.session_id()),
-            &state.applied_model,
-        );
-        state.pending_model_snapshot = Some(outcome.applied_model);
-        return Ok(generation_before);
+    match apply_result {
+        Ok(outcome) if outcome.error.is_none() => {
+            state.model = model.to_string();
+            state.applied_model = outcome.applied_model.clone();
+            web_session_store::save_meta(
+                &state.state_dir,
+                &state.qualified_handle,
+                Some(client.session_id()),
+                &state.applied_model,
+            );
+            state.pending_model_snapshot = Some(outcome.applied_model);
+            Ok(generation_before)
+        }
+        Ok(outcome) => {
+            let message = outcome.error.unwrap_or_else(|| {
+                format!(
+                    "session model {model} was refused — harness is running {}",
+                    outcome.applied_model
+                )
+            });
+            state.append_to_log(vec![SessionServerEvent::Error {
+                message: message.clone(),
+            }]);
+            Err(message)
+        }
+        Err(error) => Err(error),
     }
-
-    respawn(state, worktree_path, model, true).await
 }
 
 pub(super) async fn respawn(
