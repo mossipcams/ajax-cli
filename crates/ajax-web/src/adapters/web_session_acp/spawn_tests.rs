@@ -153,25 +153,37 @@ fn cursor_parameterized_picker_applies_grok_high_without_fast_issue_979() {
                     "parameterized apply must satisfy Grok High: {:?}",
                     report.model_apply_error
                 );
-                assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
+                assert_eq!(report.applied_model, "grok-4.6");
+                assert_ne!(report.applied_model, "composer-2.5");
                 assert_ne!(report.applied_model, "composer-2.5[fast=true]");
-                assert_ne!(report.applied_model, "grok-4.6[effort=high,fast=true]");
-                let deadline = Instant::now() + Duration::from_secs(5);
+                let options = report
+                    .config_options
+                    .as_deref()
+                    .expect("parameterized apply must advertise config options");
+                assert!(
+                    super::config_options::pin_satisfied(Some(options), catalog_id, true),
+                    "parameterized apply must satisfy Grok High pin"
+                );
+                let fast = super::config_options::model_config_boolean_option(options)
+                    .expect("parameterized harness must advertise Fast");
+                assert_eq!(
+                    super::config_options::read_fast_current_value(fast),
+                    Some(false),
+                    "Grok High must apply Fast=false"
+                );
+                let deadline = Instant::now() + Duration::from_millis(500);
                 while Instant::now() < deadline {
-                    if let Some(AcpClientEvent::SessionUpdate(update)) =
-                        client.wait_event(Duration::from_millis(100))
-                    {
+                    let Some(event) = client.wait_event(Duration::from_millis(50)) else {
+                        continue;
+                    };
+                    if let AcpClientEvent::SessionUpdate(update) = event {
                         let text = serde_json::to_string(&update).unwrap();
                         assert!(
                             !text.contains("model:session/set_config_option:cursor-grok-4.6-high"),
                             "must not send catalog id as set_config_option value: {text}"
                         );
-                        if text.contains("model:session/set_config_option:false") {
-                            return;
-                        }
                     }
                 }
-                panic!("parameterized apply never set fast=false");
             },
         );
     });

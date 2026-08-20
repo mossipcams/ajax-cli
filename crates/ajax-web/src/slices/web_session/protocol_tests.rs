@@ -5,7 +5,7 @@ use crate::slices::web_session::SessionServerEvent;
 
 #[test]
 fn snapshot_serializes_protocol_v2_fields() {
-    let snapshot = SessionSnapshot::new(7, "composer-2.5".to_string(), true, false, None);
+    let snapshot = SessionSnapshot::new(7, "composer-2.5".to_string(), true, false, None, None);
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["type"], "snapshot");
     assert_eq!(json["protocolVersion"], SESSION_PROTOCOL_VERSION);

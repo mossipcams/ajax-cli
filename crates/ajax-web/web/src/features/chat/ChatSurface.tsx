@@ -72,6 +72,7 @@ import { useTaskSession } from "./useTaskSession";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { useChatViewport } from "./viewport/useChatViewport";
 import { useChatSpeech } from "./speech/useChatSpeech";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 
 interface Props {
   handle: string | null;
@@ -84,8 +85,12 @@ interface Props {
   headActions?: ReactNode;
   /** Shared task identity row owned by Task Workspace. */
   workspaceHeader?: ReactNode;
-  /** Live session model and busy flag for workspace harness swap composition. */
-  onSessionActivity?: (activity: { model: string; busy: boolean }) => void;
+  /** Live session model, config options, and busy flag for workspace harness swap. */
+  onSessionActivity?: (activity: {
+    model: string;
+    busy: boolean;
+    sessionConfigOptions?: LiveSessionConfigOption[];
+  }) => void;
 }
 
 export default function ChatSurface({
@@ -131,6 +136,7 @@ export default function ChatSurface({
     everOpened,
     activityAgeMs,
     sessionModel,
+    sessionConfigOptions,
     sendPrompt,
     sendCancel,
     markStopped,
@@ -138,8 +144,8 @@ export default function ChatSurface({
   } = useTaskSession({ handle, detail, onMutated });
 
   useEffect(() => {
-    onSessionActivity?.({ model: sessionModel, busy: state.busy });
-  }, [sessionModel, state.busy, onSessionActivity]);
+    onSessionActivity?.({ model: sessionModel, busy: state.busy, sessionConfigOptions });
+  }, [sessionModel, sessionConfigOptions, state.busy, onSessionActivity]);
 
   const {
     speechModel,

@@ -5,23 +5,40 @@ use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
     normalize::StreamNormalizer, SessionServerEvent,
 };
-use crate::adapters::web_session_acp::AcpClientEvent;
-use crate::adapters::web_session_acp::AcpStdioClient;
+use crate::adapters::web_session_acp::{config_option_descriptors, AcpClientEvent, AcpStdioClient};
 use serde_json::{json, Value};
+
+pub(crate) struct AcpDrainOutcome {
+    pub events: Vec<SessionServerEvent>,
+    pub host_exited: bool,
+    pub prompt_finished: bool,
+    pub applied_model: Option<String>,
+    pub session_config_options:
+        Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
+}
 
 pub(crate) fn drain_acp_events(
     client: &AcpStdioClient,
     deduper: &mut UsageDeduper,
-) -> (Vec<SessionServerEvent>, bool, bool) {
+) -> AcpDrainOutcome {
     let mut events = Vec::new();
     let mut host_exited = false;
     let mut prompt_finished = false;
+    let mut applied_model = None;
+    let mut session_config_options = None;
     let startup_info = client
         .session_new_result()
         .pointer("/_meta/piAcp/startupInfo")
         .and_then(Value::as_str);
     while let Some(event) = client.poll_event() {
         match event {
+            AcpClientEvent::ConfigOptionsUpdated {
+                applied_model: model,
+                config_options,
+            } => {
+                applied_model = Some(model);
+                session_config_options = Some(config_option_descriptors(&config_options));
+            }
             AcpClientEvent::SessionUpdate(params) => {
                 let mut mapped = map_acp_session_notification(&params);
                 for event in &mut mapped {
@@ -69,7 +86,13 @@ pub(crate) fn drain_acp_events(
             }
         }
     }
-    (events, host_exited, prompt_finished)
+    AcpDrainOutcome {
+        events,
+        host_exited,
+        prompt_finished,
+        applied_model,
+        session_config_options,
+    }
 }
 
 pub(crate) fn normalize_session_events(

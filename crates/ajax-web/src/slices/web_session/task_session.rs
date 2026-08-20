@@ -149,6 +149,11 @@ pub(crate) struct TaskSessionState {
     pub(super) usage_deduper: UsageDeduper,
     /// Model-only snapshot after in-band apply (reset stays false).
     pub(super) pending_model_snapshot: Option<String>,
+    /// Live advertised config options for connected picker binding.
+    pub(super) session_config_options:
+        Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
+    pub(super) pending_config_snapshot:
+        Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
 }
 
 impl TaskSessionState {
@@ -184,9 +189,16 @@ impl TaskSessionState {
         let Some(client) = self.client.as_mut() else {
             return;
         };
-        let (events, host_exited, prompt_finished) =
-            drain_acp_events(client, &mut self.usage_deduper);
-        if prompt_finished {
+        let outcome = drain_acp_events(client, &mut self.usage_deduper);
+        if let Some(model) = outcome.applied_model {
+            self.applied_model = model;
+            self.pending_model_snapshot = Some(self.applied_model.clone());
+        }
+        if let Some(options) = outcome.session_config_options {
+            self.session_config_options = Some(options.clone());
+            self.pending_config_snapshot = Some(options);
+        }
+        if outcome.prompt_finished {
             if let Some(next) = self.queued.pop_front() {
                 if let Err(error) = client.begin_prompt(&next) {
                     self.append_to_log(vec![SessionServerEvent::Error {
@@ -195,11 +207,11 @@ impl TaskSessionState {
                 }
             }
         }
-        if host_exited {
+        if outcome.host_exited {
             self.acp_alive = false;
         }
-        if !events.is_empty() {
-            let normalized = normalize_session_events(&mut self.stream_normalizer, events);
+        if !outcome.events.is_empty() {
+            let normalized = normalize_session_events(&mut self.stream_normalizer, outcome.events);
             self.append_to_log(normalized);
         }
     }
@@ -237,6 +249,8 @@ pub(crate) fn spawn_task_session(
             worktree_path: None,
             usage_deduper: UsageDeduper::default(),
             pending_model_snapshot: None,
+            session_config_options: None,
+            pending_config_snapshot: None,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -463,8 +477,13 @@ fn attach_snapshot(
     client_cursor: Option<usize>,
 ) -> AttachSnapshot {
     let snapshot_model = snapshot_applied_model(state);
-    let (snapshot, replayed) =
-        build_attach(&state.log, snapshot_model, state.busy(), client_cursor);
+    let (snapshot, replayed) = build_attach(
+        &state.log,
+        snapshot_model,
+        state.busy(),
+        client_cursor,
+        state.session_config_options.clone(),
+    );
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -491,14 +510,17 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             state.busy(),
             true,
             pending_permission(&state.log),
+            state.session_config_options.clone(),
         ))
     } else if let Some(model) = state.pending_model_snapshot.take() {
+        let config = state.pending_config_snapshot.take();
         Some(SessionSnapshot::new(
             state.log.absolute_next_cursor(),
             model,
             state.busy(),
             false,
             pending_permission(&state.log),
+            config.or_else(|| state.session_config_options.clone()),
         ))
     } else {
         None

@@ -1,20 +1,22 @@
 //! Official ACP SDK connection actor behind the synchronous Web Session hub.
 
-use super::apply_model::{
-    apply_model_pin, enrich_session_new_value, sync_live_model_config, ApplyModelOutcome,
-};
+use super::apply_model::{apply_model_pin, sync_live_model_config, ApplyModelOutcome};
 use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
+use super::config_options::{
+    mode_option, read_model_applied, replace_config_options, sync_session_result_config_options,
+};
 use agent_client_protocol::{
     on_receive_notification, on_receive_request,
     schema::{
         v1::{
-            CancelNotification, ClientCapabilities, ContentBlock, Implementation,
-            InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption,
-            PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
-            RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
-            SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
-            SessionConfigSelectOptions, SessionNotification, SetSessionConfigOptionRequest,
-            TextContent,
+            BooleanConfigOptionCapabilities, CancelNotification, ClientCapabilities,
+            ClientSessionCapabilities, ContentBlock, Implementation, InitializeRequest,
+            LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionKind,
+            PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+            RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
+            SessionConfigKind, SessionConfigOption, SessionConfigOptionsCapabilities,
+            SessionConfigSelectOptions, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest, TextContent,
         },
         ProtocolVersion,
     },
@@ -109,7 +111,11 @@ pub(super) fn client_capabilities() -> ClientCapabilities {
         "parameterizedModelPicker".to_string(),
         serde_json::Value::Bool(true),
     );
-    ClientCapabilities::new().meta(meta)
+    ClientCapabilities::new()
+        .session(ClientSessionCapabilities::new().config_options(
+            SessionConfigOptionsCapabilities::new().boolean(BooleanConfigOptionCapabilities::new()),
+        ))
+        .meta(meta)
 }
 
 pub(super) fn run(options: RunOptions) {
@@ -147,6 +153,8 @@ async fn run_async(options: RunOptions) {
     let notification_events = events.clone();
     let permission_events = events.clone();
     let permission_store = Arc::clone(&permissions);
+    let live_session: Arc<Mutex<Option<LiveSession>>> = Arc::new(Mutex::new(None));
+    let live_for_notifications = Arc::clone(&live_session);
     let transport = traced_transport(stdin, stdout, events.clone());
 
     let connection_result = Client
@@ -159,7 +167,28 @@ async fn run_async(options: RunOptions) {
                 }
                 let params = notification.params().clone();
                 let event = match serde_json::from_value::<SessionNotification>(params.clone()) {
-                    Ok(notification) => AcpClientEvent::SessionUpdate(Box::new(notification)),
+                    Ok(notification) => {
+                        if let SessionUpdate::ConfigOptionUpdate(update) = notification.update {
+                            let applied = read_model_applied(Some(&update.config_options))
+                                .unwrap_or_default();
+                            if let Some(live) = live_for_notifications.lock().unwrap().as_mut() {
+                                replace_config_options(
+                                    &mut live.config_options,
+                                    update.config_options.clone(),
+                                );
+                                sync_session_result_config_options(
+                                    &mut live.session_result,
+                                    &update.config_options,
+                                );
+                            }
+                            AcpClientEvent::ConfigOptionsUpdated {
+                                applied_model: applied,
+                                config_options: update.config_options,
+                            }
+                        } else {
+                            AcpClientEvent::SessionUpdate(Box::new(notification))
+                        }
+                    }
                     Err(_) => AcpClientEvent::UnknownSessionUpdate(params),
                 };
                 let _ = notification_events.send(event);
@@ -212,6 +241,7 @@ async fn run_async(options: RunOptions) {
                 config_options: connection_ready.config_options.clone(),
                 agent,
             };
+            *live_session.lock().unwrap() = Some(live);
             if ready.send(Ok(connection_ready)).is_err() {
                 return Ok(());
             }
@@ -221,7 +251,7 @@ async fn run_async(options: RunOptions) {
                 connection_events.clone(),
                 busy,
                 permissions,
-                live,
+                live_session,
             )
             .await;
             Ok(())
@@ -317,8 +347,7 @@ async fn initialize_session(
 
     let (session_id, mut session_new_result) = match session_id {
         Some(session_id) => {
-            let mut value = serde_json::json!({ "sessionId": session_id });
-            enrich_session_new_value(&mut value, config_options.as_deref());
+            let value = serde_json::json!({ "sessionId": session_id });
             (session_id, value)
         }
         None => {
@@ -331,25 +360,21 @@ async fn initialize_session(
             .await
             .map_err(|_| timeout_error("session/new"))?
             .map_err(|error| format!("ACP session/new failed: {error}"))?;
-            let mut value = serde_json::to_value(&response)
+            let value = serde_json::to_value(&response)
                 .map_err(|error| format!("invalid session/new response: {error}"))?;
-            if let Some(options) = response.config_options.as_ref() {
-                if let Ok(json) = serde_json::to_value(options) {
-                    if let Value::Object(ref mut map) = value {
-                        map.insert("configOptions".to_string(), json);
-                    }
-                }
-            }
             config_options = response.config_options;
             (response.session_id.to_string(), value)
         }
     };
-    enrich_session_new_value(&mut session_new_result, config_options.as_deref());
+    if let Some(options) = config_options.as_deref() {
+        sync_session_result_config_options(&mut session_new_result, options);
+    }
     apply_permission_config(connection, agent, &session_id, config_options.as_deref()).await;
     let model_pins_at_spawn =
         acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
     let ApplyModelOutcome {
         applied_model,
+        config_options: applied_config_options,
         error: model_apply_error,
     } = apply_model_pin(
         connection,
@@ -360,6 +385,10 @@ async fn initialize_session(
         model_pins_at_spawn,
     )
     .await;
+    if let Some(options) = applied_config_options.as_deref() {
+        config_options = applied_config_options.clone();
+        sync_session_result_config_options(&mut session_new_result, options);
+    }
 
     Ok(ConnectionReady {
         session_id,
@@ -413,15 +442,13 @@ async fn send_load(
 pub(super) fn preferred_permission_config(
     agent: AgentClient,
     config_options: Option<&[SessionConfigOption]>,
-) -> Option<(&'static str, &'static str)> {
+) -> Option<(String, &'static str)> {
     let expected = match agent {
         AgentClient::Codex => "agent-full-access",
         AgentClient::Claude => "bypassPermissions",
         AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => return None,
     };
-    let option = config_options?
-        .iter()
-        .find(|option| option.id.0.as_ref() == "mode")?;
+    let option = mode_option(config_options?)?;
     let SessionConfigKind::Select(select) = &option.kind else {
         return None;
     };
@@ -437,7 +464,8 @@ pub(super) fn preferred_permission_config(
         }),
         _ => false,
     };
-    (advertised && select.current_value.0.as_ref() != expected).then_some(("mode", expected))
+    (advertised && select.current_value.0.as_ref() != expected)
+        .then_some((option.id.0.to_string(), expected))
 }
 
 async fn apply_permission_config(
@@ -471,11 +499,63 @@ async fn command_loop(
     events: Sender<AcpClientEvent>,
     busy: Arc<AtomicBool>,
     permissions: PendingPermissions,
-    mut live: LiveSession,
+    live_session: Arc<Mutex<Option<LiveSession>>>,
 ) {
     while let Some(command) = commands.recv().await {
         match command {
+            ClientCommand::ApplyModelPin {
+                desired_model,
+                result,
+            } => {
+                let Some((agent, session_id, session_result, config_options)) =
+                    live_session.lock().unwrap().as_ref().map(|live| {
+                        (
+                            live.agent,
+                            live.session_id.clone(),
+                            live.session_result.clone(),
+                            live.config_options.clone(),
+                        )
+                    })
+                else {
+                    break;
+                };
+                let model_pins_at_spawn =
+                    acp_launch_for_agent(agent).is_some_and(|launch| launch.model_pins_at_spawn());
+                let outcome = apply_model_pin(
+                    &connection,
+                    &session_id,
+                    &session_result,
+                    config_options.as_deref(),
+                    Some(&desired_model),
+                    model_pins_at_spawn,
+                )
+                .await;
+                if let Ok(mut live_guard) = live_session.lock() {
+                    if let Some(live) = live_guard.as_mut() {
+                        if outcome.error.is_none() {
+                            if let Some(options) = outcome.config_options.clone() {
+                                replace_config_options(&mut live.config_options, options.clone());
+                                sync_session_result_config_options(
+                                    &mut live.session_result,
+                                    &options,
+                                );
+                            } else if let Some(options) = live.config_options.as_mut() {
+                                sync_live_model_config(
+                                    &mut live.session_result,
+                                    options,
+                                    &outcome.applied_model,
+                                );
+                            }
+                        }
+                    }
+                }
+                let _ = result.send(Ok(outcome));
+            }
             ClientCommand::Prompt { id, text, result } => {
+                let mut live_guard = live_session.lock().unwrap();
+                let Some(live) = live_guard.as_mut() else {
+                    break;
+                };
                 let request = PromptRequest::new(
                     live.session_id.clone(),
                     vec![ContentBlock::Text(TextContent::new(text))],
@@ -506,6 +586,10 @@ async fn command_loop(
                 }
             }
             ClientCommand::Cancel { result } => {
+                let mut live_guard = live_session.lock().unwrap();
+                let Some(live) = live_guard.as_mut() else {
+                    break;
+                };
                 let cancelled = cancel_permissions(&permissions);
                 let sent =
                     connection.send_notification(CancelNotification::new(live.session_id.clone()));
@@ -522,40 +606,9 @@ async fn command_loop(
                 let response = respond_permission(&permissions, &request_id, approved);
                 let _ = result.send(response);
             }
-            ClientCommand::ApplyModelPin {
-                desired_model,
-                result,
-            } => {
-                let model_pins_at_spawn = acp_launch_for_agent(live.agent)
-                    .is_some_and(|launch| launch.model_pins_at_spawn());
-                let outcome = apply_model_pin(
-                    &connection,
-                    &live.session_id,
-                    &live.session_result,
-                    live.config_options.as_deref(),
-                    Some(&desired_model),
-                    model_pins_at_spawn,
-                )
-                .await;
-                if outcome.error.is_none() {
-                    if let Some(options) = live.config_options.as_mut() {
-                        sync_live_model_config(
-                            &mut live.session_result,
-                            options,
-                            &outcome.applied_model,
-                        );
-                    } else if let Value::Object(ref mut map) = live.session_result {
-                        if let Some(models) = map.get_mut("models").and_then(Value::as_object_mut) {
-                            models.insert(
-                                "currentModelId".to_string(),
-                                Value::String(outcome.applied_model.clone()),
-                            );
-                        }
-                    }
-                }
-                let _ = result.send(Ok(outcome));
+            ClientCommand::Shutdown => {
+                break;
             }
-            ClientCommand::Shutdown => break,
         }
     }
 }
