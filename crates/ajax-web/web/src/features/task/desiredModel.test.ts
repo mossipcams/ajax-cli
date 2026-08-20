@@ -1,0 +1,142 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  DEFAULT_SESSION_MODEL,
+  SESSION_MODEL_STORAGE_KEY,
+  composeCursorCatalogId,
+  fetchSessionModels,
+  normalizeSessionAgent,
+  parseCursorCatalogId,
+  readSessionModel,
+  writeSessionModel,
+} from "./desiredModel";
+
+describe("desiredModel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("defaults to auto", () => {
+    expect(readSessionModel()).toBe(DEFAULT_SESSION_MODEL);
+  });
+
+  it("persists the chosen model", () => {
+    writeSessionModel("composer-2.5");
+    expect(localStorage.getItem(SESSION_MODEL_STORAGE_KEY)).toBe("composer-2.5");
+    expect(readSessionModel()).toBe("composer-2.5");
+  });
+
+  it("fetches models and the launch default from the session API", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "auto", label: "Auto" },
+            { id: "composer-2.5", label: "Composer 2.5" },
+          ],
+          default: "cursor-grok-4.6-high",
+        }),
+      }),
+    );
+    await expect(fetchSessionModels()).resolves.toEqual({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "composer-2.5", label: "Composer 2.5" },
+      ],
+      default: "cursor-grok-4.6-high",
+    });
+  });
+
+  it("reports no default when the API omits one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ models: [{ id: "composer-2.5", label: "Composer 2.5" }] }),
+      }),
+    );
+    await expect(fetchSessionModels()).resolves.toEqual({
+      models: [{ id: "composer-2.5", label: "Composer 2.5" }],
+      default: "",
+    });
+  });
+
+  it("asks for the normalized harness and rejects when the API cannot answer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchSessionModels("cursor")).rejects.toThrow("session models request failed");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("agent=cursor");
+
+    await expect(fetchSessionModels("Codex")).rejects.toThrow("session models request failed");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("agent=codex");
+  });
+
+  it("normalizes harness ids for catalog lookup", () => {
+    expect(normalizeSessionAgent("Cursor")).toBe("cursor");
+    expect(normalizeSessionAgent("  ")).toBe("cursor");
+  });
+
+  it("offers Cursor Auto when the harness answers with an empty list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ models: [], default: "" }),
+      }),
+    );
+
+    await expect(fetchSessionModels("cursor")).resolves.toEqual({
+      models: [{ id: DEFAULT_SESSION_MODEL, label: "Auto" }],
+      default: DEFAULT_SESSION_MODEL,
+    });
+
+    await expect(fetchSessionModels("codex")).resolves.toEqual({ models: [], default: "" });
+  });
+
+  it("parses and composes Cursor catalog ids with effort and Fast (#979)", () => {
+    const catalog = [
+      "auto",
+      "composer-2.5",
+      "composer-2.5-fast",
+      "cursor-grok-4.6-high",
+      "cursor-grok-4.6-high-fast",
+      "gpt-5.6-sol-medium",
+      "gpt-5.6-sol-high",
+    ];
+
+    expect(parseCursorCatalogId("cursor-grok-4.6-high")).toEqual({
+      base: "grok-4.6",
+      effort: "high",
+      fast: false,
+    });
+    expect(parseCursorCatalogId("composer-2.5-fast")).toEqual({
+      base: "composer-2.5",
+      fast: true,
+    });
+    expect(
+      composeCursorCatalogId(
+        { base: "grok-4.6", effort: "high", fast: true },
+        catalog,
+      ),
+    ).toBe("cursor-grok-4.6-high-fast");
+    expect(
+      composeCursorCatalogId(
+        { base: "composer-2.5", fast: false },
+        catalog,
+      ),
+    ).toBe("composer-2.5");
+    expect(
+      composeCursorCatalogId(
+        { base: "gpt-5.6-sol", effort: "medium", fast: false },
+        catalog,
+      ),
+    ).toBe("gpt-5.6-sol-medium");
+  });
+});

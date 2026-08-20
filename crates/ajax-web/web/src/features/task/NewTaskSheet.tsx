@@ -6,17 +6,17 @@ import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
-import ModelPicker from "@/features/session/ModelPicker";
-import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import ModelPicker from "./ModelPicker";
 import {
   DEFAULT_SESSION_MODEL,
   readSessionModel,
-} from "@/features/session/sessionModel";
+} from "./desiredModel";
 import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
   repos: RepoSummary[];
   selectedProject?: string | null;
+  orchestrationChat?: boolean;
   onClose?: () => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onOpenTask?: (handle: string, cockpit?: BrowserCockpitView) => void;
@@ -64,6 +64,7 @@ function agentForArrowKey(current: string, key: string): string | null {
 export default function NewTaskSheet({
   repos,
   selectedProject = null,
+  orchestrationChat = false,
   onClose,
   onCockpit,
   onOpenTask,
@@ -73,7 +74,6 @@ export default function NewTaskSheet({
   const [agent, setAgent] = useState(initialAgent);
   const [step, setStep] = useState<"task" | "model">("task");
   const [model, setModel] = useState("");
-  const orchestrationChat = useOrchestrationChatEnabled();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);

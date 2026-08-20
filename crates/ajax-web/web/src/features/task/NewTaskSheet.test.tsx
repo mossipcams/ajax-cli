@@ -7,7 +7,6 @@ import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import NewTaskSheet from "./NewTaskSheet";
 import newTaskSheetSource from "./NewTaskSheet.tsx?raw";
 import * as api from "@/shared/lib/api";
-import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const stylesSource = readOrderedStylesSource(join(here, "../.."));
@@ -103,7 +102,7 @@ describe("NewTaskSheet", () => {
   it("submits the selected pi agent", async () => {
     stubCatalog();
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
-    render(<NewTaskSheet repos={repos} />);
+    render(<NewTaskSheet repos={repos} orchestrationChat />);
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });
@@ -117,10 +116,9 @@ describe("NewTaskSheet", () => {
   });
 
   it("omits orchestration_chat when the preference is explicitly off", async () => {
-    writeOrchestrationChatEnabled(false);
     stubCatalog();
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
-    render(<NewTaskSheet repos={repos} />);
+    render(<NewTaskSheet repos={repos} orchestrationChat={false} />);
     fireEvent.input(screen.getByLabelText("Title"), {
       target: { value: "Fix login" },
     });

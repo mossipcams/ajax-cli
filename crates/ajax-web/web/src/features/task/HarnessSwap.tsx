@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/shared/ui/button";
-import ModelPicker from "@/features/session/ModelPicker";
-import { DEFAULT_SESSION_MODEL } from "@/features/session/sessionModel";
+import ModelPicker from "./ModelPicker";
+import { DEFAULT_SESSION_MODEL } from "./desiredModel";
 import { useSwapTaskAgentMutation } from "./useSwapTaskAgentMutation";
 import { AGENTS, agentLabel } from "./agents";
 
