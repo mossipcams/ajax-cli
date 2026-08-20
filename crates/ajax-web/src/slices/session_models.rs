@@ -507,6 +507,75 @@ mod tests {
     }
 
     #[test]
+    fn collapse_cursor_catalog_collects_grok_effort_levels_issue_1004() {
+        let collapsed = collapse_cursor_catalog(vec![
+            SessionModelOption {
+                id: "cursor-grok-4.6-low".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-medium".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-xhigh".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high-fast".to_string(),
+                label: "Grok 4.6 Fast".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+        ]);
+        let grok = collapsed
+            .iter()
+            .find(|model| model.id == "grok-4.6")
+            .unwrap();
+        assert_eq!(
+            grok.efforts.as_deref(),
+            Some(
+                ["xhigh", "high", "medium", "low"]
+                    .map(String::from)
+                    .as_slice()
+            )
+        );
+        assert_eq!(grok.has_fast, Some(true));
+    }
+
+    #[test]
+    fn collapse_cursor_catalog_keeps_thinking_bases_distinct_issue_1004() {
+        let collapsed = collapse_cursor_catalog(vec![
+            SessionModelOption {
+                id: "claude-opus-5-high".to_string(),
+                label: "Claude Opus 5 High".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "claude-opus-5-thinking-high".to_string(),
+                label: "Claude Opus 5 Thinking High".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+        ]);
+        let bases: Vec<_> = collapsed.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(bases, ["claude-opus-5", "claude-opus-5-thinking"]);
+    }
+
+    #[test]
     fn collapse_cursor_catalog_preserves_first_seen_base_order() {
         let collapsed = collapse_cursor_catalog(vec![
             SessionModelOption {

@@ -85,7 +85,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     if let Some((prefix, effort)) = stem.rsplit_once('-') {
         if prefix.ends_with("-thinking") && CURSOR_EFFORT_SUFFIXES.contains(&effort) {
             return Some(CursorModelIntent {
-                base: prefix.strip_suffix("-thinking")?.to_string(),
+                base: prefix.to_string(),
                 effort: Some(effort.to_string()),
                 fast: Some(fast),
             });

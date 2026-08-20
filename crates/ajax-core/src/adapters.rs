@@ -777,6 +777,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_cursor_model_intent_keeps_thinking_in_base_issue_1004() {
+        use crate::adapters::agent::parse_cursor_model_intent;
+
+        let thinking = parse_cursor_model_intent("claude-opus-5-thinking-high").unwrap();
+        assert_eq!(thinking.base, "claude-opus-5-thinking");
+        assert_eq!(thinking.effort.as_deref(), Some("high"));
+
+        let plain = parse_cursor_model_intent("claude-opus-5-high").unwrap();
+        assert_eq!(plain.base, "claude-opus-5");
+        assert_eq!(plain.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
     fn cursor_model_intents_match_requires_matching_fast_issue_979() {
         use crate::adapters::{cursor_model_intents_match, parse_cursor_model_intent};
 

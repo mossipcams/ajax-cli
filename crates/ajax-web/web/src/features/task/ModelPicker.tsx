@@ -10,6 +10,7 @@ import {
   encodeCursorSelection,
   encodeModelSelection,
   DEFAULT_SESSION_MODEL,
+  mergeCursorEffortChoices,
   normalizeSessionAgent,
   type SessionModelCatalog,
 } from "./desiredModel";
@@ -103,7 +104,6 @@ export default function ModelPicker({
   const liveOptions = liveConfigOptions ?? [];
   const thoughtOption = liveOptions.length ? thoughtLevelLiveOption(liveOptions) : undefined;
   const fastOption = liveOptions.length ? modelConfigBooleanLiveOption(liveOptions) : undefined;
-  const showLiveEffort = !!thoughtOption && thoughtOption.choices.length > 1;
   const showLiveFast = !!fastOption;
   const selectedThought = thoughtOption
     ? options[thoughtOption.id] ?? readLiveSelectCurrent(thoughtOption)
@@ -131,8 +131,16 @@ export default function ModelPicker({
   const selectedCursorRow =
     cursorSelection && displayModels.find((row) => row.base === cursorSelection.base);
 
-  const showCatalogEffort =
-    !showLiveEffort && isCursor && selectedCursorRow && selectedCursorRow.efforts.length > 1;
+  const mergedEfforts =
+    isCursor && selectedCursorRow
+      ? mergeCursorEffortChoices(
+          selectedCursorRow.efforts,
+          thoughtOption?.choices ?? [],
+        )
+      : [];
+  const showMergedEffort = mergedEfforts.length > 1;
+  const applyEffortThroughLive = showMergedEffort && !!thoughtOption && liveOptions.length > 0;
+  const showCatalogEffort = showMergedEffort && !applyEffortThroughLive;
   const showCatalogFast = !showLiveFast && isCursor && selectedCursorRow?.hasFast;
 
   const autoOption = catalog.models.find(
@@ -249,7 +257,7 @@ export default function ModelPicker({
         )}
       </div>
 
-      {showLiveEffort && thoughtOption ? (
+      {applyEffortThroughLive && thoughtOption ? (
         <>
           <span className="field-label" id="live-thought-label">
             {thoughtOption.name}
@@ -260,7 +268,7 @@ export default function ModelPicker({
             aria-labelledby="live-thought-label"
             data-testid="live-thought-level"
           >
-            {thoughtOption.choices.map((choice) => (
+            {mergedEfforts.map((choice) => (
               <button
                 key={choice.value}
                 type="button"
@@ -276,7 +284,7 @@ export default function ModelPicker({
                   })
                 }
               >
-                {choice.name}
+                {choice.label}
               </button>
             ))}
           </div>
@@ -400,7 +408,7 @@ export default function ModelPicker({
         </>
       ) : null}
 
-      {reasoning && !showLiveEffort ? (
+      {reasoning && !showMergedEffort ? (
         <>
           <span className="field-label" id="model-reasoning-label">
             {reasoning.label}

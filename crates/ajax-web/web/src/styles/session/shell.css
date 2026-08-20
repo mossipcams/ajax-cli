@@ -62,9 +62,11 @@
 
 .session-details-sheet .session-model-catalog .model-picker,
 .session-details-sheet .model-picker {
-  /* One body scroller; nested caps hid models and stole scroll (#948, #976). */
-  max-height: none;
-  overflow: visible;
+  /* Cap the list so Effort / Fast / Switch stay on screen (#1004). */
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .model-picker-toggle {
