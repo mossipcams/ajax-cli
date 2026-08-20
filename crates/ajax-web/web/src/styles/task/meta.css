@@ -17,11 +17,13 @@
   padding-top: 16px;
 }
 
-.meta-details summary {
+.meta-details summary,
+.meta-details-trigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  width: 100%;
   min-height: 44px;
   list-style: none;
   cursor: pointer;
@@ -32,11 +34,20 @@
   color: var(--ink-muted);
 }
 
+.meta-details-trigger {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  text-align: left;
+}
+
 .meta-details summary::-webkit-details-marker {
   display: none;
 }
 
-.meta-details summary::after {
+.meta-details summary::after,
+.meta-details-trigger::after {
   content: "›";
   font-size: 18px;
   line-height: 1;

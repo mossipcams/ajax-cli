@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
-import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import { taskHash } from "@/shared/lib/routes";
 
 class StubWebSocket {
@@ -157,7 +157,7 @@ describe("App session routing", () => {
     await waitFor(() => expect(window.location.hash).toBe(taskHash("web/fix-login")));
   });
 
-  it("renders SessionChat on #/session/<handle> when orchestration chat is enabled", async () => {
+  it("renders ChatSurface on #/session/<handle> when orchestration chat is enabled", async () => {
     writeOrchestrationChatEnabled(true);
     stubFetch(true);
     render(<App />);
@@ -166,6 +166,7 @@ describe("App session routing", () => {
     setHash("#/session/web/fix-login");
     expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
     expect(await screen.findByTestId("session-head")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-chrome-header")).toBeInTheDocument();
     expect(window.location.hash).toBe("#/session/web/fix-login");
     expect(screen.queryByTestId("outlet-task")).not.toBeInTheDocument();
   });

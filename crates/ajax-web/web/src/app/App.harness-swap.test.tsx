@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import appSource from "./App.tsx?raw";
+import taskWorkspaceSource from "@/features/task-workspace/TaskWorkspace.tsx?raw";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
-import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 
 class StubWebSocket {
   readyState = 1;
@@ -63,21 +64,20 @@ describe("App harness swap", () => {
     localStorage.clear();
   });
 
-  it("wires harness swap on SessionChat with swap-only session outbox clearing", () => {
+  it("wires harness swap on ChatSurface with swap-only session outbox clearing", () => {
     const diffReviewBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
-    const taskDetailBlock = appSource.match(/<TaskDetail[\s\S]*?\/>/)?.[0] ?? "";
-    const sessionChatBlock = appSource.match(/<SessionChat[\s\S]*?\/>/)?.[0] ?? "";
+    const taskTerminalViewBlock =
+      taskWorkspaceSource.match(/<TaskTerminalView\s[\s\S]*?\/>/)?.[0] ?? "";
+    const chatSurfaceBlock = taskWorkspaceSource.match(/<ChatSurface[\s\S]*?\/>/)?.[0] ?? "";
 
     expect(diffReviewBlock).not.toMatch(/\bagent=/);
     expect(diffReviewBlock).not.toMatch(/onSwappedAgent=/);
-    expect(taskDetailBlock).not.toMatch(/onSwappedAgent=/);
-    expect(taskDetailBlock).not.toMatch(/HarnessSwap/);
-    expect(sessionChatBlock).toMatch(
-      /onSwappedAgent=\{\(\) => \{[\s\S]*?clearSessionOutbox\(route\.handle\)/,
-    );
-    expect(sessionChatBlock).toMatch(
-      /onMutated=\{\(\) => route\.kind === "session" && route\.handle && reload\(\)\}/,
-    );
+    expect(taskTerminalViewBlock).not.toMatch(/onSwappedAgent=/);
+    expect(taskTerminalViewBlock).not.toMatch(/HarnessSwap/);
+    expect(taskWorkspaceSource).toMatch(/clearSessionOutbox\(handle\)/);
+    expect(chatSurfaceBlock).not.toMatch(/onSwappedAgent=/);
+    expect(chatSurfaceBlock).not.toMatch(/HarnessSwap/);
+    expect(appSource).not.toMatch(/<ChatSurface/);
   });
 
   it("clears the session outbox and reloads task detail after a harness swap in Ajax chat", async () => {

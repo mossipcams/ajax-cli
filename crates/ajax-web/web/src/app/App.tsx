@@ -3,7 +3,6 @@ import {
   dashboardHash,
   parseRoute,
   projectHash,
-  sessionHash,
   settingsHash,
   taskDiffHash,
   taskHash,
@@ -16,30 +15,33 @@ import {
 } from "@/shared/lib/polling";
 import ConnectionStatus from "@/shared/ui/ConnectionStatus";
 import ResultPanel from "@/shared/ui/ResultPanel";
-import TaskList from "@/features/task/TaskList";
-import TaskDetail from "@/features/task/TaskDetail";
-import TaskLoadError from "@/features/task/TaskLoadError";
+import {
+  TaskList,
+  TaskLoadError,
+  NewTaskSheet,
+  useTaskDetailResource,
+  useTaskOperationMutation,
+  commitConfirmedAction,
+  type DropUndoHandles,
+} from "@/features/task/public";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
-import SessionChat from "@/features/session/SessionChat";
-import { useOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { useOrchestrationChatEnabled } from "@/features/settings/public";
 import {
-  clearTaskTerminalPreferred,
-  readTaskTerminalPreferred,
-  writeTaskTerminalPreferred,
-} from "@/features/session/taskViewPreference";
-import NewTaskSheet from "@/features/task/NewTaskSheet";
+  detailSessionCapable,
+  openTaskWorkspaceHash,
+  resolveTaskWorkspaceHash,
+} from "@/features/task-workspace/public";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
 import RouteScroll from "./RouteScroll";
+import TaskWorkspaceRoute from "./routes/TaskWorkspaceRoute";
 import { PULL_THRESHOLD } from "@/shared/gestures/pullToRefresh";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
 import { usePullToRefresh } from "@/shared/hooks/usePullToRefresh";
 import { useVersionMonitor } from "@/shared/hooks/useVersionMonitor";
 import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
-import { useTaskDetailResource } from "@/features/task/useTaskDetailResource";
-import { useTaskOperationMutation } from "@/features/task/useTaskOperationMutation";
 import {
   consumeSwipeEnterDirection,
   navigateHashWithEnter,
@@ -57,12 +59,7 @@ import {
   isNavigationPending,
   markNavigationStart,
 } from "@/shared/lib/telemetry";
-import {
-  commitConfirmedAction,
-  type DropUndoHandles,
-} from "@/features/task/taskMutations";
 import { checkHealth } from "@/shared/lib/api";
-import { clearSessionOutbox } from "@/shared/lib/webSessionTransport";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -279,11 +276,10 @@ export default function App() {
       const sessionCapable = (latestCockpit ?? cockpitRef.current.data)?.cards?.some(
         (card) => card.qualified_handle === handle && card.session_capable,
       );
-      const terminalPreferred = readTaskTerminalPreferred(handle);
-      const hash =
-        orchestrationChat && sessionCapable && !terminalPreferred
-          ? sessionHash(handle)
-          : taskHash(handle);
+      const hash = openTaskWorkspaceHash(handle, {
+        orchestrationChat,
+        sessionCapable: Boolean(sessionCapable),
+      });
       markNavigationStart(undefined, "open_task");
       navigateHashWithEnter(hash, "left");
       endTapToOperationComplete(interactionId, { ok: true, op: "open_task" });
@@ -444,16 +440,6 @@ export default function App() {
       go(route.handle ? taskHash(route.handle) : dashboardHash());
     }
   }, [route.kind, route.handle, orchestrationChat]);
-
-  // A session on a task the host will not attach (interactive, or an agent with
-  // no ACP entry point) would sit on a refused socket. Send it to the terminal.
-  useEffect(() => {
-    if (route.kind !== "session" || !route.handle) return;
-    if (detail.status !== "ready" || !detail.data) return;
-    if (detail.data.qualified_handle !== route.handle) return;
-    if (detail.data.session_capable === false) go(taskHash(route.handle));
-    else if (readTaskTerminalPreferred(route.handle)) go(taskHash(route.handle));
-  }, [route.kind, route.handle, detail.status, detail.data]);
 
   useEffect(() => {
     const kind = route.kind;
@@ -635,17 +621,15 @@ export default function App() {
                   selectedPr={route.pr}
                   onBack={() => {
                     if (route.kind === "diff" && route.handle) {
-                      const sessionCapable =
-                        detail.data.session_capable !== false &&
-                        cockpitRef.current.data?.cards?.some(
-                          (card) =>
-                            card.qualified_handle === route.handle && card.session_capable,
-                        );
-                      const terminalPreferred = readTaskTerminalPreferred(route.handle);
                       go(
-                        orchestrationChat && sessionCapable && !terminalPreferred
-                          ? sessionHash(route.handle)
-                          : taskHash(route.handle),
+                        resolveTaskWorkspaceHash(route.handle, {
+                          orchestrationChat,
+                          sessionCapable: detailSessionCapable(
+                            detail.data,
+                            route.handle,
+                            cockpitRef.current.data,
+                          ),
+                        }),
                       );
                     }
                   }}
@@ -663,86 +647,60 @@ export default function App() {
               )}
             </section>
           ) : route.kind === "session" && orchestrationChat ? (
-            <section
-              ref={outletSwipeRef}
-              className={swipeOutletClass || undefined}
-              data-outlet="session"
-              data-testid="outlet-session"
-              data-handle={route.handle}
-              aria-live="polite"
-            >
-              {route.handle ? (
-                <SessionChat
-                  handle={route.handle}
-                  detail={detail.data}
-                  detailStatus={detail.status}
-                  detailError={detail.error?.message}
-                  onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-                  onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
-                  onCockpit={applyCockpit}
-                  onResult={showResult}
-                  onSwappedAgent={() => {
-                    if (route.kind === "session" && route.handle) clearSessionOutbox(route.handle);
-                  }}
-                  onOpenTerminal={() => {
-                    if (route.handle) {
-                      writeTaskTerminalPreferred(route.handle);
-                      go(taskHash(route.handle));
-                    }
-                  }}
-                  onMutated={() => route.kind === "session" && route.handle && reload()}
-                  onDismiss={() => go(dashboardHash())}
-                  onRetry={reload}
-                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
-                  onCancelPendingConfirm={cancelPendingConfirm}
-                />
-              ) : (
+            route.handle ? (
+              <TaskWorkspaceRoute
+                kind="session"
+                handle={route.handle}
+                orchestrationChat={orchestrationChat}
+                detail={detail}
+                reload={reload}
+                outletRef={outletSwipeRef}
+                outletClassName={swipeOutletClass || undefined}
+                onGo={go}
+                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
+                onCockpit={applyCockpit}
+                onResult={showResult}
+                onDismiss={() => go(dashboardHash())}
+                pendingConfirmAction={pendingConfirm?.action.action ?? null}
+                onCancelPendingConfirm={cancelPendingConfirm}
+              />
+            ) : (
+              <section
+                ref={outletSwipeRef}
+                className={swipeOutletClass || undefined}
+                data-outlet="session"
+                data-testid="outlet-session"
+                aria-live="polite"
+              >
                 <NewTaskSheet
                   repos={cockpit.data?.repos?.repos ?? []}
                   selectedProject={selectedProject}
+                  orchestrationChat={orchestrationChat}
                   onClose={() => go(dashboardHash())}
                   onCockpit={applyCockpit}
                   onOpenTask={(handle, latestCockpit) => openTask(handle, latestCockpit)}
                 />
-              )}
-            </section>
-          ) : route.kind === "task" ? (
-            <section
-              ref={outletSwipeRef}
-              className={swipeOutletClass || undefined}
-              data-outlet="task"
-              data-testid="outlet-task"
-              data-handle={route.handle}
-              aria-live="polite"
-            >
-              {detail.status === "loading" ? (
-                <Skeleton testid="task-skeleton" rows={6} />
-              ) : detail.data ? (
-                <TaskDetail
-                  detail={detail.data}
-                  orchestrationChat={orchestrationChat}
-                  onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-                  onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
-                  onOpenChat={() => {
-                    if (route.handle) {
-                      clearTaskTerminalPreferred(route.handle);
-                      go(sessionHash(route.handle));
-                    }
-                  }}
-                  onCockpit={applyCockpit}
-                  onResult={showResult}
-                  onMutated={() => route.kind === "task" && route.handle && reload()}
-                  onDismiss={() => go(dashboardHash())}
-                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
-                  onCancelPendingConfirm={cancelPendingConfirm}
-                />
-              ) : (
-                <TaskLoadError
-                  message={detail.error?.message ?? "Request failed"}
-                  onRetry={reload}
-                />
-              )}
-            </section>
+              </section>
+            )
+          ) : route.kind === "task" && route.handle ? (
+            <TaskWorkspaceRoute
+              kind="task"
+              handle={route.handle}
+              orchestrationChat={orchestrationChat}
+              detail={detail}
+              reload={reload}
+              outletRef={outletSwipeRef}
+              outletClassName={swipeOutletClass || undefined}
+              onGo={go}
+              onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
+              onCockpit={applyCockpit}
+              onResult={showResult}
+              onDismiss={() => go(dashboardHash())}
+              pendingConfirmAction={pendingConfirm?.action.action ?? null}
+              onCancelPendingConfirm={cancelPendingConfirm}
+            />
           ) : (
             <section
               ref={(node) => {
@@ -808,6 +766,7 @@ export default function App() {
         <NewTaskSheet
           repos={cockpit.data?.repos?.repos ?? []}
           selectedProject={selectedProject}
+          orchestrationChat={orchestrationChat}
           onClose={() => setSheetOpen(false)}
           onCockpit={applyCockpit}
           onOpenTask={openTask}

@@ -8,11 +8,11 @@ export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
    * Re-measured when the session transcript became a mobile chat surface
    * (queued follow-up, turn disclosure, system divider). */
-  sourceStylesCssBytes: 97_013,
-  builtAppCssBytes: 84_201,
-  builtAppCssGzipBytes: 15_238,
-  classSelectorLines: 525,
-  hasSelectors: 19,
+  sourceStylesCssBytes: 97_208,
+  builtAppCssBytes: 84_359,
+  builtAppCssGzipBytes: 15_261,
+  classSelectorLines: 528,
+  hasSelectors: 18,
 } as const;
 
 export const STYLES_MANIFEST_REL = "styles.css";

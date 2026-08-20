@@ -4,7 +4,7 @@ import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
-import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
@@ -399,11 +399,11 @@ describe("App drop shell confirm on session chat (#947)", () => {
     setHash("#/session/web/fix-login");
     expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-details"));
-    expect(await screen.findByTestId("session-task-panel")).toBeInTheDocument();
+    expect(await screen.findByTestId("task-details-sheet")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /^Drop$/ }));
     expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByText("Confirm"));

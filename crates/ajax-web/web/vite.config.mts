@@ -62,7 +62,7 @@ export default defineConfig({
             chunk.moduleIds?.some(
               (id) =>
                 typeof id === "string" &&
-                (id.includes("/features/task/TaskTerminal") ||
+                (id.includes("/features/terminal/TaskTerminal") ||
                   id.includes("node_modules/@xterm/")),
             )
           ) {

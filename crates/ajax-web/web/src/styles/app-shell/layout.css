@@ -66,22 +66,22 @@
   }
 
   /* Open meta: release the fill pin so route-scroll can grow and scroll. */
-  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.meta-details[open]) > [data-outlet="task"] {
+  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.task-detail[data-task-details-open]) > [data-outlet="task"] {
     flex: 0 0 auto;
     min-height: auto;
   }
 
-  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail[data-task-details-open] {
     flex: 0 0 auto;
     min-height: auto;
   }
 
-  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) > div:has([data-testid="task-terminal-panel"]) {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail[data-task-details-open] > div:has([data-testid="task-terminal-panel"]) {
     flex: 0 0 auto;
     min-height: auto;
   }
 
-  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail:has(.meta-details[open]) .terminal-panel:not(.is-expanded) {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail[data-task-details-open] .terminal-panel:not(.is-expanded) {
     flex: 0 0 auto;
   }
 
