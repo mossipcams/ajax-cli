@@ -687,7 +687,10 @@ fn product_flow_create_live_switch_reload_and_cross_harness() {
                 snapshot_option(&created.snapshot, "fast"),
                 serde_json::json!(false)
             );
-            eprintln!("PROOF create pin={create_pin} child={child_live} session={session_live:?}");
+            eprintln!(
+                "PROOF create pin={create_pin} child={child_live} session_present={}",
+                session_live.is_some()
+            );
 
             let mut generation = directory.generation(handle);
             rt.block_on(apply_client_message(
