@@ -497,10 +497,23 @@ export default function App() {
 
   const swipeOutletClass = swipeEnterClassName(swipeEnter);
 
+  function releaseReloadLatchIfNavigationMissed() {
+    reloadLatchRef.current = false;
+  }
+
+  function beginCockpitDocumentReload(): boolean {
+    return reloadCockpitDocument(undefined, {
+      onNavigationMissed: releaseReloadLatchIfNavigationMissed,
+    });
+  }
+
   function reloadUpdateBanner() {
     if (reloadLatchRef.current) return;
     reloadLatchRef.current = true;
-    reloadCockpitDocument();
+    if (!beginCockpitDocumentReload()) {
+      // ponytail: defer release so same-turn multi-taps still coalesce (#1007).
+      queueMicrotask(releaseReloadLatchIfNavigationMissed);
+    }
   }
 
   function reloadConnectionOnce() {
@@ -509,7 +522,9 @@ export default function App() {
     void (async () => {
       try {
         if (await checkHealth()) {
-          reloadCockpitDocument();
+          if (!beginCockpitDocumentReload()) {
+            queueMicrotask(releaseReloadLatchIfNavigationMissed);
+          }
           return;
         }
         await loadCockpit({ trailing: true });
