@@ -9,10 +9,11 @@ pub mod tmux;
 pub use agent::{
     acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
     agent_launch_spec, cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
-    cursor_model_intents_match, cursor_unspecified_spawn_satisfied, is_unspecified_acp_model,
-    parse_cursor_model_intent, parse_model_selection, valid_cursor_model_id, AcpLaunch,
-    AcpModelSelection, AgentLaunch, CursorModelIntent, ModelSelection, CURSOR_DEFAULT_MODEL,
-    CURSOR_DEFAULT_SPAWN_MODEL,
+    cursor_family_stem, cursor_model_intents_match, cursor_model_intents_match_with_raw,
+    cursor_thinking_bases_match, cursor_unspecified_spawn_satisfied,
+    encode_cursor_intent_to_storage_pipe, is_unspecified_acp_model, parse_cursor_model_intent,
+    parse_model_selection, valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch,
+    CursorModelIntent, ModelSelection, CURSOR_DEFAULT_MODEL, CURSOR_DEFAULT_SPAWN_MODEL,
 };
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
@@ -677,6 +678,36 @@ mod tests {
     }
 
     #[test]
+    fn parse_cursor_model_intent_reads_forum_reasoning_and_skips_auto_default() {
+        use crate::adapters::agent::{
+            cursor_unspecified_spawn_satisfied, is_unspecified_acp_model, parse_cursor_model_intent,
+        };
+
+        assert!(parse_cursor_model_intent("auto").is_none());
+        assert!(parse_cursor_model_intent("default").is_none());
+        assert!(is_unspecified_acp_model(Some("default")));
+        assert!(cursor_unspecified_spawn_satisfied("default"));
+
+        let gpt =
+            parse_cursor_model_intent("gpt-5.5[context=272k,reasoning=medium,fast=false]").unwrap();
+        assert_eq!(gpt.base, "gpt-5.5");
+        assert_eq!(gpt.effort.as_deref(), Some("medium"));
+        assert_eq!(gpt.fast, Some(false));
+
+        let claude = parse_cursor_model_intent(
+            "claude-opus-4-8[thinking=true,context=300k,effort=high,fast=false]",
+        )
+        .unwrap();
+        assert_eq!(claude.base, "claude-opus-4-8");
+        assert_eq!(claude.effort.as_deref(), Some("high"));
+        assert_eq!(claude.fast, Some(false));
+
+        let pipe = parse_cursor_model_intent("gpt-5.2|reasoning=medium|fast=false").unwrap();
+        assert_eq!(pipe.base, "gpt-5.2");
+        assert_eq!(pipe.effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
     fn parse_cursor_model_intent_accepts_pipe_form_issue_991() {
         use crate::adapters::agent::parse_cursor_model_intent;
 
@@ -774,6 +805,21 @@ mod tests {
         assert_eq!(intent.base, "gpt-5.6-sol");
         assert_eq!(intent.effort.as_deref(), Some("high"));
         assert_eq!(intent.fast, Some(false));
+    }
+
+    #[test]
+    fn parse_cursor_model_intent_maps_effortless_cursor_grok_to_grok_base() {
+        use crate::adapters::agent::parse_cursor_model_intent;
+
+        let base = parse_cursor_model_intent("cursor-grok-4.6").unwrap();
+        assert_eq!(base.base, "grok-4.6");
+        assert_eq!(base.effort, None);
+        assert_eq!(base.fast, Some(false));
+
+        let fast = parse_cursor_model_intent("cursor-grok-4.6-fast").unwrap();
+        assert_eq!(fast.base, "grok-4.6");
+        assert_eq!(fast.effort, None);
+        assert_eq!(fast.fast, Some(true));
     }
 
     #[test]

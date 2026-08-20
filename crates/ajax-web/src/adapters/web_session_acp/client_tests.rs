@@ -5,9 +5,9 @@ use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
     v1::{
-        AgentCapabilities, ContentBlock, InitializeResponse, NewSessionRequest,
-        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-        SessionNotification, SessionUpdate,
+        AgentCapabilities, ContentBlock, Implementation, InitializeRequest, InitializeResponse,
+        NewSessionRequest, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelectOption, SessionNotification, SessionUpdate,
     },
     ProtocolVersion,
 };
@@ -50,16 +50,73 @@ fn session_update_text(params: &SessionNotification) -> Option<&str> {
     }
 }
 
+fn initialize_request_payload() -> Value {
+    serde_json::to_value(
+        InitializeRequest::new(ProtocolVersion::V1)
+            .client_capabilities(super::sdk_connection::client_capabilities())
+            .client_info(
+                Implementation::new("ajax-web", env!("CARGO_PKG_VERSION")).title("Ajax Web"),
+            ),
+    )
+    .expect("initialize request serializes")
+}
+
+fn value_sets_parameterized_model_picker_true(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(key, child)| {
+            key == "parameterizedModelPicker" && child.as_bool() == Some(true)
+                || value_sets_parameterized_model_picker_true(child)
+        }),
+        Value::Array(items) => items.iter().any(value_sets_parameterized_model_picker_true),
+        _ => false,
+    }
+}
+
+fn raw_json_sets_parameterized_model_picker_true(json: &str) -> bool {
+    const KEY: &str = "\"parameterizedModelPicker\"";
+    let mut rest = json;
+    while let Some(key_start) = rest.find(KEY) {
+        let after_key = rest[key_start + KEY.len()..].trim_start();
+        if after_key.starts_with(':') {
+            let after_colon = after_key[1..].trim_start();
+            if after_colon.starts_with("true")
+                && matches!(
+                    after_colon.as_bytes().get(4),
+                    None | Some(b',') | Some(b'}') | Some(b']')
+                )
+            {
+                return true;
+            }
+        }
+        rest = &rest[key_start + 1..];
+    }
+    false
+}
+
 #[test]
 fn client_capabilities_advertise_parameterized_model_picker_issue_979() {
     let capabilities = super::sdk_connection::client_capabilities();
+    let picker = capabilities
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("parameterizedModelPicker"))
+        .and_then(|value| value.as_bool());
     assert_eq!(
-        capabilities
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.get("parameterizedModelPicker"))
-            .and_then(|value| value.as_bool()),
-        Some(true)
+        picker,
+        Some(true),
+        "Cursor vendor parameterized model picker must stay enabled"
+    );
+
+    let initialize = initialize_request_payload();
+    assert!(
+        value_sets_parameterized_model_picker_true(&initialize),
+        "initialize payload must set parameterizedModelPicker true"
+    );
+
+    let raw = serde_json::to_string(&initialize).expect("initialize json string");
+    assert!(
+        raw_json_sets_parameterized_model_picker_true(&raw),
+        "serialized initialize must contain \"parameterizedModelPicker\": true"
     );
 }
 

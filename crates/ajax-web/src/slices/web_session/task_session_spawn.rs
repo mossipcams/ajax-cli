@@ -5,7 +5,10 @@ use super::transcript::{
     already_noted, context_reset_needed, context_reset_note, harness_switch_note, slot_must_replace,
 };
 use super::{apply_cancel_to_queue, SessionServerEvent};
-use crate::adapters::web_session_acp::{config_option_descriptors, AcpStdioClient, SpawnReport};
+use crate::adapters::web_session_acp::{
+    applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
+    remember_harness_config_options, AcpStdioClient, SpawnReport,
+};
 use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
@@ -65,6 +68,7 @@ pub(super) async fn acquire(
     state.applied_model = report.applied_model.clone();
     if let Some(options) = report.config_options.as_deref() {
         state.session_config_options = Some(config_option_descriptors(options));
+        remember_harness_config_options(agent, options);
     }
     if let Some(error) = &report.model_apply_error {
         log.append(vec![SessionServerEvent::Error {
@@ -109,6 +113,7 @@ pub(super) async fn apply_model(
             state.applied_model = outcome.applied_model.clone();
             if let Some(options) = outcome.config_options.as_deref() {
                 state.session_config_options = Some(config_option_descriptors(options));
+                remember_harness_config_options(state.agent, options);
             }
             web_session_store::save_meta(
                 &state.state_dir,
@@ -124,6 +129,69 @@ pub(super) async fn apply_model(
             let message = outcome.error.unwrap_or_else(|| {
                 format!(
                     "session model {model} was refused — harness is running {}",
+                    outcome.applied_model
+                )
+            });
+            state.append_to_log(vec![SessionServerEvent::Error {
+                message: message.clone(),
+            }]);
+            Err(message)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) struct ApplyConfigOptionResult {
+    pub generation: u64,
+    /// Pipe-form task metadata to persist after a successful model-option apply.
+    pub persist_model: Option<String>,
+}
+
+pub(super) async fn apply_config_option(
+    state: &mut TaskSessionState,
+    _worktree_path: &Path,
+    config_id: &str,
+    value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+) -> Result<ApplyConfigOptionResult, String> {
+    let Some(client) = state.client.as_mut() else {
+        return Err("session slot missing".to_string());
+    };
+
+    if client.host_exited() {
+        return Err("ACP process exited — reconnect to change config".to_string());
+    }
+
+    let generation_before = state.generation;
+    let apply_result = tokio::task::block_in_place(|| client.apply_config_option(config_id, value));
+    match apply_result {
+        Ok(outcome) if outcome.error.is_none() => {
+            state.applied_model = outcome.applied_model.clone();
+            if let Some(options) = outcome.config_options.as_deref() {
+                state.session_config_options = Some(config_option_descriptors(options));
+                remember_harness_config_options(state.agent, options);
+            }
+            web_session_store::save_meta(
+                &state.state_dir,
+                &state.qualified_handle,
+                Some(client.session_id()),
+                &state.applied_model,
+            );
+            state.pending_model_snapshot = Some(outcome.applied_model);
+            state.pending_config_snapshot = state.session_config_options.clone();
+            let persist_model = outcome
+                .config_options
+                .as_deref()
+                .filter(|options| option_triggers_model_persist(options, config_id))
+                .and_then(|options| applied_model_id_for_persist(Some(options)));
+            Ok(ApplyConfigOptionResult {
+                generation: generation_before,
+                persist_model,
+            })
+        }
+        Ok(outcome) => {
+            let message = outcome.error.unwrap_or_else(|| {
+                format!(
+                    "config option {config_id} was refused — harness is running {}",
                     outcome.applied_model
                 )
             });
@@ -192,6 +260,7 @@ pub(super) async fn reset_harness_context(
     state.applied_model = report.applied_model.clone();
     if let Some(options) = report.config_options.as_deref() {
         state.session_config_options = Some(config_option_descriptors(options));
+        remember_harness_config_options(agent, options);
     }
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
@@ -249,6 +318,7 @@ fn install_replaced_client(
     state.applied_model = report.applied_model.clone();
     if let Some(options) = report.config_options.as_deref() {
         state.session_config_options = Some(config_option_descriptors(options));
+        remember_harness_config_options(state.agent, options);
     }
     if let Some(error) = &report.model_apply_error {
         state.append_to_log(vec![SessionServerEvent::Error {

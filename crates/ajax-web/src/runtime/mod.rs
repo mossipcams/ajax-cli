@@ -81,6 +81,10 @@ where
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/session/models", get(axum_session_models))
+        .route(
+            "/api/session/option-catalog",
+            get(axum_session_option_catalog),
+        )
         .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
         .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
@@ -340,6 +344,30 @@ async fn axum_session_models(uri: axum::http::Uri) -> AxumResponse {
         Err(_) => json_value_response(
             500,
             serde_json::json!({ "ok": false, "error": "model catalog worker failed" }),
+        ),
+    }
+}
+
+async fn axum_session_option_catalog(uri: axum::http::Uri) -> AxumResponse {
+    let agent = uri
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key == "agent").then_some(value)
+            })
+        })
+        .unwrap_or("cursor")
+        .to_string();
+    match tokio::task::spawn_blocking(move || {
+        crate::slices::session_option_catalog::list_session_option_catalog(&agent)
+    })
+    .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(_) => json_value_response(
+            500,
+            serde_json::json!({ "ok": false, "error": "option catalog worker failed" }),
         ),
     }
 }

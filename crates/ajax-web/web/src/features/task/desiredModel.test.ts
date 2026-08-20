@@ -3,14 +3,18 @@ import {
   DEFAULT_SESSION_MODEL,
   SESSION_MODEL_STORAGE_KEY,
   buildCursorDisplayModels,
+  catalogIdToStoragePipe,
   composeCursorCatalogId,
   encodeCursorSelection,
+  defaultCatalogIdForCursorGroup,
   decodeCursorPipeOrCatalogId,
   fetchSessionModels,
+  groupCursorCatalogModels,
   mergeCursorEffortChoices,
   normalizeSessionAgent,
   parseCursorCatalogId,
   readSessionModel,
+  resolveCursorCatalogSelection,
   writeSessionModel,
 } from "./desiredModel";
 
@@ -183,6 +187,21 @@ describe("desiredModel", () => {
     });
   });
 
+  it("maps exploded catalog ids to pipe storage", () => {
+    const catalog = [
+      "cursor-grok-4.6-high",
+      "cursor-grok-4.6-high-fast",
+      "claude-opus-5-thinking-high",
+    ];
+    expect(catalogIdToStoragePipe("cursor-grok-4.6-high", catalog)).toBe(
+      "grok-4.6|effort=high|fast=false",
+    );
+    expect(catalogIdToStoragePipe("composer-2.5-fast", catalog)).toBe("composer-2.5|fast=true");
+    expect(catalogIdToStoragePipe("claude-opus-5-thinking-high", catalog)).toBe(
+      "claude-opus-5|thinking=true|effort=high",
+    );
+  });
+
   it("keeps thinking in the Cursor catalog base (#1004)", () => {
     expect(parseCursorCatalogId("claude-opus-5-thinking-high")).toEqual({
       base: "claude-opus-5-thinking",
@@ -215,5 +234,132 @@ describe("desiredModel", () => {
       { value: "low", label: "Low" },
     ]);
     expect(mergeCursorEffortChoices(["high"], [{ value: "high", name: "High" }])).toEqual([]);
+  });
+
+  it("groups exploded Cursor catalog ids under family headers", () => {
+    const { auto, groups } = groupCursorCatalogModels([
+      { id: "auto", label: "Auto" },
+      { id: "composer-2.5", label: "Composer 2.5" },
+      { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+      { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+      { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+    ]);
+    expect(auto.map((option) => option.id)).toEqual(["auto"]);
+    expect(groups).toEqual([
+      {
+        base: "composer-2.5",
+        label: "Composer 2.5",
+        variants: [
+          { id: "composer-2.5", label: "Composer 2.5" },
+          { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+        ],
+      },
+      {
+        base: "grok-4.6",
+        label: "Grok 4.6",
+        variants: [
+          { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+          { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps the family name on every variant under the group header", () => {
+    const { groups } = groupCursorCatalogModels([
+      { id: "cursor-grok-4.5-high", label: "Grok 4.5" },
+      { id: "cursor-grok-4.5-high-fast", label: "Grok 4.5 Fast" },
+    ]);
+    expect(groups).toEqual([
+      {
+        base: "grok-4.5",
+        label: "Grok 4.5",
+        variants: [
+          { id: "cursor-grok-4.5-high", label: "Grok 4.5 High" },
+          { id: "cursor-grok-4.5-high-fast", label: "Grok 4.5 Fast" },
+        ],
+      },
+    ]);
+  });
+
+  it("strips effort suffixes from Cursor family headers when labels include them", () => {
+    const { groups } = groupCursorCatalogModels([
+      { id: "cursor-grok-4.6-xhigh", label: "Grok 4.6 Extra High" },
+      { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+      { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Extra High Fast" },
+    ]);
+    expect(groups).toEqual([
+      {
+        base: "grok-4.6",
+        label: "Grok 4.6",
+        variants: [
+          { id: "cursor-grok-4.6-xhigh", label: "Grok 4.6 Extra High" },
+          { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+          { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Extra High Fast" },
+        ],
+      },
+    ]);
+  });
+
+  it("decodes thinking from pipe-form and bracket ids (#1013)", () => {
+    expect(decodeCursorPipeOrCatalogId("claude-opus-5|thinking=true|effort=high")).toEqual({
+      base: "claude-opus-5",
+      thinking: true,
+      effort: "high",
+      fast: false,
+    });
+    expect(
+      decodeCursorPipeOrCatalogId(
+        "claude-opus-5[thinking=true,context=200k,effort=high,fast=false]",
+      ),
+    ).toEqual({
+      base: "claude-opus-5",
+      thinking: true,
+      effort: "high",
+      fast: false,
+    });
+  });
+
+  it("resolves thinking pipe storage to the thinking catalog variant (#1013)", () => {
+    const ids = ["claude-opus-5-high", "claude-opus-5-thinking-high"] as const;
+    expect(resolveCursorCatalogSelection("claude-opus-5|thinking=true|effort=high", ids)).toBe(
+      "claude-opus-5-thinking-high",
+    );
+    expect(resolveCursorCatalogSelection("claude-opus-5|effort=high", ids)).toBe(
+      "claude-opus-5-high",
+    );
+  });
+
+  it("resolves legacy pipe-form values to exploded Cursor catalog ids", () => {
+    const ids = [
+      "auto",
+      "cursor-grok-4.6-high",
+      "cursor-grok-4.6-high-fast",
+    ] as const;
+    expect(resolveCursorCatalogSelection("cursor-grok-4.6-high", ids)).toBe(
+      "cursor-grok-4.6-high",
+    );
+    expect(resolveCursorCatalogSelection("grok-4.6|effort=high|fast=true", ids)).toBe(
+      "cursor-grok-4.6-high-fast",
+    );
+    expect(
+      resolveCursorCatalogSelection("grok-4.6|reasoning=xhigh|fast=false", [
+        "cursor-grok-4.6-xhigh",
+        "cursor-grok-4.6-high",
+      ]),
+    ).toBe("cursor-grok-4.6-xhigh");
+  });
+
+  it("picks the non-fast preferred effort when tapping a Cursor family header", () => {
+    const { groups } = groupCursorCatalogModels([
+      { id: "cursor-grok-4.6-xhigh", label: "Grok 4.6 Extra High" },
+      { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+      { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 High Fast" },
+    ]);
+    const group = groups[0]!;
+    const ids = group.variants.map((variant) => variant.id);
+    expect(defaultCatalogIdForCursorGroup(group, "cursor-grok-4.6-high", ids)).toBe(
+      "cursor-grok-4.6-high",
+    );
   });
 });

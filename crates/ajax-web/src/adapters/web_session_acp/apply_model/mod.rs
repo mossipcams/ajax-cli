@@ -4,9 +4,11 @@
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
     apply_steps_needing_send, build_set_config_request, is_unspecified_model,
-    map_pin_to_apply_steps, model_config_advertised, pin_satisfied, read_model_applied,
-    replace_config_options, sync_session_result_config_options, ConfigApplyStep,
+    map_pin_to_apply_steps, model_config_advertised, option_value_advertised, pin_satisfied,
+    read_model_applied, replace_config_options, step_matches_current,
+    sync_session_result_config_options, ConfigApplyStep,
 };
+use agent_client_protocol::schema::v1::SessionConfigOptionValue;
 use agent_client_protocol::schema::v1::{SessionConfigOption, SetSessionConfigOptionResponse};
 use agent_client_protocol::{Agent, ConnectionTo};
 use serde_json::Value;
@@ -20,6 +22,81 @@ pub struct ApplyModelOutcome {
     pub config_options: Option<Vec<SessionConfigOption>>,
     /// Typed error when an explicit operator pin was refused or could not be proven.
     pub error: Option<String>,
+}
+
+/// Apply one advertised `{ configId, value }` on a live session (AoE contract).
+pub async fn apply_config_option(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    config_id: &str,
+    value: SessionConfigOptionValue,
+    config_options: Option<&[SessionConfigOption]>,
+) -> ApplyModelOutcome {
+    let mut stored = config_options.map(|options| options.to_vec());
+    let applied = read_applied_model(&Value::Null, stored.as_deref());
+    let step = ConfigApplyStep {
+        config_id: config_id.to_string(),
+        value,
+    };
+    let options = stored.as_deref().unwrap_or(&[]);
+    if !options
+        .iter()
+        .any(|option| option.id.0.as_ref() == config_id)
+    {
+        return ApplyModelOutcome {
+            applied_model: applied,
+            config_options: stored,
+            error: Some(format!(
+                "config option {config_id} is not advertised on this session"
+            )),
+        };
+    }
+    if step_matches_current(options, &step) {
+        return ApplyModelOutcome {
+            applied_model: applied,
+            config_options: stored,
+            error: None,
+        };
+    }
+    if let SessionConfigOptionValue::ValueId { value: id } = &step.value {
+        if let Some(option) = options
+            .iter()
+            .find(|option| option.id.0.as_ref() == config_id)
+        {
+            if !option_value_advertised(option, id.0.as_ref()) {
+                return ApplyModelOutcome {
+                    applied_model: applied.clone(),
+                    config_options: stored,
+                    error: Some(format!(
+                        "config option {config_id}={} is not advertised",
+                        id.0.as_ref()
+                    )),
+                };
+            }
+        }
+    }
+    match apply_in_band(
+        connection,
+        session_id,
+        std::slice::from_ref(&step),
+        stored.clone(),
+    )
+    .await
+    {
+        Ok((next, options)) => {
+            replace_config_options(&mut stored, options);
+            ApplyModelOutcome {
+                applied_model: next,
+                config_options: stored,
+                error: None,
+            }
+        }
+        Err(error) => ApplyModelOutcome {
+            applied_model: applied.clone(),
+            config_options: stored,
+            error: Some(format!("config option {config_id} was refused — {error}")),
+        },
+    }
 }
 
 /// True when the harness-reported applied id satisfies the operator pin (string fallback).

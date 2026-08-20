@@ -13,36 +13,70 @@ const stylesSource = readOrderedStylesSource(join(here, "../.."));
 
 const repos = [{ name: "web" }, { name: "api" }];
 
-const CATALOG = {
-  models: [
-    { id: "gpt-5.6-sol[low]", label: "GPT-5.6-Sol (low)" },
-    { id: "gpt-5.6-sol[high]", label: "GPT-5.6-Sol (high)" },
-  ],
-  default: "gpt-5.6-sol[low]",
-};
+const CODEX_MODELS = [
+  { id: "gpt-5.6-sol[low]", label: "GPT-5.6-Sol (low)" },
+  { id: "gpt-5.6-sol[high]", label: "GPT-5.6-Sol (high)" },
+];
 
-// Claude and the other bridges keep the reasoning level in its own option.
-const CATALOG_WITH_REASONING = {
-  models: [
-    { id: "opus", label: "Opus" },
-    { id: "haiku", label: "Haiku" },
-  ],
-  default: "opus",
-  reasoning: {
-    id: "effort",
-    label: "Effort",
-    default: "high",
-    options: [
-      { id: "low", label: "Low" },
-      { id: "high", label: "High" },
+function codexOptionCatalog(
+  models: Array<{ id: string; label: string }> = CODEX_MODELS,
+  currentValue = models[0]?.id ?? "",
+) {
+  return {
+    agent: "codex",
+    configOptions: [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue,
+        choices: models.map((model) => ({ value: model.id, name: model.label })),
+      },
     ],
-  },
-};
+  };
+}
 
-function stubCatalog(catalog: unknown = CATALOG) {
+function claudeOptionCatalog(currentValue = "opus") {
+  return {
+    agent: "claude",
+    configOptions: [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue,
+        choices: [
+          { value: "opus", name: "Opus" },
+          { value: "haiku", name: "Haiku" },
+        ],
+      },
+    ],
+  };
+}
+
+function stubCatalog({
+  sessionModels,
+  optionCatalog = codexOptionCatalog(),
+}: {
+  sessionModels?: unknown;
+  optionCatalog?: unknown;
+} = {}) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => catalog }),
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/session/models")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => sessionModels ?? { models: [], default: "" },
+        });
+      }
+      if (url.includes("/api/session/option-catalog")) {
+        return Promise.resolve({ ok: true, json: async () => optionCatalog });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    }),
   );
 }
 
@@ -140,7 +174,8 @@ describe("NewTaskSheet", () => {
 
     expect(await screen.findByRole("radio", { name: /GPT-5.6-Sol \(high\)/ })).toBeInTheDocument();
     const fetchMock = vi.mocked(globalThis.fetch);
-    expect(fetchMock.mock.calls[0]?.[0]).toContain("agent=codex");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("option-catalog"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("agent=codex"))).toBe(true);
     vi.unstubAllGlobals();
   });
 
@@ -162,38 +197,36 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the harness reasoning level and sends it with the model", async () => {
-    stubCatalog(CATALOG_WITH_REASONING);
+  it("starts on the harness default and submits the picked Claude model", async () => {
+    stubCatalog({ optionCatalog: claudeOptionCatalog() });
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     render(<NewTaskSheet repos={repos} />);
     fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
     fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
     await goToModelStep();
 
-    // The harness's own current level is preselected, not the first option.
-    const level = await screen.findByRole("radio", { name: "High" });
-    expect(level).toHaveAttribute("aria-checked", "true");
+    const preselected = await screen.findByRole("radio", { name: /Opus/ });
+    expect(preselected).toHaveAttribute("aria-checked", "true");
 
-    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
-    fireEvent.submit(taskForm());
-    await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0][0].model).toBe("opus|effort=low");
-    vi.unstubAllGlobals();
-  });
-
-  it("keeps the reasoning level when the model changes", async () => {
-    stubCatalog(CATALOG_WITH_REASONING);
-    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
-    render(<NewTaskSheet repos={repos} />);
-    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
-    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
-    await goToModelStep();
-
-    fireEvent.click(await screen.findByRole("radio", { name: "Low" }));
     fireEvent.click(screen.getByRole("radio", { name: "Haiku" }));
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0][0].model).toBe("haiku|effort=low");
+    expect(spy.mock.calls[0][0].model).toBe("haiku");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the picked model when switching between Claude options", async () => {
+    stubCatalog({ optionCatalog: claudeOptionCatalog("haiku") });
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    await goToModelStep();
+
+    fireEvent.click(await screen.findByRole("radio", { name: "Opus" }));
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0][0].model).toBe("opus");
     vi.unstubAllGlobals();
   });
 
@@ -207,14 +240,16 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("submits pipe-form Cursor session_model with Fast off by default (#979)", async () => {
+  it("submits the picked Cursor catalog model id (#979)", async () => {
     stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-      ],
-      default: "cursor-grok-4.6-high",
+      sessionModels: {
+        models: [
+          { id: "auto", label: "Auto" },
+          { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+          { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+        ],
+        default: "cursor-grok-4.6-high",
+      },
     });
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     render(<NewTaskSheet repos={repos} />);
@@ -222,7 +257,7 @@ describe("NewTaskSheet", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Cursor" }));
     await goToModelStep();
 
-    fireEvent.click(await screen.findByRole("radio", { name: "On" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Grok 4.6 Fast" }));
     fireEvent.submit(taskForm());
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0][0].model).toBe("grok-4.6|effort=high|fast=true");
@@ -233,9 +268,11 @@ describe("NewTaskSheet", () => {
   // page said the harness "lists no models", hiding a fixable install problem.
   it("shows why a harness could not be read instead of an empty list", async () => {
     stubCatalog({
-      models: [],
-      default: "",
-      error: "codex-acp is not installed — npm install -g @agentclientprotocol/codex-acp",
+      optionCatalog: {
+        agent: "codex",
+        configOptions: [],
+        error: "codex-acp is not installed — npm install -g @agentclientprotocol/codex-acp",
+      },
     });
     render(<NewTaskSheet repos={repos} />);
     fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
@@ -263,7 +300,9 @@ describe("NewTaskSheet", () => {
   });
 
   it("sends no model when the harness advertises none", async () => {
-    stubCatalog({ models: [], default: "" });
+    stubCatalog({
+      optionCatalog: { agent: "claude", configOptions: [] },
+    });
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
     render(<NewTaskSheet repos={repos} />);
     fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });

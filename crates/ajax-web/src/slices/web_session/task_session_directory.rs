@@ -6,8 +6,12 @@ use super::{
         send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch,
         TaskSessionCommand, TaskSessionSender,
     },
+    task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
     PersistSessionModel, SessionClientMessage, SessionServerEvent,
+};
+use crate::adapters::web_session_acp::{
+    session_model_for_task_persist, wire_value_to_session_value,
 };
 use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
@@ -279,6 +283,36 @@ impl TaskSessionDirectory {
         .await?
     }
 
+    pub async fn apply_config_option(
+        &self,
+        handle: &str,
+        worktree_path: &Path,
+        config_id: &str,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+    ) -> Result<task_session_spawn::ApplyConfigOptionResult, String> {
+        let tx = self.command_tx(handle)?;
+        let worktree_path = worktree_path.to_path_buf();
+        let config_id = config_id.to_string();
+        send_command(&tx, |reply| TaskSessionCommand::ApplyConfigOption {
+            worktree_path,
+            config_id,
+            value,
+            reply,
+        })
+        .await?
+    }
+
+    pub async fn append_notice(&self, handle: &str, message: &str) -> Result<(), String> {
+        let tx = self.command_tx(handle)?;
+        send_command(&tx, |reply| TaskSessionCommand::AppendEvent {
+            event: SessionServerEvent::Error {
+                message: message.to_string(),
+            },
+            reply,
+        })
+        .await
+    }
+
     pub async fn reset_harness_context(
         &self,
         handle: &str,
@@ -447,10 +481,13 @@ async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, S
     send_command(tx, |reply| TaskSessionCommand::EvictionSnapshot { reply }).await
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum ApplyClientMessageOutcome {
     Applied,
-    ModelChanged,
+    ModelChanged {
+        /// WS-only warning when live apply succeeded but task persist failed.
+        persist_warning: Option<String>,
+    },
 }
 
 pub(crate) async fn apply_client_message(
@@ -480,15 +517,41 @@ pub(crate) async fn apply_client_message(
         }
         SessionClientMessage::SetModel { model } => {
             let model = normalize_session_model(&model)?;
-            if let Some(persist) = persist_session_model {
-                persist(&model)?;
-            }
             if !directory.has_live_entry(handle) {
                 return Err("session slot missing".to_string());
             }
             let next_generation = directory.apply_model(handle, worktree_path, &model).await?;
             *generation = next_generation;
-            Ok(ApplyClientMessageOutcome::ModelChanged)
+            let persist_model = session_model_for_task_persist(&model);
+            let persist_warning = persist_session_model
+                .as_ref()
+                .and_then(|persist| persist(&persist_model).err())
+                .map(|warn| format!("Model changed but could not save to task — {warn}"));
+            Ok(ApplyClientMessageOutcome::ModelChanged { persist_warning })
+        }
+        SessionClientMessage::SetConfigOption { config_id, value } => {
+            let config_id = config_id.trim().to_string();
+            if config_id.is_empty() {
+                return Err("configId is required".to_string());
+            }
+            let wire = wire_value_to_session_value(&value)?;
+            if !directory.has_live_entry(handle) {
+                return Err("session slot missing".to_string());
+            }
+            let outcome = directory
+                .apply_config_option(handle, worktree_path, &config_id, wire)
+                .await?;
+            *generation = outcome.generation;
+            let persist_warning = outcome
+                .persist_model
+                .as_deref()
+                .and_then(|model| {
+                    persist_session_model
+                        .as_ref()
+                        .and_then(|persist| persist(model).err())
+                })
+                .map(|warn| format!("Model changed but could not save to task — {warn}"));
+            Ok(ApplyClientMessageOutcome::ModelChanged { persist_warning })
         }
         SessionClientMessage::Permission {
             request_id,

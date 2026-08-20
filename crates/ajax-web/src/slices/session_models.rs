@@ -162,9 +162,8 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
                 has_fast: None,
             }]
         });
-        let models = collapse_cursor_catalog(raw);
         return SessionModelsResponse {
-            models,
+            models: raw,
             default: CURSOR_DEFAULT_MODEL.to_string(),
             agent: agent.to_string(),
             // Cursor carries its reasoning level inside the model id.
@@ -603,6 +602,36 @@ mod tests {
             .map(|model| model.id.as_str())
             .collect();
         assert_eq!(base_ids, ["grok-4.6", "gpt-5.6-sol"]);
+    }
+
+    #[test]
+    fn cursor_catalog_keeps_exploded_agent_model_ids() {
+        let raw = vec![
+            SessionModelOption {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "cursor-grok-4.6-high-fast".to_string(),
+                label: "Grok 4.6 Fast".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+        ];
+        let collapsed = collapse_cursor_catalog(raw.clone());
+        assert_eq!(collapsed.len(), 2);
+        assert_eq!(raw.len(), 3);
+        assert!(raw
+            .iter()
+            .any(|model| model.id == "cursor-grok-4.6-high-fast"));
     }
 
     #[test]

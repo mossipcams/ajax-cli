@@ -12,40 +12,49 @@ import {
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import {
+  modelLiveOption,
+  readLiveSelectCurrent,
+} from "@/shared/lib/liveSessionConfig";
 import { DEFAULT_SESSION_MODEL, writeSessionModel } from "@/features/task/public";
 import { initialSessionState, sessionReducer } from "./sessionThread";
 import { useSessionTransport } from "./useSessionTransport";
+import { isSessionConfigChangeFailure } from "./sessionModel";
 
 interface Options {
   handle: string | null;
   detail: BrowserTaskDetail | null;
   onMutated?: () => void;
+  onConfigError?: (message: string) => void;
 }
 
-export function useTaskSession({ handle, detail, onMutated }: Options) {
+function modelFromOptions(options: LiveSessionConfigOption[] | undefined): string {
+  if (!options?.length) return DEFAULT_SESSION_MODEL;
+  const model = modelLiveOption(options);
+  return model ? readLiveSelectCurrent(model) ?? DEFAULT_SESSION_MODEL : DEFAULT_SESSION_MODEL;
+}
+
+export function useTaskSession({ handle, detail, onMutated, onConfigError }: Options) {
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const [connected, setConnected] = useState(false);
   const [everOpened, setEverOpened] = useState(false);
   const [activityAgeMs, setActivityAgeMs] = useState(0);
-  /** Host-authoritative model for this task's live session (not localStorage). */
   const [sessionModel, setSessionModel] = useState(DEFAULT_SESSION_MODEL);
   const [sessionConfigOptions, setSessionConfigOptions] = useState<
     LiveSessionConfigOption[] | undefined
   >(undefined);
-  const serverModelRef = useRef(DEFAULT_SESSION_MODEL);
-  const pendingModelRef = useRef<string | null>(null);
 
   const transportRef = useRef<WebSessionTransport | undefined>(undefined);
   const connectedRef = useRef(false);
   const everOpenedRef = useRef(false);
   const detailRef = useRef(detail);
   const lastActivityAtRef = useRef(Date.now());
+  const onConfigErrorRef = useRef(onConfigError);
+  onConfigErrorRef.current = onConfigError;
 
   useEffect(() => {
     setSessionModel(DEFAULT_SESSION_MODEL);
     setSessionConfigOptions(undefined);
-    serverModelRef.current = DEFAULT_SESSION_MODEL;
-    pendingModelRef.current = null;
   }, [handle]);
 
   detailRef.current = detail;
@@ -62,20 +71,15 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
 
   const applyHostSessionModel = useCallback((nextModel: string) => {
     const next = nextModel.trim() || DEFAULT_SESSION_MODEL;
-    if (pendingModelRef.current !== null && pendingModelRef.current !== next) {
-      return;
-    }
-    pendingModelRef.current = null;
-    serverModelRef.current = next;
     setSessionModel(next);
-    // Seed the New Task picker only; task metadata remains authoritative in-session.
     writeSessionModel(next);
   }, []);
 
-  const revertPendingModelChange = useCallback(() => {
-    if (pendingModelRef.current === null) return;
-    pendingModelRef.current = null;
-    setSessionModel(serverModelRef.current);
+  const applyHostConfigOptions = useCallback((options: LiveSessionConfigOption[] | undefined) => {
+    setSessionConfigOptions(options);
+    const next = modelFromOptions(options);
+    setSessionModel(next);
+    if (options?.length) writeSessionModel(next);
   }, []);
 
   useSessionTransport({
@@ -90,8 +94,9 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     setEverOpened,
     onSessionInvalidated: invalidateSession,
     onSessionModel: applyHostSessionModel,
-    onSessionConfigOptions: setSessionConfigOptions,
-    onSessionModelRejected: revertPendingModelChange,
+    onSessionConfigOptions: applyHostConfigOptions,
+    onSessionModelRejected: () => {},
+    onConfigError: (message) => onConfigErrorRef.current?.(message),
   });
 
   useEffect(() => {
@@ -119,17 +124,16 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     transportRef.current?.sendCancel();
   }, []);
 
-  /** A stop the operator asked for is session history, not an ACP event: the
-   * host has no update that says "the human interrupted here". */
   const markStopped = useCallback(() => {
     dispatch({ type: "event", event: { type: "message", role: "system", text: "Stopped" } });
   }, []);
 
-  const setModel = useCallback((model: string) => {
-    const trimmed = model.trim() || DEFAULT_SESSION_MODEL;
-    pendingModelRef.current = trimmed;
-    setSessionModel(trimmed);
-    transportRef.current?.setModel(trimmed);
+  const applyConfigOption = useCallback((configId: string, value: string | boolean) => {
+    transportRef.current?.setConfigOption(configId, value);
+  }, []);
+
+  const applyModel = useCallback((catalogId: string) => {
+    transportRef.current?.setModel(catalogId);
   }, []);
 
   const respondPermission = useCallback(
@@ -157,7 +161,8 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     sendPrompt,
     sendCancel,
     markStopped,
-    setModel,
+    applyConfigOption,
+    applyModel,
     respondPermission,
     onMutated: handleMutated,
   };

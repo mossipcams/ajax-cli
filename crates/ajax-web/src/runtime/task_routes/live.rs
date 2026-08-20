@@ -325,8 +325,6 @@ where
     let handle = percent_decode_model(&handle);
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_apply = handle.clone();
-    let apply_in_band = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let apply_flag = std::sync::Arc::clone(&apply_in_band);
     let reset_harness = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let reset_flag = std::sync::Arc::clone(&reset_harness);
     let worktree_for_apply = std::sync::Arc::new(std::sync::Mutex::new(None::<std::path::PathBuf>));
@@ -351,6 +349,17 @@ where
             .unwrap_or(false)
     };
 
+    if same_harness && directory.has_live_entry(&handle_for_apply) {
+        return json_value_response(
+            400,
+            serde_json::json!({
+                "ok": false,
+                "error": "same-harness model changes use in-session config chips, not Switch",
+                "code": "unsupported_capability",
+            }),
+        );
+    }
+
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
         state.run_optimistic(
@@ -366,7 +375,7 @@ where
                 match result {
                     Ok(outcome) => {
                         if same_harness {
-                            apply_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                            // Idle same-harness: persist metadata only; live slot uses chips.
                         } else {
                             reset_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
@@ -411,30 +420,7 @@ where
         )
     });
     let worktree_path = worktree_for_apply.lock().unwrap().clone();
-    if apply_in_band.load(std::sync::atomic::Ordering::SeqCst) {
-        if let Some(worktree) = worktree_path {
-            if let Err(error) = crate::slices::web_session::model_change::apply_persisted_model(
-                &directory,
-                &handle_for_apply,
-                &worktree,
-                model_for_apply.as_deref(),
-            )
-            .await
-            {
-                return match crate::runtime::json_response(
-                    409,
-                    serde_json::json!({
-                        "ok": false,
-                        "error": error,
-                        "code": "command_failed",
-                    }),
-                ) {
-                    Ok(response) => response.into_axum_response(),
-                    Err(error) => response_from_web_error(error, None).into_axum_response(),
-                };
-            }
-        }
-    } else if reset_harness.load(std::sync::atomic::Ordering::SeqCst) {
+    if reset_harness.load(std::sync::atomic::Ordering::SeqCst) {
         if let Some(worktree) = worktree_path {
             if let Err(error) = crate::slices::web_session::model_change::apply_cross_harness_reset(
                 &directory,

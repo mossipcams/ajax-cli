@@ -5,7 +5,6 @@ import { DEFAULT_SESSION_MODEL } from "./desiredModel";
 import { useSwapTaskAgentMutation } from "./useSwapTaskAgentMutation";
 import { AGENTS, agentLabel } from "./agents";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
-import { encodeDesiredPinFromLiveOptions } from "@/shared/lib/liveSessionConfig";
 
 interface Props {
   handle: string;
@@ -13,16 +12,15 @@ interface Props {
   currentAgent: string;
   /** Live session model from the host snapshot (catalog id or `auto`). */
   currentModel?: string;
-  /** Advertised ACP config options for the connected session (same harness only). */
+  /** Advertised ACP config options for the connected session. */
   liveConfigOptions?: LiveSessionConfigOption[];
   disabled?: boolean;
   onSwapped?: () => void;
 }
 
 /**
- * Move a running task to another harness. Only ACP-started tasks can move —
- * the backend refuses a task whose agent is live in its tmux pane, because
- * rewriting the registry under it would not stop that process.
+ * Cross-harness Switch only when a session is connected (AoE contract).
+ * Same-harness model changes use the composer-footer picker, not Switch.
  */
 export default function HarnessSwap({
   handle,
@@ -37,6 +35,9 @@ export default function HarnessSwap({
   const [model, setModel] = useState(currentModel);
   const [error, setError] = useState<string | null>(null);
 
+  const connected = (liveConfigOptions?.length ?? 0) > 0;
+  const showModelPicker = !connected || agent !== currentAgent;
+
   const swapMutation = useSwapTaskAgentMutation(handle, () => {
     setOpen(false);
     onSwapped?.();
@@ -50,10 +51,14 @@ export default function HarnessSwap({
 
   async function apply() {
     setError(null);
+    if (connected && agent === currentAgent) {
+      setError("Same-harness model changes use in-session config chips, not Switch");
+      return;
+    }
     try {
       const result = await swapMutation.mutateAsync({
         agent,
-        model: persistedModel(model),
+        model: showModelPicker ? persistedModel(model) : undefined,
       });
       if (!result.ok) {
         setError(result.error?.message ?? "Could not switch harness");
@@ -73,11 +78,7 @@ export default function HarnessSwap({
           data-testid="harness-swap-open"
           onClick={() => {
             setAgent(currentAgent);
-            setModel(
-              (liveConfigOptions?.length ?? 0) > 0
-                ? encodeDesiredPinFromLiveOptions(liveConfigOptions!)
-                : currentModel,
-            );
+            setModel(currentModel);
             setOpen(true);
           }}
         >
@@ -86,9 +87,6 @@ export default function HarnessSwap({
       </div>
     );
   }
-
-  const useLivePicker =
-    agent === currentAgent && (liveConfigOptions?.length ?? 0) > 0;
 
   return (
     <div className="harness-swap is-open" data-testid="harness-swap">
@@ -103,28 +101,32 @@ export default function HarnessSwap({
             className={`agent-option${agent === option.value ? " is-selected" : ""}`}
             role="radio"
             aria-checked={agent === option.value}
-            onClick={() => {
-              setAgent(option.value);
-              setModel("");
-            }}
+            onClick={() => setAgent(option.value)}
           >
             {option.label}
           </button>
         ))}
       </div>
 
-      <span className="field-label" id="harness-swap-model">
-        Model
-      </span>
-      <ModelPicker
-        agent={agent}
-        agentLabel={agentLabel(agent)}
-        value={model}
-        liveConfigOptions={useLivePicker ? liveConfigOptions : undefined}
-        disabled={disabled || swapMutation.isPending}
-        onChange={setModel}
-        onCatalog={(catalog) => setModel((current) => current || catalog.default)}
-      />
+      {showModelPicker ? (
+        <>
+          <span className="field-label" id="harness-swap-model">
+            Model
+          </span>
+          <ModelPicker
+            agent={agent}
+            agentLabel={agentLabel(agent)}
+            value={model}
+            disabled={disabled || swapMutation.isPending}
+            onChange={setModel}
+            onCatalog={(catalog) => setModel((current) => current || catalog.default)}
+          />
+        </>
+      ) : (
+        <p className="sheet-note" data-testid="harness-swap-harness-only">
+          Model changes for this harness use the composer config chips.
+        </p>
+      )}
 
       {error ? (
         <p className="diff-status diff-error" data-testid="harness-swap-error">

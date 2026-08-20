@@ -112,6 +112,38 @@ impl BlockingSessionDirectory {
     pub fn is_marked_idle_release(&self, handle: &str) -> Option<bool> {
         self.inner.is_marked_idle_release(handle)
     }
+
+    pub fn reset_harness_context(
+        &self,
+        handle: &str,
+        worktree: &Path,
+        agent: AgentClient,
+        model: &str,
+    ) -> Result<(), String> {
+        self.rt.block_on(
+            self.inner
+                .reset_harness_context(handle, worktree, agent, model),
+        )
+    }
+}
+
+pub(crate) fn fake_acp_initialize_params_path(worktree: &Path) -> std::path::PathBuf {
+    worktree.join(".fake-acp-initialize-params")
+}
+
+pub(crate) fn initialize_params_set_parameterized_model_picker_true(
+    value: &serde_json::Value,
+) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(key, child)| {
+            key == "parameterizedModelPicker" && child.as_bool() == Some(true)
+                || initialize_params_set_parameterized_model_picker_true(child)
+        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(initialize_params_set_parameterized_model_picker_true),
+        _ => false,
+    }
 }
 
 pub(crate) fn scratch_dir(label: &str) -> std::path::PathBuf {

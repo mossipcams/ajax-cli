@@ -1,6 +1,8 @@
 //! Official ACP SDK connection actor behind the synchronous Web Session hub.
 
-use super::apply_model::{apply_model_pin, sync_live_model_config, ApplyModelOutcome};
+use super::apply_model::{
+    apply_config_option, apply_model_pin, sync_live_model_config, ApplyModelOutcome,
+};
 use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
 use super::config_options::{
     mode_option, read_model_applied, replace_config_options, sync_session_result_config_options,
@@ -68,6 +70,11 @@ pub(super) enum ClientCommand {
         desired_model: String,
         result: Sender<Result<ApplyModelOutcome, String>>,
     },
+    ApplyConfigOption {
+        config_id: String,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+        result: Sender<Result<ApplyModelOutcome, String>>,
+    },
     Shutdown,
 }
 
@@ -102,8 +109,9 @@ pub(super) struct RunOptions {
 /// The host currently implements permission replies only. Keep filesystem and
 /// terminal capabilities false until their worktree-scoped handlers exist.
 ///
-/// Advertise Cursor's parameterized model picker so the harness exposes separate
-/// `model` / `effort` / `fast` options instead of Fast-only exploded variants
+/// Advertise Cursor's vendor `parameterizedModelPicker` extra so the harness
+/// exposes apply axes. The operator surface still lists one exploded catalog
+/// id per effort, not a separate effort select
 /// ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub(super) fn client_capabilities() -> ClientCapabilities {
     let mut meta = agent_client_protocol::schema::v1::Meta::new();
@@ -533,6 +541,48 @@ async fn command_loop(
                 if let Ok(mut live_guard) = live_session.lock() {
                     if let Some(live) = live_guard.as_mut() {
                         if outcome.error.is_none() {
+                            if let Some(options) = outcome.config_options.clone() {
+                                replace_config_options(&mut live.config_options, options.clone());
+                                sync_session_result_config_options(
+                                    &mut live.session_result,
+                                    &options,
+                                );
+                            } else if let Some(options) = live.config_options.as_mut() {
+                                sync_live_model_config(
+                                    &mut live.session_result,
+                                    options,
+                                    &outcome.applied_model,
+                                );
+                            }
+                        }
+                    }
+                }
+                let _ = result.send(Ok(outcome));
+            }
+            ClientCommand::ApplyConfigOption {
+                config_id,
+                value,
+                result,
+            } => {
+                let Some((session_id, config_options)) = live_session
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|live| (live.session_id.clone(), live.config_options.clone()))
+                else {
+                    break;
+                };
+                let outcome = apply_config_option(
+                    &connection,
+                    &session_id,
+                    &config_id,
+                    value,
+                    config_options.as_deref(),
+                )
+                .await;
+                if outcome.error.is_none() {
+                    if let Ok(mut live_guard) = live_session.lock() {
+                        if let Some(live) = live_guard.as_mut() {
                             if let Some(options) = outcome.config_options.clone() {
                                 replace_config_options(&mut live.config_options, options.clone());
                                 sync_session_result_config_options(
