@@ -80,9 +80,18 @@ async fn apply_in_band(
     config_options: Option<Vec<SessionConfigOption>>,
 ) -> Result<(String, Vec<SessionConfigOption>), String> {
     let mut latest = config_options.unwrap_or_default();
-    for step in steps {
-        let response = set_config_option(connection, session_id, step).await?;
-        latest = response.config_options;
+    // ponytail: bounded rounds — model set_config can reset sibling options so we
+    // re-filter after each response instead of trusting the pre-apply skip list.
+    const MAX_ROUNDS: usize = 8;
+    for _ in 0..MAX_ROUNDS {
+        let pending = apply_steps_needing_send(&latest, steps);
+        if pending.is_empty() {
+            break;
+        }
+        for step in &pending {
+            let response = set_config_option(connection, session_id, step).await?;
+            latest = response.config_options;
+        }
     }
     let applied = read_model_applied(Some(&latest)).unwrap_or_default();
     Ok((applied, latest))
@@ -109,10 +118,10 @@ pub async fn apply_model_pin(
                     model_pins_at_spawn,
                 ) {
                     Ok(steps) => {
-                        let pending =
-                            apply_steps_needing_send(stored.as_deref().unwrap_or(&[]), &steps);
-                        if !pending.is_empty() {
-                            match apply_in_band(connection, session_id, &pending, stored.clone())
+                        if !apply_steps_needing_send(stored.as_deref().unwrap_or(&[]), &steps)
+                            .is_empty()
+                        {
+                            match apply_in_band(connection, session_id, &steps, stored.clone())
                                 .await
                             {
                                 Ok((next, options)) => {
@@ -178,7 +187,7 @@ pub async fn apply_model_pin(
 
     let options = stored.as_deref().unwrap_or(&[]);
     let steps = match map_pin_to_apply_steps(options, raw, model_pins_at_spawn) {
-        Ok(steps) => apply_steps_needing_send(options, &steps),
+        Ok(steps) => steps,
         Err(error) => {
             return ApplyModelOutcome {
                 applied_model: applied.clone(),
@@ -192,7 +201,7 @@ pub async fn apply_model_pin(
         }
     };
 
-    if steps.is_empty() {
+    if apply_steps_needing_send(options, &steps).is_empty() {
         return ApplyModelOutcome {
             applied_model: applied,
             config_options: stored,
