@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
-import type { Terminal } from "@xterm/xterm";
-import type { TerminalConnection } from "@/shared/lib/terminalConnection";
 import {
   createSpeechInputModel,
   isStandaloneStartOver,
@@ -10,7 +7,6 @@ import {
 } from "@/shared/lib/speechState";
 import {
   clearSpeechInserts,
-  undoPayload,
   type SpeechInsert,
 } from "@/shared/lib/speechInsertLedger";
 import {
@@ -21,14 +17,15 @@ import {
   type SpeechTransport,
 } from "@/shared/lib/speechTransport";
 
-export type TaskTerminalSpeechDeps = {
-  handle: string;
-  termRef: RefObject<Terminal | undefined>;
-  connectionRef: RefObject<TerminalConnection | undefined>;
-  pasteThroughTerm: (text: string, ownedFocus?: boolean) => boolean;
+export type SpeechInputAdapter = {
+  insertDelta: (delta: string) => { ok: boolean; record?: SpeechInsert };
+  undoInserts: (records: readonly SpeechInsert[]) => void;
 };
 
-export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
+export function useSpeechInput(
+  handle: string,
+  adapter: SpeechInputAdapter,
+): {
   speechModel: SpeechInputModel;
   pauseCountdownSeconds: number | undefined;
   micAriaLabel: string;
@@ -37,7 +34,8 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
   cancelSpeechInput: () => void;
   cancelSpeechTransport: () => void;
 } {
-  const { handle, termRef, connectionRef, pasteThroughTerm } = deps;
+  const adapterRef = useRef(adapter);
+  adapterRef.current = adapter;
 
   const [speechModel, setSpeechModel] = useState<SpeechInputModel>(() =>
     createSpeechInputModel(),
@@ -51,12 +49,8 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
   const undoInsertedSpeech = () => {
     const records = insertedSpeechRef.current;
     if (records.length === 0) return;
-    const payload = undoPayload(records);
+    adapterRef.current.undoInserts(records);
     clearSpeechInserts(records);
-    // ponytail: assumes speech only appends to the current line; en-US UTF-16 .length DEL undo.
-    if (payload && connectionRef.current?.isOpen()) {
-      connectionRef.current.sendInput(payload);
-    }
   };
 
   const dispatchSpeech = (action: Parameters<typeof speechReducer>[1]) => {
@@ -133,8 +127,6 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
         onPartial: (sequence, text) =>
           dispatchSpeech({ type: "partial", sessionId, sequence, text }),
         onFinal: (sequence, text) => {
-          // Paste contiguous transcript deltas / undo here, never inside a setState
-          // updater: StrictMode may invoke an updater twice and double-write the PTY.
           const previous = speechModelRef.current;
           const action = {
             type: "final" as const,
@@ -163,9 +155,9 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
           ) {
             const delta = next.finalTranscript.slice(previous.finalTranscript.length);
             if (delta) {
-              const bracketed = termRef.current?.modes.bracketedPasteMode ?? false;
-              if (pasteThroughTerm(delta, false)) {
-                insertedSpeechRef.current.push({ text: delta, bracketed });
+              const result = adapterRef.current.insertDelta(delta);
+              if (result.ok && result.record) {
+                insertedSpeechRef.current.push(result.record);
               }
             }
           }
@@ -195,7 +187,6 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
           setPauseCountdownSeconds(undefined);
         },
         onBackpressureWarning: (message) => {
-          // Surface via the existing status region without tearing down capture yet.
           setSpeechModel((previous) =>
             previous.sessionId === sessionId
               ? { ...previous, errorMessage: message }
@@ -212,7 +203,6 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
         cancelSpeechInput();
         return;
       }
-      // Other errors surface through onError / reducer.
     });
   };
 

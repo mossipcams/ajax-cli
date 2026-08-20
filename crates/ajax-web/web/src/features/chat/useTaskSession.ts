@@ -11,7 +11,7 @@ import {
   clearSessionTransportState,
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
-import { DEFAULT_SESSION_MODEL, writeSessionModel } from "./sessionModel";
+import { DEFAULT_SESSION_MODEL, writeSessionModel } from "@/features/task/public";
 import { initialSessionState, sessionReducer } from "./sessionThread";
 import { useSessionTransport } from "./useSessionTransport";
 

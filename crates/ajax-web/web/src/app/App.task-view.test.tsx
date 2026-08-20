@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import appSource from "./App.tsx?raw";
+import routingSource from "@/features/task-workspace/taskWorkspaceRouting.ts?raw";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
-import { writeOrchestrationChatEnabled } from "@/features/session/sessionMode";
+import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import {
   readTaskTerminalPreferred,
   TASK_TERMINAL_PREFERENCE_STORAGE_KEY,
-} from "@/features/session/taskViewPreference";
+} from "@/features/task-workspace/public";
 import { sessionHash, taskHash } from "@/shared/lib/routes";
 
 class StubWebSocket {
@@ -130,7 +131,7 @@ describe("App task view preference", () => {
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
   });
 
-  it("returns to Ajax chat from the footer Task details disclosure and clears terminal preference", async () => {
+  it("returns to Ajax chat from the footer Task details affordance and clears terminal preference", async () => {
     localStorage.setItem(TASK_TERMINAL_PREFERENCE_STORAGE_KEY, JSON.stringify(["web/fix-login"]));
     stubFetch();
     render(<App />);
@@ -138,9 +139,10 @@ describe("App task view preference", () => {
 
     setHash(taskHash("web/fix-login"));
     await screen.findByTestId("outlet-task");
-    const footerDisclosure = screen.getByRole("group");
-    fireEvent.click(screen.getByText("Task details"));
-    fireEvent.click(within(footerDisclosure).getByRole("button", { name: "Ajax chat" }));
+    fireEvent.click(screen.getByTestId("task-meta-details-trigger"));
+    fireEvent.click(
+      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
+    );
 
     await waitFor(() => expect(window.location.hash).toBe(sessionHash("web/fix-login")));
     expect(readTaskTerminalPreferred("web/fix-login")).toBe(false);
@@ -166,12 +168,15 @@ describe("App task view preference", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });
 
-  it("routes Diff Review back through terminal preference in App onBack", () => {
-    const diffBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
-    expect(diffBlock).toMatch(/readTaskTerminalPreferred\(route\.handle\)/);
-    expect(diffBlock).toMatch(
-      /orchestrationChat && sessionCapable && !terminalPreferred[\s\S]*?sessionHash\(route\.handle\)/,
+  it("routes Diff Review back through terminal preference in task workspace routing", () => {
+    expect(routingSource).toMatch(/readTaskTerminalPreferred/);
+    expect(routingSource).toMatch(
+      /orchestrationChat && options\.sessionCapable && !terminalPreferred[\s\S]*?sessionHash\(handle\)/,
     );
-    expect(diffBlock).toMatch(/taskHash\(route\.handle\)/);
+    expect(routingSource).toMatch(/taskHash\(handle\)/);
+
+    const diffBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
+    expect(diffBlock).toMatch(/resolveTaskWorkspaceHash\(route\.handle/);
+    expect(diffBlock).toMatch(/detailSessionCapable\(/);
   });
 });

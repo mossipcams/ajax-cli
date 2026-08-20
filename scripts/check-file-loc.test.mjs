@@ -80,6 +80,22 @@ test("parseNumstat reads additions and deletions", () => {
   ]);
 });
 
+test("parseNumstat uses the destination path for git renames", () => {
+  assert.deepEqual(
+    parseNumstat(
+      "4\t1\tcrates/ajax-web/web/src/features/{session => chat}/ChatSurface.tsx\n10\t0\told/SessionChat.tsx => new/ChatSurface.tsx\n",
+    ),
+    [
+      {
+        path: "crates/ajax-web/web/src/features/chat/ChatSurface.tsx",
+        additions: 4,
+        deletions: 1,
+      },
+      { path: "new/ChatSurface.tsx", additions: 10, deletions: 0 },
+    ],
+  );
+});
+
 test("changed file LOC warns and fails at its thresholds", () => {
   assert.equal(
     evaluateChangedLoc("crates/foo.rs", CHANGED_FILE_LOC_WARN_AT).level,

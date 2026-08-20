@@ -158,9 +158,15 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   separate typed inputs.
 - Web Cockpit targets normal iOS Safari without requiring Home Screen install
   for core Cockpit use, without classic PWA packaging (manifest, icons, service
-  worker), without a service-worker offline mutation model, and without
-  replacing the raw xterm/tmux-first terminal model as the default path.
-  Optional Home Screen install enables Declarative Web Push only.
+  worker), and without a service-worker offline mutation model. Selected tasks
+  open in one **Task Workspace** with two peer interaction surfaces — **Ajax
+  Chat** and **Ajax Terminal** — plus shared task header/details and Diff
+  Review navigation. Chat is the default for provisioned, session-capable tasks;
+  Terminal is the raw xterm.js/tmux peer mode for interactive tasks, explicit
+  per-task preference, and capability fallback. Neither Chat nor Terminal owns
+  task metadata, task actions, harness switching, mode preference, or Diff
+  routing; the workspace composition layer does. Optional Home Screen install
+  enables Declarative Web Push only.
 - Optional orchestration chat uses ACP over stdio via an `ajax-web` host, not
   PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   WebSocket uses protocol v2 snapshot and cursor-bearing event envelopes.

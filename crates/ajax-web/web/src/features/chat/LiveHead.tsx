@@ -3,8 +3,8 @@
 // which outranks a task that needs attention, which outranks idle — so the
 // operator reads one state, never four competing banners.
 //
-// Back + title live here too: a second sticky header stole a full 44px row and
-// left the transcript well under the ~80% band this surface needs.
+// Identity chrome (back, title, Details) lives on the shared Task Workspace
+// header above this panel. The head keeps tool, permission, usage, and turn state.
 
 import type { ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -110,7 +110,6 @@ function ToolRow({ call }: { call: ToolCall }) {
 }
 
 interface Props {
-  title: string;
   state: HeadState;
   tone: string;
   detail: BrowserTaskDetail | null;
@@ -129,19 +128,12 @@ interface Props {
   /** The task's own actions, rendered by the caller so the head stays free of
    * mutation wiring. Shown only in the `attention` state. */
   actions?: ReactNode;
-  onBack: () => void;
   onApprove: () => void;
   onReject: () => void;
   onStop: () => void;
-  onOpenDetails: () => void;
-  /** When the task details sheet is open — drives Details disclosure a11y. */
-  detailsOpen?: boolean;
-  /** Panel id for `aria-controls` on the Details control. */
-  detailsPanelId?: string;
 }
 
 export default function LiveHead({
-  title,
   state,
   tone,
   detail,
@@ -154,13 +146,9 @@ export default function LiveHead({
   activityAgeMs,
   connected,
   actions,
-  onBack,
   onApprove,
   onReject,
   onStop,
-  onOpenDetails,
-  detailsOpen = false,
-  detailsPanelId,
 }: Props) {
   const quiet = state === "working" && activityAgeMs >= 60_000;
   const hasToolOrPlan = Boolean(tool || planStep);
@@ -172,12 +160,8 @@ export default function LiveHead({
       data-state={state}
     >
       {/* The live region is scoped to the state line and tool row: wrapping the
-          whole head made every thought chunk re-announce Stop and Details too. */}
+          whole head made every thought chunk re-announce Stop too. */}
       <div className="session-head-line" aria-live="polite">
-        <button type="button" className="session-head-back" onClick={onBack}>
-          ←
-        </button>
-        <h1 className="session-title">{title}</h1>
         <span
           className={`status-dot${state === "working" && !quiet ? " is-live" : ""}`}
           aria-hidden="true"
@@ -201,16 +185,6 @@ export default function LiveHead({
               Stop
             </button>
           ) : null}
-          <button
-            type="button"
-            className="session-head-details"
-            data-testid="session-details"
-            aria-expanded={detailsOpen}
-            {...(detailsPanelId ? { "aria-controls": detailsPanelId } : {})}
-            onClick={onOpenDetails}
-          >
-            Details
-          </button>
         </div>
       </div>
 

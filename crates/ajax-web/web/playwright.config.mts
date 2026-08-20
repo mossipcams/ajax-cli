@@ -10,9 +10,10 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 4 : undefined,
   reporter: "list",
-  // Superseded by terminal-expanded-overlay.test.ts; terminal-behavior.test.ts
-  // cannot be edited without tripping the 1000-line File LOC gate.
-  grepInvert: /terminal-expanded hides cockpit chrome and bottom nav on task route/,
+  // Superseded by sibling e2e files; terminal-behavior.test.ts cannot be edited
+  // without tripping the 1000-line File LOC gate.
+  grepInvert:
+    /terminal-expanded hides cockpit chrome and bottom nav on task route|phone fullscreen keeps background controls inert until exit|desktop expanded mode keeps terminal bounded and task details summary reachable/,
   use: {
     baseURL: "http://localhost:5173",
     trace: "on-first-retry",

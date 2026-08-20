@@ -17,7 +17,7 @@ import {
 import {
   readOrchestrationChatEnabled,
   writeOrchestrationChatEnabled,
-} from "@/features/session/sessionMode";
+} from "./orchestrationChatPreference";
 import { Button } from "@/shared/ui/button";
 import {
   runPushNotificationTest,

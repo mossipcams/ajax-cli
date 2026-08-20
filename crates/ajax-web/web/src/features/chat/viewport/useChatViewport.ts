@@ -7,7 +7,7 @@ import {
   sessionSurfaceStyle,
   type TranscriptGeometry,
 } from "@/shared/lib/sessionViewport";
-import { useMobileKeyboard } from "./useMobileKeyboard";
+import { useMobileKeyboard } from "@/shared/hooks/useMobileKeyboard";
 
 interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
@@ -36,8 +36,6 @@ function afterLayoutSettles(
 
   const poll = () => {
     frameCount++;
-    // While the keyboard band closes, clientHeight grows; pin live edge each frame
-    // so a stale scrollTop does not paint a keyboard-sized gap. History mode waits.
     if (restoreTarget.atBottom) {
       node.scrollTop = node.scrollHeight;
     }
@@ -61,11 +59,11 @@ function afterLayoutSettles(
 }
 
 /**
- * Session chat viewport ownership: claim geometry from global keyboard pin,
+ * Chat viewport ownership: claim geometry from global keyboard pin,
  * apply iOS Safari bottom reservation, and preserve live-edge vs history scroll
  * across keyboard and composer height changes.
  */
-export function useSessionChatViewport({
+export function useChatViewport({
   threadRef,
   composerRef,
   pinnedRef,
@@ -83,7 +81,6 @@ export function useSessionChatViewport({
     return () => releaseSessionViewportOwnership();
   }, []);
 
-  // Sample operator scroll intent; ignore Safari resize-generated scroll events.
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
@@ -97,7 +94,6 @@ export function useSessionChatViewport({
     return () => node.removeEventListener("scroll", onScroll);
   }, [threadRef]);
 
-  // Restore equivalent position after keyboard open/close once layout settles.
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
@@ -129,7 +125,6 @@ export function useSessionChatViewport({
     });
   }, [keyboardOpen, onRestoreLiveEdge, pinnedRef, threadRef]);
 
-  // Composer growth while pinned uses the same bottom restore as the keyboard band.
   useEffect(() => {
     const composer = composerRef.current;
     const node = threadRef.current;

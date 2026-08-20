@@ -1,7 +1,7 @@
 import { renderHook, act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
-import { writeSessionModel } from "./sessionModel";
+import { writeSessionModel } from "@/features/task/public";
 import type { SessionAction } from "./sessionThread";
 import { useSessionTransport } from "./useSessionTransport";
 

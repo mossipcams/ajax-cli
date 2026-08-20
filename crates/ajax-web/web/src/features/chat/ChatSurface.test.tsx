@@ -1,82 +1,24 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, fireEvent, screen, act, waitFor, within } from "@testing-library/react";
-import { readOrderedStylesSource } from "@/shared/lib/styleSources";
-import SessionChat from "./SessionChat";
-import * as webSessionTransport from "@/shared/lib/webSessionTransport";
-import * as useTaskTerminalSpeechModule from "@/features/task/useTaskTerminalSpeech";
-import * as api from "@/shared/lib/api";
+import { fireEvent, screen, act, waitFor, within } from "@testing-library/react";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
-import { writeSessionModel } from "./sessionModel";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const stylesSource = readOrderedStylesSource(join(here, "../.."));
-
-const transport = {
-  // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and
-  // "" when it refuses to send; the composer keys off that.
-  sendPrompt: vi.fn(() => "cmid-1"),
-  sendCancel: vi.fn(),
-  setModel: vi.fn(),
-  respondPermission: vi.fn(),
-  dispose: vi.fn(),
-};
-
-let emit: ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined;
-let ready: ((model: string) => void) | undefined;
-let autoReady = true;
-let frameQueue: FrameRequestCallback[] = [];
-
-function flushRaf() {
-  act(() => {
-    for (const callback of frameQueue.splice(0)) callback(0);
-  });
-}
-
-function stubSessionTransport() {
-  vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
-    (_handle, callbacks) => {
-      emit = callbacks.onEvent;
-      ready = callbacks.onReady;
-      if (autoReady) callbacks.onReady("auto");
-      return transport;
-    },
-  );
-}
-
-function openTaskDetails() {
-  fireEvent.click(screen.getByTestId("session-details"));
-}
-
-function openSwitchPanel() {
-  fireEvent.click(screen.getByTestId("harness-swap-open"));
-}
-
-function mountChat(overrides: Partial<React.ComponentProps<typeof SessionChat>> = {}) {
-  return render(
-    <SessionChat
-      handle="web/fix-login"
-      detail={taskDetail as BrowserTaskDetail}
-      detailStatus="ready"
-      {...overrides}
-    />,
-  );
-}
-
-function send(event: webSessionTransport.WebSessionServerEvent) {
-  act(() => emit?.(event));
-  flushRaf();
-}
-
-/** Type into the composer and press Enter — send, queue, or stop-and-send,
- * whichever the current turn state makes it. */
-function type(text: string) {
-  fireEvent.change(screen.getByLabelText("Message"), { target: { value: text } });
-  fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
-}
+import { writeSessionModel } from "@/features/task/public";
+import * as useChatSpeechModule from "@/features/chat/speech/useChatSpeech";
+import * as api from "@/shared/lib/api";
+import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import {
+  ChatWithSheet,
+  chatH,
+  mountChat,
+  openSwitchPanel,
+  openTaskDetails,
+  prepareChatSurface,
+  send,
+  stylesSource,
+  transport,
+  typeComposer,
+} from "./ChatSurface.testHarness";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -85,45 +27,19 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-describe("SessionChat smoke", () => {
+describe("ChatSurface smoke", () => {
   beforeEach(() => {
-    emit = undefined;
-    ready = undefined;
-    autoReady = true;
-    frameQueue = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frameQueue.push(callback);
-      return frameQueue.length;
-    });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
-    transport.sendPrompt.mockClear();
-    transport.setModel.mockClear();
-    transport.respondPermission.mockClear();
-    localStorage.clear();
-    sessionStorage.clear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          models: [
-            { id: "auto", label: "Auto" },
-            { id: "composer-2.5", label: "Composer 2.5" },
-          ],
-        }),
-      }),
-    );
-    stubSessionTransport();
+    prepareChatSurface();
   });
 
   it("keeps replayed chat history when the session becomes ready", () => {
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat();
     send({ type: "message", role: "user", text: "Prior question", itemId: "u1" });
     send({ type: "message", role: "agent", text: "Prior answer", itemId: "a1" });
     send({ type: "turn_end", stopReason: "end_turn" });
 
-    act(() => ready?.("auto"));
+    act(() => chatH.ready?.("auto"));
 
     expect(screen.getByTestId("session-message-user")).toHaveTextContent("Prior question");
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Prior answer");
@@ -234,7 +150,7 @@ describe("SessionChat smoke", () => {
   });
 
   it("shows warn text while listening without a filled chip", () => {
-    vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
+    vi.spyOn(useChatSpeechModule, "useChatSpeech").mockReturnValue({
       speechModel: {
         state: "listening",
         sessionId: "speech-session-test",
@@ -258,7 +174,7 @@ describe("SessionChat smoke", () => {
   });
 
   it("shows warn text while connecting without looking disabled-dead", () => {
-    vi.spyOn(useTaskTerminalSpeechModule, "useTaskTerminalSpeech").mockReturnValue({
+    vi.spyOn(useChatSpeechModule, "useChatSpeech").mockReturnValue({
       speechModel: {
         state: "connecting",
         sessionId: "speech-session-test",
@@ -378,9 +294,9 @@ describe("SessionChat smoke", () => {
   it("queues one editable follow-up instead of sending it into a live turn", () => {
     mountChat();
 
-    type("First");
+    typeComposer("First");
     transport.sendPrompt.mockClear();
-    type("Next");
+    typeComposer("Next");
 
     expect(transport.sendPrompt).not.toHaveBeenCalled();
     expect(transport.sendCancel).not.toHaveBeenCalled();
@@ -394,9 +310,9 @@ describe("SessionChat smoke", () => {
   it("sends the queued follow-up by itself when the turn ends normally", () => {
     mountChat();
 
-    type("First");
+    typeComposer("First");
     transport.sendPrompt.mockClear();
-    type("Next");
+    typeComposer("Next");
     send({ type: "turn_end", stopReason: "end_turn" });
 
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
@@ -410,9 +326,9 @@ describe("SessionChat smoke", () => {
   it("stops the turn on a second Enter and only then sends the follow-up", () => {
     mountChat();
 
-    type("First");
+    typeComposer("First");
     transport.sendPrompt.mockClear();
-    type("Next");
+    typeComposer("Next");
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 
     expect(transport.sendCancel).toHaveBeenCalledOnce();
@@ -428,8 +344,8 @@ describe("SessionChat smoke", () => {
   it("lets the operator edit or drop the queued follow-up", () => {
     mountChat();
 
-    type("First");
-    type("Next");
+    typeComposer("First");
+    typeComposer("Next");
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByLabelText("Message")).toHaveValue("Next");
     expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
@@ -446,9 +362,9 @@ describe("SessionChat smoke", () => {
     mountChat();
 
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
-    type("First");
+    typeComposer("First");
     expect(screen.getByRole("button", { name: "Queue" })).toBeInTheDocument();
-    type("Next");
+    typeComposer("Next");
     expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
   });
 
@@ -480,7 +396,7 @@ describe("SessionChat smoke", () => {
   it("leads the task details sheet with task identity (#p1 layout)", () => {
     mountChat();
     openTaskDetails();
-    const sheet = screen.getByTestId("session-task-panel");
+    const sheet = screen.getByTestId("task-details-sheet");
     const identity = screen.getByTestId("session-task-identity");
     const terminal = screen.getByTestId("session-ajax-terminal");
     const meta = screen.getByTestId("task-meta-details-embedded");
@@ -516,7 +432,7 @@ describe("SessionChat smoke", () => {
 
     mountChat();
     openTaskDetails();
-    const sheet = screen.getByTestId("session-task-panel");
+    const sheet = screen.getByTestId("task-details-sheet");
     const primaryTools = within(sheet).getByTestId("session-primary-tools");
     const body = within(sheet).getByTestId("session-details-body");
     const identity = within(sheet).getByTestId("session-task-identity");
@@ -527,9 +443,9 @@ describe("SessionChat smoke", () => {
   });
 
   it("keeps Switch collapsed until opened (#979)", async () => {
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => ready?.("composer-2.5"));
+    act(() => chatH.ready?.("composer-2.5"));
     openTaskDetails();
 
     expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
@@ -555,7 +471,7 @@ describe("SessionChat smoke", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-details"));
-    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     expect(screen.getByTestId("harness-swap")).toBeInTheDocument();
     expect(screen.queryByText("Agent")).not.toBeInTheDocument();
   });
@@ -563,7 +479,7 @@ describe("SessionChat smoke", () => {
   it("hides the harness switch in the task details modal when the task has no agent", () => {
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "" } });
     fireEvent.click(screen.getByTestId("session-details"));
-    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
   });
 
@@ -591,7 +507,7 @@ describe("SessionChat smoke", () => {
     await waitFor(() => {
       expect(screen.getByTestId("test-in-dev")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("session-task-panel")).toContainElement(
+    expect(screen.getByTestId("task-details-sheet")).toContainElement(
       screen.getByTestId("test-in-dev"),
     );
   });
@@ -600,7 +516,7 @@ describe("SessionChat smoke", () => {
     mountChat();
     expect(screen.queryByTestId("test-in-dev")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-details"));
-    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     expect(screen.queryByTestId("test-in-dev")).not.toBeInTheDocument();
   });
 
@@ -711,25 +627,18 @@ describe("SessionChat smoke", () => {
   it("closes the task details sheet when Drop confirm arms (#947)", () => {
     const { rerender } = mountChat({ pendingConfirmAction: null });
     fireEvent.click(screen.getByTestId("session-details"));
-    expect(screen.getByTestId("session-task-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
 
-    rerender(
-      <SessionChat
-        handle="web/fix-login"
-        detail={taskDetail as BrowserTaskDetail}
-        detailStatus="ready"
-        pendingConfirmAction="drop"
-      />,
-    );
-    expect(screen.queryByTestId("session-task-panel")).not.toBeInTheDocument();
+    rerender(<ChatWithSheet pendingConfirmAction="drop" />);
+    expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });
 
   // Regression for #936 / #979: Switch preselects the live session model and
   // persists changes through swap, not the removed in-session picker.
   it("preselects the live session model in Switch and applies Auto through swap (#936, #979)", async () => {
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => ready?.("composer-2.5"));
+    act(() => chatH.ready?.("composer-2.5"));
     openTaskDetails();
     openSwitchPanel();
 
@@ -764,9 +673,9 @@ describe("SessionChat smoke", () => {
         }),
       }),
     );
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "claude" } });
-    act(() => ready?.("opus|effort=high"));
+    act(() => chatH.ready?.("opus|effort=high"));
     openTaskDetails();
     openSwitchPanel();
 
@@ -797,9 +706,9 @@ describe("SessionChat smoke", () => {
         json: async () => catalog,
       }),
     );
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => ready?.("model-2"));
+    act(() => chatH.ready?.("model-2"));
     openTaskDetails();
     openSwitchPanel();
 
@@ -835,9 +744,9 @@ describe("SessionChat smoke", () => {
       }),
     );
     writeSessionModel("composer-2.5");
-    autoReady = false;
+    chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => ready?.("harness-default"));
+    act(() => chatH.ready?.("harness-default"));
 
     openTaskDetails();
     openSwitchPanel();
@@ -846,103 +755,5 @@ describe("SessionChat smoke", () => {
     expect(
       screen.queryByRole("radio", { name: /Composer 2\.5/i, checked: true }),
     ).toBeNull();
-  });
-});
-
-describe("SessionChat task details polish", () => {
-  beforeEach(() => {
-    emit = undefined;
-    ready = undefined;
-    autoReady = true;
-    frameQueue = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frameQueue.push(callback);
-      return frameQueue.length;
-    });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
-    transport.sendPrompt.mockClear();
-    transport.setModel.mockClear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          models: [
-            { id: "auto", label: "Auto" },
-            { id: "composer-2.5", label: "Composer 2.5" },
-          ],
-        }),
-      }),
-    );
-    stubSessionTransport();
-  });
-
-  it("styles sheet field labels with tracked uppercase chrome", () => {
-    const labelCss =
-      stylesSource.match(/\.session-details-sheet \.field-label\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(labelCss).toMatch(/text-transform:\s*uppercase/);
-    expect(labelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
-    expect(labelCss).toMatch(/color:\s*var\(--ink-muted\)/);
-  });
-
-  it("lifts Close to 44px in the task details sheet", () => {
-    const closeCss =
-      stylesSource.match(
-        /\.session-details-sheet \.session-sheet-header \.pill[\s\S]*?\{([^}]*)\}/,
-      )?.[1] ?? "";
-    expect(closeCss).toMatch(/min-height:\s*44px/);
-  });
-
-  it("exposes aria-expanded on Details and Switch", async () => {
-    autoReady = false;
-    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => ready?.("composer-2.5"));
-
-    const details = screen.getByTestId("session-details");
-    expect(details).toHaveAttribute("aria-expanded", "false");
-    expect(details).toHaveAttribute("aria-controls");
-
-    openTaskDetails();
-    expect(details).toHaveAttribute("aria-expanded", "true");
-
-    expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
-    openSwitchPanel();
-    expect(screen.getByTestId("harness-swap")).toHaveClass("is-open");
-    expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-  });
-
-  it("pins observation error under identity with the task-detail prefix", () => {
-    mountChat({
-      detail: {
-        ...(taskDetail as BrowserTaskDetail),
-        runtime_observation_error: "tmux session missing",
-      },
-    });
-    openTaskDetails();
-
-    const identity = screen.getByTestId("session-task-identity");
-    const observationError = screen.getByTestId("session-observation-error");
-    const harnessSwap = screen.getByTestId("harness-swap");
-    expect(observationError).toHaveTextContent("Observation error: tmux session missing");
-    expect(identity.compareDocumentPosition(observationError) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(observationError.compareDocumentPosition(harnessSwap) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("does not render a separate in-session model picker (#979)", () => {
-    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    openTaskDetails();
-    expect(screen.queryByTestId("session-model-select")).not.toBeInTheDocument();
-    expect(screen.getByTestId("harness-swap")).toBeInTheDocument();
-  });
-
-  it("does not give the first sheet ActionBar action primary fill", () => {
-    const mutedCss =
-      stylesSource.match(/\.session-sheet-actions-muted \.action\.primary\s*\{([^}]*)\}/)?.[1] ??
-      "";
-    expect(mutedCss).toMatch(/background:\s*transparent/);
-    expect(mutedCss).not.toMatch(/background:\s*var\(--accent\)/);
   });
 });

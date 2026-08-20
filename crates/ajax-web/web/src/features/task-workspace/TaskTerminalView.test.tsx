@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { useState, type ComponentProps } from "react";
 import { render, fireEvent, screen, act, within } from "@testing-library/react";
-import TaskDetail from "./TaskDetail";
-import taskDetailSource from "./TaskDetail?raw";
-import taskTerminalSource from "./TaskTerminal?raw";
+import TaskTerminalView from "./TaskTerminalView";
+import TaskDetailsSheet from "@/features/task-workspace/TaskDetailsSheet";
+import taskTerminalViewSource from "./TaskTerminalView?raw";
+import taskTerminalSource from "@/features/terminal/TaskTerminal?raw";
 import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -76,21 +78,56 @@ function taskDetailMobileBlock(): string {
   return match?.[1] ?? "";
 }
 
-describe("TaskDetail", () => {
+function TaskTerminalViewWithSheet(
+  props: ComponentProps<typeof TaskTerminalView> & {
+    orchestrationChat?: boolean;
+    onOpenChat?: () => void;
+  },
+) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const panelId = "test-task-panel";
+  const { orchestrationChat = false, onOpenChat, ...taskDetailProps } = props;
+  return (
+    <>
+      <TaskTerminalView
+        {...taskDetailProps}
+        onOpenDetails={() => setDetailsOpen(true)}
+        detailsOpen={detailsOpen}
+        detailsPanelId={panelId}
+      />
+      <TaskDetailsSheet
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        panelId={panelId}
+        mode="terminal"
+        detail={taskDetailProps.detail}
+        orchestrationChat={orchestrationChat}
+        onOpenChat={onOpenChat}
+        onResult={taskDetailProps.onResult}
+      />
+    </>
+  );
+}
+
+function renderWithSheet(props: ComponentProps<typeof TaskTerminalView>) {
+  return render(<TaskTerminalViewWithSheet {...props} />);
+}
+
+describe("TaskTerminalView", () => {
   it("renders the canonical headline status", () => {
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} />);
     expect(screen.getByText("Waiting")).toHaveClass("interact-pill");
     expect(screen.getByText("Ready for review")).toBeInTheDocument();
   });
 
   it("renders the ordered actions without inferring them", () => {
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} />);
     expect(screen.getByText("Review")).toBeInTheDocument();
   });
 
   it("removes redundant resume from task detail actions", () => {
     render(
-      <TaskDetail
+      <TaskTerminalView
         detail={detail({
           actions: [
             { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
@@ -105,7 +142,7 @@ describe("TaskDetail", () => {
   });
 
   it("exposes mobile layout hooks for header and actions", () => {
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} />);
 
     expect(screen.getByTestId("mobile-chrome-header")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-chrome-actions")).toBeInTheDocument();
@@ -113,25 +150,23 @@ describe("TaskDetail", () => {
   });
 
   it("exposes a header Details control matching the session chat live head", () => {
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} onOpenDetails={vi.fn()} />);
     expect(screen.getByTestId("task-details")).toHaveClass("session-head-details");
     expect(screen.getByTestId("task-details")).toHaveTextContent("Details");
   });
 
   it("does not show the harness switch on the terminal task page", () => {
-    render(<TaskDetail detail={detail({ agent: "cursor" })} />);
+    render(<TaskTerminalView detail={detail({ agent: "cursor" })} />);
     expect(screen.queryByTestId("harness-swap")).not.toBeInTheDocument();
   });
 
   it("shows Ajax chat in the header Details sheet when orchestration chat is enabled and the task is session-capable", () => {
     const onOpenChat = vi.fn();
-    render(
-      <TaskDetail
-        detail={detail({ session_capable: true })}
-        orchestrationChat
-        onOpenChat={onOpenChat}
-      />,
-    );
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: true,
+      onOpenChat,
+    });
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-details"));
     const sheet = screen.getByTestId("task-details-sheet");
@@ -142,13 +177,11 @@ describe("TaskDetail", () => {
   });
 
   it("pins Ajax chat primary tools outside the scrolling session details body", () => {
-    render(
-      <TaskDetail
-        detail={detail({ session_capable: true })}
-        orchestrationChat
-        onOpenChat={vi.fn()}
-      />,
-    );
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: true,
+      onOpenChat: vi.fn(),
+    });
     fireEvent.click(screen.getByTestId("task-details"));
     const sheet = screen.getByTestId("task-details-sheet");
     const primaryTools = within(sheet).getByTestId("task-primary-tools");
@@ -163,13 +196,11 @@ describe("TaskDetail", () => {
 
   it("keeps the header Details control reachable while terminal-expanded", () => {
     document.documentElement.classList.add("terminal-expanded");
-    render(
-      <TaskDetail
-        detail={detail({ session_capable: true })}
-        orchestrationChat
-        onOpenChat={vi.fn()}
-      />,
-    );
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: true,
+      onOpenChat: vi.fn(),
+    });
     const details = screen.getByTestId("task-details");
     expect(details).toBeInTheDocument();
     fireEvent.click(details);
@@ -177,72 +208,69 @@ describe("TaskDetail", () => {
     document.documentElement.classList.remove("terminal-expanded");
   });
 
-  it("reaches Ajax chat via Details without opening the footer Task details disclosure", () => {
+  it("reaches Ajax chat via header Details without opening inline metadata", () => {
     const onOpenChat = vi.fn();
-    render(
-      <TaskDetail
-        detail={detail({ session_capable: true })}
-        orchestrationChat
-        onOpenChat={onOpenChat}
-      />,
-    );
-    const footerDisclosure = screen.getByRole("group");
-    expect(footerDisclosure).not.toHaveAttribute("open");
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: true,
+      onOpenChat,
+    });
+    expect(screen.queryByTestId("task-meta-details-embedded")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
-    expect(footerDisclosure).not.toHaveAttribute("open");
     fireEvent.click(
       within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
     );
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
-  it("shows Ajax chat in the footer Task details disclosure when orchestration chat is enabled and the task is session-capable", () => {
+  it("shows Ajax chat when opening task details from the footer affordance", () => {
     const onOpenChat = vi.fn();
-    render(
-      <TaskDetail
-        detail={detail({ session_capable: true })}
-        orchestrationChat
-        onOpenChat={onOpenChat}
-      />,
-    );
-    const footerDisclosure = screen.getByRole("group");
-    expect(footerDisclosure).not.toHaveAttribute("open");
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: true,
+      onOpenChat,
+    });
+    expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Task details"));
-    expect(footerDisclosure).toHaveAttribute("open");
-    fireEvent.click(within(footerDisclosure).getByRole("button", { name: "Ajax chat" }));
+    fireEvent.click(screen.getByTestId("task-meta-details-trigger"));
+    const sheet = screen.getByTestId("task-details-sheet");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Ajax chat" }));
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
   it("hides Ajax chat when orchestration chat is off or the task is not session-capable", () => {
-    render(
-      <TaskDetail detail={detail({ session_capable: true })} orchestrationChat={false} onOpenChat={vi.fn()} />,
-    );
+    renderWithSheet({
+      detail: detail({ session_capable: true }),
+      orchestrationChat: false,
+      onOpenChat: vi.fn(),
+    });
     fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
 
-    render(
-      <TaskDetail detail={detail({ session_capable: false })} orchestrationChat onOpenChat={vi.fn()} />,
-    );
+    renderWithSheet({
+      detail: detail({ session_capable: false }),
+      orchestrationChat: true,
+      onOpenChat: vi.fn(),
+    });
     fireEvent.click(screen.getAllByTestId("task-details").at(-1)!);
     expect(screen.queryAllByRole("button", { name: "Ajax chat" })).toHaveLength(0);
   });
 
   it("renders the task outlet hook the scroll lock targets", () => {
     expect(appSource).toMatch(
-      /<section[^>]*data-outlet="task"[^>]*>[\s\S]*?<TaskDetail/,
+      /route\.kind === "task" && route\.handle[\s\S]*?<TaskWorkspaceRoute/,
     );
     // `.task-detail` is the element the scroll lock targets; the terminal
     // region is a different node and would not prove this contract.
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} />);
     expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
 
   it("fires onBack from the back control after the commit animation", async () => {
     vi.useFakeTimers();
     const onBack = vi.fn();
-    render(<TaskDetail detail={detail()} onBack={onBack} />);
+    render(<TaskTerminalView detail={detail()} onBack={onBack} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.click(screen.getByText("← Back"));
@@ -258,7 +286,7 @@ describe("TaskDetail", () => {
   it("does not double-navigate when Back is clicked during settle", async () => {
     vi.useFakeTimers();
     const onBack = vi.fn();
-    render(<TaskDetail detail={detail()} onBack={onBack} />);
+    render(<TaskTerminalView detail={detail()} onBack={onBack} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.click(screen.getByText("← Back"));
@@ -273,7 +301,7 @@ describe("TaskDetail", () => {
   it("opens Diff Review on a left swipe", async () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();
-    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+    render(<TaskTerminalView detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
@@ -290,7 +318,7 @@ describe("TaskDetail", () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();
     const onBack = vi.fn();
-    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} onBack={onBack} />);
+    render(<TaskTerminalView detail={detail()} onOpenDiff={onOpenDiff} onBack={onBack} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 40, clientY: 40 }] });
@@ -309,7 +337,7 @@ describe("TaskDetail", () => {
   it("opens Diff Review on a left swipe that begins on the terminal panel", async () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();
-    render(<TaskDetail detail={detail()} onOpenDiff={onOpenDiff} />);
+    render(<TaskTerminalView detail={detail()} onOpenDiff={onOpenDiff} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     const terminal = document.createElement("div");
@@ -329,11 +357,11 @@ describe("TaskDetail", () => {
     vi.useFakeTimers();
     const first = vi.fn();
     const second = vi.fn();
-    const { rerender } = render(<TaskDetail detail={detail()} onOpenDiff={first} />);
+    const { rerender } = render(<TaskTerminalView detail={detail()} onOpenDiff={first} />);
     const root = screen.getByTestId("task-detail");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
-    rerender(<TaskDetail detail={detail()} onOpenDiff={second} />);
+    rerender(<TaskTerminalView detail={detail()} onOpenDiff={second} />);
     fireEvent.touchMove(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
     fireEvent.touchEnd(root, { changedTouches: [{ clientX: 120, clientY: 40 }] });
     await act(async () => {
@@ -345,13 +373,13 @@ describe("TaskDetail", () => {
   });
 
   it("does not own document scroll via ajax-task-open", () => {
-    expect(taskDetailSource).not.toMatch(/ajax-task-open/);
+    expect(taskTerminalViewSource).not.toMatch(/ajax-task-open/);
     expect(routeScrollSource).toMatch(/data-testid="route-scroll"/);
   });
 
   it("does not toggle document classes on mount", () => {
     document.documentElement.classList.remove("ajax-task-open");
-    const { unmount } = render(<TaskDetail detail={detail()} />);
+    const { unmount } = render(<TaskTerminalView detail={detail()} />);
 
     expect(document.documentElement.classList.contains("ajax-task-open")).toBe(false);
 
@@ -361,29 +389,29 @@ describe("TaskDetail", () => {
   });
 });
 
-describe("TaskDetail projection surface", () => {
+describe("TaskTerminalView projection surface", () => {
   it("surfaces the runtime observation error as a warning", () => {
     render(
-      <TaskDetail detail={detail({ runtime_observation_error: "tmux capture failed" })} />,
+      <TaskTerminalView detail={detail({ runtime_observation_error: "tmux capture failed" })} />,
     );
     expect(screen.getByTestId("observation-error").textContent).toContain("tmux capture failed");
   });
 
   it("omits the observation warning when observation succeeded", () => {
-    render(<TaskDetail detail={detail()} />);
+    render(<TaskTerminalView detail={detail()} />);
     expect(screen.queryByTestId("observation-error")).not.toBeInTheDocument();
   });
 
   it("shows agent activity when it adds information beyond the status line", () => {
     render(
-      <TaskDetail detail={detail({ agent_activity: "running cargo nextest" })} />,
+      <TaskTerminalView detail={detail({ agent_activity: "running cargo nextest" })} />,
     );
     expect(screen.getByTestId("agent-activity").textContent).toContain("running cargo nextest");
   });
 
   it("hides agent activity when it just repeats the status explanation", () => {
     render(
-      <TaskDetail
+      <TaskTerminalView
         detail={detail({ agent_activity: "Ready for review", status_explanation: "Ready for review" })}
       />,
     );
@@ -392,15 +420,17 @@ describe("TaskDetail projection surface", () => {
 
   it("falls back to the live status summary for the activity line", () => {
     render(
-      <TaskDetail detail={detail({ agent_activity: null, live_status_summary: "waiting on approval" })} />,
+      <TaskTerminalView detail={detail({ agent_activity: null, live_status_summary: "waiting on approval" })} />,
     );
     expect(screen.getByTestId("agent-activity").textContent).toContain("waiting on approval");
   });
 
-  it("composes TaskMetaDetails with the task details disclosure", () => {
-    render(<TaskDetail detail={detail()} />);
-    expect(screen.getByRole("group")).toBeInTheDocument();
-    expect(screen.getByText("Task details")).toBeInTheDocument();
+  it("exposes a footer Task details affordance wired to the workspace sheet", () => {
+    render(<TaskTerminalView detail={detail()} onOpenDetails={vi.fn()} detailsPanelId="task-panel" />);
+    const trigger = screen.getByTestId("task-meta-details-trigger");
+    expect(trigger).toHaveTextContent("Task details");
+    expect(trigger).toHaveAttribute("aria-controls", "task-panel");
+    expect(screen.queryByTestId("task-meta-details-embedded")).not.toBeInTheDocument();
   });
 
   it("clamps status explanation and activity to a single row", () => {
@@ -471,16 +501,16 @@ describe("TaskDetail projection surface", () => {
     expect(mobileBlock).toMatch(/\.interact-panel\s+\.action[\s\S]*?white-space:\s*nowrap/);
   });
 
-  it("releases the mobile fill pin and caps the terminal when meta details are open", () => {
+  it("releases the mobile fill pin and caps the terminal when the task details sheet is open", () => {
     expect(stylesSource).toMatch(
-      /\.task-detail:has\(\.meta-details\[open\]\)[\s\S]*?flex:\s*0\s+0\s+auto/,
+      /\.task-detail\[data-task-details-open\][\s\S]*?flex:\s*0\s+0\s+auto/,
     );
     expect(stylesSource).toMatch(
-      /\.task-detail:has\(\.meta-details\[open\]\)[\s\S]*?min-height:\s*auto/,
+      /\.task-detail\[data-task-details-open\][\s\S]*?min-height:\s*auto/,
     );
 
     const openMetaWrap = stylesSource.match(
-      /\.task-detail:has\(\.meta-details\[open\]\)\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
+      /\.task-detail\[data-task-details-open\]\s+\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap\s*\{([^}]*)\}/,
     );
     expect(openMetaWrap).not.toBeNull();
     const wrapBody = openMetaWrap![1];

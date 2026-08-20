@@ -3,7 +3,7 @@ import {
   fetchSessionModels,
   normalizeSessionAgent,
   type SessionModelCatalog,
-} from "./sessionModel";
+} from "./desiredModel";
 import { queryKeys } from "@/shared/lib/queryClient";
 
 export function useSessionModelsQuery(agent: string) {

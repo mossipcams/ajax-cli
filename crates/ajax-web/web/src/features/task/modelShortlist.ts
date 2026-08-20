@@ -5,7 +5,7 @@ import {
   normalizeSessionAgent,
   parseCursorCatalogId,
   type SessionModelOption,
-} from "./sessionModel";
+} from "./desiredModel";
 
 export const SHORTLIST_CAP = 10;
 

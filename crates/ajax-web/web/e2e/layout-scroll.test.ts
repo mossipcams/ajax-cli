@@ -67,6 +67,7 @@ async function probeNormalRouteScrollOwners(page: Page): Promise<{
       !!(
         el.closest('[data-testid="new-task-sheet"]') ||
         el.closest("#new-task-sheet") ||
+        el.closest('[data-testid="task-details-sheet"]') ||
         el.closest(".sheet-card") ||
         el.closest(".result-output")
       );
@@ -215,10 +216,6 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
     timeout: 10_000,
   });
 
-  const summary = page.locator(".meta-details summary");
-  await summary.click();
-  await expect(page.locator(".meta-details[open]")).toBeVisible();
-
   const routeScroll = page.locator('[data-testid="route-scroll"]');
   const routeOverflow = await routeScroll.evaluate((el) => ({
     scrollWidth: el.scrollWidth,
@@ -231,13 +228,19 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
     .evaluate((el) => Math.round(el.getBoundingClientRect().height));
   expect(terminalHeight).toBeGreaterThanOrEqual(120);
 
-  const scrollDims = await routeScroll.evaluate((el) => ({
+  const detailsTrigger = page.getByTestId("task-meta-details-trigger");
+  await detailsTrigger.click();
+  const detailsSheet = page.getByTestId("task-details-sheet");
+  await expect(detailsSheet).toBeVisible();
+
+  const detailsBody = page.getByTestId("session-details-body");
+  const scrollDims = await detailsBody.evaluate((el) => ({
     scrollHeight: el.scrollHeight,
     clientHeight: el.clientHeight,
   }));
   expect(scrollDims.scrollHeight).toBeGreaterThan(scrollDims.clientHeight + 1);
 
-  await routeScroll.evaluate((el) => {
+  await detailsBody.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
 

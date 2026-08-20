@@ -6,14 +6,13 @@ import {
   encodeCursorSelection,
   decodeCursorPipeOrCatalogId,
   fetchSessionModels,
-  isSessionModelChangeFailure,
   normalizeSessionAgent,
   parseCursorCatalogId,
   readSessionModel,
   writeSessionModel,
-} from "./sessionModel";
+} from "./desiredModel";
 
-describe("sessionModel", () => {
+describe("desiredModel", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -25,21 +24,6 @@ describe("sessionModel", () => {
 
   it("defaults to auto", () => {
     expect(readSessionModel()).toBe(DEFAULT_SESSION_MODEL);
-  });
-
-  it("recognizes host errors that should revert an in-session model change (#942)", () => {
-    expect(isSessionModelChangeFailure("session model change needs a task Ajax started over ACP")).toBe(
-      true,
-    );
-    expect(isSessionModelChangeFailure("session model composer-2.5 was refused — model refused")).toBe(
-      true,
-    );
-    expect(isSessionModelChangeFailure("session model composer-2.5 could not be verified — harness did not report an applied model")).toBe(
-      true,
-    );
-    expect(isSessionModelChangeFailure("unsupported model")).toBe(true);
-    expect(isSessionModelChangeFailure("ACP process exited")).toBe(false);
-    expect(isSessionModelChangeFailure("queued prompt failed: prompt already in flight")).toBe(false);
   });
 
   it("persists the chosen model", () => {

@@ -101,15 +101,7 @@ export default tseslint.config(
     },
   },
   {
-    // Layering, added in slice 9 once app/features/shared existed. Direction is
-    // one-way: app -> features -> shared. Enforced on the @/ alias because slice 9
-    // round 1 made every cross-directory import use it; a relative escape hatch
-    // would need to climb out of its own folder, which the patterns below also catch.
-    //
-    // shared/ is the leaf: it must not know about features or the app shell.
-    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
-    // a test that reads another layer's source text with ?raw for a source-text
-    // assertion is not a runtime dependency.
+    // Production layering: shared/ is the leaf and must not import app or features.
     ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/shared/**/*.{ts,tsx}"],
     rules: {
@@ -128,22 +120,21 @@ export default tseslint.config(
     },
   },
   {
-    // features/ may use shared/, but not the app shell, and not each other —
-    // cross-feature coupling is what feature folders exist to prevent.
-    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
-    // a test that reads another layer's source text with ?raw for a source-text
-    // assertion is not a runtime dependency.
     ignores: ["**/*.test.{ts,tsx}"],
-    files: ["**/src/features/**/*.{ts,tsx}"],
+    files: ["**/src/app/routes/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              group: ["@/app/*", "**/app/*"],
+              regex: "^@/features/(chat|terminal|task|task-workspace|settings)/(?!public$).+",
               message:
-                "features/ must not import from the app shell. Lift the shared piece into shared/.",
+                "app/routes import feature public modules only (@/features/<name>/public).",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "app/routes must not import the app shell outside this folder.",
             },
           ],
         },
@@ -151,9 +142,78 @@ export default tseslint.config(
     },
   },
   {
-    // Tests are exempt from layering below: these rules constrain *runtime*
-    // coupling, and a test that reads another layer's source text with ?raw for a
-    // source-text assertion is not a runtime dependency.
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/features/task-workspace/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/(chat|terminal|task)/(?!public$).+",
+              message:
+                "task-workspace imports peer features only through their public.ts modules.",
+            },
+            {
+              regex: "^@/features/(settings|diff)/.*",
+              message: "task-workspace must not import settings or diff internals.",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "features must not import from the app shell.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: ["**/src/features/chat/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/task/(?!public$).+",
+              message: "chat imports task only through @/features/task/public.",
+            },
+            {
+              regex: "^@/features/(terminal|task-workspace|settings|diff)/.*",
+              message: "chat must not import terminal, task-workspace, settings, or diff.",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "features must not import from the app shell.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}"],
+    files: ["**/src/features/terminal/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/(chat|task|task-workspace|settings|diff)/.*",
+              message: "terminal must not import chat, task, task-workspace, settings, or diff.",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "features must not import from the app shell.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/features/task/**/*.{ts,tsx}"],
     rules: {
@@ -162,9 +222,12 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["@/app/*", "**/app/*", "@/features/settings/*"],
-              message:
-                "features/task must not import from app/ or another feature. Shared pieces belong in shared/.",
+              regex: "^@/features/(chat|terminal|task-workspace|settings|diff)/.*",
+              message: "task must not import chat, terminal, task-workspace, settings, or diff.",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "features must not import from the app shell.",
             },
           ],
         },
@@ -172,9 +235,6 @@ export default tseslint.config(
     },
   },
   {
-    // Tests are exempt from layering: these rules constrain *runtime* coupling, and
-    // a test that reads another layer's source text with ?raw for a source-text
-    // assertion is not a runtime dependency.
     ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/features/settings/**/*.{ts,tsx}"],
     rules: {
@@ -183,9 +243,12 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["@/app/*", "**/app/*", "@/features/task/*"],
-              message:
-                "features/settings must not import from app/ or another feature. Shared pieces belong in shared/.",
+              regex: "^@/features/(chat|terminal|task|task-workspace|diff)/.*",
+              message: "settings must not import other feature internals.",
+            },
+            {
+              group: ["@/app/*", "**/app/*"],
+              message: "features must not import from the app shell.",
             },
           ],
         },

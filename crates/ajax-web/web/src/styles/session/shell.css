@@ -1,7 +1,7 @@
 /* SESSION ORCHESTRATION CHAT ---------------------------------------------- */
 /* Instrument stack: a live head that never scrolls away over a settled
    transcript that holds its position. See the direction contract at the top of
-   features/session/SessionChat.tsx. */
+   features/chat/ChatSurface.tsx. */
 .app-shell--session .app-main {
   display: flex;
   flex-direction: column;

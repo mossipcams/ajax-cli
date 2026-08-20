@@ -32,8 +32,8 @@
 // STORY: the operator opens a session on a phone, sees one panel saying what
 //   the agent is doing and whether it needs them, answers if asked, scrolls the
 //   transcript for history, types to steer.
-// FIRST VIEWPORT: live head (back / title / state + running tool / decision /
-//   context pressure) -> conversation (~80% of the band) with a full-width
+// FIRST VIEWPORT: shared task header, then live head (state + running tool /
+//   decision / context pressure) -> conversation (~80% of the band) with a full-width
 //   in-thread composer (Enter sends; no Send chrome). The primary action is
 //   whatever the head asks for; with nothing asked, the composer is primary.
 // FORM: candidate 6 of 7 ("instrument stack: live head over settled
@@ -46,24 +46,15 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
   type PointerEvent,
+  type ReactNode,
   type UIEvent,
 } from "react";
-import type { Terminal } from "@xterm/xterm";
-import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
-import type { TerminalConnection } from "@/shared/lib/terminalConnection";
-import { visibleTaskActions } from "@/features/task/taskActions";
-import ActionBar from "@/features/task/ActionBar";
-import HarnessSwap from "@/features/task/HarnessSwap";
-import TaskLoadError from "@/features/task/TaskLoadError";
-import FullscreenLayer from "@/shared/ui/FullscreenLayer";
-import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
-import { Button } from "@/shared/ui/button";
+import type { BrowserTaskDetail } from "@/shared/lib/types";
 import {
   activePlanStep,
   activeTool,
@@ -75,63 +66,39 @@ import {
 } from "./sessionThread";
 import LiveHead, { headState, headTone } from "./LiveHead";
 import Transcript from "./Transcript";
-import TaskMetaDetails from "@/features/task/TaskMetaDetails";
 import { autoGrow } from "./sessionChatChrome";
 import { PIN_THRESHOLD_PX } from "./sessionChatSeed";
 import { useTaskSession } from "./useTaskSession";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
-import { useSessionChatViewport } from "@/shared/hooks/useSessionChatViewport";
-import { useTaskTerminalSpeech } from "@/features/task/useTaskTerminalSpeech";
+import { useChatViewport } from "./viewport/useChatViewport";
+import { useChatSpeech } from "./speech/useChatSpeech";
 
 interface Props {
   handle: string | null;
   detail: BrowserTaskDetail | null;
   detailStatus: "loading" | "ready" | "stale" | "error";
-  detailError?: string;
   onBack?: () => void;
   onOpenDiff?: () => void;
-  onCockpit?: (cockpit: BrowserCockpitView) => void;
-  onResult?: (
-    message: string,
-    output: string | null | undefined,
-    isError: boolean,
-    options?: {
-      onUndo?: () => void;
-      onCommit?: () => void;
-      pendingConfirm?: { action: WebAction; handle: string; interactionId: string };
-    },
-  ) => void;
   onMutated?: () => void;
-  /** Swap-only hook — e.g. clear the orchestration session outbox before reload. */
-  onSwappedAgent?: () => void;
-  onOpenTerminal?: () => void;
-  onDismiss?: () => void;
-  onRetry?: () => void;
-  /** Shell confirm currently armed (`drop`, etc.). Sibling taps must not POST. */
-  pendingConfirmAction?: string | null;
-  /** Cancel that confirm when a different action is chosen. */
-  onCancelPendingConfirm?: () => void;
+  /** Task actions for the live head attention state — composed by Task Workspace. */
+  headActions?: ReactNode;
+  /** Shared task identity row owned by Task Workspace. */
+  workspaceHeader?: ReactNode;
+  /** Live session model and busy flag for workspace harness swap composition. */
+  onSessionActivity?: (activity: { model: string; busy: boolean }) => void;
 }
 
-export default function SessionChat({
+export default function ChatSurface({
   handle,
   detail,
   detailStatus,
-  detailError,
   onBack,
   onOpenDiff,
-  onCockpit,
-  onResult,
   onMutated,
-  onSwappedAgent,
-  onOpenTerminal,
-  onDismiss,
-  onRetry,
-  pendingConfirmAction = null,
-  onCancelPendingConfirm,
+  headActions = null,
+  workspaceHeader = null,
+  onSessionActivity,
 }: Props) {
-  const composerId = useId();
-  const taskPanelId = `${composerId}-task-panel`;
   const rootRef = useRef<HTMLElement | null>(null);
   const onOpenDiffRef = useRef(onOpenDiff);
   onOpenDiffRef.current = onOpenDiff;
@@ -143,8 +110,6 @@ export default function SessionChat({
   });
   const threadRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const speechTermRef = useRef<Terminal | undefined>(undefined);
-  const speechConnectionRef = useRef<TerminalConnection | undefined>(undefined);
   const draftRef = useRef("");
   // What the operator had already seen when they last held the live edge.
   const seenRef = useRef<{ items: ConversationItem[] }>({ items: [] });
@@ -154,7 +119,6 @@ export default function SessionChat({
   const [draft, setDraft] = useState("");
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   /** One editable follow-up held here until the active turn resolves. The host
    * still owns dispatch; holding it in the composer is what makes it editable
    * and what keeps a stop-and-send from racing the prompt it cancels. */
@@ -171,44 +135,31 @@ export default function SessionChat({
     sendCancel,
     markStopped,
     respondPermission,
-    onMutated: onSessionMutated,
   } = useTaskSession({ handle, detail, onMutated });
 
-  const insertSpeechText = useCallback((text: string) => {
-    const current = draftRef.current;
-    const separator = current && !/\s$/.test(current) ? " " : "";
-    const next = `${current}${separator}${text}`;
-    draftRef.current = next;
-    setDraft(next);
-    return true;
-  }, []);
+  useEffect(() => {
+    onSessionActivity?.({ model: sessionModel, busy: state.busy });
+  }, [sessionModel, state.busy, onSessionActivity]);
 
   const {
     speechModel,
     micAriaLabel,
     micArmed,
     toggleMic,
-  } = useTaskTerminalSpeech({
+  } = useChatSpeech({
     handle: handle ?? "",
-    termRef: speechTermRef,
-    connectionRef: speechConnectionRef,
-    pasteThroughTerm: insertSpeechText,
+    draftRef,
+    setDraft,
   });
 
   pinnedRef.current = pinned;
-
-  // Drop confirm uses the shell ResultPanel (z-index 40); close the details
-  // sheet (z-index 50) so Confirm is reachable without raising ResultPanel.
-  useEffect(() => {
-    if (pendingConfirmAction === "drop") setDetailsOpen(false);
-  }, [pendingConfirmAction]);
 
   const restoreLiveEdge = useCallback(() => {
     setPinned(true);
     setBehind(false);
   }, []);
 
-  const { surfaceStyle } = useSessionChatViewport({
+  const { surfaceStyle } = useChatViewport({
     threadRef,
     composerRef,
     pinnedRef,
@@ -354,23 +305,8 @@ export default function SessionChat({
     respondPermission(approved);
   }
 
-  function handleHarnessSwapped() {
-    onSwappedAgent?.();
-    onMutated?.();
-  }
-
   if (!handle) return null;
 
-  if (detailStatus === "error" || (detailStatus !== "loading" && !detail)) {
-    return (
-      <section className="session-page" data-testid="session-chat">
-        <TaskLoadError message={detailError ?? "Task not found"} onRetry={() => onRetry?.()} />
-      </section>
-    );
-  }
-
-  const actions = detail ? visibleTaskActions(detail.actions) : [];
-  const safeActions = actions.filter((action) => !action.destructive);
   const state_ = headState(state.decision, state.busy, detail, state.status);
   const tone = headTone(state_, detail);
   const plan = latestPlan(state.items);
@@ -388,7 +324,6 @@ export default function SessionChat({
     0,
     toolCount(state.items) - toolCount(seenRef.current.items),
   );
-  const title = detail?.title || detail?.qualified_handle || handle;
   // The action names what Enter does next, so the phone operator never has to
   // know the turn state to predict it.
   const submitLabel = queued !== null ? "Stop & send" : state.busy ? "Queue" : "Send";
@@ -407,8 +342,8 @@ export default function SessionChat({
         data-testid="session-chat-surface"
         style={surfaceStyle}
       >
+      {workspaceHeader}
       <LiveHead
-        title={title}
         state={state_}
         tone={tone}
         detail={detail}
@@ -420,29 +355,10 @@ export default function SessionChat({
         turnUsage={state.turnUsage}
         activityAgeMs={state_ === "working" ? activityAgeMs : 0}
         connected={connected}
-        actions={
-          safeActions.length ? (
-            <div data-testid="session-head-actions">
-              <ActionBar
-                actions={safeActions}
-                handle={detail?.qualified_handle ?? handle}
-                onCockpit={onCockpit}
-                onResult={onResult}
-                onMutated={onSessionMutated}
-                onDismiss={onDismiss}
-                pendingConfirmAction={pendingConfirmAction}
-                onCancelPendingConfirm={onCancelPendingConfirm}
-              />
-            </div>
-          ) : null
-        }
-        onBack={onBack ?? (() => {})}
+        actions={headActions}
         onApprove={() => respondDecision(true)}
         onReject={() => respondDecision(false)}
         onStop={sendCancel}
-        onOpenDetails={() => setDetailsOpen(true)}
-        detailsOpen={detailsOpen}
-        detailsPanelId={taskPanelId}
       />
 
       <div
@@ -492,7 +408,6 @@ export default function SessionChat({
       >
         <div className="session-composer-row">
           <textarea
-            id={composerId}
             rows={1}
             enterKeyHint="send"
             placeholder={
@@ -561,130 +476,6 @@ export default function SessionChat({
           Jump to latest
           {unseenTools ? ` · ${unseenTools} new ${unseenTools === 1 ? "step" : "steps"}` : ""}
         </button>
-      ) : null}
-
-      {detailsOpen ? (
-        <FullscreenLayer zIndex={50}>
-          <Sheet open onOpenChange={(open) => !open && setDetailsOpen(false)}>
-            <SheetContent asChild aria-describedby={undefined}>
-              {/* This element IS the Radix content node, so a backdrop tap is
-                  inside it and onPointerDownOutside never fires — the
-                  target===currentTarget guard is ours, as in NewTaskSheet. */}
-              <div
-                className="session-sheet-scrim"
-                onPointerDown={(event) => {
-                  if (event.target === event.currentTarget) setDetailsOpen(false);
-                }}
-              >
-                <div
-                  className="session-details-sheet"
-                  id={taskPanelId}
-                  data-testid="session-task-panel"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Task details"
-                >
-                  <div className="session-sheet-header">
-                    <SheetTitle asChild>
-                      <h2>Task details</h2>
-                    </SheetTitle>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="session-sheet-close"
-                      onClick={() => setDetailsOpen(false)}
-                    >
-                      Close
-                    </Button>
-                  </div>
-
-                  <div
-                    className="session-sheet-tools session-sheet-tools-primary"
-                    data-testid="session-primary-tools"
-                  >
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      data-testid="session-ajax-terminal"
-                      onClick={() => {
-                        setDetailsOpen(false);
-                        onOpenTerminal?.();
-                      }}
-                    >
-                      Ajax terminal
-                    </Button>
-                    {onOpenDiff ? (
-                      <Button type="button" variant="secondary" onClick={onOpenDiff}>
-                        Show diff
-                      </Button>
-                    ) : null}
-                  </div>
-
-                  <div className="session-details-body" data-testid="session-details-body">
-                    {detail ? (
-                      <header
-                        className="session-task-identity"
-                        data-testid="session-task-identity"
-                      >
-                        <h3 className="session-task-title">
-                          {detail.title || detail.qualified_handle}
-                        </h3>
-                        <p className="session-task-handle">{detail.qualified_handle}</p>
-                        <p className="session-task-branch">{detail.branch}</p>
-                      </header>
-                    ) : null}
-
-                    {detail?.runtime_observation_error ? (
-                      <p
-                        className="session-sheet-warning"
-                        data-testid="session-observation-error"
-                      >
-                        Observation error: {detail.runtime_observation_error}
-                      </p>
-                    ) : null}
-
-                    {detail?.agent ? (
-                      <HarnessSwap
-                        handle={detail.qualified_handle ?? handle}
-                        currentAgent={detail.agent}
-                        currentModel={sessionModel}
-                        disabled={state.busy}
-                        onSwapped={handleHarnessSwapped}
-                      />
-                    ) : null}
-
-                    {detail ? (
-                      <TaskMetaDetails
-                        detail={detail}
-                        embedded
-                        hideBranch
-                        onResult={onResult}
-                      />
-                    ) : null}
-
-                    {actions.length ? (
-                      <div
-                        className="session-sheet-actions session-sheet-actions-muted"
-                        data-testid="session-quick-actions"
-                      >
-                        <ActionBar
-                          actions={actions}
-                          handle={detail?.qualified_handle ?? handle}
-                          onCockpit={onCockpit}
-                          onResult={onResult}
-                          onMutated={onSessionMutated}
-                          onDismiss={onDismiss}
-                          pendingConfirmAction={pendingConfirmAction}
-                          onCancelPendingConfirm={onCancelPendingConfirm}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </FullscreenLayer>
       ) : null}
     </section>
   );

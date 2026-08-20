@@ -13,7 +13,7 @@ import {
   DEFAULT_SESSION_MODEL,
   normalizeSessionAgent,
   type SessionModelCatalog,
-} from "./sessionModel";
+} from "./desiredModel";
 import { buildModelShortlist } from "./modelShortlist";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
 
