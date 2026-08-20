@@ -1,37 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Button } from "@/shared/ui/button";
 import {
-  buildCursorDisplayModels,
-  decodeCursorPipeOrCatalogId,
-  decodeCursorSelection,
-  decodeModelSelection,
-  defaultCursorEffort,
-  effortOptionLabel,
-  encodeCursorSelection,
-  encodeModelSelection,
   DEFAULT_SESSION_MODEL,
-  mergeCursorEffortChoices,
+  catalogIdToStoragePipe,
+  defaultCatalogIdForCursorGroup,
+  groupCursorCatalogModels,
+  modelChoicesFromOptionCatalog,
   normalizeSessionAgent,
+  resolveCursorCatalogSelection,
   type SessionModelCatalog,
 } from "./desiredModel";
+import { useOptionCatalogQuery } from "./useOptionCatalogQuery";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
-import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
-import {
-  encodeDesiredPinWithLiveSelection,
-  modelConfigBooleanLiveOption,
-  readLiveBooleanCurrent,
-  readLiveSelectCurrent,
-  thoughtLevelLiveOption,
-} from "@/shared/lib/liveSessionConfig";
 
 interface Props {
-  /** Harness whose own catalog to list. */
+  /** Harness whose advertised options to list. */
   agent: string;
   agentLabel: string;
-  /** Composite selection: catalog id, or `opus|effort=high` for bridges. */
+  /** Advertised model id, or legacy pipe-form / exploded catalog id. */
   value: string;
-  /** Live advertised ACP config options (connected session). */
-  liveConfigOptions?: LiveSessionConfigOption[];
   disabled?: boolean;
   onChange: (selection: string) => void;
   /** Called once with the harness default so callers can preselect it. */
@@ -39,38 +26,77 @@ interface Props {
 }
 
 /**
- * Full harness catalog for model choice, plus effort / Fast when multiple levels
- * exist. Live sessionConfigOptions seed the current pin and supply in-band apply
- * ids; they do not replace the catalog model list.
+ * New Task / idle Switch picker.
+ * Cursor lists exploded ids from GET /api/session/models; onChange emits pipe storage.
+ * Other harnesses list last-advertised option-catalog model ids.
+ * Connected sessions use advertised configOptions via set_config_option.
  */
 export default function ModelPicker({
   agent,
   agentLabel,
   value,
-  liveConfigOptions,
   disabled = false,
   onChange,
   onCatalog,
 }: Props) {
-  const { data: catalog, isPending, isError, refetch } = useSessionModelsQuery(agent);
+  const harness = normalizeSessionAgent(agent);
+  const isCursor = harness === "cursor";
+  const sessionQuery = useSessionModelsQuery(agent, { enabled: isCursor });
+  const catalogQuery = useOptionCatalogQuery(agent, { enabled: !isCursor });
   const listRef = useRef<HTMLDivElement>(null);
   const catalogNotifiedRef = useRef<string | null>(null);
-  const isCursor = normalizeSessionAgent(agent) === "cursor";
+
+  const isPending = isCursor ? sessionQuery.isPending : catalogQuery.isPending;
+  const isError = isCursor ? sessionQuery.isError : catalogQuery.isError;
+  const refetch = isCursor ? sessionQuery.refetch : catalogQuery.refetch;
+
+  const catalog = useMemo((): SessionModelCatalog | undefined => {
+    if (isCursor) {
+      if (sessionQuery.data === undefined) return undefined;
+      return sessionQuery.data;
+    }
+    if (catalogQuery.data === undefined) return undefined;
+    const { models, default: defaultModel } = modelChoicesFromOptionCatalog(catalogQuery.data);
+    return {
+      models,
+      default: defaultModel,
+      ...(catalogQuery.data.error ? { error: catalogQuery.data.error } : {}),
+    };
+  }, [isCursor, sessionQuery.data, catalogQuery.data]);
+
+  const catalogIds = useMemo(
+    () => (catalog ? catalog.models.map((option) => option.id) : []),
+    [catalog],
+  );
+
+  const selectedId = useMemo(() => {
+    if (isCursor) return resolveCursorCatalogSelection(value, catalogIds);
+    const trimmed = value.trim();
+    return trimmed;
+  }, [isCursor, value, catalogIds]);
+
+  const unknownModel =
+    Boolean(selectedId) &&
+    selectedId !== DEFAULT_SESSION_MODEL &&
+    !catalogIds.includes(selectedId);
 
   useEffect(() => {
-    if (!catalog || catalogNotifiedRef.current === agent) return;
+    if (!catalog) return;
+    if (catalogNotifiedRef.current === agent) return;
     catalogNotifiedRef.current = agent;
-    onCatalog?.(catalog);
+    onCatalog?.({
+      models: catalog.models,
+      default: catalog.default,
+      ...(catalog.error ? { error: catalog.error } : {}),
+    });
   }, [agent, catalog, onCatalog]);
 
-  const { model, options } = decodeModelSelection(value);
-
   useEffect(() => {
-    if (!model) return;
+    if (!selectedId) return;
     listRef.current
       ?.querySelector<HTMLElement>("[aria-checked='true']")
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [model, catalog]);
+  }, [selectedId, catalog]);
 
   if (isError) {
     return (
@@ -87,104 +113,30 @@ export default function ModelPicker({
     return <p className="sheet-note">Reading models from {agentLabel}…</p>;
   }
 
-  const activeCatalog = catalog;
+  const { models, default: defaultModel } = catalog;
 
-  if (activeCatalog.models.length === 0) {
-    return catalog.error ? (
+  if (catalog.error && models.length === 0) {
+    return (
       <p className="sheet-error" data-testid="model-catalog-error">
-        {catalog.error}
+        {catalog.error}{" "}
+        <Button type="button" variant="secondary" onClick={() => void refetch()}>
+          Retry
+        </Button>
       </p>
-    ) : (
+    );
+  }
+
+  if (models.length === 0) {
+    return (
       <p className="sheet-note">
         {agentLabel} lists no models here; it will start on its own default.
       </p>
     );
   }
 
-  const liveOptions = liveConfigOptions ?? [];
-  const thoughtOption = liveOptions.length ? thoughtLevelLiveOption(liveOptions) : undefined;
-  const fastOption = liveOptions.length ? modelConfigBooleanLiveOption(liveOptions) : undefined;
-  const showLiveFast = !!fastOption;
-  const selectedThought = thoughtOption
-    ? options[thoughtOption.id] ?? readLiveSelectCurrent(thoughtOption)
-    : undefined;
-  const selectedFast = fastOption
-    ? options[fastOption.id] === "true" ||
-      (options[fastOption.id] === undefined ? readLiveBooleanCurrent(fastOption) : false)
-    : undefined;
-
-  const reasoning = catalog.reasoning;
-  const catalogIds = new Set(catalog.models.map((option) => option.id));
-  const cursorIntent = isCursor && model ? decodeCursorPipeOrCatalogId(model) : null;
-  const isKnownSelection =
-    !model ||
-    model === DEFAULT_SESSION_MODEL ||
-    catalogIds.has(model) ||
-    (isCursor && cursorIntent !== null && catalogIds.has(cursorIntent.base));
-  const unknownModel = model && !isKnownSelection;
-
-  const displayModels = isCursor ? buildCursorDisplayModels(catalog.models) : [];
-  const cursorSelection =
-    isCursor && model && model !== DEFAULT_SESSION_MODEL
-      ? decodeCursorSelection(model, displayModels)
-      : null;
-  const selectedCursorRow =
-    cursorSelection && displayModels.find((row) => row.base === cursorSelection.base);
-
-  const mergedEfforts =
-    isCursor && selectedCursorRow
-      ? mergeCursorEffortChoices(
-          selectedCursorRow.efforts,
-          thoughtOption?.choices ?? [],
-        )
-      : [];
-  const showMergedEffort = mergedEfforts.length > 1;
-  const applyEffortThroughLive = showMergedEffort && !!thoughtOption && liveOptions.length > 0;
-  const showCatalogEffort = showMergedEffort && !applyEffortThroughLive;
-  const showCatalogFast = !showLiveFast && isCursor && selectedCursorRow?.hasFast;
-
-  const autoOption = catalog.models.find(
-    (option) => option.id === DEFAULT_SESSION_MODEL || option.id === "auto",
-  );
-
-  function emitLive(selection: {
-    model?: string;
-    thoughtLevel?: string;
-    fast?: boolean;
-  }) {
-    onChange(encodeDesiredPinWithLiveSelection(liveOptions, selection));
-  }
-
-  function emitCursorSelection(base: string, effort: string | undefined, fast: boolean) {
-    const row = displayModels.find((entry) => entry.base === base);
-    if (!row) return;
-    if (liveOptions.length) {
-      emitLive({
-        model: base,
-        thoughtLevel: effort ?? selectedThought,
-        fast: fastOption ? fast : undefined,
-      });
-      return;
-    }
-    onChange(encodeCursorSelection(base, effort, fast, row));
-  }
-
-  function selectCursorBase(base: string) {
-    const row = displayModels.find((entry) => entry.base === base);
-    if (!row) return;
-    emitCursorSelection(base, defaultCursorEffort(row, activeCatalog.default), false);
-  }
-
-  function selectCatalogModel(optionId: string) {
-    if (liveOptions.length) {
-      emitLive({ model: optionId, thoughtLevel: selectedThought, fast: selectedFast });
-      return;
-    }
-    onChange(encodeModelSelection(optionId, options));
-  }
-
-  return (
-    <>
+  if (isCursor) {
+    const { auto, groups } = groupCursorCatalogModels(models);
+    return (
       <div
         className="model-picker"
         role="radiogroup"
@@ -193,7 +145,7 @@ export default function ModelPicker({
       >
         {unknownModel ? (
           <button
-            key={`unknown-${model}`}
+            key={`unknown-${selectedId}`}
             type="button"
             className="model-option is-selected"
             role="radio"
@@ -201,250 +153,112 @@ export default function ModelPicker({
             disabled={disabled}
             onClick={() => onChange(value)}
           >
-            <span className="model-option-label">{model}</span>
+            <span className="model-option-label">{selectedId}</span>
           </button>
         ) : null}
 
-        {isCursor ? (
-          <>
-            {autoOption ? (
-              <button
-                key={autoOption.id}
-                type="button"
-                className={`model-option${model === autoOption.id || model === DEFAULT_SESSION_MODEL ? " is-selected" : ""}`}
-                role="radio"
-                aria-checked={model === autoOption.id || model === DEFAULT_SESSION_MODEL}
-                disabled={disabled}
-                onClick={() => selectCatalogModel(autoOption.id)}
-              >
-                <span className="model-option-label">{autoOption.label}</span>
-                {autoOption.id === catalog.default ? (
-                  <span className="model-option-tag">Default</span>
-                ) : null}
-              </button>
+        {auto.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={`model-option${selectedId === option.id ? " is-selected" : ""}`}
+            role="radio"
+            aria-checked={selectedId === option.id}
+            disabled={disabled}
+            onClick={() => onChange(option.id)}
+          >
+            <span className="model-option-label">{option.label}</span>
+            {option.id === defaultModel ? (
+              <span className="model-option-tag">Default</span>
             ) : null}
-            {displayModels.map((row) => (
-              <button
-                key={row.base}
-                type="button"
-                className={`model-option${cursorSelection?.base === row.base ? " is-selected" : ""}`}
-                role="radio"
-                aria-checked={cursorSelection?.base === row.base}
-                disabled={disabled}
-                onClick={() => selectCursorBase(row.base)}
-              >
-                <span className="model-option-label">{row.label}</span>
-              </button>
-            ))}
-          </>
-        ) : (
-          catalog.models.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={`model-option${model === option.id ? " is-selected" : ""}`}
-              role="radio"
-              aria-checked={model === option.id}
-              disabled={disabled}
-              onClick={() => selectCatalogModel(option.id)}
+          </button>
+        ))}
+
+        {groups.map((group) => {
+          const headerId = `model-group-${group.base}`;
+          return (
+            <div
+              key={group.base}
+              className="model-group"
+              role="group"
+              aria-labelledby={headerId}
             >
-              <span className="model-option-label">{option.label}</span>
-              {option.id === catalog.default ? (
-                <span className="model-option-tag">Default</span>
-              ) : null}
-            </button>
-          ))
-        )}
-      </div>
-
-      {applyEffortThroughLive && thoughtOption ? (
-        <>
-          <span className="field-label" id="live-thought-label">
-            {thoughtOption.name}
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="live-thought-label"
-            data-testid="live-thought-level"
-          >
-            {mergedEfforts.map((choice) => (
               <button
-                key={choice.value}
                 type="button"
-                className={`reasoning-option${selectedThought === choice.value ? " is-selected" : ""}`}
-                role="radio"
-                aria-checked={selectedThought === choice.value}
+                className="model-group-label"
+                id={headerId}
                 disabled={disabled}
                 onClick={() =>
-                  emitLive({
-                    model: cursorSelection?.base ?? model ?? undefined,
-                    thoughtLevel: choice.value,
-                    fast: selectedFast,
-                  })
-                }
-              >
-                {choice.label}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {showCatalogEffort && selectedCursorRow ? (
-        <>
-          <span className="field-label" id="model-effort-label">
-            Effort
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="model-effort-label"
-            data-testid="model-effort"
-          >
-            {selectedCursorRow.efforts.map((effort) => (
-              <button
-                key={effort}
-                type="button"
-                className={`reasoning-option${cursorSelection?.effort === effort ? " is-selected" : ""}`}
-                role="radio"
-                aria-checked={cursorSelection?.effort === effort}
-                disabled={disabled}
-                onClick={() =>
-                  emitCursorSelection(
-                    selectedCursorRow.base,
-                    effort,
-                    cursorSelection?.fast ?? false,
+                  onChange(
+                    catalogIdToStoragePipe(
+                      defaultCatalogIdForCursorGroup(group, defaultModel, catalogIds),
+                      catalogIds,
+                    ),
                   )
                 }
               >
-                {effortOptionLabel(effort)}
+                {group.label}
               </button>
-            ))}
-          </div>
-        </>
+              {group.variants.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  className={`model-option${selectedId === variant.id ? " is-selected" : ""}`}
+                  role="radio"
+                  aria-checked={selectedId === variant.id}
+                  disabled={disabled}
+                  onClick={() => onChange(catalogIdToStoragePipe(variant.id, catalogIds))}
+                >
+                  <span className="model-option-label">{variant.label}</span>
+                  {variant.id === defaultModel ? (
+                    <span className="model-option-tag">Default</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="model-picker"
+      role="radiogroup"
+      aria-label={`${agentLabel} models`}
+      ref={listRef}
+    >
+      {unknownModel ? (
+        <button
+          key={`unknown-${selectedId}`}
+          type="button"
+          className="model-option is-selected"
+          role="radio"
+          aria-checked
+          disabled={disabled}
+          onClick={() => onChange(value)}
+        >
+          <span className="model-option-label">{selectedId}</span>
+        </button>
       ) : null}
 
-      {showLiveFast && fastOption ? (
-        <>
-          <span className="field-label" id="live-fast-label">
-            {fastOption.name}
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="live-fast-label"
-            data-testid="live-model-fast"
-          >
-            {[
-              { id: false, label: "Off" },
-              { id: true, label: "On" },
-            ].map((option) => {
-              const fastOn = selectedFast ?? false;
-              const selected = option.id === fastOn;
-              return (
-                <button
-                  key={String(option.id)}
-                  type="button"
-                  className={`reasoning-option${selected ? " is-selected" : ""}`}
-                  role="radio"
-                  aria-checked={selected}
-                  disabled={disabled}
-                  onClick={() =>
-                    emitLive({
-                      model: cursorSelection?.base ?? model ?? undefined,
-                      thoughtLevel: selectedThought,
-                      fast: option.id,
-                    })
-                  }
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {showCatalogFast && selectedCursorRow ? (
-        <>
-          <span className="field-label" id="model-fast-label">
-            Fast
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="model-fast-label"
-            data-testid="model-fast"
-          >
-            {[
-              { id: "false", label: "Off" },
-              { id: "true", label: "On" },
-            ].map((option) => {
-              const fastOn = cursorSelection?.fast ?? false;
-              const selected = option.id === "true" ? fastOn : !fastOn;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`reasoning-option${selected ? " is-selected" : ""}`}
-                  role="radio"
-                  aria-checked={selected}
-                  disabled={disabled}
-                  onClick={() =>
-                    emitCursorSelection(
-                      selectedCursorRow.base,
-                      cursorSelection?.effort ??
-                        defaultCursorEffort(selectedCursorRow, catalog.default),
-                      option.id === "true",
-                    )
-                  }
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {reasoning && !showMergedEffort ? (
-        <>
-          <span className="field-label" id="model-reasoning-label">
-            {reasoning.label}
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="model-reasoning-label"
-            data-testid="model-reasoning"
-          >
-            {reasoning.options.map((option) => {
-              const current = options[reasoning.id] ?? reasoning.default;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`reasoning-option${current === option.id ? " is-selected" : ""}`}
-                  role="radio"
-                  aria-checked={current === option.id}
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange(
-                      encodeModelSelection(model || catalog.default, {
-                        ...options,
-                        [reasoning.id]: option.id,
-                      }),
-                    )
-                  }
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-    </>
+      {models.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className={`model-option${selectedId === option.id ? " is-selected" : ""}`}
+          role="radio"
+          aria-checked={selectedId === option.id}
+          disabled={disabled}
+          onClick={() => onChange(option.id)}
+        >
+          <span className="model-option-label">{option.label}</span>
+          {option.id === defaultModel ? (
+            <span className="model-option-tag">Default</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }

@@ -9,8 +9,9 @@ use agent_client_protocol::schema::v1::{
     SessionConfigSelect, SessionConfigSelectOptions, SetSessionConfigOptionRequest,
 };
 use ajax_core::adapters::{
-    cursor_model_intents_match, cursor_unspecified_spawn_satisfied, parse_cursor_model_intent,
-    parse_model_selection, CursorModelIntent, CURSOR_DEFAULT_SPAWN_MODEL,
+    cursor_model_intents_match_with_raw, cursor_unspecified_spawn_satisfied,
+    encode_cursor_intent_to_storage_pipe, parse_cursor_model_intent, parse_model_selection,
+    CursorModelIntent, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
 };
 use serde_json::Value;
 
@@ -55,11 +56,19 @@ pub fn model_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOpt
 }
 
 pub fn thought_level_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOption> {
-    find_option_by_category(
+    // Cursor advertises `reasoning` (thought_level) then rejects
+    // session/set_config_option reasoning as unknown (#1010). Prefer `effort`.
+    let found = find_option_by_category(
         options,
         SessionConfigOptionCategory::ThoughtLevel,
-        &["reasoning", "effort"],
-    )
+        &["effort", "thought_level", "reasoning"],
+    )?;
+    if found.id.0.as_ref() == "reasoning" {
+        return options
+            .iter()
+            .find(|option| option.id.0.as_ref() == "effort");
+    }
+    Some(found)
 }
 
 fn fast_option_advertised(option: &SessionConfigOption) -> bool {
@@ -175,6 +184,149 @@ pub fn build_set_config_request(
     SetSessionConfigOptionRequest::new(session_id.to_string(), config_id.to_string(), value)
 }
 
+/// Parse a browser WebSocket config-option value into an ACP wire value.
+pub fn wire_value_to_session_value(raw: &Value) -> Result<SessionConfigOptionValue, String> {
+    if let Some(value) = raw.as_str() {
+        return Ok(SessionConfigOptionValue::value_id(value.to_string()));
+    }
+    if let Some(value) = raw.as_bool() {
+        return Ok(SessionConfigOptionValue::boolean(value));
+    }
+    if let Some(map) = raw.as_object() {
+        if map.get("type").and_then(Value::as_str) == Some("boolean") {
+            if let Some(value) = map.get("value").and_then(Value::as_bool) {
+                return Ok(SessionConfigOptionValue::boolean(value));
+            }
+        }
+        if let Some(value) = map.get("value").and_then(Value::as_str) {
+            return Ok(SessionConfigOptionValue::value_id(value.to_string()));
+        }
+    }
+    Err("invalid config option value".to_string())
+}
+
+/// True when `config_id` names the advertised model selector.
+pub fn option_is_model_category(options: &[SessionConfigOption], config_id: &str) -> bool {
+    options.iter().any(|option| {
+        option.id.0.as_ref() == config_id
+            && (option.category.as_ref() == Some(&SessionConfigOptionCategory::Model)
+                || config_id == "model")
+    })
+}
+
+/// True when a successful apply of `config_id` should persist pipe storage ([#1014]).
+pub fn option_triggers_model_persist(options: &[SessionConfigOption], config_id: &str) -> bool {
+    if option_is_model_category(options, config_id) {
+        return true;
+    }
+    options
+        .iter()
+        .any(|option| option.id.0.as_ref() == config_id && fast_option_advertised(option))
+}
+
+/// Normalize a compatibility `set_model` client id to Ajax pipe storage when parseable.
+///
+/// Catalog ids and advertised bracket tokens become pipe; non-Cursor / unparseable ids
+/// pass through unchanged. Auto/unspecified stays as-is.
+pub fn session_model_for_task_persist(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if is_unspecified_model(Some(trimmed)) {
+        return trimmed.to_string();
+    }
+    if looks_like_cursor_model_identity(trimmed) {
+        if let Some(intent) = parse_cursor_model_intent(trimmed) {
+            return encode_cursor_intent_to_storage_pipe(&intent);
+        }
+    }
+    trimmed.to_string()
+}
+
+fn looks_like_cursor_model_identity(raw: &str) -> bool {
+    if raw.contains('|') || raw.contains('[') {
+        return true;
+    }
+    if raw.starts_with("cursor-grok-") || raw.contains("-thinking-") || raw.ends_with("-fast") {
+        return true;
+    }
+    const EFFORTS: &[&str] = &["xhigh", "high", "medium", "low", "none", "max"];
+    if EFFORTS
+        .iter()
+        .any(|effort| raw.ends_with(&format!("-{effort}")))
+    {
+        return true;
+    }
+    const PREFIXES: &[&str] = &["composer-", "gpt-", "claude-", "grok-", "gemini-"];
+    PREFIXES.iter().any(|prefix| raw.starts_with(prefix))
+}
+
+/// Storage pipe for task `session_model` after a successful model-option apply.
+///
+/// Decodes advertised `currentValue` plus sibling effort/Fast options into structured
+/// fields, then encodes Ajax pipe storage — never catalog ids or bracket tokens.
+pub fn applied_model_id_for_persist(options: Option<&[SessionConfigOption]>) -> Option<String> {
+    let options = options?;
+    let model_id = read_model_applied(Some(options))?;
+    if is_unspecified_model(Some(&model_id)) {
+        return None;
+    }
+    if let Some(mut intent) = parse_cursor_model_intent(&model_id) {
+        if let Some(level) = read_advertised_effort_level(options) {
+            intent.effort = Some(level);
+        }
+        if let Some(fast) = model_config_boolean_option(options) {
+            intent.fast = Some(read_fast_current_value(fast).unwrap_or(false));
+        }
+        return Some(encode_cursor_intent_to_storage_pipe(&intent));
+    }
+    model_selection_from_advertised_options(options).map(|selection| selection.encode())
+}
+
+fn read_advertised_effort_level(options: &[SessionConfigOption]) -> Option<String> {
+    if let Some(thought) = thought_level_option(options) {
+        return read_select_current_value(thought);
+    }
+    for id in ["effort", "reasoning", "thought_level"] {
+        if let Some(option) = options.iter().find(|option| option.id.0.as_ref() == id) {
+            if let Some(level) = read_select_current_value(option) {
+                return Some(level);
+            }
+        }
+    }
+    None
+}
+
+fn effort_key_for_persist(options: &[SessionConfigOption]) -> &'static str {
+    if options
+        .iter()
+        .any(|option| option.id.0.as_ref() == "reasoning")
+    {
+        "reasoning"
+    } else {
+        "effort"
+    }
+}
+fn model_selection_from_advertised_options(
+    options: &[SessionConfigOption],
+) -> Option<ModelSelection> {
+    let model = read_model_applied(Some(options))?;
+    let mut extras = Vec::new();
+    if let Some(level) = read_advertised_effort_level(options) {
+        extras.push((effort_key_for_persist(options).to_string(), level));
+    }
+    if let Some(fast) = model_config_boolean_option(options) {
+        if let Some(on) = read_fast_current_value(fast) {
+            extras.push((
+                fast.id.0.to_string(),
+                if on { "true" } else { "false" }.to_string(),
+            ));
+        }
+    }
+    Some(ModelSelection {
+        model,
+        options: extras,
+    })
+}
+
 pub fn replace_config_options(
     stored: &mut Option<Vec<SessionConfigOption>>,
     next: Vec<SessionConfigOption>,
@@ -200,7 +352,10 @@ pub fn sync_session_result_config_options(
     }
 }
 
-fn step_matches_current(options: &[SessionConfigOption], step: &ConfigApplyStep) -> bool {
+pub(crate) fn step_matches_current(
+    options: &[SessionConfigOption],
+    step: &ConfigApplyStep,
+) -> bool {
     let Some(option) = options
         .iter()
         .find(|option| option.id.0.as_ref() == step.config_id)
@@ -237,6 +392,9 @@ pub fn pin_satisfied(
         if !model_pins_at_spawn {
             return true;
         }
+        if cursor_auto_value(options).is_some() {
+            return read_model_applied(Some(options)).as_deref() == Some("default");
+        }
         let Some(applied) = read_model_applied(Some(options)) else {
             return false;
         };
@@ -248,6 +406,9 @@ pub fn pin_satisfied(
         }
         return true;
     }
+    if applied_model_satisfies_pin(options, desired) {
+        return true;
+    }
     map_pin_to_apply_steps(options, desired, model_pins_at_spawn)
         .ok()
         .is_some_and(|steps| steps.iter().all(|step| step_matches_current(options, step)))
@@ -255,7 +416,7 @@ pub fn pin_satisfied(
 
 /// True when the operator did not pin a specific harness model id.
 pub fn is_unspecified_model(raw: Option<&str>) -> bool {
-    matches!(raw.map(str::trim), None | Some("") | Some("auto"))
+    ajax_core::adapters::is_unspecified_acp_model(raw)
 }
 
 pub fn map_pin_to_apply_steps(
@@ -278,6 +439,24 @@ pub fn map_pin_to_apply_steps(
     if let Some(intent) = parse_cursor_model_intent(raw) {
         if model_config_boolean_option(options).is_some() || thought_level_option(options).is_some()
         {
+            // Issue #1010: when the model select advertises the full exploded id
+            // (e.g. gpt-5.2-high), apply that value directly — effort lives in the
+            // model value id, not a sibling thought_level/reasoning option.
+            if let Some(model) = model_option(options) {
+                if let SessionConfigKind::Select(select) = &model.kind {
+                    if let Some(advertised_id) =
+                        find_advertised_model_value(select, &intent, model_pins_at_spawn)
+                    {
+                        if advertised_id != intent.base {
+                            return map_exploded_model_value_steps(
+                                options,
+                                &intent,
+                                &advertised_id,
+                            );
+                        }
+                    }
+                }
+            }
             return map_intent_to_split_steps(options, &intent);
         }
         return map_intent_to_model_select_steps(options, &intent, model_pins_at_spawn);
@@ -290,12 +469,28 @@ pub fn map_pin_to_apply_steps(
     map_selection_to_steps(options, &selection)
 }
 
+fn cursor_auto_value(options: &[SessionConfigOption]) -> Option<&'static str> {
+    let model = model_option(options)?;
+    option_value_advertised(model, "default").then_some("default")
+}
+
 fn map_unspecified_apply_steps(
     options: &[SessionConfigOption],
     model_pins_at_spawn: bool,
 ) -> Result<Vec<ConfigApplyStep>, String> {
     if !model_pins_at_spawn {
         return Ok(Vec::new());
+    }
+    if let Some(auto_id) = cursor_auto_value(options) {
+        let model = model_option(options)
+            .ok_or_else(|| "harness did not advertise a model option".to_string())?;
+        if read_select_current_value(model).as_deref() == Some(auto_id) {
+            return Ok(Vec::new());
+        }
+        return Ok(vec![ConfigApplyStep {
+            config_id: model.id.0.to_string(),
+            value: SessionConfigOptionValue::value_id(auto_id.to_string()),
+        }]);
     }
     let mut steps = Vec::new();
     if let Some(fast) = model_config_boolean_option(options) {
@@ -324,6 +519,7 @@ fn map_unspecified_apply_steps(
                 let default_intent = parse_cursor_model_intent(CURSOR_DEFAULT_SPAWN_MODEL)
                     .unwrap_or(CursorModelIntent {
                         base: CURSOR_DEFAULT_SPAWN_MODEL.to_string(),
+                        thinking: Some(false),
                         effort: None,
                         fast: Some(false),
                     });
@@ -335,6 +531,31 @@ fn map_unspecified_apply_steps(
                 }
             }
         }
+    }
+    Ok(steps)
+}
+
+fn map_exploded_model_value_steps(
+    options: &[SessionConfigOption],
+    intent: &CursorModelIntent,
+    advertised_id: &str,
+) -> Result<Vec<ConfigApplyStep>, String> {
+    let model = model_option(options)
+        .ok_or_else(|| "harness did not advertise a model option".to_string())?;
+    let mut steps = vec![ConfigApplyStep {
+        config_id: model.id.0.to_string(),
+        value: SessionConfigOptionValue::value_id(advertised_id.to_string()),
+    }];
+    if let Some(fast) = model_config_boolean_option(options) {
+        let want = intent.fast.unwrap_or(false);
+        if read_fast_current_value(fast) != Some(want) {
+            steps.push(ConfigApplyStep {
+                config_id: fast.id.0.to_string(),
+                value: fast_apply_value(fast, want),
+            });
+        }
+    } else if intent.fast == Some(true) {
+        return Err("harness did not advertise a Fast config option".to_string());
     }
     Ok(steps)
 }
@@ -357,13 +578,12 @@ fn map_intent_to_split_steps(
     }];
     if let Some(effort) = &intent.effort {
         if let Some(thought) = thought_level_option(options) {
-            if !option_value_advertised(thought, effort) {
-                return Err(format!("harness did not advertise thought level {effort}"));
+            if option_value_advertised(thought, effort) {
+                steps.push(ConfigApplyStep {
+                    config_id: thought.id.0.to_string(),
+                    value: SessionConfigOptionValue::value_id(effort.clone()),
+                });
             }
-            steps.push(ConfigApplyStep {
-                config_id: thought.id.0.to_string(),
-                value: SessionConfigOptionValue::value_id(effort.clone()),
-            });
         }
     }
     if let Some(fast) = model_config_boolean_option(options) {
@@ -398,6 +618,123 @@ fn map_intent_to_model_select_steps(
     }])
 }
 
+fn compose_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
+    let fast = intent.fast.unwrap_or(false);
+    let mut id = if let Some(version) = intent.base.strip_prefix("grok-") {
+        format!("cursor-grok-{version}")
+    } else {
+        intent.base.clone()
+    };
+    if let Some(effort) = &intent.effort {
+        id.push('-');
+        id.push_str(effort);
+    }
+    if fast {
+        id.push_str("-fast");
+    }
+    id
+}
+
+fn effort_advertised_in_model_select(
+    select: &SessionConfigSelect,
+    intent: &CursorModelIntent,
+) -> bool {
+    let Some(effort) = &intent.effort else {
+        return false;
+    };
+    select_option_ids(select).iter().any(|id| {
+        parse_cursor_model_intent(id).is_some_and(|applied| {
+            applied.effort.as_deref() == Some(effort.as_str())
+                && intent_matches_base_and_fast(intent, &applied, id)
+        })
+    })
+}
+
+fn intent_matches_base_and_fast(
+    desired: &CursorModelIntent,
+    applied: &CursorModelIntent,
+    _applied_raw: &str,
+) -> bool {
+    cursor_model_intents_match_with_raw(
+        &CursorModelIntent {
+            base: desired.base.clone(),
+            thinking: desired.thinking,
+            effort: None,
+            fast: desired.fast,
+        },
+        &CursorModelIntent {
+            base: applied.base.clone(),
+            thinking: applied.thinking,
+            effort: None,
+            fast: applied.fast,
+        },
+        "",
+    )
+}
+
+fn applied_model_satisfies_pin(options: &[SessionConfigOption], desired: &str) -> bool {
+    let Some(applied_id) = read_model_applied(Some(options)) else {
+        return false;
+    };
+    let Some(desired_intent) = parse_cursor_model_intent(desired) else {
+        return false;
+    };
+    let Some(applied_intent) = parse_cursor_model_intent(&applied_id) else {
+        return false;
+    };
+    let Some(model) = model_option(options) else {
+        return false;
+    };
+    let SessionConfigKind::Select(select) = &model.kind else {
+        return false;
+    };
+    if !select_option_ids(select).iter().any(|id| id == &applied_id) {
+        return false;
+    }
+
+    let fast_ok = if let Some(fast) = model_config_boolean_option(options) {
+        read_fast_current_value(fast) == Some(desired_intent.fast.unwrap_or(false))
+    } else {
+        desired_intent.fast.unwrap_or(false) == applied_intent.fast.unwrap_or(false)
+    };
+    if !fast_ok {
+        return false;
+    }
+
+    if cursor_model_intents_match_with_raw(&desired_intent, &applied_intent, &applied_id) {
+        return true;
+    }
+
+    // Writable thought_level: when current matches this pin's effort, accept; otherwise
+    // fall through to spawn-applied family-row satisfaction (#1013).
+    if let Some(thought) = thought_level_option(options) {
+        if let Some(effort) = &desired_intent.effort {
+            if option_value_advertised(thought, effort)
+                && read_select_current_value(thought).as_deref() == Some(effort.as_str())
+                && intent_matches_base_and_fast(&desired_intent, &applied_intent, &applied_id)
+            {
+                return true;
+            }
+        }
+    }
+
+    // Issue #1011/#1013: spawn-applied model select values may omit unadvertised effort
+    // even when a non-writable thought_level option is advertised.
+    if desired_intent.effort.is_none() {
+        return false;
+    }
+    if effort_advertised_in_model_select(select, &desired_intent) {
+        return false;
+    }
+    if applied_intent.effort.is_none()
+        && intent_matches_base_and_fast(&desired_intent, &applied_intent, &applied_id)
+    {
+        return true;
+    }
+    unique_advertised_base_fast(&select_option_ids(select), &desired_intent).as_deref()
+        == Some(applied_id.as_str())
+}
+
 fn find_advertised_model_value(
     select: &SessionConfigSelect,
     intent: &CursorModelIntent,
@@ -410,14 +747,45 @@ fn find_advertised_model_value(
     {
         return Some(intent.base.clone());
     }
-    ids.into_iter().find(|id| {
-        if model_pins_at_spawn {
-            parse_cursor_model_intent(id)
-                .is_some_and(|applied| cursor_model_intents_match(intent, &applied))
-        } else {
-            id == &intent.base
+    if !model_pins_at_spawn {
+        return ids.into_iter().find(|id| id == &intent.base);
+    }
+
+    let catalog_id = compose_catalog_id_from_intent(intent);
+    if ids.iter().any(|id| id == &catalog_id) {
+        return Some(catalog_id);
+    }
+
+    if let Some(id) = ids.iter().find(|id| {
+        parse_cursor_model_intent(id)
+            .is_some_and(|applied| cursor_model_intents_match_with_raw(intent, &applied, id))
+    }) {
+        return Some(id.clone());
+    }
+
+    // Issue #1011: when *this* pin's effort is not advertised for the same base+fast
+    // (High on gpt-5.6-sol-high must not block a Grok High pin), map to effort-less base+fast.
+    if intent.effort.is_some() && !effort_advertised_in_model_select(select, intent) {
+        if let Some(id) = ids.iter().find(|id| {
+            parse_cursor_model_intent(id).is_some_and(|applied| {
+                applied.effort.is_none() && intent_matches_base_and_fast(intent, &applied, id)
+            })
+        }) {
+            return Some(id.clone());
         }
-    })
+        return unique_advertised_base_fast(&ids, intent);
+    }
+
+    unique_advertised_base_fast(&ids, intent)
+}
+
+fn unique_advertised_base_fast(ids: &[String], intent: &CursorModelIntent) -> Option<String> {
+    let mut matches = ids.iter().filter(|id| {
+        parse_cursor_model_intent(id)
+            .is_some_and(|applied| intent_matches_base_and_fast(intent, &applied, id))
+    });
+    let first = matches.next()?.clone();
+    matches.next().is_none().then_some(first)
 }
 
 fn select_option_ids(select: &SessionConfigSelect) -> Vec<String> {
