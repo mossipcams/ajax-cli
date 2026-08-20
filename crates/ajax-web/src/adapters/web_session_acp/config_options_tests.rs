@@ -197,47 +197,100 @@ fn find_option_by_category_prefers_category_over_id() {
     );
 }
 
+/// Split-catalog fixture for issue #997 sibling-reset retry: advertises every High
+/// pin base model value id without changing [`parameterized_options`].
+fn split_catalog_high_pin_options() -> Vec<SessionConfigOption> {
+    vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5", "Composer"),
+                SessionConfigSelectOption::new("grok-4.6", "Grok 4.6"),
+                SessionConfigSelectOption::new("gpt-5.6-sol", "GPT 5.6 Sol"),
+                SessionConfigSelectOption::new("claude-opus-5", "Claude Opus 5"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        SessionConfigOption::select(
+            "effort",
+            "Effort",
+            "high",
+            vec![
+                SessionConfigSelectOption::new("high", "High"),
+                SessionConfigSelectOption::new("medium", "Medium"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+        SessionConfigOption::boolean("fast", "Fast", true)
+            .category(SessionConfigOptionCategory::ModelConfig),
+    ]
+}
+
 #[test]
 fn apply_steps_needing_send_recovers_when_model_set_resets_siblings_issue_997() {
-    let target_steps =
-        map_pin_to_apply_steps(&parameterized_options(), "cursor-grok-4.6-high", true)
-            .expect("mapped");
-    let mut options = parameterized_options();
-    if let SessionConfigKind::Select(select) = &mut options[0].kind {
-        select.current_value = SessionConfigValueId::from("composer-2.5");
-    }
-    if let SessionConfigKind::Select(select) = &mut options[1].kind {
-        select.current_value = SessionConfigValueId::from("high");
-    }
-    if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
-        boolean.current_value = false;
-    }
-    let first_pending = apply_steps_needing_send(&options, &target_steps);
-    assert_eq!(first_pending.len(), 1);
-    assert_eq!(first_pending[0].config_id, "model");
+    let cases = [
+        ("cursor-grok-4.6-high", "grok-4.6"),
+        ("gpt-5.6-sol-high", "gpt-5.6-sol"),
+        ("claude-opus-5-high", "claude-opus-5"),
+    ];
+    for (catalog_pin, model_value) in cases {
+        let base_options = split_catalog_high_pin_options();
+        let target_steps =
+            map_pin_to_apply_steps(&base_options, catalog_pin, true).expect("mapped");
+        let mut options = base_options;
+        if let SessionConfigKind::Select(select) = &mut options[0].kind {
+            select.current_value = SessionConfigValueId::from("composer-2.5");
+        }
+        if let SessionConfigKind::Select(select) = &mut options[1].kind {
+            select.current_value = SessionConfigValueId::from("high");
+        }
+        if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
+            boolean.current_value = false;
+        }
+        let first_pending = apply_steps_needing_send(&options, &target_steps);
+        assert_eq!(first_pending.len(), 1, "{catalog_pin}: only model pending");
+        assert_eq!(first_pending[0].config_id, "model");
 
-    if let SessionConfigKind::Select(select) = &mut options[0].kind {
-        select.current_value = SessionConfigValueId::from("grok-4.6");
-    }
-    if let SessionConfigKind::Select(select) = &mut options[1].kind {
-        select.current_value = SessionConfigValueId::from("medium");
-    }
-    if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
-        boolean.current_value = true;
-    }
-    let second_pending = apply_steps_needing_send(&options, &target_steps);
-    assert!(second_pending.iter().any(|step| step.config_id == "effort"));
-    assert!(second_pending.iter().any(|step| step.config_id == "fast"));
-    assert!(!pin_satisfied(Some(&options), "cursor-grok-4.6-high", true));
+        if let SessionConfigKind::Select(select) = &mut options[0].kind {
+            select.current_value = SessionConfigValueId::from(model_value);
+        }
+        if let SessionConfigKind::Select(select) = &mut options[1].kind {
+            select.current_value = SessionConfigValueId::from("medium");
+        }
+        if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
+            boolean.current_value = true;
+        }
+        let second_pending = apply_steps_needing_send(&options, &target_steps);
+        assert!(
+            second_pending.iter().any(|step| step.config_id == "effort"),
+            "{catalog_pin}: effort must be re-sent after model set_config reset"
+        );
+        assert!(
+            second_pending.iter().any(|step| step.config_id == "fast"),
+            "{catalog_pin}: fast must be re-sent after model set_config reset"
+        );
+        assert!(
+            !pin_satisfied(Some(&options), catalog_pin, true),
+            "{catalog_pin}: pin must stay unsatisfied until siblings match"
+        );
 
-    if let SessionConfigKind::Select(select) = &mut options[1].kind {
-        select.current_value = SessionConfigValueId::from("high");
+        if let SessionConfigKind::Select(select) = &mut options[1].kind {
+            select.current_value = SessionConfigValueId::from("high");
+        }
+        if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
+            boolean.current_value = false;
+        }
+        assert!(
+            apply_steps_needing_send(&options, &target_steps).is_empty(),
+            "{catalog_pin}: no steps left once siblings match"
+        );
+        assert!(
+            pin_satisfied(Some(&options), catalog_pin, true),
+            "{catalog_pin}: pin satisfied when all mapped options match"
+        );
     }
-    if let SessionConfigKind::Boolean(boolean) = &mut options[2].kind {
-        boolean.current_value = false;
-    }
-    assert!(apply_steps_needing_send(&options, &target_steps).is_empty());
-    assert!(pin_satisfied(Some(&options), "cursor-grok-4.6-high", true));
 }
 
 #[test]
