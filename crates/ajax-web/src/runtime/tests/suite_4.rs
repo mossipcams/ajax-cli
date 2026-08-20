@@ -242,6 +242,7 @@ async fn axum_task_keys_route_is_not_supported() {
 async fn post_task_swaps_a_provisioned_task_to_another_harness() {
     let mut task = crate::test_support::fix_login_task();
     task.set_skip_interactive_agent(true);
+    task.set_session_model(Some("gpt-5.6-sol[high]"));
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let (state, cookie, app) = app_with(context, TestBridge::default(), "swap-agent");
 
@@ -249,7 +250,7 @@ async fn post_task_swaps_a_provisioned_task_to_another_harness() {
         &app,
         &cookie,
         "/api/tasks/web%2Ffix-login",
-        r#"{"agent":"claude","model":"claude-opus-5"}"#,
+        r#"{"agent":"claude"}"#,
     )
     .await;
 
@@ -263,7 +264,25 @@ async fn post_task_swaps_a_provisioned_task_to_another_harness() {
         .expect("task")
         .clone();
     assert_eq!(task.selected_agent, ajax_core::models::AgentClient::Claude);
-    assert_eq!(task.session_model(), Some("claude-opus-5"));
+    assert_eq!(task.session_model(), None);
+}
+
+#[tokio::test]
+async fn post_task_rejects_a_model_field() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "swap-agent-model-field");
+
+    let response = post_json(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login",
+        r#"{"agent":"claude","model":"claude-opus-5"}"#,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 // An interactive task still has its agent live in tmux; the registry must not
@@ -311,6 +330,25 @@ async fn post_task_without_an_agent_body_is_still_not_found() {
     assert_json_not_found(response, "not found").await;
 }
 
+#[tokio::test]
+async fn post_task_rejects_an_idle_same_harness_switch() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = ajax_core::models::AgentClient::Cursor;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "same-harness-idle");
+
+    let response = post_json(
+        &app,
+        &cookie,
+        "/api/tasks/web%2Ffix-login",
+        r#"{"agent":"cursor"}"#,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 #[test]
 fn post_task_same_harness_swap_keeps_live_child() {
     use crate::adapters::web_session_acp::with_test_acp_program;
@@ -322,6 +360,7 @@ fn post_task_same_harness_swap_keeps_live_child() {
     let mut task = crate::test_support::fix_login_task();
     task.set_skip_interactive_agent(true);
     task.selected_agent = AgentClient::Cursor;
+    task.set_session_model(Some("cursor-grok-4.6-high"));
     task.worktree_path = worktree.clone();
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let script =
@@ -348,11 +387,14 @@ fn post_task_same_harness_swap_keeps_live_child() {
                 &app,
                 &cookie,
                 "/api/tasks/web%2Ffix-login",
-                r#"{"agent":"cursor","model":"composer-2.5"}"#,
+                r#"{"agent":"cursor"}"#,
             )
             .await;
 
-            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = json_of(response).await;
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["code"], "unsupported_capability");
             assert!(directory.has_live_entry(handle));
             assert_eq!(directory.child_id(handle).await, child_before);
         });
@@ -371,6 +413,7 @@ fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
     let mut task = crate::test_support::fix_login_task();
     task.set_skip_interactive_agent(true);
     task.selected_agent = AgentClient::Cursor;
+    task.set_session_model(Some("cursor-grok-4.6-high"));
     task.worktree_path = worktree.clone();
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let script =
@@ -415,12 +458,23 @@ fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
                     &app,
                     &cookie,
                     "/api/tasks/web%2Ffix-login",
-                    r#"{"agent":"claude","model":"claude-opus-5"}"#,
+                    r#"{"agent":"claude"}"#,
                 )
                 .await;
 
                 assert_eq!(response.status(), StatusCode::OK);
                 assert!(directory.has_live_entry(handle));
+                use ajax_core::registry::Registry as _;
+                assert_eq!(
+                    state
+                        .shared()
+                        .context
+                        .registry
+                        .get_task(&ajax_core::models::TaskId::new(handle))
+                        .expect("task")
+                        .session_model(),
+                    None
+                );
                 let child_after = directory.child_id(handle).await;
                 assert_ne!(child_after, child_before);
                 directory.pump(handle).await;
@@ -498,10 +552,10 @@ fn post_task_same_harness_swap_surfaces_apply_failure_with_live_slot() {
                 .await;
 
                 set_test_acp_command(None);
-                assert_eq!(response.status(), StatusCode::CONFLICT);
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
                 let body = json_of(response).await;
                 assert_eq!(body["ok"], false);
-                assert_eq!(body["code"], "command_failed");
+                assert_eq!(body["code"], "unsupported_capability");
             });
         });
     });

@@ -64,6 +64,11 @@ pub(crate) enum TaskSessionCommand {
         model: String,
         reply: oneshot::Sender<Result<u64, String>>,
     },
+    ApplyConfigOption {
+        config_id: String,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+        reply: oneshot::Sender<Result<task_session_spawn::ApplyConfigOptionResult, String>>,
+    },
     ResetHarness {
         worktree_path: PathBuf,
         model: String,
@@ -323,6 +328,14 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             reply,
         } => {
             let result = task_session_spawn::apply_model(state, &worktree_path, &model).await;
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::ApplyConfigOption {
+            config_id,
+            value,
+            reply,
+        } => {
+            let result = task_session_spawn::apply_config_option(state, &config_id, value).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::ResetHarness {

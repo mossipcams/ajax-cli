@@ -180,7 +180,12 @@ async fn handle_inbound_text(
     .await
     {
         Ok(ApplyClientMessageOutcome::Applied) => ClientHandleResult::Continue,
-        Ok(ApplyClientMessageOutcome::ModelChanged) => ClientHandleResult::Continue,
+        Ok(ApplyClientMessageOutcome::ModelChanged { persist_warning }) => {
+            if let Some(warn) = persist_warning {
+                let _ = send_error(socket, &warn).await;
+            }
+            ClientHandleResult::Continue
+        }
         Err(error) => {
             let ok = send_error(socket, &error).await;
             if ok {

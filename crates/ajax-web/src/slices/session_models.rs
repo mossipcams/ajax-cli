@@ -162,7 +162,8 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
                 has_fast: None,
             }]
         });
-        let models = collapse_cursor_catalog(raw);
+        let mut models = collapse_cursor_catalog(raw);
+        overlay_cursor_acp_labels(&mut models);
         return SessionModelsResponse {
             models,
             default: CURSOR_DEFAULT_MODEL.to_string(),
@@ -375,6 +376,31 @@ pub fn collapse_cursor_catalog(models: Vec<SessionModelOption>) -> Vec<SessionMo
         });
     }
     collapsed
+}
+
+/// Replace collapsed Cursor row labels with ACP `choice.name` values when available.
+fn overlay_cursor_acp_labels(models: &mut [SessionModelOption]) {
+    let labels =
+        crate::adapters::web_session_acp::read_cursor_acp_model_labels(&std::env::temp_dir());
+    apply_cursor_label_overlay(models, &labels);
+}
+
+/// Apply a base-id label map; leaves Auto and unmatched rows unchanged.
+pub(crate) fn apply_cursor_label_overlay(
+    models: &mut [SessionModelOption],
+    labels: &HashMap<String, String>,
+) {
+    if labels.is_empty() {
+        return;
+    }
+    for model in models.iter_mut() {
+        if model.id == "auto" {
+            continue;
+        }
+        if let Some(label) = labels.get(&model.id) {
+            model.label = label.clone();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -610,5 +636,48 @@ mod tests {
         let models = parse_agent_models_output("composer-2.5 - Composer 2.5\n");
         assert_eq!(models[0].id, "auto");
         assert_eq!(models[1].id, "composer-2.5");
+    }
+
+    #[test]
+    fn apply_cursor_label_overlay_replaces_cli_names_with_acp_names() {
+        let mut models = collapse_cursor_catalog(vec![
+            SessionModelOption {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+                efforts: None,
+                has_fast: None,
+            },
+            SessionModelOption {
+                id: "grok-4.6".to_string(),
+                label: "Cursor Grok 4.6".to_string(),
+                efforts: Some(vec!["high".to_string()]),
+                has_fast: Some(true),
+            },
+            SessionModelOption {
+                id: "gpt-5.6-sol".to_string(),
+                label: "GPT-5.6 Sol 1M High".to_string(),
+                efforts: Some(vec!["high".to_string(), "medium".to_string()]),
+                has_fast: None,
+            },
+        ]);
+        let mut labels = HashMap::new();
+        labels.insert("grok-4.6".to_string(), "Grok 4.6".to_string());
+        labels.insert("gpt-5.6-sol".to_string(), "GPT-5.6-Sol".to_string());
+        apply_cursor_label_overlay(&mut models, &labels);
+        assert_eq!(models[0].label, "Auto");
+        assert_eq!(models[1].label, "Grok 4.6");
+        assert_eq!(models[2].label, "GPT-5.6-Sol");
+    }
+
+    #[test]
+    fn apply_cursor_label_overlay_fails_open_when_overlay_is_empty() {
+        let mut models = vec![SessionModelOption {
+            id: "grok-4.6".to_string(),
+            label: "Cursor Grok 4.6".to_string(),
+            efforts: None,
+            has_fast: None,
+        }];
+        apply_cursor_label_overlay(&mut models, &HashMap::new());
+        assert_eq!(models[0].label, "Cursor Grok 4.6");
     }
 }

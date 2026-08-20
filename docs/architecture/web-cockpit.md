@@ -188,17 +188,16 @@ sheet as the dashboard (orchestration chat pre-selected when the flag is on);
 the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
-`POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
-model for an existing task, exposed as **Switch** in the Ajax chat (ChatSurface)
-task-details modal. Same-harness model changes persist `session_model` and apply
-the pin in-band on the live ACP session when a slot exists
-(`session/set_config_option`); with no live slot, persist only. Cross-harness
-changes persist and reset backend context on the live slot (cancel in-flight work,
-shut down the old ACP child, spawn the new harness with empty context) while
-keeping the TaskSession slot and JSONL transcript; with no live slot, persist and
-clear the stored resume id so the next attach uses `session/new`. Switch is refused
-for a task that was launched interactively, because that task's agent is live in its
-tmux pane and the registry must not name a harness that is not the running process.
+`POST /api/tasks/{handle}` with `{ "agent" }` is **Harness Switch**. A `model`
+field is refused (`unsupported_capability`). Same-harness Switch is refused;
+connected model, effort, and Fast changes use the composer controls. Cross-harness
+Switch clears the prior harness model pin, resets backend context on the live slot
+(cancel in-flight work, shut down the old ACP child, spawn the new harness with
+empty context), and keeps the TaskSession slot and JSONL transcript; with no live
+slot, persist `agent` with `session_model: None` and clear the stored resume id so
+the next attach uses `session/new`. Switch is refused for a task that was launched
+interactively, because that task's agent is live in its tmux pane and the registry
+must not name a harness that is not the running process.
 
 When spawn argv or resume/load leave a model that does not match the operator pin
 (for example Cursor CLI default Composer Fast while Grok High was chosen), the
@@ -210,12 +209,28 @@ emits a typed error, keeps the child running, and leaves `session_model` as the
 operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
 Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
 `_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
-capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` so
-the connected picker seeds the current pin and encodes in-band apply with
-advertised config ids; the model list still comes from `GET /api/session/models`.
-`snapshot.model` is the model option's `currentValue` only. In-band refusal
-leaves `session_model` as the operator pin and `snapshot.model` on
-harness-reported evidence.
+capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` as
+the live connected-control contract. New Task still lists models from
+`GET /api/session/models`. `snapshot.model` is the model option's `currentValue`
+only. In-band refusal leaves `session_model` as the prior restart pin and
+`snapshot.model` on harness-reported evidence.
+
+**Connected model controls (MVP).** When `snapshot.sessionConfigOptions` advertises
+model, effort/thought-level, and/or Fast options, the chat composer hotbar exposes
+pessimistic pickers bound to those descriptors only. Each pick sends WebSocket
+`set_config_option` with the exact advertised `configId` and string or boolean
+value; the UI keeps the last confirmed value until a replacement snapshot arrives.
+After ACP accepts the change, the host replaces the complete advertised option
+list, derives pipe-form restart storage from the confirmed descriptors, and persists
+`session_model` through the existing core operation. Refusal does not persist or
+change confirmed browser state; persistence failure keeps the live change and
+reports a warning. New Task and idle catalog selection still use only
+`GET /api/session/models?agent=` — there is no second option-catalog endpoint.
+
+**Harness Switch (MVP).** Cross-harness Switch in task details sends only the target
+harness (no model picker). It clears the prior harness model pin, resets ACP
+context, and keeps the transcript. Same-harness model changes use the connected
+composer controls or legacy `set_model`, not Switch.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The

@@ -1,8 +1,5 @@
 //! ACP session `configOptions` helpers (Agent of Empires contract).
-//!
-//! Advertised options are the live configuration surface: find by category,
-//! read select/boolean current values, map operator pins, and build typed
-//! `session/set_config_option` requests.
+//! Find advertised options, map operator pins, and build typed set requests.
 
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
@@ -10,9 +7,18 @@ use agent_client_protocol::schema::v1::{
 };
 use ajax_core::adapters::{
     cursor_model_intents_match, cursor_unspecified_spawn_satisfied, parse_cursor_model_intent,
-    parse_model_selection, CursorModelIntent, CURSOR_DEFAULT_SPAWN_MODEL,
+    parse_model_selection, CursorModelIntent, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Wire value for one live `session/set_config_option` change.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum SessionConfigValue {
+    Select(String),
+    Boolean(bool),
+}
 
 /// One in-band `session/set_config_option` change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,10 +61,17 @@ pub fn model_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOpt
 }
 
 pub fn thought_level_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOption> {
+    // Cursor advertises `reasoning` then rejects it on set_config_option (#1010). Prefer `effort`.
+    if let Some(effort) = options
+        .iter()
+        .find(|option| option.id.0.as_ref() == "effort")
+    {
+        return Some(effort);
+    }
     find_option_by_category(
         options,
         SessionConfigOptionCategory::ThoughtLevel,
-        &["reasoning", "effort"],
+        &["thought_level", "reasoning"],
     )
 }
 
@@ -175,6 +188,103 @@ pub fn build_set_config_request(
     SetSessionConfigOptionRequest::new(session_id.to_string(), config_id.to_string(), value)
 }
 
+/// Convert the typed browser value without widening the accepted JSON shape.
+pub fn wire_value_to_session_value(value: SessionConfigValue) -> SessionConfigOptionValue {
+    match value {
+        SessionConfigValue::Select(value) => SessionConfigOptionValue::value_id(value),
+        SessionConfigValue::Boolean(value) => SessionConfigOptionValue::boolean(value),
+    }
+}
+
+/// Validate the exact advertised id, kind, and choice before ACP I/O.
+pub fn validate_config_change(
+    options: &[SessionConfigOption],
+    config_id: &str,
+    value: &SessionConfigOptionValue,
+) -> Result<(), String> {
+    let option = options
+        .iter()
+        .find(|option| option.id.0.as_ref() == config_id)
+        .ok_or_else(|| format!("config option {config_id} is not advertised on this session"))?;
+    match (&option.kind, value) {
+        (SessionConfigKind::Select(select), SessionConfigOptionValue::ValueId { value })
+            if select_value_advertised(select, value.0.as_ref()) =>
+        {
+            Ok(())
+        }
+        (SessionConfigKind::Select(_), SessionConfigOptionValue::ValueId { value }) => {
+            Err(format!(
+                "config option {config_id}={} is not advertised",
+                value.0.as_ref()
+            ))
+        }
+        (SessionConfigKind::Boolean(_), SessionConfigOptionValue::Boolean { .. }) => Ok(()),
+        (SessionConfigKind::Select(_), _) => {
+            Err(format!("config option {config_id} requires a string value"))
+        }
+        (SessionConfigKind::Boolean(_), _) => Err(format!(
+            "config option {config_id} requires a boolean value"
+        )),
+        _ => Err(format!("config option {config_id} cannot be changed")),
+    }
+}
+
+fn option_is_model_category(options: &[SessionConfigOption], config_id: &str) -> bool {
+    options.iter().any(|option| {
+        option.id.0.as_ref() == config_id
+            && (option.category.as_ref() == Some(&SessionConfigOptionCategory::Model)
+                || config_id == "model")
+    })
+}
+
+/// True when a successful apply of `config_id` should persist pipe storage ([#1014]).
+pub fn option_triggers_model_persist(options: &[SessionConfigOption], config_id: &str) -> bool {
+    option_is_model_category(options, config_id)
+        || thought_level_option(options).is_some_and(|option| option.id.0.as_ref() == config_id)
+        || model_config_boolean_option(options)
+            .is_some_and(|option| option.id.0.as_ref() == config_id)
+}
+
+/// Storage pipe for task `session_model` after a successful model-option apply.
+pub fn applied_model_id_for_persist(options: &[SessionConfigOption]) -> Result<String, String> {
+    let model_id = read_model_applied(Some(options))
+        .ok_or_else(|| "confirmed config options omitted the model value".to_string())?;
+    if is_unspecified_model(Some(&model_id)) {
+        return Ok("auto".to_string());
+    }
+    let selection = model_selection_from_advertised_options(options)
+        .ok_or_else(|| "confirmed config options omitted the model value".to_string())?;
+    let encoded = selection.encode();
+    if parse_model_selection(&encoded).as_ref() != Some(&selection) {
+        return Err("confirmed model options cannot be encoded for restart".to_string());
+    }
+    Ok(encoded)
+}
+
+fn model_selection_from_advertised_options(
+    options: &[SessionConfigOption],
+) -> Option<ModelSelection> {
+    let model = read_model_applied(Some(options))?;
+    let mut extras = Vec::new();
+    if let Some(thought) = thought_level_option(options) {
+        if let Some(level) = read_select_current_value(thought) {
+            extras.push((thought.id.0.to_string(), level));
+        }
+    }
+    if let Some(fast) = model_config_boolean_option(options) {
+        if let Some(on) = read_fast_current_value(fast) {
+            extras.push((
+                fast.id.0.to_string(),
+                if on { "true" } else { "false" }.to_string(),
+            ));
+        }
+    }
+    Some(ModelSelection {
+        model,
+        options: extras,
+    })
+}
+
 pub fn replace_config_options(
     stored: &mut Option<Vec<SessionConfigOption>>,
     next: Vec<SessionConfigOption>,
@@ -200,7 +310,10 @@ pub fn sync_session_result_config_options(
     }
 }
 
-fn step_matches_current(options: &[SessionConfigOption], step: &ConfigApplyStep) -> bool {
+pub(crate) fn step_matches_current(
+    options: &[SessionConfigOption],
+    step: &ConfigApplyStep,
+) -> bool {
     let Some(option) = options
         .iter()
         .find(|option| option.id.0.as_ref() == step.config_id)
@@ -255,7 +368,8 @@ pub fn pin_satisfied(
 
 /// True when the operator did not pin a specific harness model id.
 pub fn is_unspecified_model(raw: Option<&str>) -> bool {
-    matches!(raw.map(str::trim), None | Some("") | Some("auto"))
+    ajax_core::adapters::is_unspecified_acp_model(raw)
+        || matches!(raw.map(str::trim), Some("default" | "default[]"))
 }
 
 pub fn map_pin_to_apply_steps(
@@ -357,13 +471,12 @@ fn map_intent_to_split_steps(
     }];
     if let Some(effort) = &intent.effort {
         if let Some(thought) = thought_level_option(options) {
-            if !option_value_advertised(thought, effort) {
-                return Err(format!("harness did not advertise thought level {effort}"));
+            if option_value_advertised(thought, effort) {
+                steps.push(ConfigApplyStep {
+                    config_id: thought.id.0.to_string(),
+                    value: SessionConfigOptionValue::value_id(effort.clone()),
+                });
             }
-            steps.push(ConfigApplyStep {
-                config_id: thought.id.0.to_string(),
-                value: SessionConfigOptionValue::value_id(effort.clone()),
-            });
         }
     }
     if let Some(fast) = model_config_boolean_option(options) {
@@ -437,7 +550,7 @@ fn select_option_ids(select: &SessionConfigSelect) -> Vec<String> {
 
 fn map_selection_to_steps(
     options: &[SessionConfigOption],
-    selection: &ajax_core::adapters::ModelSelection,
+    selection: &ModelSelection,
 ) -> Result<Vec<ConfigApplyStep>, String> {
     let model = model_option(options)
         .ok_or_else(|| "harness did not advertise a model option".to_string())?;

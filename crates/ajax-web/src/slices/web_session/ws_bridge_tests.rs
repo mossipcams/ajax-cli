@@ -1,7 +1,12 @@
 use super::test_support::BlockingSessionDirectory;
 use super::ws_bridge::{should_send_keepalive, MAX_SESSION_FRAME_BYTES, SESSION_PING_INTERVAL};
-use super::{apply_client_message, SessionClientMessage, SessionServerEvent, TaskSessionDirectory};
-use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+use super::{
+    apply_client_message, ApplyClientMessageOutcome, SessionClientMessage, SessionServerEvent,
+    SessionSnapshot, TaskSessionDirectory,
+};
+use crate::adapters::web_session_acp::{
+    with_test_acp_extra_args, with_test_acp_program, SessionConfigValue,
+};
 use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Duration};
 
@@ -28,6 +33,22 @@ fn keepalive_waits_for_silence_then_pings() {
     ));
     assert!(should_send_keepalive(SESSION_PING_INTERVAL));
     assert!(should_send_keepalive(SESSION_PING_INTERVAL * 3));
+}
+
+#[test]
+fn set_config_option_accepts_only_string_or_boolean_values() {
+    assert!(serde_json::from_str::<SessionClientMessage>(
+        r#"{"type":"set_config_option","configId":"model","value":"composer-2.5"}"#
+    )
+    .is_ok());
+    assert!(serde_json::from_str::<SessionClientMessage>(
+        r#"{"type":"set_config_option","configId":"fast","value":true}"#
+    )
+    .is_ok());
+    assert!(serde_json::from_str::<SessionClientMessage>(
+        r#"{"type":"set_config_option","configId":"fast","value":{"type":"boolean","value":true}}"#
+    )
+    .is_err());
 }
 
 #[tokio::test]
@@ -88,11 +109,10 @@ fn apply_client_message_prompt_records_user_message_immediately() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #931: in-session set_model must persist on the task
-// before the host applies the pin in-band; persistence failure leaves the slot
-// unchanged and returns a typed error.
+// Regression for issue #931: in-session set_config_option persists the model id
+// after a successful live apply; persistence failure leaves the child running.
 #[test]
-fn apply_client_message_set_model_persists_before_in_band_apply() {
+fn apply_client_message_set_config_option_persists_after_in_band_apply() {
     let dir = scratch_dir("set-model-persist");
     let handle = "web/set-model";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -118,13 +138,14 @@ fn apply_client_message_set_model_persists_before_in_band_apply() {
             directory.inner(),
             handle,
             &dir,
-            SessionClientMessage::SetModel {
-                model: "composer-2.5".to_string(),
+            SessionClientMessage::SetConfigOption {
+                config_id: "model".to_string(),
+                value: SessionConfigValue::Select("composer-2.5".to_string()),
             },
             &mut generation,
             Some(persist),
         ))
-        .expect("set model");
+        .expect("set config option");
 
         assert_eq!(persisted.lock().unwrap().as_deref(), Some("composer-2.5"));
         assert_eq!(directory.child_id(handle), Some(before));
@@ -144,8 +165,75 @@ fn apply_client_message_set_model_persists_before_in_band_apply() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+// Regression #1014: each live model axis refreshes the complete restart pin.
 #[test]
-fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
+fn apply_client_message_set_config_option_persists_effort_and_fast_toggles() {
+    let dir = scratch_dir("set-fast-persist");
+    let handle = "web/set-fast";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &["--cursor-parameterized-models", "--cli-default-model"],
+            || {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire");
+                let before = directory.child_id(handle).expect("child");
+                let mut generation = directory.generation(handle);
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let persist: super::PersistSessionModel =
+                    std::sync::Arc::new(move |model: &str| {
+                        *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+                        Ok(())
+                    });
+                rt.block_on(apply_client_message(
+                    directory.inner(),
+                    handle,
+                    &dir,
+                    SessionClientMessage::SetConfigOption {
+                        config_id: "effort".to_string(),
+                        value: SessionConfigValue::Select("medium".to_string()),
+                    },
+                    &mut generation,
+                    Some(std::sync::Arc::clone(&persist)),
+                ))
+                .expect("set effort config option");
+                assert_eq!(
+                    persisted.lock().unwrap().as_deref(),
+                    Some("grok-4.6|effort=medium|fast=false")
+                );
+
+                rt.block_on(apply_client_message(
+                    directory.inner(),
+                    handle,
+                    &dir,
+                    SessionClientMessage::SetConfigOption {
+                        config_id: "fast".to_string(),
+                        value: SessionConfigValue::Boolean(true),
+                    },
+                    &mut generation,
+                    Some(persist),
+                ))
+                .expect("set fast config option");
+
+                assert_eq!(
+                    persisted.lock().unwrap().as_deref(),
+                    Some("grok-4.6|effort=medium|fast=true")
+                );
+                assert_eq!(directory.child_id(handle), Some(before));
+            },
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn apply_client_message_set_config_option_leaves_child_unchanged_when_persist_fails() {
     let dir = scratch_dir("set-model-persist-fail");
     let handle = "web/set-model-fail";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -160,20 +248,35 @@ fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let persist: super::PersistSessionModel =
             std::sync::Arc::new(|_model: &str| Err("registry write failed".to_string()));
-        let error = rt
+        let outcome = rt
             .block_on(apply_client_message(
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: "composer-2.5".to_string(),
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("composer-2.5".to_string()),
                 },
                 &mut generation,
                 Some(persist),
             ))
-            .unwrap_err();
-        assert!(error.contains("registry write failed"));
+            .expect("apply succeeds even when persist fails");
+        assert_eq!(
+            outcome,
+            ApplyClientMessageOutcome::ModelChanged {
+                persist_warning: Some(
+                    "Model changed but could not save to task — registry write failed".to_string()
+                ),
+            }
+        );
         assert_eq!(directory.child_id(handle), Some(before));
+        directory.pump(handle);
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Error { message }
+                if message.contains("could not save to task")
+        )));
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -521,6 +624,222 @@ fn apply_persisted_model_keeps_live_child_for_same_harness_swap() {
 
         assert_eq!(directory.child_id(handle), Some(child_before));
         assert!(directory.inner().has_live_entry(handle));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn snapshot_option(snapshot: &SessionSnapshot, id: &str) -> serde_json::Value {
+    snapshot
+        .session_config_options
+        .as_ref()
+        .expect("snapshot advertised config options")
+        .iter()
+        .find(|option| option.id == id)
+        .map(|option| option.current_value.clone())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn events_contain_text(events: &[SessionServerEvent], needle: &str) -> bool {
+    events.iter().any(|event| match event {
+        SessionServerEvent::Message { text, .. } => text.contains(needle),
+        _ => false,
+    })
+}
+
+/// Fixture-backed product path: create pin → prompt nonce → live axes →
+/// snapshot → persist → reconnect → restart → cross-harness reset.
+#[test]
+fn product_flow_create_live_switch_reload_and_cross_harness() {
+    let dir = scratch_dir("product-flow");
+    let handle = "web/product-flow";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let nonce = format!("nonce-prove-task-model-mvp-{}", std::process::id());
+    let create_pin = "grok-4.6|effort=medium|fast=false";
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cursor-parameterized-models"], || {
+            directory
+                .acquire(handle, &dir, create_pin, AgentClient::Cursor)
+                .expect("create acquire");
+            let child_live = directory.child_id(handle).expect("child");
+            let session_live =
+                crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                    .acp_session_id;
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let created = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                create_pin.to_string(),
+                None,
+            ));
+            assert_eq!(
+                snapshot_option(&created.snapshot, "model"),
+                serde_json::json!("grok-4.6")
+            );
+            assert_eq!(
+                snapshot_option(&created.snapshot, "effort"),
+                serde_json::json!("medium")
+            );
+            assert_eq!(
+                snapshot_option(&created.snapshot, "fast"),
+                serde_json::json!(false)
+            );
+            eprintln!("PROOF create pin={create_pin} child={child_live} session={session_live:?}");
+
+            let mut generation = directory.generation(handle);
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::Prompt {
+                    text: nonce.clone(),
+                    client_message_id: "prompt-nonce".to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("prompt nonce");
+            directory.pump(handle);
+            let (after_prompt, _) = directory.read_from(handle, 0);
+            assert!(
+                events_contain_text(&after_prompt, &nonce),
+                "prompt nonce missing from transcript: {after_prompt:?}"
+            );
+            eprintln!("PROOF prompt nonce={nonce}");
+
+            let persist: super::PersistSessionModel = std::sync::Arc::new(move |model: &str| {
+                *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+                Ok(())
+            });
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetConfigOption {
+                    config_id: "effort".to_string(),
+                    value: SessionConfigValue::Select("low".to_string()),
+                },
+                &mut generation,
+                Some(std::sync::Arc::clone(&persist)),
+            ))
+            .expect("live effort");
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetConfigOption {
+                    config_id: "fast".to_string(),
+                    value: SessionConfigValue::Boolean(true),
+                },
+                &mut generation,
+                Some(std::sync::Arc::clone(&persist)),
+            ))
+            .expect("live fast");
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("gpt-5.6-sol".to_string()),
+                },
+                &mut generation,
+                Some(persist),
+            ))
+            .expect("live model");
+
+            assert_eq!(directory.child_id(handle), Some(child_live));
+            let session_after =
+                crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                    .acp_session_id;
+            assert_eq!(session_after, session_live);
+            let expected_pin = "gpt-5.6-sol|effort=low|fast=true";
+            assert_eq!(persisted.lock().unwrap().as_deref(), Some(expected_pin));
+            let live = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                expected_pin.to_string(),
+                None,
+            ));
+            assert_eq!(
+                snapshot_option(&live.snapshot, "model"),
+                serde_json::json!("gpt-5.6-sol")
+            );
+            assert_eq!(
+                snapshot_option(&live.snapshot, "effort"),
+                serde_json::json!("low")
+            );
+            assert_eq!(
+                snapshot_option(&live.snapshot, "fast"),
+                serde_json::json!(true)
+            );
+            let (after_live, _) = directory.read_from(handle, 0);
+            assert!(events_contain_text(&after_live, &nonce));
+            eprintln!("PROOF live pin={expected_pin} same_child=true same_session=true");
+
+            directory.kill_host_for_test(handle);
+            directory
+                .acquire(handle, &dir, expected_pin, AgentClient::Cursor)
+                .expect("reload acquire");
+            let restarted = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                expected_pin.to_string(),
+                None,
+            ));
+            assert_eq!(
+                snapshot_option(&restarted.snapshot, "model"),
+                serde_json::json!("gpt-5.6-sol")
+            );
+            assert_eq!(
+                snapshot_option(&restarted.snapshot, "effort"),
+                serde_json::json!("low")
+            );
+            assert_eq!(
+                snapshot_option(&restarted.snapshot, "fast"),
+                serde_json::json!(true)
+            );
+            let (after_reload, _) = directory.read_from(handle, 0);
+            assert!(events_contain_text(&after_reload, &nonce));
+            eprintln!("PROOF reload pin={expected_pin} nonce_retained=true");
+
+            rt.block_on(directory.inner().reset_harness_context(
+                handle,
+                &dir,
+                AgentClient::Claude,
+                "auto",
+            ))
+            .expect("cross-harness reset");
+            directory.pump(handle);
+            let (after_swap, _) = directory.read_from(handle, 0);
+            assert!(events_contain_text(&after_swap, &nonce));
+            assert!(events_contain_text(
+                &after_swap,
+                "Client switched harness. Context reset."
+            ));
+            assert_ne!(directory.child_id(handle), Some(child_live));
+            let mut generation = directory.generation(handle);
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::Prompt {
+                    text: format!("{nonce}-after-swap"),
+                    client_message_id: "prompt-after-swap".to_string(),
+                },
+                &mut generation,
+                None,
+            ))
+            .expect("prompt after swap");
+            directory.pump(handle);
+            let (after_new_prompt, _) = directory.read_from(handle, 0);
+            assert!(events_contain_text(
+                &after_new_prompt,
+                &format!("{nonce}-after-swap")
+            ));
+            eprintln!("PROOF cross-harness nonce_retained=true new_prompt=true");
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);

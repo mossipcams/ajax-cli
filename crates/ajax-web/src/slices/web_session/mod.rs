@@ -50,6 +50,12 @@ pub enum SessionClientMessage {
     },
     #[serde(rename = "set_model")]
     SetModel { model: String },
+    #[serde(rename = "set_config_option")]
+    SetConfigOption {
+        #[serde(rename = "configId")]
+        config_id: String,
+        value: crate::adapters::web_session_acp::SessionConfigValue,
+    },
     #[serde(rename = "permission")]
     Permission {
         #[serde(rename = "requestId")]
