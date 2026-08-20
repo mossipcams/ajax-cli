@@ -164,11 +164,20 @@ export function parseNumstat(text) {
     .split("\n")
     .map((line) => line.split("\t"))
     .filter(([additions, deletions]) => /^\d+$/.test(additions) && /^\d+$/.test(deletions))
-    .map(([additions, deletions, ...pathParts]) => ({
-      path: pathParts.join("\t"),
-      additions: Number(additions),
-      deletions: Number(deletions),
-    }));
+    .map(([additions, deletions, ...pathParts]) => {
+      const rawPath = pathParts.join("\t");
+      const brace = rawPath.match(/^(.*)\{(.+) => (.+)\}(.*)$/);
+      const path = brace
+        ? `${brace[1]}${brace[3]}${brace[4]}`
+        : rawPath.includes(" => ")
+          ? rawPath.slice(rawPath.lastIndexOf(" => ") + 4)
+          : rawPath;
+      return {
+        path,
+        additions: Number(additions),
+        deletions: Number(deletions),
+      };
+    });
 }
 
 export function evaluateStagedFiles(entries, lineCountAtIndex) {
@@ -230,7 +239,6 @@ export async function inspectStagedFileLoc({
     await runGit([
       "diff",
       "--cached",
-      "--no-renames",
       "--numstat",
       "--diff-filter=ACMR",
     ]),
