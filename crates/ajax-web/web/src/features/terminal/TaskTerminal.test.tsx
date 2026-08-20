@@ -5,12 +5,13 @@ import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import taskTerminalSource from "./TaskTerminal.tsx?raw";
 import mountTaskTerminalSessionSource from "./mountTaskTerminalSession.ts?raw";
 import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
+import useSpeechInputSource from "@/shared/hooks/useSpeechInput.ts?raw";
 import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw";
 import terminalPasteSource from "./terminalPaste.ts?raw";
 
 /** Shell + peeled mount/speech/paste modules for source-contract asserts. */
 const taskTerminalFeatureSource =
-  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
+  `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${useSpeechInputSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
 
 const stylesSource = readOrderedStylesSource(
   join(dirname(fileURLToPath(import.meta.url)), "../.."),
@@ -607,12 +608,13 @@ describe("TaskTerminal speech input", () => {
     expect(taskTerminalFeatureSource).toMatch(/undoInsertedSpeech/);
     expect(taskTerminalFeatureSource).toMatch(/isStandaloneStartOver/);
 
-    // Contiguous finalTranscript deltas paste in onFinal (outside setState).
+    // Contiguous finalTranscript deltas paste via the terminal adapter (outside setState).
     const onFinal = taskTerminalFeatureSource.match(/onFinal:[\s\S]*?\n {4,8}\},/)?.[0] ?? "";
-    expect(onFinal).toMatch(/pasteThroughTerm\(/);
+    expect(onFinal).toMatch(/insertDelta\(/);
     expect(onFinal).toMatch(/finalTranscript/);
     expect(onFinal).toMatch(/isStandaloneStartOver\(text\)/);
     expect(onFinal).toMatch(/undoInsertedSpeech\(\)/);
+    expect(useTaskTerminalSpeechSource).toMatch(/pasteThroughTerm\(/);
 
     const paste = taskTerminalSource.indexOf(">\n            Paste");
     const backspace = taskTerminalSource.indexOf("aria-label={BACKSPACE_KEY.ariaLabel}");

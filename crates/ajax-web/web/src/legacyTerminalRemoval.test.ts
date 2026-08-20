@@ -71,7 +71,7 @@ describe("legacy terminal removal hygiene", () => {
 
     violations.push(
       ...collectSymbolViolations(
-        "crates/ajax-web/web/src/features/task/TaskDetail.tsx",
+        "crates/ajax-web/web/src/features/task-workspace/TaskTerminalView.tsx",
         ["TerminalSurfaceSelector"],
       ),
       ...collectSymbolViolations("crates/ajax-web/web/src/app/App.tsx", [
