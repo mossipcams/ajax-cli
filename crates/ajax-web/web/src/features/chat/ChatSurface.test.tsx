@@ -408,6 +408,16 @@ describe("ChatSurface smoke", () => {
     expect(within(sheet).getByTestId("session-details-body")).toContainElement(identity);
   });
 
+  it("#998 session route-scroll owns safe-area top because chat omits cockpit chrome", () => {
+    const routeScrollBlock =
+      stylesSource.match(
+        /\[data-testid="route-scroll"\]:has\(\[data-outlet="session"\]\)\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(routeScrollBlock).toMatch(
+      /padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+0\s+env\(safe-area-inset-left\)/,
+    );
+  });
+
   it("#976 pins Ajax terminal outside the scrolling body with iOS-safe sheet insets", () => {
     const scrimBlock =
       stylesSource.match(/\.session-sheet-scrim\s*\{([^}]*)\}/)?.[1] ?? "";
