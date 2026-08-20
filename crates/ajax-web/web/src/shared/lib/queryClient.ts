@@ -8,6 +8,7 @@ export const queryKeys = {
   taskDiff: (handle: string, source: TaskDiffSource) =>
     ["task-diff", handle, source] as const,
   sessionModels: (agent: string) => ["session-models", agent] as const,
+  sessionOptionCatalog: (agent: string) => ["session-option-catalog", agent] as const,
   version: () => ["version"] as const,
   devDeploy: () => ["dev-deploy"] as const,
 };

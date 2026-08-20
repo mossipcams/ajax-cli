@@ -188,6 +188,12 @@ function replayUpdate(text) {
 function handleRequest(msg) {
   const { id, method, params } = msg;
   if (method === 'initialize') {
+    try {
+      fs.writeFileSync(
+        path.join(process.cwd(), '.fake-acp-initialize-params'),
+        JSON.stringify(params ?? {}),
+      );
+    } catch {}
     if (badInitialize) {
       process.stderr.write('agent login required\n');
       send({ jsonrpc: '2.0', id, result: { protocolVersion: 'broken' } });

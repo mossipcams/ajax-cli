@@ -29,6 +29,46 @@
   animation: sheet-rise 220ms var(--ease-spring);
 }
 
+.session-model-switch-sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  gap: 14px;
+  width: min(var(--shell), 100%);
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+    calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  animation: sheet-rise 220ms var(--ease-spring);
+}
+
+.session-model-switch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-model-switch-current {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+}
+
+.session-model-switch-sheet .session-sheet-header .pill,
+.session-model-switch-sheet .session-sheet-close {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
 .session-sheet-header {
   display: flex;
   align-items: center;

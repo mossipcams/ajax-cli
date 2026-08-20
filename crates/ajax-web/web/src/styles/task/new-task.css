@@ -187,6 +187,31 @@
   color: var(--ink-muted);
 }
 
+.model-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-group-label {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 2px 2px;
+  font-size: var(--text-label);
+  font-weight: 700;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.model-group-label:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Reasoning level: a short row of levels, not a full-width list. */
 .reasoning-picker {
   display: flex;

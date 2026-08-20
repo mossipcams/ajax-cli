@@ -8,6 +8,7 @@ pub mod install;
 pub mod operate;
 pub mod push;
 pub mod session_models;
+pub mod session_option_catalog;
 pub mod stt;
 pub mod terminal;
 pub mod web_session;

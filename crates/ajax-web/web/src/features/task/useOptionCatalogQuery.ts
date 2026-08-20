@@ -1,20 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  fetchSessionModels,
+  fetchSessionOptionCatalog,
   normalizeSessionAgent,
-  type SessionModelCatalog,
+  type SessionOptionCatalog,
 } from "./desiredModel";
 import { queryKeys } from "@/shared/lib/queryClient";
 
-export function useSessionModelsQuery(agent: string, options?: { enabled?: boolean }) {
+export function useOptionCatalogQuery(agent: string, options?: { enabled?: boolean }) {
   const harness = normalizeSessionAgent(agent);
   return useQuery({
-    queryKey: queryKeys.sessionModels(harness),
-    queryFn: () => fetchSessionModels(harness),
+    queryKey: queryKeys.sessionOptionCatalog(harness),
+    queryFn: () => fetchSessionOptionCatalog(harness),
     staleTime: 0,
     retry: 1,
     enabled: options?.enabled ?? true,
   });
 }
 
-export type { SessionModelCatalog };
+export type { SessionOptionCatalog };

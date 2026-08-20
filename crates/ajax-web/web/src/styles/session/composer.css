@@ -116,6 +116,31 @@ html.keyboard-open .session-composer {
   cursor: wait;
 }
 
+.session-composer-model {
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  min-width: 44px;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-composer-model-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.session-composer-model:hover,
+.session-composer-model:focus-visible {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+}
+
 .session-composer-send {
   border-color: var(--accent);
   background: var(--accent);

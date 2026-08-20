@@ -69,6 +69,14 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.session-config-pickers .session-model-catalog .model-picker,
+.session-model-switch-sheet .session-config-pickers .session-model-catalog .model-picker {
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .model-picker-toggle {
   align-self: flex-start;
   margin-top: 4px;

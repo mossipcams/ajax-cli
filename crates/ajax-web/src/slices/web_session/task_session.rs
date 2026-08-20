@@ -64,6 +64,12 @@ pub(crate) enum TaskSessionCommand {
         model: String,
         reply: oneshot::Sender<Result<u64, String>>,
     },
+    ApplyConfigOption {
+        worktree_path: PathBuf,
+        config_id: String,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+        reply: oneshot::Sender<Result<task_session_spawn::ApplyConfigOptionResult, String>>,
+    },
     ResetHarness {
         worktree_path: PathBuf,
         model: String,
@@ -84,6 +90,10 @@ pub(crate) enum TaskSessionCommand {
         cursor: usize,
         generation: u64,
         reply: oneshot::Sender<OutboundBatch>,
+    },
+    AppendEvent {
+        event: SessionServerEvent,
+        reply: oneshot::Sender<()>,
     },
     #[cfg(test)]
     Record {
@@ -325,6 +335,17 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let result = task_session_spawn::apply_model(state, &worktree_path, &model).await;
             let _ = reply.send(result);
         }
+        TaskSessionCommand::ApplyConfigOption {
+            worktree_path,
+            config_id,
+            value,
+            reply,
+        } => {
+            let result =
+                task_session_spawn::apply_config_option(state, &worktree_path, &config_id, value)
+                    .await;
+            let _ = reply.send(result);
+        }
         TaskSessionCommand::ResetHarness {
             worktree_path,
             model,
@@ -357,6 +378,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         } => {
             let batch = collect_outbound(state, cursor, generation);
             let _ = reply.send(batch);
+        }
+        TaskSessionCommand::AppendEvent { event, reply } => {
+            state.append_to_log(vec![event]);
+            let _ = reply.send(());
         }
         #[cfg(test)]
         TaskSessionCommand::Record { event, reply } => {

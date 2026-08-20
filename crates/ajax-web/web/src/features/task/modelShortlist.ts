@@ -1,5 +1,5 @@
 import {
-  collapseCursorCatalogModels,
+  composeCursorCatalogId,
   decodeCursorPipeOrCatalogId,
   DEFAULT_SESSION_MODEL,
   normalizeSessionAgent,
@@ -76,8 +76,7 @@ export function buildModelShortlist(
   agent: string,
   pins: { currentModelId?: string; catalogDefault?: string },
 ): { shortlist: SessionModelOption[]; hasMore: boolean } {
-  const catalog =
-    normalizeSessionAgent(agent) === "cursor" ? collapseCursorCatalogModels(models) : models;
+  const catalog = models;
   const ranked = pickRanked(catalog, agent);
   const shortlist: SessionModelOption[] = [];
   const seen = new Set<string>();
@@ -96,10 +95,11 @@ export function buildModelShortlist(
       const currentIntent =
         decodeCursorPipeOrCatalogId(pins.currentModelId) ??
         parseCursorCatalogId(pins.currentModelId);
-      const pinned = currentIntent
-        ? catalog.find((option) => option.id === currentIntent.base)
-        : findById(catalog, pins.currentModelId);
-      add(pinned);
+      const resolved =
+        (currentIntent
+          ? composeCursorCatalogId(currentIntent, catalog.map((option) => option.id))
+          : null) ?? pins.currentModelId;
+      add(findById(catalog, resolved));
     } else {
       add(findById(catalog, pins.currentModelId));
     }

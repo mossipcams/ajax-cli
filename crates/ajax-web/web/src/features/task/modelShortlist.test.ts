@@ -3,9 +3,12 @@ import { buildModelShortlist, SHORTLIST_CAP } from "./modelShortlist";
 
 const cursorCatalog = [
   { id: "auto", label: "Auto" },
-  { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
-  { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-  { id: "gpt-5.6-sol", label: "GPT 5.6", efforts: ["medium", "high"] },
+  { id: "composer-2.5", label: "Composer 2.5" },
+  { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+  { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+  { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+  { id: "gpt-5.6-sol-medium", label: "GPT 5.6" },
+  { id: "gpt-5.6-sol-high", label: "GPT 5.6 High" },
   { id: "claude-opus-4.6", label: "Opus 4.6" },
   { id: "claude-sonnet-4.6", label: "Sonnet 4.6" },
   { id: "gemini-3.7-flash", label: "Gemini Flash" },
@@ -20,10 +23,10 @@ describe("buildModelShortlist", () => {
     const { shortlist, hasMore } = buildModelShortlist(cursorCatalog, "cursor", {
       catalogDefault: "cursor-grok-4.6-high",
     });
-    expect(shortlist.length).toBeLessThanOrEqual(SHORTLIST_CAP + 1);
+    expect(shortlist.length).toBeLessThanOrEqual(SHORTLIST_CAP + 2);
     expect(hasMore).toBe(true);
     expect(shortlist.map((option) => option.id)).toEqual(
-      expect.arrayContaining(["auto", "composer-2.5", "grok-4.6"]),
+      expect.arrayContaining(["auto", "composer-2.5", "cursor-grok-4.6-high"]),
     );
   });
 
@@ -55,7 +58,7 @@ describe("buildModelShortlist", () => {
     expect(hasMore).toBe(false);
   });
 
-  it("does not list Fast and non-Fast Cursor variants as two shortlist slots (#979)", () => {
+  it("keeps exploded Cursor variants as separate shortlist slots", () => {
     const exploded = [
       { id: "auto", label: "Auto" },
       { id: "composer-2.5", label: "Composer 2.5" },
@@ -68,9 +71,9 @@ describe("buildModelShortlist", () => {
     });
     const ids = shortlist.map((option) => option.id);
     expect(ids).toContain("composer-2.5");
-    expect(ids).not.toContain("composer-2.5-fast");
+    expect(ids).toContain("composer-2.5-fast");
     expect(ids).toContain("cursor-grok-4.6-high");
-    expect(ids).not.toContain("cursor-grok-4.6-high-fast");
+    expect(ids).toContain("cursor-grok-4.6-high-fast");
   });
 
   it("caps generic Cursor catalogs without leaking model-11 (#948)", () => {

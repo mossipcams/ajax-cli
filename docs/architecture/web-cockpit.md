@@ -35,9 +35,10 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
 `features/task/public.ts`, `features/settings/public.ts`). Task owns the
-reusable desired-model catalog and `ModelPicker` used by New Task and harness
-Switch; Chat owns applying a selected model to the live ACP session. Settings
-owns orchestration-chat enablement storage (`orchestrationChatPreference.ts`);
+reusable `ModelPicker` used by New Task and idle cross-harness Switch (Cursor
+from `GET /api/session/models`, other harnesses from option catalog); Chat owns
+the composer hotbar model sheet for connected
+sessions. Settings owns orchestration-chat enablement storage (`orchestrationChatPreference.ts`);
 App passes the value to New Task and Task Workspace. ESLint
 (`npm run web:lint`) enforces these paths on production files; tests may import
 fixtures across boundaries.
@@ -120,10 +121,11 @@ harness to its ACP entry point and to how it accepts a model:
 Every bridge answers `session/set_config_option { sessionId, configId, value }`,
 which carries both the model and the reasoning level those harnesses expose as a
 **separate** option (`effort`, `reasoning_effort`, `thought_level` — matched by
-its `thought_level` category). Cursor has no second axis: its model ids already
-name the level. A selection is therefore stored as `model|configId=value`, e.g.
-`opus|effort=low`, parsed by `parse_model_selection` in core and applied one
-config option at a time.
+its `thought_level` category). Live Cursor ACP is model-select only: Auto is the
+advertised value `default`, and each other choice is one exploded bracket token
+with effort baked in (`reasoning=` or `effort=`). Connected Cursor sessions expose
+a sibling Fast or thought-level control only when the harness actually advertises
+it — current Cursor does not.
 
 Cursor is the only harness that speaks ACP itself today; the others are reached
 through their Agent Client Protocol adapters, which are separate installs:
@@ -144,9 +146,11 @@ no mapping keeps the tmux send-keys launch, and when no candidate program can be
 spawned the host reports an install hint rather than a spawn error.
 
 A session with no operator-chosen model runs the harness default: Cursor ACP spawn
-uses [`CURSOR_DEFAULT_SPAWN_MODEL`] (`agent --model grok-4.6 acp`); the Ajax catalog
-default [`CURSOR_DEFAULT_MODEL`] remains the attach-plan and UI default for Cursor.
-Bridge harnesses are left to pick for themselves.
+uses [`CURSOR_DEFAULT_SPAWN_MODEL`] (`agent --model grok-4.6 acp`) so omitting
+`--model` does not land on Composer Fast; after handshake, in-band Auto apply
+sends advertised `model=default` when Cursor lists Auto that way. The Ajax catalog
+default [`CURSOR_DEFAULT_MODEL`] remains the attach-plan and UI default for Cursor
+when the operator picks a model. Bridge harnesses are left to pick for themselves.
 
 A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
 offered for every mapped harness, and session attach admits any task whose agent
@@ -157,48 +161,45 @@ opens chat only for a task the host will actually attach. An interactive task
 keeps its agent in tmux and opens its terminal instead; a session URL for such a
 task falls back to the terminal route rather than sitting on a refused socket.
 
-The **New task** sheet is two steps: repository/title/harness, then a model page
-listing the full `GET /api/session/models?agent=` catalog for that harness.
-Bridge harnesses show a reasoning level beside the model list when the handshake
-advertises one. Cursor collapses effort and Fast out of its catalog ids:
-`GET /api/session/models?agent=cursor` serves unique model bases
-(`composer-2.5`, `grok-4.6`, …) with optional `efforts[]` and `hasFast` derived
-from exploded `agent models` siblings; thinking ids such as `claude-opus-5-thinking`
-stay separate from their non-thinking base. The picker shows one row per base, an
-**Effort** row when multiple levels exist (live `thought_level` unioned with
-catalog `efforts[]` when connected so sparse live choices cannot hide advertised
-Grok levels, otherwise catalog `efforts[]` when the selected base has more than
-one), and a **Fast** Off/On row when live
-boolean Fast is advertised or the catalog row has `hasFast` (default Off; Auto is
-never Fast). New Task and Switch persist pipe-form `session_model` such as
-`grok-4.6|effort=high|fast=false`. The catalog endpoint serves the complete list —
-Cursor from collapsed `agent models`, the bridges from their own `session/new`
-handshake.
+The **New task** sheet is two steps: repository/title/harness, then a model page.
+**Cursor** lists exploded catalog ids from `GET /api/session/models?agent=cursor`
+(`agent models`): family headers are labels only; selecting a variant stores
+**pipe** (`grok-4.6|effort=high|fast=false`, …) on the task, not the catalog id.
+**Codex, Claude, and Pi** list flat advertised model ids from
+`GET /api/session/option-catalog?agent=` (last-advertised ACP `configOptions`; a
+short handshake-only probe when the cache is empty). Failed catalog read shows
+an operator-visible error with retry; it must not fall back to Auto plus the live
+session model ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
+Legacy stored pipe-form or exploded catalog ids still decode for attach.
 
-That handshake costs a short-lived bridge process, so the catalog is cached
-against the **harness CLI version** rather than a clock: each request reads
-`<harness> --version` (cheap), reuses the stored catalog when it matches, and
-re-reads the catalog only after the harness has been updated. A version that
-cannot be read is never treated as a cache hit.
+That probe costs a short-lived bridge process when the cache is empty, so the
+catalog is cached against the **harness CLI version** rather than a clock: each
+request reads `<harness> --version` (cheap), reuses the stored advertised options
+when it matches, and re-probes only after the harness has been updated. A version
+that cannot be read is never treated as a cache hit.
 
-The chosen selection is stored on the task (`session_model` metadata) and applied
-when its session starts; `POST /api/tasks` validates its shape and rejects a
-model for an agent with no ACP launch. Bare `#/session` opens the same New Task
-sheet as the dashboard (orchestration chat pre-selected when the flag is on);
-the duplicate Cursor-only Session Starter is removed
+The chosen **pipe** (Cursor) or advertised model id (bridges) is stored on the
+task (`session_model` metadata). Cursor spawn converts pipe → CLI slug on
+`--model` (`cursor-grok-4.6-high`, `claude-opus-5-thinking-medium`, …); `POST
+/api/tasks` validates shape and rejects a model for an agent with no ACP launch. Bare `#/session` opens
+the same New Task sheet as the dashboard (orchestration chat pre-selected when the
+flag is on); the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
-`POST /api/tasks/{handle}` with `{ "agent", "model" }` changes harness and/or
-model for an existing task, exposed as **Switch** in the Ajax chat (ChatSurface)
-task-details modal. Same-harness model changes persist `session_model` and apply
-the pin in-band on the live ACP session when a slot exists
-(`session/set_config_option`); with no live slot, persist only. Cross-harness
-changes persist and reset backend context on the live slot (cancel in-flight work,
-shut down the old ACP child, spawn the new harness with empty context) while
-keeping the TaskSession slot and JSONL transcript; with no live slot, persist and
-clear the stored resume id so the next attach uses `session/new`. Switch is refused
-for a task that was launched interactively, because that task's agent is live in its
-tmux pane and the registry must not name a harness that is not the running process.
+**Switch** in task details is **harness-only** when a live session is connected:
+same-harness model changes use the composer model sheet, not Switch Apply.
+**Cursor** connected model control binds to advertised `sessionConfigOptions`
+(model select plus sibling effort/Fast when present), same as bridge harnesses;
+picks send WebSocket `set_config_option` with advertised `configId` + value —
+never `set_model` with catalog ids. After success, persist pipe storage decoded
+from advertised state. **Codex, Claude, and Pi** use the same advertised chips.
+Cross-harness Switch uses `POST /api/tasks/{handle}` with `{ "agent", "model?" }`:
+persist agent and optional spawn model, cancel in-flight work, shut down the old
+ACP child, clear the stored resume id, spawn the new harness with empty context
+while keeping the TaskSession slot and JSONL transcript; with no live slot,
+persist and clear resume id only. Switch is refused for a task that was launched
+interactively, because that task's agent is live in its tmux pane and the registry
+must not name a harness that is not the running process.
 
 When spawn argv or resume/load leave a model that does not match the operator pin
 (for example Cursor CLI default Composer Fast while Grok High was chosen), the
@@ -207,15 +208,24 @@ model control: drop the child, `session/new` (no resume), then apply the pin
 in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 When in-band apply fails because a requested value is not advertised, the host
 emits a typed error, keeps the child running, and leaves `session_model` as the
-operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
+operator pin until a successful live model pick persists the new id
+([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
 Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
 `_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
 capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` so
-the connected picker seeds the current pin and encodes in-band apply with
-advertised config ids; the model list still comes from `GET /api/session/models`.
-`snapshot.model` is the model option's `currentValue` only. In-band refusal
-leaves `session_model` as the operator pin and `snapshot.model` on
-harness-reported evidence.
+connected **Codex / Claude / Pi** model-sheet chips bind to advertised options;
+choosing a value sends WebSocket `set_config_option` `{ configId, value }` immediately
+with advertised ids. **Cursor** uses the same advertised model/effort/Fast controls
+in the model switch sheet (not the New Task catalog); picks send `set_config_option`
+only. UI is pessimistic: controls stay on the last confirmed snapshot value until the host
+confirms; refusal is a dismissable notice and the child keeps running.
+After a successful **model** or **Fast** pick, persist **pipe storage** onto task
+`session_model` via `applied_model_id_for_persist`; do not persist thought_level
+alone. Persist failure after a live apply is a typed warning; the running child keeps
+the new model. WebSocket `set_model` remains for compatibility (pipe or legacy
+catalog) but is not the live Cursor operator path.
+`snapshot.model` is the model option's `currentValue` only. In-band refusal leaves
+`snapshot.model` on harness-reported evidence.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
@@ -253,11 +263,11 @@ queue empties, or idle retention evicts the slot.
 
 Reconnects do not send the browser `ajax.web.session.model` preference on the
 session WebSocket URL; task metadata remains authoritative
-([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
-on the task through a core-owned operation, then applies the pin in-band on the
-live ACP session when a slot exists (`session/set_config_option` with the mapped
-advertised ACP id). Cross-harness Switch resets backend context on the live slot
-instead of dropping it.
+([#910](https://github.com/mossipcams/ajax-cli/issues/910)). Live model picks use
+WebSocket `set_config_option` with advertised ids; the host applies in-band, then
+persists the advertised model id onto the task after a successful model-category
+apply. Cross-harness Switch resets backend context on the live slot instead of
+dropping it.
 Incoming ACP v1 notifications remain typed through the per-task command loop.
 Stable message, thought, tool, plan, mode, configuration, session-info, and usage
 updates are mapped explicitly; unsupported capability announcements are

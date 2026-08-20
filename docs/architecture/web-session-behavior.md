@@ -56,11 +56,24 @@ existing paths.
   `localStorage` preference on the WebSocket URL to override that metadata
   ([#910](https://github.com/mossipcams/ajax-cli/issues/910)). With no stored
   model, Cursor runs `CURSOR_DEFAULT_MODEL` and a bridge harness picks for itself.
-- Task `session_model` is **desired** state (Ajax pipe-form or catalog id for New
-  Task / Switch). Protocol v2 `snapshot.model` is **applied** state: the model
-  config option's advertised `currentValue` only — not a reconstructed bracket
-  string ([#952](https://github.com/mossipcams/ajax-cli/issues/952),
+- Task `session_model` is **desired** Ajax storage: a **pipe string** encoding
+  structured fields (`base`, optional `thinking`, `effort`, `fast`) — e.g.
+  `grok-4.6|effort=high|fast=false` or
+  `claude-opus-5|thinking=true|effort=medium|fast=false`. Auto/unspecified stays
+  unset / `auto`; never store the literal advertised ACP bracket token or catalog
+  id as task metadata. Legacy pipe-form, exploded catalog ids, and bracket tokens
+  still decode into structured fields for attach. Protocol v2 `snapshot.model` is
+  **applied** state: the model config option's advertised `currentValue` only —
+  not pipe storage ([#952](https://github.com/mossipcams/ajax-cli/issues/952),
   [#997](https://github.com/mossipcams/ajax-cli/issues/997)).
+- **Identity layers (do not collapse):** (1) canonical Ajax state = structured
+  fields; (2) Ajax storage = pipe string; (3) Cursor spawn `--model` = CLI slug
+  (`cursor-grok-4.6-high`, `claude-opus-5-thinking-medium`) converted from stored
+  pipe at spawn — never pipe or bracket tokens on argv; (4) Cursor ACP live
+  switch = advertised `session/set_config_option` values only — never catalog ids,
+  pipe-form, or reconstructed brackets on the wire; (5) UI shows friendly labels;
+  New Task / idle Switch `onChange` emits pipe storage; live connected picks emit
+  advertised `configId` + value.
 - Live session configuration follows ACP `configOptions` (Agent of Empires
   contract): after `session/new`, resume/load, every `session/set_config_option`
   response, and every `config_option_update`, the host stores the complete
@@ -69,59 +82,95 @@ existing paths.
   merge. `config_option_update` refreshes applied state; it is not a transcript
   artifact.
 - Ajax `initialize` advertises `clientCapabilities.session.configOptions.boolean:
-  {}` so harnesses may expose boolean Fast; filesystem and terminal capabilities
-  remain false. Cursor `_meta.parameterizedModelPicker` is a vendor extra, not the
-  model contract.
+  {}` so bridge harnesses may expose boolean Fast; filesystem and terminal
+  capabilities remain false. Cursor `_meta.parameterizedModelPicker: true` is a
+  vendor extra on initialize (spawn and Switch), not the operator model contract:
+  Cursor UI lists one exploded catalog id per effort, not a separate effort select.
 - In-band apply maps the desired pin onto **currently advertised** options: find
   selectors by `category` (`model`, `thought_level`, `model_config`, `mode`) with
   id fallback; send `session/set_config_option` with the advertised `configId`
   and value id (select) or `{ type: "boolean", value }` (boolean). Never send Ajax
   catalog ids or reconstructed bracket tokens on the wire
-  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)). Pin satisfaction
-  is per-option `currentValue` match, not string equality on a synthetic id.
-- Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
-  catalog ids unchanged for explicit pins). Live same-harness Switch / WebSocket
-  `set_model` persists desired `session_model` first, then applies in-band; keep
-  process, `sessionId`, and JSONL. Respawn (`session/new`, no resume) only when
-  the child is dead or no model control is advertised. In-band refusal is a typed
-  error; the child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
-- A connected session's model picker lists the full Ajax catalog from
-  `GET /api/session/models` and uses live `sessionConfigOptions` only to seed the
-  current pin and encode in-band apply (effort / Fast when multiple levels or
-  boolean Fast are advertised). New Task before a session exists uses the same
-  catalog endpoint. Deprecated `models.availableModels` is not authority.
-  Verification requires matching Fast bracket flags: a non-Fast catalog pin such as
-  `cursor-grok-4.6-high` must not be satisfied by `grok-4.6[effort=high,fast=true]`
-  or Composer Fast. When spawn or resume/load still leaves a different model
-  running while a pin is unsatisfied and the child is alive with model control
-  advertised, the host applies in-band again; it does not respawn solely because
-  in-band apply was refused ([#979](https://github.com/mossipcams/ajax-cli/issues/979),
-  [#997](https://github.com/mossipcams/ajax-cli/issues/997)). After a successful
-  in-band apply, `snapshot.model` is the harness-reported applied id. If apply
-  fails because a requested value is not advertised, the host emits a typed
-  `error` event and leaves `snapshot.model` on the harness-reported id (or empty),
-  not the rejected pin; the child keeps running.
-- Changing the model while connected persists `session_model` on the task through
-  a core-owned operation before the host applies the pin on the live ACP session;
-  a persistence failure returns a typed `error` event and leaves the running child
-  unchanged. Same-harness Switch and WebSocket `set_model` send
-  `session/set_config_option` `{ sessionId, configId: "model", value }` with the
-  mapped advertised ACP id when a live slot exists; the ACP process, `sessionId`,
-  and JSONL transcript stay put and `snapshot.model` updates from the
-  harness-reported applied id. With no live slot, persist only — the next attach
-  uses the pin. Cross-harness Switch resets backend context on the same public
-  Ajax session: cancel any in-flight turn, discard the host queue, shut down the
-  old ACP child, clear the stored resume id, spawn the new harness with
-  `session/new` (no resume/load, no transcript replay), append a host note
-  (`Client switched harness. Context reset.`), and keep the TaskSession slot,
-  JSONL transcript, and WebSocket identity. With no live slot, persist only and
-  clear the stored resume id so the next attach uses empty context. In-band apply
-  that is unadvertised or refused is a typed error; the child keeps running
-  ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
-  [#997](https://github.com/mossipcams/ajax-cli/issues/997)). Respawn (`session/new`,
-  no resume) runs only when the child is dead or no model control is advertised.
-  Persist `None` for Auto/unspecified; never store the literal string `auto` as
-  a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)). Live Cursor ACP
+  advertises **only** `mode` and `model` selects. Auto is `{ name: "Auto", value:
+  "default" }` (not `"auto"`). Model values are exploded bracket tokens
+  (`composer-2.5[fast=false]`, `gpt-5.5[context=272k,reasoning=medium,fast=false]`,
+  `claude-opus-4-8[thinking=true,context=300k,effort=high,fast=false]`). GPT/Codex
+  bake effort in `reasoning=` inside the model value; Claude uses `effort=`.
+  Ajax parses every pin and advertised id into canonical axes on
+  `CursorModelIntent`: family stem (catalog base with trailing `-thinking`
+  stripped for matching), thinking (`-thinking` suffix or `thinking=true` /
+  `thinking=false` in brackets or pipe form), effort (catalog suffix plus
+  `effort=` / `reasoning=` in brackets), and Fast (`-fast` suffix or `fast=` —
+  omitted `fast=` is non-Fast). Unknown bracket keys such as `context=` are
+  ignored. In-band apply exact-matches stem + thinking + effort + fast; when this
+  pin's effort is not a distinct advertised row for that stem+thinking+fast,
+  map to the unique same-stem+thinking+fast token or the effort-less row for
+  that key ([#1011](https://github.com/mossipcams/ajax-cli/issues/1011),
+  [#1013](https://github.com/mossipcams/ajax-cli/issues/1013)). Catalog parse
+  keeps `-thinking` in `base` so collapsed picker rows stay distinct
+  ([#1004](https://github.com/mossipcams/ajax-cli/issues/1004)). Apply Auto as
+  `configId: "model"` / `value: "default"` when that id is advertised; do not keep
+  spawn `grok-4.6` as Auto once `default` is on the list. Send the advertised
+  model string **verbatim**. Never send `configId: "reasoning"` — Cursor has no
+  writable sibling effort option on this handshake, and older handshakes that
+  listed `reasoning` still reject `session/set_config_option reasoning` as unknown
+  ([#1010](https://github.com/mossipcams/ajax-cli/issues/1010)). When the model
+  select advertises an exploded value matching the full catalog intent (e.g.
+  `gpt-5.2-high`), apply that model value id only. If this pin's effort is not a
+  distinct advertised row for the same base and Fast flag, map to the unique
+  same-base+fast advertised token (one baked-in effort per family) or to the
+  effort-less base+fast id ([#1011](https://github.com/mossipcams/ajax-cli/issues/1011)).
+  When a sibling `reasoning` / thought_level option is advertised but not
+  writable, or this pin's effort is not a distinct model-select value, skip the
+  effort step and treat pin satisfaction as satisfied on the unique same-base+fast
+  model row — do not fail the session with "harness is running {family}"
+  ([#1013](https://github.com/mossipcams/ajax-cli/issues/1013)).
+  Split model + effort + Fast applies only when the model select advertises the
+  base id and effort is a separate advertised writable option (e.g. `grok-4.6` +
+  `effort`). When `default` is not advertised, Auto still uses spawn `grok-4.6`
+  and Fast-clear ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Pin
+  satisfaction is per-option `currentValue` match, not string equality on a
+  synthetic id. When `default` is advertised, Auto is satisfied only by
+  `currentValue == "default"` — a grok or Composer current value is not Auto.
+- Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified,
+  so omitting `--model` does not land on Composer Fast; advertised ids unchanged
+  for explicit pins). After handshake, in-band apply moves Auto onto `default`
+  when Cursor advertises it. Live same-harness model change uses WebSocket
+  `set_config_option`; persist the advertised model id after a successful model
+  pick only. Keep process, `sessionId`, and JSONL. Respawn (`session/new`, no
+  resume) only when the child is dead or no model control is advertised. In-band
+  refusal is a typed error; the child keeps running
+  ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
+- A connected session exposes a composer hotbar model control that opens a sheet
+  bound only to advertised `sessionConfigOptions` (model dropdown, thought_level
+  selector, Fast when advertised as boolean or true/false select). No advertisement
+  means no model/effort/Fast chrome. Choosing a
+  value sends WebSocket `set_config_option` `{ configId, value }` immediately;
+  never send Ajax catalog ids or pipe-form on the ACP wire. UI is pessimistic: chips
+  stay on the last confirmed `currentValue` until the host snapshot confirms.
+  Refusal is a dismissable notice; the child keeps running. After a successful
+  **model** or **Fast** pick, persist **pipe storage** decoded from advertised
+  `currentValue` plus sibling effort/Fast when present — not the advertised
+  bracket/string and not the catalog id. Do not persist thought_level alone (live
+  options only).
+  Persist failure after a live apply is a typed warning; the running child keeps
+  the new model. WebSocket `set_model` remains a compatibility API that accepts
+  pipe or legacy catalog and maps internally; the live Cursor UI must not use it.
+- New Task and idle Switch: **Cursor** lists exploded catalog ids from
+  `GET /api/session/models` (grouped by family for labels); `onChange` stores
+  **pipe** from structured fields, not catalog ids. **Codex / Claude / Pi** list
+  advertised model choices from `GET /api/session/option-catalog`. Failed catalog
+  read shows a retry error; no silent Auto fallback
+  ([#948](https://github.com/mossipcams/ajax-cli/issues/948)). Legacy stored
+  pipe-form / exploded catalog ids still attach for compatibility.
+- Same-harness model change is in-session model sheet picks, not Switch. Cross-harness Switch
+  resets backend context: cancel in-flight work, shut down the old ACP child, clear
+  the stored resume id, spawn the new harness with `session/new` (empty context),
+  append a host note, and keep TaskSession / JSONL / WebSocket identity. With no
+  live slot, persist agent + optional spawn model and clear resume id only.
+  Persist `None` for Auto/unspecified; never store the literal string `auto` as a
+  harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - Moving a task to another harness is refused unless it was launched over ACP.
   Cross-harness Switch resets backend context on the live slot when present, or
   clears the stored resume id when idle, so the next attach spawns the new harness
@@ -196,12 +245,12 @@ existing paths.
 
 ## Model switching on the live ACP session
 
-- `set_model` persists the desired model on the task, then applies it in-band on
-  the live ACP session via `session/set_config_option` when a slot exists and the
-  harness advertises a model control. The ACP process, `sessionId`, and JSONL
-  transcript stay put; `snapshot.model` updates from the harness-reported applied
-  id. In-band apply that is unadvertised or refused is a typed error; the child
-  keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
+- WebSocket `set_config_option` applies one advertised option in-band on the live
+  ACP session when a slot exists. After a successful **model** pick, persist the
+  advertised model id on the task; do not persist effort or Fast. The ACP process,
+  `sessionId`, and JSONL transcript stay put; `snapshot.model` updates from the
+  harness-reported applied id. In-band apply that is unadvertised or refused is a
+  typed error; the child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
   [#997](https://github.com/mossipcams/ajax-cli/issues/997)). Respawn (`session/new`,
   no resume) runs only when the child is dead or no model control is advertised.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
@@ -248,25 +297,22 @@ existing paths.
   WebSocket URL; task `session_model` metadata and the host attach plan decide
   the model. The preference may still be updated from `ready` so it seeds the
   New Task picker for the next task only.
-- New Task lists the full harness catalog from `GET /api/session/models`. In
-  orchestration chat, task details expose **Switch** (harness + model) as the
-  in-session model control; there is no separate task-details model picker
-  ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Both surfaces share
-  `ModelPicker` (`features/task`). Bridge harnesses keep the reasoning picker from `catalog.reasoning`.
-  Cursor shows one row per model base (Fast catalog variants collapsed), an **Effort**
-  row when the catalog encodes multiple levels on that base, and a **Fast** Off/On
-  row (default Off). Selection persists as pipe-form `session_model` such as
-  `grok-4.6|effort=high|fast=false` or `composer-2.5|fast=false`; Auto stays
-  `auto`. ACP bracket-form live snapshots such as `gpt-5.6-sol[fast=false]` decode
-  to the matching catalog base and expose effort controls; choosing a level emits
-  pipe-form with `effort=`. Legacy exploded catalog ids such as `cursor-grok-4.6-high` still decode
-  in the picker and apply on the backend. Switch opens with the current harness and live session model preselected; Apply on the
-  same harness persists `session_model` and applies the pin in-band on a live slot
-  (no slot: persist only). Cross-harness Apply persists and resets backend context
-  on the live slot (or clears the stored resume id when idle) so the new harness
-  starts with empty context while prior chat turns stay visible. A failed catalog read shows an
-  operator-visible error with retry; it must not fall back to Auto plus the live
-  session model ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
+- New Task lists **Cursor** exploded catalog ids from `GET /api/session/models`
+  grouped by family; picker `onChange` emits Ajax **pipe** storage (not catalog
+  ids). **Codex, Claude, and Pi** list flat advertised model choices from
+  `GET /api/session/option-catalog`. When a session is connected, task details
+  expose **Switch** for cross-harness changes only; same-harness model control
+  is the composer model sheet — **Cursor** uses live advertised
+  `session/set_config_option` values only (never catalog ids, pipe-form, or
+  reconstructed brackets on the wire); **Codex / Claude / Pi** use flat
+  advertised model chips
+  ([#979](https://github.com/mossipcams/ajax-cli/issues/979)). Idle Switch with
+  no live slot may still pick an optional spawn model from the same catalogs.
+  After a successful apply, persist Ajax **pipe** storage (from advertised
+  options or by parsing a compatibility `set_model` client id); never persist
+  catalog ids or bracket tokens. Legacy pipe-form / exploded catalog ids still
+  decode for attach. Failed catalog read shows a retry error; no silent Auto
+  fallback ([#948](https://github.com/mossipcams/ajax-cli/issues/948)).
 - The ACP client keeps v1 `SessionNotification` values typed through mapping.
   Message, thought, tool, plan, mode, configuration, session-info, usage,
   turn_usage, and status-like updates have explicit mappings; unsupported

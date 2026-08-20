@@ -34,6 +34,7 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("POST", "/api/operations"),
         ("POST", "/api/tasks"),
         ("GET", "/api/session/models"),
+        ("GET", "/api/session/option-catalog"),
         ("GET", "/api/tasks/web%2Ffix-login"),
         ("GET", "/api/tasks/web%2Ffix-login/session"),
         ("GET", "/api/tasks/web%2Ffix-login/terminal"),

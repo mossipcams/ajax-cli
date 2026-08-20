@@ -50,6 +50,12 @@ pub enum SessionClientMessage {
     },
     #[serde(rename = "set_model")]
     SetModel { model: String },
+    #[serde(rename = "set_config_option")]
+    SetConfigOption {
+        #[serde(rename = "configId")]
+        config_id: String,
+        value: serde_json::Value,
+    },
     #[serde(rename = "permission")]
     Permission {
         #[serde(rename = "requestId")]

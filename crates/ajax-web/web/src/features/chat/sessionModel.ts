@@ -3,13 +3,26 @@ export function isSessionModelChangeFailure(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (!normalized) return false;
   if (normalized.includes("session model")) return true;
+  if (normalized.includes("config option")) return true;
   if (normalized.includes("could not be verified")) return true;
   if (normalized.includes("was refused")) return true;
   if (normalized.includes("unsupported model")) return true;
   if (normalized.includes("model id must not contain whitespace")) return true;
   if (normalized.includes("registry write failed")) return true;
+  if (normalized.includes("could not save to task")) return true;
   if (normalized.includes("cockpit state changed while updating session model")) return true;
   if (normalized.includes("agent has no acp entry point")) return true;
   if (normalized.includes("no acp mapping")) return true;
+  return false;
+}
+
+/** Config-option apply failures surface as dismissable notices (AoE contract). */
+export function isSessionConfigChangeFailure(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("config option")) return true;
+  if (normalized.includes("was refused")) return true;
+  if (normalized.includes("not advertised")) return true;
+  if (normalized.includes("could not save to task")) return true;
   return false;
 }
