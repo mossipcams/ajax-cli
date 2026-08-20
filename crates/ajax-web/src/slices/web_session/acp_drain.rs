@@ -22,6 +22,7 @@ pub(crate) fn drain_acp_events(
         .and_then(Value::as_str);
     while let Some(event) = client.poll_event() {
         match event {
+            AcpClientEvent::ConfigOptionsUpdated { .. } => {}
             AcpClientEvent::SessionUpdate(params) => {
                 let mut mapped = map_acp_session_notification(&params);
                 for event in &mut mapped {
