@@ -79,15 +79,16 @@ test("task detail Back returns to the dashboard", async ({ page }) => {
 });
 
 test("task detail Copy buttons copy branch and worktree path", async ({ page }) => {
-  // Copy buttons live in meta-details, which is desktop-only in the layout.
   await page.setViewportSize({ width: 1280, height: 800 });
   await installClipboardSpy(page);
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 10_000 });
 
-  await page.locator(".meta-details summary").click();
-  const copyButtons = page.locator(".meta-copy");
+  await page.getByTestId("task-details").click();
+  const detailsSheet = page.getByTestId("task-details-sheet");
+  await expect(detailsSheet).toBeVisible();
+  const copyButtons = detailsSheet.locator(".meta-copy");
   await copyButtons.nth(0).click();
   await expect.poll(() => clipboardWrites(page)).toContain("ajax/fix-login");
 
