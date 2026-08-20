@@ -505,6 +505,8 @@ export function connectWebSessionTransport(
   let socket: WebSessionSocket | undefined;
   let ready = false;
   let disposed = false;
+  let replayEndCursor: number | undefined;
+  let replaySettledEvent: WebSessionServerEvent | undefined;
   const stored = readOutbox(handle);
   const pendingPrompts = stored.filter(frameFits);
   if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
@@ -519,12 +521,14 @@ export function connectWebSessionTransport(
 
     if (frame.kind === "snapshot") {
       ready = true;
+      replayEndCursor = frame.snapshot.cursor;
       const readyEvent: WebSessionServerEvent = {
         type: "ready",
         model: frame.snapshot.model,
         busy: frame.snapshot.turnState === "busy",
         reset: frame.snapshot.reset,
       };
+      replaySettledEvent = { ...readyEvent, reset: false };
       callbacks.onEvent(readyEvent);
       if (frame.snapshot.pendingPermission) {
         const pending = frame.snapshot.pendingPermission;
@@ -552,6 +556,15 @@ export function connectWebSessionTransport(
       }
     }
     callbacks.onEvent(parsed);
+    if (replayEndCursor !== undefined && frame.cursor + 1 === replayEndCursor) {
+      const settled = replaySettledEvent;
+      replayEndCursor = undefined;
+      replaySettledEvent = undefined;
+      if (settled) callbacks.onEvent(settled);
+    } else if (replayEndCursor !== undefined && frame.cursor >= replayEndCursor) {
+      replayEndCursor = undefined;
+      replaySettledEvent = undefined;
+    }
   };
 
   const closeListener: SocketListener = () => {
