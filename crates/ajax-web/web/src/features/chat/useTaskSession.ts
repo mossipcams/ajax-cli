@@ -11,6 +11,7 @@ import {
   clearSessionTransportState,
   type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import { DEFAULT_SESSION_MODEL, writeSessionModel } from "@/features/task/public";
 import { initialSessionState, sessionReducer } from "./sessionThread";
 import { useSessionTransport } from "./useSessionTransport";
@@ -28,6 +29,9 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
   const [activityAgeMs, setActivityAgeMs] = useState(0);
   /** Host-authoritative model for this task's live session (not localStorage). */
   const [sessionModel, setSessionModel] = useState(DEFAULT_SESSION_MODEL);
+  const [sessionConfigOptions, setSessionConfigOptions] = useState<
+    LiveSessionConfigOption[] | undefined
+  >(undefined);
   const serverModelRef = useRef(DEFAULT_SESSION_MODEL);
   const pendingModelRef = useRef<string | null>(null);
 
@@ -39,6 +43,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
 
   useEffect(() => {
     setSessionModel(DEFAULT_SESSION_MODEL);
+    setSessionConfigOptions(undefined);
     serverModelRef.current = DEFAULT_SESSION_MODEL;
     pendingModelRef.current = null;
   }, [handle]);
@@ -85,6 +90,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     setEverOpened,
     onSessionInvalidated: invalidateSession,
     onSessionModel: applyHostSessionModel,
+    onSessionConfigOptions: setSessionConfigOptions,
     onSessionModelRejected: revertPendingModelChange,
   });
 
@@ -146,6 +152,7 @@ export function useTaskSession({ handle, detail, onMutated }: Options) {
     everOpened,
     activityAgeMs,
     sessionModel,
+    sessionConfigOptions,
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     sendCancel,

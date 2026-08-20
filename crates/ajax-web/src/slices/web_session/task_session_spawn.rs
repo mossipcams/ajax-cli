@@ -5,7 +5,7 @@ use super::transcript::{
     already_noted, context_reset_needed, context_reset_note, harness_switch_note, slot_must_replace,
 };
 use super::{apply_cancel_to_queue, SessionServerEvent};
-use crate::adapters::web_session_acp::{AcpStdioClient, SpawnReport};
+use crate::adapters::web_session_acp::{config_option_descriptors, AcpStdioClient, SpawnReport};
 use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
@@ -63,6 +63,9 @@ pub(super) async fn acquire(
     state.client = Some(client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
+    if let Some(options) = report.config_options.as_deref() {
+        state.session_config_options = Some(config_option_descriptors(options));
+    }
     if let Some(error) = &report.model_apply_error {
         log.append(vec![SessionServerEvent::Error {
             message: error.clone(),
@@ -104,6 +107,9 @@ pub(super) async fn apply_model(
         Ok(outcome) if outcome.error.is_none() => {
             state.model = model.to_string();
             state.applied_model = outcome.applied_model.clone();
+            if let Some(options) = outcome.config_options.as_deref() {
+                state.session_config_options = Some(config_option_descriptors(options));
+            }
             web_session_store::save_meta(
                 &state.state_dir,
                 &state.qualified_handle,
@@ -111,6 +117,7 @@ pub(super) async fn apply_model(
                 &state.applied_model,
             );
             state.pending_model_snapshot = Some(outcome.applied_model);
+            state.pending_config_snapshot = state.session_config_options.clone();
             Ok(generation_before)
         }
         Ok(outcome) => {
@@ -183,6 +190,9 @@ pub(super) async fn reset_harness_context(
     state.client = Some(new_client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
+    if let Some(options) = report.config_options.as_deref() {
+        state.session_config_options = Some(config_option_descriptors(options));
+    }
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
     state.acp_alive = true;
@@ -237,6 +247,9 @@ fn install_replaced_client(
     state.client = Some(new_client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
+    if let Some(options) = report.config_options.as_deref() {
+        state.session_config_options = Some(config_option_descriptors(options));
+    }
     if let Some(error) = &report.model_apply_error {
         state.append_to_log(vec![SessionServerEvent::Error {
             message: error.clone(),

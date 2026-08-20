@@ -1,6 +1,7 @@
 //! Versioned WebSocket envelopes for orchestration chat (protocol v2).
 
 use super::SessionServerEvent;
+use crate::adapters::web_session_acp::ConfigOptionDescriptor;
 use serde::{Deserialize, Serialize};
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 2;
@@ -24,6 +25,12 @@ pub struct SessionSnapshot {
     pub protocol_version: u32,
     pub cursor: usize,
     pub model: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "sessionConfigOptions"
+    )]
+    pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
     #[serde(rename = "turnState")]
     pub turn_state: String,
     pub reset: bool,
@@ -38,12 +45,14 @@ impl SessionSnapshot {
         busy: bool,
         reset: bool,
         pending_permission: Option<PendingPermission>,
+        session_config_options: Option<Vec<ConfigOptionDescriptor>>,
     ) -> Self {
         Self {
             kind: "snapshot".to_string(),
             protocol_version: SESSION_PROTOCOL_VERSION,
             cursor,
             model,
+            session_config_options,
             turn_state: if busy { "busy" } else { "idle" }.to_string(),
             reset,
             pending_permission,

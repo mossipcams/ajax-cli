@@ -99,7 +99,7 @@ function spawnModelFromArgv() {
 }
 let currentModel = spawnModelFromArgv() ?? cliDefaultModel ?? 'harness-default';
 let currentEffort = 'high';
-let currentFast = cursorParameterizedModels ? 'true' : null;
+let currentFast = cursorParameterizedModels ? true : null;
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
@@ -109,6 +109,7 @@ function modelConfigOptions() {
       {
         id: 'model',
         name: 'Model',
+        category: 'model',
         type: 'select',
         currentValue: currentModel,
         options: [
@@ -120,6 +121,7 @@ function modelConfigOptions() {
       {
         id: 'effort',
         name: 'Effort',
+        category: 'thought_level',
         type: 'select',
         currentValue: currentEffort,
         options: [
@@ -131,12 +133,9 @@ function modelConfigOptions() {
       {
         id: 'fast',
         name: 'Fast',
-        type: 'select',
+        category: 'model_config',
+        type: 'boolean',
         currentValue: currentFast,
-        options: [
-          { value: 'true', name: 'Fast' },
-          { value: 'false', name: 'Standard' },
-        ],
       },
     ];
   }
@@ -244,14 +243,18 @@ function handleRequest(msg) {
   // Model selection: echo what the client asked for so tests can assert the
   // request shape each harness family uses.
   if (method === 'session/set_model' || method === 'session/set_config_option') {
-    const requested = params?.modelId ?? params?.value ?? '';
-    const unadvertisedGrokHigh =
-      acceptUnadvertisedGrokHigh &&
-      requested === 'grok-4.6[effort=high,fast=false]';
+    const configId = params?.configId;
+    const rawValue = params?.value ?? params?.modelId;
+    const selectValue =
+      typeof rawValue === 'object' && rawValue !== null && rawValue.type === 'boolean'
+        ? String(rawValue.value)
+        : typeof rawValue === 'boolean'
+          ? String(rawValue)
+          : rawValue ?? '';
     const refuseInBand =
-      requested &&
-      requested !== currentModel &&
-      !unadvertisedGrokHigh &&
+      selectValue &&
+      configId === 'model' &&
+      selectValue !== currentModel &&
       (modelRefuse || (refuseInBandOnce && firstSpawnAttempt));
     if (refuseInBand) {
       send({
@@ -261,19 +264,31 @@ function handleRequest(msg) {
       });
       return;
     }
-    if (params?.configId === 'model' || method === 'session/set_model') {
-      currentModel = requested || currentModel;
-    } else if (params?.configId === 'effort') {
-      currentEffort = requested || currentEffort;
-    } else if (params?.configId === 'fast') {
-      currentFast = requested || currentFast;
+    if (configId === 'model' || method === 'session/set_model') {
+      currentModel = (typeof rawValue === 'string' ? rawValue : selectValue) || currentModel;
+    } else if (configId === 'effort') {
+      currentEffort = selectValue || currentEffort;
+    } else if (configId === 'fast') {
+      if (typeof rawValue === 'object' && rawValue !== null && rawValue.type === 'boolean') {
+        currentFast = rawValue.value;
+      } else if (typeof rawValue === 'boolean') {
+        currentFast = rawValue;
+      } else {
+        currentFast = selectValue === 'true';
+      }
     }
     send({
       jsonrpc: '2.0',
       id,
       result: { configOptions: modelConfigOptions() },
     });
-    replayUpdate(`model:${method}:${requested}`);
+    replayUpdate(
+      `model:${method}:${
+        configId === 'model' || method === 'session/set_model'
+          ? (typeof rawValue === 'string' ? rawValue : selectValue)
+          : `${configId}:${selectValue}`
+      }`,
+    );
     return;
   }
   if (method === 'session/prompt') {

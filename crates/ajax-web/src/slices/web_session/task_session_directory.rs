@@ -325,7 +325,7 @@ impl TaskSessionDirectory {
         let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
         let (snapshot, replayed) =
-            super::replay::build_attach(&log, fallback_model, false, client_cursor);
+            super::replay::build_attach(&log, fallback_model, false, client_cursor, None);
         AttachSnapshot {
             generation: 0,
             snapshot,

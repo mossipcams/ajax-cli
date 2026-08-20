@@ -6,6 +6,7 @@ import TaskTerminalView from "./TaskTerminalView";
 import Skeleton from "@/shared/ui/Skeleton";
 import { sessionHash, taskHash } from "@/shared/lib/routes";
 import { clearSessionOutbox } from "@/shared/lib/webSessionTransport";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import TaskDetailsSheet from "./TaskDetailsSheet";
 import TaskWorkspaceHeader from "./TaskWorkspaceHeader";
 import {
@@ -61,6 +62,9 @@ export default function TaskWorkspace({
   const detailsPanelId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionModel, setSessionModel] = useState<string | undefined>();
+  const [sessionConfigOptions, setSessionConfigOptions] = useState<
+    LiveSessionConfigOption[] | undefined
+  >(undefined);
   const [sessionBusy, setSessionBusy] = useState(false);
 
   useEffect(() => {
@@ -108,6 +112,7 @@ export default function TaskWorkspace({
         detail={taskDetail}
         orchestrationChat={orchestrationChat}
         sessionModel={sessionModel}
+        sessionConfigOptions={sessionConfigOptions}
         harnessSwapDisabled={sessionBusy}
         onOpenDiff={onOpenDiff}
         onOpenTerminal={
@@ -171,8 +176,9 @@ export default function TaskWorkspace({
               detailsTestId="session-details"
             />
           }
-          onSessionActivity={({ model, busy }) => {
+          onSessionActivity={({ model, busy, sessionConfigOptions: options }) => {
             setSessionModel(model);
+            setSessionConfigOptions(options);
             setSessionBusy(busy);
           }}
         />

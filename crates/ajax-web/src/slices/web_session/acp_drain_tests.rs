@@ -179,11 +179,12 @@ fn typed_mapper_covers_stable_acp_updates() {
     assert!(!events
         .iter()
         .any(|event| matches!(event, SessionServerEvent::Status { .. })));
-    for kind in ["config", "session_info"] {
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, SessionServerEvent::Artifact { kind: actual, body: Some(_) , .. } if actual == kind)));
-    }
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Artifact { kind: actual, body: Some(_) , .. } if actual == "session_info")));
+    assert!(!events.iter().any(
+        |event| matches!(event, SessionServerEvent::Artifact { kind, .. } if kind == "config")
+    ));
 }
 
 #[test]
