@@ -60,6 +60,7 @@ import {
   markNavigationStart,
 } from "@/shared/lib/telemetry";
 import { checkHealth } from "@/shared/lib/api";
+import { reloadCockpitDocument } from "@/shared/lib/reloadCockpitDocument";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -496,20 +497,25 @@ export default function App() {
 
   const swipeOutletClass = swipeEnterClassName(swipeEnter);
 
-  function reloadOnce() {
+  function reloadUpdateBanner() {
+    if (reloadLatchRef.current) return;
+    reloadLatchRef.current = true;
+    reloadCockpitDocument();
+  }
+
+  function reloadConnectionOnce() {
     if (reloadLatchRef.current) return;
     reloadLatchRef.current = true;
     void (async () => {
       try {
         if (await checkHealth()) {
-          location.reload();
+          reloadCockpitDocument();
           return;
         }
         await loadCockpit({ trailing: true });
       } catch {
         // Stay on the SPA; allow another tap.
       }
-      // Keep the latch if we started a document navigation.
       reloadLatchRef.current = false;
     })();
   }
@@ -534,7 +540,7 @@ export default function App() {
           state={connection}
           detail={connectionDetail}
           onRetry={() => void loadCockpit({ trailing: true })}
-          onReload={reloadOnce}
+          onReload={reloadConnectionOnce}
           onCopyDiagnostics={() => go(settingsHash())}
         />
       </header>
@@ -545,7 +551,7 @@ export default function App() {
           data-testid="update-banner"
           type="button"
           hidden={!updateAvailable}
-          onClick={reloadOnce}
+          onClick={reloadUpdateBanner}
         >
           Update ready — tap to reload
         </button>
