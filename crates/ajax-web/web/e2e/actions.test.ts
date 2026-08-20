@@ -214,9 +214,9 @@ test("new task sheet steps to the harness model page", async ({ page }) => {
   await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
 });
 
-// Found against the real dev server: Codex lists 29 models. The picker now
-// shortlists ~10 and pins the harness default so Start stays on screen; Show all
-// reveals the rest and scrolls the checked default into view.
+// Found against the real dev server: Codex lists 29 models. The full catalog is
+// listed inside a scrollable picker so Start stays on screen; the harness default
+// is scrolled into view within the picker bounds.
 test("long model catalog keeps Start reachable and scrolls to the default", async ({ page }) => {
   await mockFetch(page, { "/api/session/models": LONG_SESSION_MODELS });
   await page.goto("/app.html");
@@ -229,33 +229,19 @@ test("long model catalog keeps Start reachable and scrolls to the default", asyn
   await expect(page.getByTestId("new-task-model-page")).toBeVisible();
 
   const modelPicker = sheet.locator(".model-picker");
-  const showAll = sheet.getByTestId("model-picker-toggle");
   const defaultModel = sheet.getByRole("radio", { name: "Model 24" });
 
   await expect(defaultModel).toHaveAttribute("aria-checked", "true");
-  await expect(showAll).toHaveText("Show all");
-  expect(await modelPicker.getByRole("radio").count()).toBeLessThan(
+  expect(await modelPicker.getByRole("radio").count()).toBe(
     LONG_SESSION_MODELS.models.length,
   );
-  await expect(sheet.getByRole("radio", { name: "Model 28" })).toHaveCount(0);
+  await expect(sheet.getByRole("radio", { name: "Model 28" })).toHaveCount(1);
 
   const start = sheet.getByRole("button", { name: "Start" });
   const box = await start.boundingBox();
   const viewport = page.viewportSize();
   expect(box, "Start must be laid out").not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
-
-  // Pinned default sits in the shortlist without scrolling the picker open.
-  expect(await modelPicker.evaluate((el) => el.scrollTop)).toBe(0);
-
-  await showAll.click();
-  await expect(showAll).toHaveText("Show fewer");
-  expect(await modelPicker.getByRole("radio").count()).toBe(
-    LONG_SESSION_MODELS.models.length,
-  );
-  await expect(sheet.getByRole("radio", { name: "Model 28" })).toBeVisible();
-  await expect(defaultModel).toHaveAttribute("aria-checked", "true");
-  await expect(defaultModel).toBeInViewport();
 
   expect(
     await modelPicker.evaluate((picker) => {
