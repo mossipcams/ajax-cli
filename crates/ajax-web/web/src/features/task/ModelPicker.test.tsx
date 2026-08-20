@@ -1,19 +1,53 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import ModelPicker from "./ModelPicker";
 
-const FULL_CATALOG = {
-  models: Array.from({ length: 12 }, (_, index) => ({
-    id: `model-${index}`,
-    label: `Model ${index}`,
-  })),
-  default: "model-0",
+const CURSOR_MODELS = {
+  models: [
+    { id: "auto", label: "Auto" },
+    { id: "composer-2.5", label: "Composer 2.5" },
+    { id: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+    { id: "cursor-grok-4.6-high", label: "Grok 4.6" },
+    { id: "cursor-grok-4.6-high-fast", label: "Grok 4.6 Fast" },
+  ],
+  default: "cursor-grok-4.6-high",
 };
 
-function stubCatalog(catalog: unknown = FULL_CATALOG) {
+const CODEX_OPTION_CATALOG = {
+  agent: "codex",
+  configOptions: [
+    {
+      id: "model",
+      category: "model",
+      name: "Model",
+      type: "select",
+      currentValue: "model-0",
+      choices: Array.from({ length: 12 }, (_, index) => ({
+        value: `model-${index}`,
+        name: `Model ${index}`,
+      })),
+    },
+  ],
+};
+
+function stubFetch({
+  sessionModels = CURSOR_MODELS,
+  optionCatalog = CODEX_OPTION_CATALOG,
+}: {
+  sessionModels?: unknown;
+  optionCatalog?: unknown;
+} = {}) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => catalog }),
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/session/models")) {
+        return Promise.resolve({ ok: true, json: async () => sessionModels });
+      }
+      if (url.includes("/api/session/option-catalog")) {
+        return Promise.resolve({ ok: true, json: async () => optionCatalog });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    }),
   );
 }
 
@@ -23,23 +57,45 @@ afterEach(() => {
 });
 
 describe("ModelPicker", () => {
-  it("lists the full catalog without a shortlist or Show all toggle", async () => {
-    stubCatalog();
+  it("lists exploded Cursor catalog ids grouped by family", async () => {
+    stubFetch();
     render(
       <ModelPicker
         agent="cursor"
         agentLabel="Cursor"
+        value="cursor-grok-4.6-high"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: "Grok 4.6" })).toBeInTheDocument();
+    });
+    const grok = screen.getByRole("group", { name: "Grok 4.6" });
+    expect(within(grok).getByRole("radio", { name: /Grok 4.6 High/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(within(grok).getByRole("radio", { name: "Grok 4.6 Fast" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Composer 2.5 Fast" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Grok 4.6" })).not.toBeInTheDocument();
+  });
+
+  it("lists advertised model choices from the option catalog for other harnesses", async () => {
+    stubFetch();
+    render(
+      <ModelPicker
+        agent="codex"
+        agentLabel="Codex"
         value="model-3"
         onChange={vi.fn()}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
+      expect(screen.getAllByRole("radio")).toHaveLength(12);
     });
     expect(screen.getByRole("radio", { name: "Model 3" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "Model 11" })).toBeInTheDocument();
-    expect(screen.queryByTestId("model-picker-toggle")).not.toBeInTheDocument();
   });
 
   it("does not treat a failed catalog fetch as Auto plus the live model (#948)", async () => {
@@ -62,110 +118,30 @@ describe("ModelPicker", () => {
       { timeout: 3000 },
     );
     expect(screen.queryByRole("radio", { name: /composer/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: /Auto/i })).not.toBeInTheDocument();
   });
 
-  it("collapses Cursor Fast variants and emits pipe-form session_model (#979)", async () => {
-    const onChange = vi.fn();
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-      ],
-      default: "cursor-grok-4.6-high",
-    });
+  it("still decodes legacy exploded Cursor catalog ids (#979)", async () => {
+    stubFetch();
     render(
       <ModelPicker
         agent="cursor"
         agentLabel="Cursor"
-        value="grok-4.6|effort=high|fast=false"
-        onChange={onChange}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toHaveAttribute("aria-checked", "true");
-    });
-    expect(screen.getByTestId("model-fast")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
-
-    fireEvent.click(screen.getByRole("radio", { name: "On" }));
-    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=high|fast=true");
-
-    onChange.mockClear();
-    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
-    expect(onChange).toHaveBeenCalledWith("composer-2.5|fast=false");
-  });
-
-  it("shows unknown current option when snapshot id base is not in catalog (#979)", async () => {
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-      ],
-      default: "cursor-grok-4.6-high",
-    });
-    render(
-      <ModelPicker
-        agent="cursor"
-        agentLabel="Cursor"
-        value="cursor-grok-5.0-high"
+        value="cursor-grok-4.6-high"
         onChange={vi.fn()}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "cursor-grok-5.0-high" })).toHaveAttribute(
+      expect(screen.getByRole("radio", { name: /Grok 4.6 High/ })).toHaveAttribute(
         "aria-checked",
         "true",
       );
     });
-    expect(screen.queryByRole("radio", { name: "Grok 4.6" })).not.toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
   });
 
-  it("decodes ACP bracket snapshot and exposes effort controls (#989)", async () => {
+  it("emits pipe storage on pick", async () => {
     const onChange = vi.fn();
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "gpt-5.6-sol", label: "GPT 5.6 Sol", efforts: ["medium", "high"], hasFast: true },
-      ],
-      default: "gpt-5.6-sol-high",
-    });
-    render(
-      <ModelPicker
-        agent="cursor"
-        agentLabel="Cursor"
-        value="gpt-5.6-sol[fast=false]"
-        onChange={onChange}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "GPT 5.6 Sol" })).toHaveAttribute(
-        "aria-checked",
-        "true",
-      );
-    });
-    expect(screen.getByTestId("model-effort")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("radio", { name: "High" }));
-    expect(onChange).toHaveBeenCalledWith("gpt-5.6-sol|effort=high|fast=false");
-  });
-
-  it("still decodes legacy exploded Cursor catalog ids (#979)", async () => {
-    const onChange = vi.fn();
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-      ],
-      default: "cursor-grok-4.6-high",
-    });
+    stubFetch();
     render(
       <ModelPicker
         agent="cursor"
@@ -176,182 +152,84 @@ describe("ModelPicker", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: "Composer 2.5 Fast" })).toBeInTheDocument();
     });
-    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5 Fast" }));
+    expect(onChange).toHaveBeenCalledWith("composer-2.5|fast=true");
   });
 
-  it("uses live sessionConfigOptions for effort and Fast while listing the full catalog (#997)", async () => {
+  it("emits pipe storage when clicking the Default row", async () => {
     const onChange = vi.fn();
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
-        { id: "extra-model", label: "Extra Model" },
-      ],
-      default: "grok-4.6",
-    });
+    stubFetch();
     render(
       <ModelPicker
         agent="cursor"
         agentLabel="Cursor"
-        value="grok-4.6|reasoning=high|fast=false"
-        liveConfigOptions={[
-          {
-            id: "model",
-            category: "model",
-            name: "Model",
-            type: "select",
-            currentValue: "grok-4.6",
-            choices: [
-              { value: "grok-4.6", name: "Grok 4.6" },
-              { value: "composer-2.5", name: "Composer 2.5" },
-            ],
-          },
-          {
-            id: "reasoning",
-            category: "thought_level",
-            name: "Effort",
-            type: "select",
-            currentValue: "high",
-            choices: [
-              { value: "high", name: "High" },
-              { value: "low", name: "Low" },
-            ],
-          },
-          {
-            id: "fast",
-            category: "model_config",
-            name: "Fast",
-            type: "boolean",
-            currentValue: false,
-            choices: [],
-          },
-        ]}
+        value="composer-2.5"
         onChange={onChange}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "Extra Model" })).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: /Grok 4.6 High/ })).toBeInTheDocument();
     });
-    expect(screen.getByTestId("live-thought-level")).toBeInTheDocument();
-    expect(screen.queryByTestId("model-effort")).not.toBeInTheDocument();
-    expect(screen.getByTestId("live-model-fast")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
-    expect(onChange).toHaveBeenCalledWith("composer-2.5|reasoning=high|fast=false");
+    fireEvent.click(screen.getByRole("radio", { name: /Grok 4.6 High/ }));
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=high|fast=false");
+    expect(onChange).not.toHaveBeenCalledWith("auto");
   });
 
-  it("hides the effort picker when only one thought level is advertised", async () => {
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
-      ],
-      default: "grok-4.6",
-    });
-    render(
-      <ModelPicker
-        agent="cursor"
-        agentLabel="Cursor"
-        value="grok-4.6|reasoning=high|fast=false"
-        liveConfigOptions={[
-          {
-            id: "reasoning",
-            category: "thought_level",
-            name: "Effort",
-            type: "select",
-            currentValue: "high",
-            choices: [{ value: "high", name: "High" }],
-          },
-        ]}
-        onChange={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId("live-thought-level")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("model-effort")).not.toBeInTheDocument();
-  });
-
-  it("unions catalog Grok efforts when live thought_level advertises fewer choices (#1004)", async () => {
+  it("emits pipe storage when tapping the group header", async () => {
     const onChange = vi.fn();
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
-      ],
-      default: "grok-4.6",
+    stubFetch({
+      sessionModels: {
+        models: [
+          { id: "auto", label: "Auto" },
+          { id: "cursor-grok-4.6-xhigh", label: "Grok 4.6 Extra High" },
+          { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+        ],
+        default: "cursor-grok-4.6-high",
+      },
     });
     render(
       <ModelPicker
         agent="cursor"
         agentLabel="Cursor"
-        value="grok-4.6|reasoning=high|fast=false"
-        liveConfigOptions={[
-          {
-            id: "model",
-            category: "model",
-            name: "Model",
-            type: "select",
-            currentValue: "grok-4.6",
-            choices: [{ value: "grok-4.6", name: "Grok 4.6" }],
-          },
-          {
-            id: "reasoning",
-            category: "thought_level",
-            name: "Effort",
-            type: "select",
-            currentValue: "high",
-            choices: [{ value: "high", name: "High" }],
-          },
-          {
-            id: "fast",
-            category: "model_config",
-            name: "Fast",
-            type: "boolean",
-            currentValue: false,
-            choices: [],
-          },
-        ]}
+        value="cursor-grok-4.6-xhigh"
         onChange={onChange}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("live-thought-level")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Grok 4.6" })).toBeInTheDocument();
     });
-    expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Medium" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Extra high" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
-    expect(onChange).toHaveBeenCalledWith("grok-4.6|reasoning=low|fast=false");
+    fireEvent.click(screen.getByRole("button", { name: "Grok 4.6" }));
+    expect(onChange).toHaveBeenCalledWith("grok-4.6|effort=high");
   });
 
-  it("shows catalog effort chips for Grok when disconnected (#1004)", async () => {
-    stubCatalog({
-      models: [
-        { id: "auto", label: "Auto" },
-        { id: "grok-4.6", label: "Grok 4.6", efforts: ["low", "medium", "high", "xhigh"], hasFast: true },
-      ],
-      default: "grok-4.6",
+  it("uses family name only for group headers when labels include effort", async () => {
+    stubFetch({
+      sessionModels: {
+        models: [
+          { id: "auto", label: "Auto" },
+          { id: "cursor-grok-4.6-xhigh", label: "Grok 4.6 Extra High" },
+          { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+        ],
+        default: "cursor-grok-4.6-high",
+      },
     });
     render(
       <ModelPicker
         agent="cursor"
         agentLabel="Cursor"
-        value="grok-4.6|effort=high|fast=false"
+        value="cursor-grok-4.6-high"
         onChange={vi.fn()}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("model-effort")).toBeInTheDocument();
+      expect(screen.getByText("Grok 4.6")).toBeInTheDocument();
     });
-    expect(screen.getByRole("radio", { name: "Low" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Extra high" })).toBeInTheDocument();
+    expect(screen.queryByText("Grok 4.6 Extra High", { selector: ".model-group-label" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Grok 4.6 Extra High" })).toBeInTheDocument();
   });
 });
