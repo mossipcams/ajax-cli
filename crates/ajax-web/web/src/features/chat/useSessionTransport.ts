@@ -2,16 +2,8 @@ import { useEffect, type MutableRefObject, type RefObject } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import {
   connectWebSessionTransport,
-  parseServerEvent,
-  parseServerFrame,
-  PROMPT_TOO_LONG,
-  MAX_FRAME_BYTES,
-  readSessionCursor,
-  writeSessionCursor,
-  type WebSessionTransportCallbacks,
-  type WebSessionTransportPlatform,
-  type WebSessionSocket,
   type SessionSnapshot,
+  type WebSessionTransport,
 } from "@/shared/lib/webSessionTransport";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import { MessageBuffer } from "./messageBuffer";
