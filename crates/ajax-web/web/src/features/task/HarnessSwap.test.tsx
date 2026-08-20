@@ -164,6 +164,19 @@ describe("HarnessSwap", () => {
   });
 
   it("seeds the live picker from sessionConfigOptions and applies the full pin without chip clicks", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "grok-4.6", label: "Grok 4.6", efforts: ["high", "low"], hasFast: true },
+            { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+          ],
+          default: "grok-4.6",
+        }),
+      }),
+    );
     const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
     render(
       <HarnessSwap
@@ -190,6 +203,19 @@ describe("HarnessSwap", () => {
   });
 
   it("keeps a live chip selection as the pending pin through Apply", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: "grok-4.6", label: "Grok 4.6", efforts: ["high", "low"], hasFast: true },
+            { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+          ],
+          default: "grok-4.6",
+        }),
+      }),
+    );
     const spy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
     render(
       <HarnessSwap

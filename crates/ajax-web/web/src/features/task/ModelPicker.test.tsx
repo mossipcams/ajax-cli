@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("ModelPicker", () => {
-  it("shows a shortlist by default and reveals the full catalog on Show all (#948)", async () => {
+  it("lists the full catalog without a shortlist or Show all toggle", async () => {
     stubCatalog();
     render(
       <ModelPicker
@@ -35,32 +35,11 @@ describe("ModelPicker", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByRole("radio").length).toBeLessThan(FULL_CATALOG.models.length);
+      expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
     });
     expect(screen.getByRole("radio", { name: "Model 3" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.queryByRole("radio", { name: "Model 11" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show all");
-
-    fireEvent.click(screen.getByTestId("model-picker-toggle"));
-    expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
-    expect(screen.getByTestId("model-picker-toggle")).toHaveTextContent("Show fewer");
-  });
-
-  it("pins the current selection when it sits outside the shortlist", async () => {
-    stubCatalog();
-    render(
-      <ModelPicker
-        agent="codex"
-        agentLabel="Codex"
-        value="model-11"
-        onChange={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("radio", { name: "Model 11" })).toHaveAttribute("aria-checked", "true");
-    });
     expect(screen.getByRole("radio", { name: "Model 11" })).toBeInTheDocument();
+    expect(screen.queryByTestId("model-picker-toggle")).not.toBeInTheDocument();
   });
 
   it("does not treat a failed catalog fetch as Auto plus the live model (#948)", async () => {
@@ -202,9 +181,17 @@ describe("ModelPicker", () => {
     expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
   });
 
-  it("binds to live sessionConfigOptions instead of the catalog (#997)", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+  it("uses live sessionConfigOptions for effort and Fast while listing the full catalog (#997)", async () => {
     const onChange = vi.fn();
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+        { id: "composer-2.5", label: "Composer 2.5", hasFast: true },
+        { id: "extra-model", label: "Extra Model" },
+      ],
+      default: "grok-4.6",
+    });
     render(
       <ModelPicker
         agent="cursor"
@@ -246,10 +233,47 @@ describe("ModelPicker", () => {
       />,
     );
 
-    expect(screen.getByTestId("live-model-picker")).toBeInTheDocument();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Extra Model" })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("live-thought-level")).toBeInTheDocument();
+    expect(screen.queryByTestId("model-effort")).not.toBeInTheDocument();
+    expect(screen.getByTestId("live-model-fast")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Composer 2.5" }));
     expect(onChange).toHaveBeenCalledWith("composer-2.5|reasoning=high|fast=false");
-    fetchSpy.mockRestore();
+  });
+
+  it("hides the effort picker when only one thought level is advertised", async () => {
+    stubCatalog({
+      models: [
+        { id: "auto", label: "Auto" },
+        { id: "grok-4.6", label: "Grok 4.6", efforts: ["high"], hasFast: true },
+      ],
+      default: "grok-4.6",
+    });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="grok-4.6|reasoning=high|fast=false"
+        liveConfigOptions={[
+          {
+            id: "reasoning",
+            category: "thought_level",
+            name: "Effort",
+            type: "select",
+            currentValue: "high",
+            choices: [{ value: "high", name: "High" }],
+          },
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: "Grok 4.6" })).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("live-thought-level")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("model-effort")).not.toBeInTheDocument();
   });
 });

@@ -85,9 +85,11 @@ existing paths.
   process, `sessionId`, and JSONL. Respawn (`session/new`, no resume) only when
   the child is dead or no model control is advertised. In-band refusal is a typed
   error; the child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
-- A connected session's model picker binds to live `sessionConfigOptions`, not the
-  Ajax catalog. New Task before a session exists may still use
-  `GET /api/session/models`. Deprecated `models.availableModels` is not authority.
+- A connected session's model picker lists the full Ajax catalog from
+  `GET /api/session/models` and uses live `sessionConfigOptions` only to seed the
+  current pin and encode in-band apply (effort / Fast when multiple levels or
+  boolean Fast are advertised). New Task before a session exists uses the same
+  catalog endpoint. Deprecated `models.availableModels` is not authority.
   Verification requires matching Fast bracket flags: a non-Fast catalog pin such as
   `cursor-grok-4.6-high` must not be satisfied by `grok-4.6[effort=high,fast=true]`
   or Composer Fast. When spawn or resume/load still leaves a different model

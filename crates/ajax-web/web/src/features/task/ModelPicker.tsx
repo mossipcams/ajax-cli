@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Button } from "@/shared/ui/button";
 import {
   buildCursorDisplayModels,
-  collapseCursorCatalogModels,
   decodeCursorPipeOrCatalogId,
   decodeCursorSelection,
   decodeModelSelection,
@@ -14,13 +13,11 @@ import {
   normalizeSessionAgent,
   type SessionModelCatalog,
 } from "./desiredModel";
-import { buildModelShortlist } from "./modelShortlist";
 import { useSessionModelsQuery } from "./useSessionModelsQuery";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import {
   encodeDesiredPinWithLiveSelection,
   modelConfigBooleanLiveOption,
-  modelLiveOption,
   readLiveBooleanCurrent,
   readLiveSelectCurrent,
   thoughtLevelLiveOption,
@@ -41,28 +38,15 @@ interface Props {
 }
 
 /**
- * The models one harness advertises, plus its reasoning level when that is a
- * separate choice. Cursor effort and Fast are split out of catalog ids; the
- * bridges expose reasoning as their own config option.
+ * Full harness catalog for model choice, plus effort / Fast when multiple levels
+ * exist. Live sessionConfigOptions seed the current pin and supply in-band apply
+ * ids; they do not replace the catalog model list.
  */
-export default function ModelPicker(props: Props) {
-  if (props.liveConfigOptions?.length) {
-    return (
-      <LiveConfigModelPicker
-        options={props.liveConfigOptions}
-        value={props.value}
-        disabled={props.disabled ?? false}
-        onChange={props.onChange}
-      />
-    );
-  }
-  return <CatalogModelPicker {...props} />;
-}
-
-function CatalogModelPicker({
+export default function ModelPicker({
   agent,
   agentLabel,
   value,
+  liveConfigOptions,
   disabled = false,
   onChange,
   onCatalog,
@@ -70,7 +54,6 @@ function CatalogModelPicker({
   const { data: catalog, isPending, isError, refetch } = useSessionModelsQuery(agent);
   const listRef = useRef<HTMLDivElement>(null);
   const catalogNotifiedRef = useRef<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const isCursor = normalizeSessionAgent(agent) === "cursor";
 
   useEffect(() => {
@@ -82,15 +65,11 @@ function CatalogModelPicker({
   const { model, options } = decodeModelSelection(value);
 
   useEffect(() => {
-    setShowAll(false);
-  }, [agent, catalog]);
-
-  useEffect(() => {
     if (!model) return;
     listRef.current
       ?.querySelector<HTMLElement>("[aria-checked='true']")
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [model, catalog, showAll]);
+  }, [model, catalog]);
 
   if (isError) {
     return (
@@ -121,6 +100,19 @@ function CatalogModelPicker({
     );
   }
 
+  const liveOptions = liveConfigOptions ?? [];
+  const thoughtOption = liveOptions.length ? thoughtLevelLiveOption(liveOptions) : undefined;
+  const fastOption = liveOptions.length ? modelConfigBooleanLiveOption(liveOptions) : undefined;
+  const showLiveEffort = !!thoughtOption && thoughtOption.choices.length > 1;
+  const showLiveFast = !!fastOption;
+  const selectedThought = thoughtOption
+    ? options[thoughtOption.id] ?? readLiveSelectCurrent(thoughtOption)
+    : undefined;
+  const selectedFast = fastOption
+    ? options[fastOption.id] === "true" ||
+      (options[fastOption.id] === undefined ? readLiveBooleanCurrent(fastOption) : false)
+    : undefined;
+
   const reasoning = catalog.reasoning;
   const catalogIds = new Set(catalog.models.map((option) => option.id));
   const cursorIntent = isCursor && model ? decodeCursorPipeOrCatalogId(model) : null;
@@ -139,33 +131,33 @@ function CatalogModelPicker({
   const selectedCursorRow =
     cursorSelection && displayModels.find((row) => row.base === cursorSelection.base);
 
-  const { shortlist, hasMore } = buildModelShortlist(catalog.models, agent, {
-    currentModelId: model || undefined,
-    catalogDefault: catalog.default || undefined,
-  });
-  const shortlistIds = new Set(shortlist.map((option) => option.id));
-  const remainingCatalog = isCursor
-    ? collapseCursorCatalogModels(catalog.models).filter((option) => !shortlistIds.has(option.id))
-    : catalog.models.filter((option) => !shortlistIds.has(option.id));
-  const visibleCatalog = showAll ? [...shortlist, ...remainingCatalog] : shortlist;
-
-  const visibleCursorBases = new Set(
-    visibleCatalog
-      .map((option) => option.id)
-      .filter((id) => id !== DEFAULT_SESSION_MODEL && id !== "auto"),
-  );
-  if (cursorSelection) visibleCursorBases.add(cursorSelection.base);
-  const visibleDisplayModels = isCursor
-    ? displayModels.filter((row) => visibleCursorBases.has(row.base))
-    : [];
+  const showCatalogEffort =
+    !showLiveEffort && isCursor && selectedCursorRow && selectedCursorRow.efforts.length > 1;
+  const showCatalogFast = !showLiveFast && isCursor && selectedCursorRow?.hasFast;
 
   const autoOption = catalog.models.find(
     (option) => option.id === DEFAULT_SESSION_MODEL || option.id === "auto",
   );
 
+  function emitLive(selection: {
+    model?: string;
+    thoughtLevel?: string;
+    fast?: boolean;
+  }) {
+    onChange(encodeDesiredPinWithLiveSelection(liveOptions, selection));
+  }
+
   function emitCursorSelection(base: string, effort: string | undefined, fast: boolean) {
     const row = displayModels.find((entry) => entry.base === base);
     if (!row) return;
+    if (liveOptions.length) {
+      emitLive({
+        model: base,
+        thoughtLevel: effort ?? selectedThought,
+        fast: fastOption ? fast : undefined,
+      });
+      return;
+    }
     onChange(encodeCursorSelection(base, effort, fast, row));
   }
 
@@ -173,6 +165,14 @@ function CatalogModelPicker({
     const row = displayModels.find((entry) => entry.base === base);
     if (!row) return;
     emitCursorSelection(base, defaultCursorEffort(row, activeCatalog.default), false);
+  }
+
+  function selectCatalogModel(optionId: string) {
+    if (liveOptions.length) {
+      emitLive({ model: optionId, thoughtLevel: selectedThought, fast: selectedFast });
+      return;
+    }
+    onChange(encodeModelSelection(optionId, options));
   }
 
   return (
@@ -207,7 +207,7 @@ function CatalogModelPicker({
                 role="radio"
                 aria-checked={model === autoOption.id || model === DEFAULT_SESSION_MODEL}
                 disabled={disabled}
-                onClick={() => onChange(autoOption.id)}
+                onClick={() => selectCatalogModel(autoOption.id)}
               >
                 <span className="model-option-label">{autoOption.label}</span>
                 {autoOption.id === catalog.default ? (
@@ -215,7 +215,7 @@ function CatalogModelPicker({
                 ) : null}
               </button>
             ) : null}
-            {visibleDisplayModels.map((row) => (
+            {displayModels.map((row) => (
               <button
                 key={row.base}
                 type="button"
@@ -230,7 +230,7 @@ function CatalogModelPicker({
             ))}
           </>
         ) : (
-          visibleCatalog.map((option) => (
+          catalog.models.map((option) => (
             <button
               key={option.id}
               type="button"
@@ -238,7 +238,7 @@ function CatalogModelPicker({
               role="radio"
               aria-checked={model === option.id}
               disabled={disabled}
-              onClick={() => onChange(encodeModelSelection(option.id, options))}
+              onClick={() => selectCatalogModel(option.id)}
             >
               <span className="model-option-label">{option.label}</span>
               {option.id === catalog.default ? (
@@ -249,18 +249,41 @@ function CatalogModelPicker({
         )}
       </div>
 
-      {hasMore ? (
-        <button
-          type="button"
-          className="model-picker-toggle"
-          data-testid="model-picker-toggle"
-          onClick={() => setShowAll((open) => !open)}
-        >
-          {showAll ? "Show fewer" : "Show all"}
-        </button>
+      {showLiveEffort && thoughtOption ? (
+        <>
+          <span className="field-label" id="live-thought-label">
+            {thoughtOption.name}
+          </span>
+          <div
+            className="reasoning-picker"
+            role="radiogroup"
+            aria-labelledby="live-thought-label"
+            data-testid="live-thought-level"
+          >
+            {thoughtOption.choices.map((choice) => (
+              <button
+                key={choice.value}
+                type="button"
+                className={`reasoning-option${selectedThought === choice.value ? " is-selected" : ""}`}
+                role="radio"
+                aria-checked={selectedThought === choice.value}
+                disabled={disabled}
+                onClick={() =>
+                  emitLive({
+                    model: cursorSelection?.base ?? model ?? undefined,
+                    thoughtLevel: choice.value,
+                    fast: selectedFast,
+                  })
+                }
+              >
+                {choice.name}
+              </button>
+            ))}
+          </div>
+        </>
       ) : null}
 
-      {isCursor && selectedCursorRow && selectedCursorRow.efforts.length > 1 ? (
+      {showCatalogEffort && selectedCursorRow ? (
         <>
           <span className="field-label" id="model-effort-label">
             Effort
@@ -294,7 +317,48 @@ function CatalogModelPicker({
         </>
       ) : null}
 
-      {isCursor && selectedCursorRow?.hasFast ? (
+      {showLiveFast && fastOption ? (
+        <>
+          <span className="field-label" id="live-fast-label">
+            {fastOption.name}
+          </span>
+          <div
+            className="reasoning-picker"
+            role="radiogroup"
+            aria-labelledby="live-fast-label"
+            data-testid="live-model-fast"
+          >
+            {[
+              { id: false, label: "Off" },
+              { id: true, label: "On" },
+            ].map((option) => {
+              const fastOn = selectedFast ?? false;
+              const selected = option.id === fastOn;
+              return (
+                <button
+                  key={String(option.id)}
+                  type="button"
+                  className={`reasoning-option${selected ? " is-selected" : ""}`}
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={disabled}
+                  onClick={() =>
+                    emitLive({
+                      model: cursorSelection?.base ?? model ?? undefined,
+                      thoughtLevel: selectedThought,
+                      fast: option.id,
+                    })
+                  }
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
+      {showCatalogFast && selectedCursorRow ? (
         <>
           <span className="field-label" id="model-fast-label">
             Fast
@@ -322,7 +386,8 @@ function CatalogModelPicker({
                   onClick={() =>
                     emitCursorSelection(
                       selectedCursorRow.base,
-                      cursorSelection?.effort ?? defaultCursorEffort(selectedCursorRow, catalog.default),
+                      cursorSelection?.effort ??
+                        defaultCursorEffort(selectedCursorRow, catalog.default),
                       option.id === "true",
                     )
                   }
@@ -335,7 +400,7 @@ function CatalogModelPicker({
         </>
       ) : null}
 
-      {reasoning ? (
+      {reasoning && !showLiveEffort ? (
         <>
           <span className="field-label" id="model-reasoning-label">
             {reasoning.label}
@@ -371,146 +436,6 @@ function CatalogModelPicker({
             })}
           </div>
         </>
-      ) : null}
-    </>
-  );
-}
-
-function LiveConfigModelPicker({
-  options,
-  value,
-  disabled,
-  onChange,
-}: {
-  options: LiveSessionConfigOption[];
-  value: string;
-  disabled: boolean;
-  onChange: (selection: string) => void;
-}) {
-  const modelOption = modelLiveOption(options);
-  const thoughtOption = thoughtLevelLiveOption(options);
-  const fastOption = modelConfigBooleanLiveOption(options);
-  const parsed = decodeModelSelection(value);
-  const selectedModel =
-    parsed.model ||
-    (modelOption ? readLiveSelectCurrent(modelOption) : undefined) ||
-    undefined;
-  const selectedThought = thoughtOption
-    ? parsed.options[thoughtOption.id] ?? readLiveSelectCurrent(thoughtOption)
-    : undefined;
-  const selectedFast = fastOption
-    ? parsed.options[fastOption.id] === "true" ||
-      (parsed.options[fastOption.id] === undefined
-        ? readLiveBooleanCurrent(fastOption)
-        : false)
-    : undefined;
-
-  function emit(selection: {
-    model?: string;
-    thoughtLevel?: string;
-    fast?: boolean;
-  }) {
-    onChange(encodeDesiredPinWithLiveSelection(options, selection));
-  }
-
-  return (
-    <>
-      {modelOption && modelOption.choices.length ? (
-        <div
-          className="model-picker"
-          role="radiogroup"
-          aria-label={`${modelOption.name} models`}
-          data-testid="live-model-picker"
-        >
-          {modelOption.choices.map((choice) => (
-            <button
-              key={choice.value}
-              type="button"
-              className={`model-option${selectedModel === choice.value ? " is-selected" : ""}`}
-              role="radio"
-              aria-checked={selectedModel === choice.value}
-              disabled={disabled}
-              onClick={() => emit({ model: choice.value, thoughtLevel: selectedThought, fast: selectedFast })}
-            >
-              <span className="model-option-label">{choice.name}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {thoughtOption && thoughtOption.choices.length > 1 ? (
-        <>
-          <span className="field-label" id="live-thought-label">
-            {thoughtOption.name}
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="live-thought-label"
-            data-testid="live-thought-level"
-          >
-            {thoughtOption.choices.map((choice) => (
-              <button
-                key={choice.value}
-                type="button"
-                className={`reasoning-option${selectedThought === choice.value ? " is-selected" : ""}`}
-                role="radio"
-                aria-checked={selectedThought === choice.value}
-                disabled={disabled}
-                onClick={() => emit({ model: selectedModel, thoughtLevel: choice.value, fast: selectedFast })}
-              >
-                {choice.name}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {fastOption ? (
-        <>
-          <span className="field-label" id="live-fast-label">
-            {fastOption.name}
-          </span>
-          <div
-            className="reasoning-picker"
-            role="radiogroup"
-            aria-labelledby="live-fast-label"
-            data-testid="live-model-fast"
-          >
-            {[
-              { id: false, label: "Off" },
-              { id: true, label: "On" },
-            ].map((option) => {
-              const fastOn = selectedFast ?? false;
-              const selected = option.id === fastOn;
-              return (
-                <button
-                  key={String(option.id)}
-                  type="button"
-                  className={`reasoning-option${selected ? " is-selected" : ""}`}
-                  role="radio"
-                  aria-checked={selected}
-                  disabled={disabled}
-                  onClick={() =>
-                    emit({
-                      model: selectedModel,
-                      thoughtLevel: selectedThought,
-                      fast: option.id,
-                    })
-                  }
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {value && !modelOption ? (
-        <p className="sheet-note" data-testid="live-model-fallback">
-          Applied model: {value}
-        </p>
       ) : null}
     </>
   );
