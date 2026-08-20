@@ -21,6 +21,8 @@ pub struct ConfigApplyStep {
     pub value: SessionConfigOptionValue,
 }
 
+/// Kept for the stacked UI branch (`config_option_descriptors`); unused on PR #999 alone.
+#[allow(dead_code)]
 pub fn category_name(category: &SessionConfigOptionCategory) -> &str {
     match category {
         SessionConfigOptionCategory::Mode => "mode",
@@ -60,6 +62,16 @@ pub fn thought_level_option(options: &[SessionConfigOption]) -> Option<&SessionC
     )
 }
 
+fn fast_option_advertised(option: &SessionConfigOption) -> bool {
+    match &option.kind {
+        SessionConfigKind::Boolean(_) => true,
+        SessionConfigKind::Select(select) => {
+            select_value_advertised(select, "true") && select_value_advertised(select, "false")
+        }
+        _ => false,
+    }
+}
+
 pub fn model_config_boolean_option(
     options: &[SessionConfigOption],
 ) -> Option<&SessionConfigOption> {
@@ -67,14 +79,37 @@ pub fn model_config_boolean_option(
         .iter()
         .find(|option| {
             option.category.as_ref() == Some(&SessionConfigOptionCategory::ModelConfig)
-                && matches!(option.kind, SessionConfigKind::Boolean(_))
+                && fast_option_advertised(option)
         })
         .or_else(|| {
-            options.iter().find(|option| {
-                option.id.0.as_ref() == "fast"
-                    && matches!(option.kind, SessionConfigKind::Boolean(_))
-            })
+            options
+                .iter()
+                .find(|option| option.id.0.as_ref() == "fast" && fast_option_advertised(option))
         })
+}
+
+pub fn read_fast_current_value(option: &SessionConfigOption) -> Option<bool> {
+    if let Some(value) = read_boolean_current_value(option) {
+        return Some(value);
+    }
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    match select.current_value.0.as_ref() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn fast_apply_value(option: &SessionConfigOption, want: bool) -> SessionConfigOptionValue {
+    match &option.kind {
+        SessionConfigKind::Boolean(_) => SessionConfigOptionValue::boolean(want),
+        SessionConfigKind::Select(_) => {
+            SessionConfigOptionValue::value_id(if want { "true" } else { "false" })
+        }
+        _ => SessionConfigOptionValue::boolean(want),
+    }
 }
 
 pub fn mode_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOption> {
@@ -176,6 +211,12 @@ fn step_matches_current(options: &[SessionConfigOption], step: &ConfigApplyStep)
         (SessionConfigKind::Select(select), SessionConfigOptionValue::ValueId { value }) => {
             select.current_value.0.as_ref() == value.0.as_ref()
         }
+        (SessionConfigKind::Select(select), SessionConfigOptionValue::Boolean { value }) => {
+            select.current_value.0.as_ref() == if *value { "true" } else { "false" }
+        }
+        (SessionConfigKind::Boolean(boolean), SessionConfigOptionValue::ValueId { value }) => {
+            boolean.current_value == (value.0.as_ref() == "true")
+        }
         (SessionConfigKind::Boolean(boolean), SessionConfigOptionValue::Boolean { value }) => {
             boolean.current_value == *value
         }
@@ -203,7 +244,7 @@ pub fn pin_satisfied(
             return false;
         }
         if let Some(fast) = model_config_boolean_option(options) {
-            return read_boolean_current_value(fast) == Some(false);
+            return read_fast_current_value(fast) == Some(false);
         }
         return true;
     }
@@ -258,10 +299,10 @@ fn map_unspecified_apply_steps(
     }
     let mut steps = Vec::new();
     if let Some(fast) = model_config_boolean_option(options) {
-        if read_boolean_current_value(fast) != Some(false) {
+        if read_fast_current_value(fast) != Some(false) {
             steps.push(ConfigApplyStep {
                 config_id: fast.id.0.to_string(),
-                value: SessionConfigOptionValue::boolean(false),
+                value: fast_apply_value(fast, false),
             });
         }
     }
@@ -327,10 +368,10 @@ fn map_intent_to_split_steps(
     }
     if let Some(fast) = model_config_boolean_option(options) {
         let want = intent.fast.unwrap_or(false);
-        if read_boolean_current_value(fast) != Some(want) {
+        if read_fast_current_value(fast) != Some(want) {
             steps.push(ConfigApplyStep {
                 config_id: fast.id.0.to_string(),
-                value: SessionConfigOptionValue::boolean(want),
+                value: fast_apply_value(fast, want),
             });
         }
     } else if intent.fast == Some(true) {
