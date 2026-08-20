@@ -1,6 +1,12 @@
-use super::test_support::BlockingSessionDirectory;
+use super::test_support::{
+    fake_acp_initialize_params_path, initialize_params_set_parameterized_model_picker_true,
+    BlockingSessionDirectory,
+};
 use super::ws_bridge::{should_send_keepalive, MAX_SESSION_FRAME_BYTES, SESSION_PING_INTERVAL};
-use super::{apply_client_message, SessionClientMessage, SessionServerEvent, TaskSessionDirectory};
+use super::{
+    apply_client_message, ApplyClientMessageOutcome, SessionClientMessage, SessionServerEvent,
+    TaskSessionDirectory,
+};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Duration};
@@ -88,11 +94,10 @@ fn apply_client_message_prompt_records_user_message_immediately() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #931: in-session set_model must persist on the task
-// before the host applies the pin in-band; persistence failure leaves the slot
-// unchanged and returns a typed error.
+// Regression for issue #931: in-session set_config_option persists the model id
+// after a successful live apply; persistence failure leaves the child running.
 #[test]
-fn apply_client_message_set_model_persists_before_in_band_apply() {
+fn apply_client_message_set_config_option_persists_after_in_band_apply() {
     let dir = scratch_dir("set-model-persist");
     let handle = "web/set-model";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -118,15 +123,19 @@ fn apply_client_message_set_model_persists_before_in_band_apply() {
             directory.inner(),
             handle,
             &dir,
-            SessionClientMessage::SetModel {
-                model: "composer-2.5".to_string(),
+            SessionClientMessage::SetConfigOption {
+                config_id: "model".to_string(),
+                value: serde_json::json!("composer-2.5"),
             },
             &mut generation,
             Some(persist),
         ))
-        .expect("set model");
+        .expect("set config option");
 
-        assert_eq!(persisted.lock().unwrap().as_deref(), Some("composer-2.5"));
+        assert_eq!(
+            persisted.lock().unwrap().as_deref(),
+            Some("composer-2.5|fast=false")
+        );
         assert_eq!(directory.child_id(handle), Some(before));
         let session_after =
             crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
@@ -144,8 +153,99 @@ fn apply_client_message_set_model_persists_before_in_band_apply() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+// Regression #1014: Fast toggle persists pipe storage including fast= axis.
 #[test]
-fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
+fn apply_client_message_set_config_option_persists_fast_toggle() {
+    let dir = scratch_dir("set-fast-persist");
+    let handle = "web/set-fast";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &["--cursor-parameterized-models", "--cli-default-model"],
+            || {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire");
+                let before = directory.child_id(handle).expect("child");
+                let mut generation = directory.generation(handle);
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let persist: super::PersistSessionModel =
+                    std::sync::Arc::new(move |model: &str| {
+                        *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+                        Ok(())
+                    });
+                rt.block_on(apply_client_message(
+                    directory.inner(),
+                    handle,
+                    &dir,
+                    SessionClientMessage::SetConfigOption {
+                        config_id: "fast".to_string(),
+                        value: serde_json::json!(false),
+                    },
+                    &mut generation,
+                    Some(persist),
+                ))
+                .expect("set fast config option");
+
+                assert_eq!(
+                    persisted.lock().unwrap().as_deref(),
+                    Some("grok-4.6|effort=high|fast=false")
+                );
+                assert_eq!(directory.child_id(handle), Some(before));
+            },
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression: compatibility set_model persists Ajax pipe, not catalog ids.
+#[test]
+fn apply_client_message_set_model_persists_pipe_from_catalog_id() {
+    let dir = scratch_dir("set-model-pipe-persist");
+    let handle = "web/set-model-pipe";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let mut generation = directory.generation(handle);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let persist: super::PersistSessionModel = std::sync::Arc::new(move |model: &str| {
+            *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+            Ok(())
+        });
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::SetModel {
+                model: "composer-2.5".to_string(),
+            },
+            &mut generation,
+            Some(persist),
+        ))
+        .expect("set model");
+
+        assert_eq!(
+            persisted.lock().unwrap().as_deref(),
+            Some("composer-2.5|fast=false")
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn apply_client_message_set_config_option_leaves_child_unchanged_when_persist_fails() {
     let dir = scratch_dir("set-model-persist-fail");
     let handle = "web/set-model-fail";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -160,20 +260,35 @@ fn apply_client_message_set_model_leaves_child_unchanged_when_persist_fails() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let persist: super::PersistSessionModel =
             std::sync::Arc::new(|_model: &str| Err("registry write failed".to_string()));
-        let error = rt
+        let outcome = rt
             .block_on(apply_client_message(
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: "composer-2.5".to_string(),
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: serde_json::json!("composer-2.5"),
                 },
                 &mut generation,
                 Some(persist),
             ))
-            .unwrap_err();
-        assert!(error.contains("registry write failed"));
+            .expect("apply succeeds even when persist fails");
+        assert_eq!(
+            outcome,
+            ApplyClientMessageOutcome::ModelChanged {
+                persist_warning: Some(
+                    "Model changed but could not save to task — registry write failed".to_string()
+                ),
+            }
+        );
         assert_eq!(directory.child_id(handle), Some(before));
+        directory.pump(handle);
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Error { message }
+                if message.contains("could not save to task")
+        )));
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -521,6 +636,38 @@ fn apply_persisted_model_keeps_live_child_for_same_harness_swap() {
 
         assert_eq!(directory.child_id(handle), Some(child_before));
         assert!(directory.inner().has_live_entry(handle));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Cross-harness Switch respawns with a fresh initialize; Cursor vendor picker stays on.
+#[test]
+fn reset_harness_context_to_cursor_advertises_parameterized_model_picker() {
+    let dir = scratch_dir("reset-harness-cursor-picker");
+    let handle = "web/reset-harness-cursor";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let init_params_path = fake_acp_initialize_params_path(&dir);
+    let _ = std::fs::remove_file(&init_params_path);
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Codex)
+            .expect("acquire codex");
+        directory
+            .reset_harness_context(handle, &dir, AgentClient::Cursor, "auto")
+            .expect("reset harness to cursor");
+        directory.pump(handle);
+
+        let raw = std::fs::read_to_string(&init_params_path)
+            .unwrap_or_else(|error| panic!("fake ACP child must write initialize params: {error}"));
+        let params: serde_json::Value =
+            serde_json::from_str(&raw).expect("initialize params must be valid json");
+        assert!(
+            initialize_params_set_parameterized_model_picker_true(&params),
+            "cross-harness Switch initialize must set parameterizedModelPicker true: {params}"
+        );
     });
 
     let _ = std::fs::remove_dir_all(dir);
