@@ -228,6 +228,11 @@ existing paths.
 - Each attach delivers one protocol v2 `snapshot` wire frame to the browser
   reducer (as a synthetic `ready` event for turn state), then cursor-bearing
   `event` envelopes for replay/live traffic.
+- After the last replay envelope below `snapshot.cursor`, the browser reapplies
+  that snapshot's turn state as a non-resetting synthetic `ready`. Historical
+  prompt acknowledgements, agent messages, and tool rows therefore cannot
+  override an authoritative idle snapshot and disable model/effort controls
+  ([#994](https://github.com/mossipcams/ajax-cli/issues/994)).
 - The in-session picker reverts only on model-change failures from the host
   (persistence refused, invalid model, refused/unprovable harness pin, and similar).
   Unrelated `error` events during the next prompt must not restore the previous

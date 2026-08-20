@@ -362,6 +362,62 @@ describe("connectWebSessionTransport", () => {
     expect(openSocket).toHaveBeenCalledWith(expect.stringContaining("cursor=2"));
   });
 
+  it("#994 reapplies idle snapshot state after the replay tail", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ cursor: 3, model: "gpt-5.6-sol", turnState: "idle" }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(1, { type: "prompt_accepted", clientMessageId: "historical" }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(2, {
+        type: "message",
+        role: "agent",
+        text: "Historical tail",
+        itemId: "i-history",
+      }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenLastCalledWith({
+      type: "ready",
+      model: "gpt-5.6-sol",
+      busy: false,
+      reset: false,
+    });
+  });
+
+  it("#994 does not reapply the snapshot to live events at its cursor", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ cursor: 3, turnState: "idle" }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(3, {
+        type: "message",
+        role: "agent",
+        text: "Live update",
+        itemId: "i-live",
+      }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenCalledTimes(2);
+    expect(cbs.onEvent).toHaveBeenLastCalledWith({
+      type: "message",
+      role: "agent",
+      text: "Live update",
+      itemId: "i-live",
+    });
+  });
+
   it("applies pendingPermission from snapshot", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
