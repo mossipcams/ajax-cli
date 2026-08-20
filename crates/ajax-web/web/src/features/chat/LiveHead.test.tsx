@@ -9,7 +9,6 @@ function mountHead(
 ) {
   return render(
     <LiveHead
-      title="Fix login"
       state="idle"
       tone="idle"
       detail={null}
@@ -21,11 +20,9 @@ function mountHead(
       turnUsage={null}
       activityAgeMs={0}
       connected
-      onBack={noop}
       onApprove={noop}
       onReject={noop}
       onStop={noop}
-      onOpenDetails={noop}
       {...overrides}
     />,
   );

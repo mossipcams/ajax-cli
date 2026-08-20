@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useSessionChatViewport } from "./useSessionChatViewport";
+import { useChatViewport } from "./useChatViewport";
 
 const keyboardState = vi.hoisted(() => ({
   keyboardOpen: false,
@@ -9,7 +9,7 @@ const keyboardState = vi.hoisted(() => ({
   visualViewportHeight: 800,
 }));
 
-vi.mock("./useMobileKeyboard", () => ({
+vi.mock("@/shared/hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: () => ({
     isMobile: true,
     keyboardOpen: keyboardState.keyboardOpen,
@@ -19,7 +19,7 @@ vi.mock("./useMobileKeyboard", () => ({
   }),
 }));
 
-describe("useSessionChatViewport", () => {
+describe("useChatViewport", () => {
   const rafQueue: FrameRequestCallback[] = [];
 
   beforeEach(() => {
@@ -64,7 +64,7 @@ describe("useSessionChatViewport", () => {
     const pinnedRef = { current: pinned };
 
     const view = renderHook(() =>
-      useSessionChatViewport({ threadRef, composerRef, pinnedRef }),
+      useChatViewport({ threadRef, composerRef, pinnedRef }),
     );
     return { view, thread, composer, pinnedRef };
   }
@@ -227,7 +227,7 @@ describe("useSessionChatViewport", () => {
     const pinnedRef = { current: true };
 
     const view = renderHook(() =>
-      useSessionChatViewport({ threadRef, composerRef, pinnedRef, onRestoreLiveEdge }),
+      useChatViewport({ threadRef, composerRef, pinnedRef, onRestoreLiveEdge }),
     );
 
     keyboardState.keyboardOpen = true;

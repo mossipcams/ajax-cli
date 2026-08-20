@@ -4,7 +4,7 @@ import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import {
   SESSION_MODEL_STORAGE_KEY,
   writeSessionModel,
-} from "./sessionModel";
+} from "@/features/task/public";
 import { useTaskSession } from "./useTaskSession";
 
 describe("useTaskSession", () => {

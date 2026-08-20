@@ -1,5 +1,5 @@
 /* Live head --------------------------------------------------------------- */
-/* One sticky strip: back + title + state + Details/Stop. Idle has no second
+/* Sticky ACP state strip under the shared task header. Idle has no second
    quiet line — agent/branch live in Details. Keeps chrome ~20% so the
    transcript can own ~80% of the band. */
 .session-head {
@@ -7,7 +7,7 @@
   position: sticky;
   top: 0;
   z-index: 3;
-  padding: calc(4px + env(safe-area-inset-top, 0px)) 12px 6px;
+  padding: 4px 12px 6px;
   background: color-mix(in srgb, var(--paper) 94%, transparent);
   border-bottom: 1px solid var(--rule);
   -webkit-backdrop-filter: saturate(140%) blur(10px);

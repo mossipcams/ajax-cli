@@ -4,14 +4,14 @@ import {
   readOrchestrationChatEnabled,
   writeOrchestrationChatEnabled,
   subscribeOrchestrationChat,
-} from "./sessionMode";
+} from "./orchestrationChatPreference";
 
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
 });
 
-describe("sessionMode", () => {
+describe("orchestrationChatPreference", () => {
   it("defaults orchestration chat to true when the key is missing", () => {
     expect(readOrchestrationChatEnabled()).toBe(true);
   });
