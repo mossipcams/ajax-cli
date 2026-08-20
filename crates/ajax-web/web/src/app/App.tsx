@@ -502,11 +502,6 @@ export default function App() {
     void (async () => {
       try {
         if (await checkHealth()) {
-          const { origin, hash } = window.location;
-          if (origin.startsWith("http://") || origin.startsWith("https://")) {
-            window.location.replace(`${origin}${hash}`);
-            return;
-          }
           location.reload();
           return;
         }

@@ -79,14 +79,16 @@ describe("App update banner", () => {
     expect(banner).toHaveTextContent("Update ready — tap to reload");
   });
 
-  it("reloads only once when the update banner is multi-tapped", async () => {
+  // #1007: production shell is GET `/` with a hash; replace(origin+hash) is a no-op.
+  it("reloads only once when the update banner is multi-tapped (#1007)", async () => {
     vi.useFakeTimers();
     let versionCalls = 0;
     const replace = vi.fn();
     const reload = vi.fn();
     vi.stubGlobal("location", {
       ...window.location,
-      hash: "",
+      pathname: "/",
+      hash: "#/",
       origin: "https://ajax.local:8787",
       replace,
       reload,
@@ -113,10 +115,7 @@ describe("App update banner", () => {
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await vi.waitFor(() =>
-      expect(replace).toHaveBeenCalledOnce(),
-    );
-    expect(replace).toHaveBeenCalledWith("https://ajax.local:8787");
-    expect(reload).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(replace).not.toHaveBeenCalled();
   });
 });
