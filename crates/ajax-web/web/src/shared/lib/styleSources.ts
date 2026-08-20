@@ -8,9 +8,9 @@ export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
    * Re-measured when the session transcript became a mobile chat surface
    * (queued follow-up, turn disclosure, system divider). */
-  sourceStylesCssBytes: 97_168,
-  builtAppCssBytes: 84_322,
-  builtAppCssGzipBytes: 15_253,
+  sourceStylesCssBytes: 97_214,
+  builtAppCssBytes: 84_345,
+  builtAppCssGzipBytes: 15_251,
   classSelectorLines: 528,
   hasSelectors: 18,
 } as const;

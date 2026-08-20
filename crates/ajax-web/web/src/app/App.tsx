@@ -586,6 +586,7 @@ export default function App() {
   return (
     <AppViewport>
       <AppShell
+        // Chat omits dashboard chrome; session route-scroll owns safe-area-top.
         chrome={isSessionRoute ? null : chrome}
         nav={nav}
         className={isSessionRoute ? "app-shell--session" : undefined}
