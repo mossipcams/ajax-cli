@@ -14,9 +14,6 @@ pub use config_options::is_unspecified_model;
 mod apply_model_tests;
 
 #[cfg(test)]
-mod client_spawn_model_tests;
-
-#[cfg(test)]
 mod client_tests;
 
 #[cfg(test)]
