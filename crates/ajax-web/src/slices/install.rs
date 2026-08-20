@@ -64,8 +64,8 @@ mod tests {
             "shell must paint dark before /app.css arrives"
         );
         assert!(
-            shell.contains("ajax-retire-sw"),
-            "shell must unregister leftover service workers from the retired PWA"
+            !shell.contains("ajax-retire-sw"),
+            "shell must not carry retired PWA service-worker cleanup"
         );
     }
 
