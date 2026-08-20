@@ -1,7 +1,7 @@
 import {
   DEFAULT_SESSION_MODEL,
   encodeModelSelection,
-} from "@/features/task/desiredModel";
+} from "@/shared/lib/sessionModelSelection";
 
 export interface LiveConfigOptionChoice {
   value: string;
