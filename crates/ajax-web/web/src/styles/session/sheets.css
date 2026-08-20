@@ -204,9 +204,9 @@
   overflow: hidden;
   /* The generic route padding is dead space here: this route renders no bottom
      nav and no page lead, so its 72px of nav clearance only stranded the
-     composer that far above the keyboard. The session page owns its own gutter;
-     only the landscape notch insets survive. */
-  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+     composer that far above the keyboard. Session omits .cockpit-chrome, so
+     this scroller owns safe-area top as well as landscape notch insets. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
 [data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {
