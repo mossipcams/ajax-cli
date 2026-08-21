@@ -102,11 +102,13 @@ describe("NewTaskSheet", () => {
     const extras = stylesSource.match(/\.model-picker-extras\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(extras).toMatch(/z-index:\s*1/);
     expect(extras).toMatch(/position:\s*relative/);
-    expect(modelList).toMatch(/pointer-events:\s*none/);
-    expect(stylesSource).toMatch(
-      /\.sheet-card\.is-model-step \.model-option\s*\{[^}]*pointer-events:\s*auto/,
-    );
     expect(extras).toMatch(/pointer-events:\s*auto/);
+    const baseModelPicker =
+      stylesSource.match(/\.sheet-card \.model-picker\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(baseModelPicker).toMatch(/overflow-y:\s*auto/);
+    expect(baseModelPicker).toMatch(/overscroll-behavior:\s*contain/);
+    expect(baseModelPicker).toMatch(/-webkit-overflow-scrolling:\s*touch/);
+    expect(modelList).not.toMatch(/pointer-events:\s*none/); // #1022
   });
 
   it("offers every supported agent including pi", () => {
