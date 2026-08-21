@@ -77,7 +77,13 @@ existing paths.
   id fallback; send `session/set_config_option` with the advertised `configId`
   and value id (select) or `{ type: "boolean", value }` (boolean). Never send Ajax
   catalog ids or reconstructed bracket tokens on the wire
-  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)). Pin satisfaction
+  ([#954](https://github.com/mossipcams/ajax-cli/issues/954)). A Cursor pin is an
+  exact full match: split-axis send of base plus advertised effort/Fast, or one
+  exploded advertised id whose parsed intent matches, including Fast. Otherwise
+  refuse before ACP. After apply, verify `configOptions.currentValue` against that
+  same intent; persist Ajax collapsed pipe-form (`claude-opus-5-thinking|effort=high|fast=false`)
+  even when the harness currentValue is exploded (`claude-opus-5-thinking-high`).
+  Pin satisfaction
   is per-option `currentValue` match, not string equality on a synthetic id.
 - Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
   catalog ids unchanged for explicit pins). Legacy WebSocket `set_model` persists
