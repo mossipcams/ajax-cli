@@ -191,6 +191,13 @@ existing paths.
 - Idle LRU eviction sends `Shutdown` only to slots with zero subscribers, no
   in-flight turn, and an empty host queue; evictable slots must not hold pending
   work.
+- After WebSocket detach, finished disconnected slots stay out of the idle-LRU
+  pool for **15 minutes** (`IDLE_RELEASE_GRACE`). During that grace window the
+  live ACP child is kept so a backgrounded PWA or Safari tab can reconnect
+  without paying a full spawn handshake. Once grace expires, the slot becomes an
+  ordinary idle-LRU candidate (oldest released first) and the idle cap can
+  reclaim it. Reattach clears the release marker; in-flight turns, queued
+  prompts, and held slots are never evicted regardless of grace.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
