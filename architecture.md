@@ -242,9 +242,12 @@ set for a single-verb change.
 The named **Architecture** CI job runs `npm run verify:arch` on PRs whose diff
 touches rust, web, or full lanes (not on docs/agent-only or Release Please PRs).
 Run the same command locally before opening a PR that changes crate boundaries
-or web embed contracts. Chat capability import direction and the
-`styles/chat/` + `styles/task-workspace/` CSS inventory stay in the **Web Unit**
-job (`npm run web:lint` / ESLint), not in Architecture.
+or web embed contracts. That job asserts crate import rules, the Vite/CSS embed
+contract, and the `styles/chat/` + `styles/task-workspace/` stylesheet inventory
+(`ajax-web` `architecture.rs`, test
+`web_src_stylesheet_graph_uses_manifest_and_owned_modules`). Chat capability
+import direction stays in the **Web Unit** job (`npm run web:lint` / ESLint),
+not in Architecture.
 
 Granular orchestration-chat module import rules (protocol vs mapping vs
 transcript vs bridge vs adapters vs runtime production) are enforced by
