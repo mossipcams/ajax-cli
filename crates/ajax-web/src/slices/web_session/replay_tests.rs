@@ -43,6 +43,24 @@ fn incremental_replay_after_one_new_event() {
 }
 
 #[test]
+fn pending_permission_cleared_after_resolved_answer_issue_1018() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        SessionServerEvent::PermissionRequest {
+            request_id: "p1".to_string(),
+            title: Some("Run?".to_string()),
+            detail: None,
+        },
+        SessionServerEvent::PermissionResolved {
+            request_id: "p1".to_string(),
+            approved: true,
+        },
+    ]);
+    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, None, None);
+    assert!(snapshot.pending_permission.is_none());
+}
+
+#[test]
 fn filtered_permissions_keep_absolute_cursors() {
     let mut log = TranscriptLog::default();
     log.append(vec![

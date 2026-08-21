@@ -476,12 +476,23 @@ fn answer_permission(
         return Err("session slot missing".to_string());
     };
     let id = parse_json_rpc_id(request_id);
-    client.respond_client_request(&id, permission_response(approved, reason))?;
-    state.append_to_log(vec![SessionServerEvent::PermissionResolved {
-        request_id: request_id.to_string(),
-        approved,
-    }]);
-    Ok(())
+    let respond_result = client.respond_client_request(&id, permission_response(approved, reason));
+    if respond_result.is_ok()
+        || respond_result
+            .as_ref()
+            .err()
+            .is_some_and(|message| message == "ACP permission request is no longer pending")
+    {
+        state.append_to_log(vec![SessionServerEvent::PermissionResolved {
+            request_id: request_id.to_string(),
+            approved,
+        }]);
+    }
+    match respond_result {
+        Ok(()) => Ok(()),
+        Err(message) if message == "ACP permission request is no longer pending" => Ok(()),
+        Err(message) => Err(message),
+    }
 }
 
 fn attach_snapshot(
