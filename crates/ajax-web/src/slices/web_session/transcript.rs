@@ -3,11 +3,51 @@
 use super::protocol::SessionEventEnvelope;
 use super::SessionServerEvent;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 /// Per-task transcript bound. Long sessions trim from the front rather than
 /// growing without limit.
 pub(crate) const MAX_IDLE_SESSIONS: usize = 8;
+
+/// How long a disconnected slot keeps its live ACP child before idle-LRU may
+/// reclaim it. Sized for PWA / Safari background reconnect (order of minutes).
+pub(crate) const IDLE_RELEASE_GRACE: Duration = Duration::from_secs(15 * 60);
+
+pub(crate) fn idle_release_grace() -> Duration {
+    #[cfg(test)]
+    if let Some(grace) = test_idle_release_grace_override() {
+        return grace;
+    }
+    IDLE_RELEASE_GRACE
+}
+
+#[cfg(test)]
+static TEST_IDLE_RELEASE_GRACE: std::sync::Mutex<Option<Duration>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+static TEST_IDLE_RELEASE_GRACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn test_idle_release_grace_override() -> Option<Duration> {
+    *TEST_IDLE_RELEASE_GRACE.lock().unwrap()
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_idle_release_grace<F, R>(grace: Duration, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _guard = TEST_IDLE_RELEASE_GRACE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut slot = TEST_IDLE_RELEASE_GRACE.lock().unwrap();
+    let previous = *slot;
+    *slot = Some(grace);
+    drop(slot);
+    let result = f();
+    *TEST_IDLE_RELEASE_GRACE.lock().unwrap() = previous;
+    result
+}
 
 /// Append-only transcript. Sockets hold absolute cursors into it, which is what
 /// lets a reload replay and two devices both receive every event — the ACP
