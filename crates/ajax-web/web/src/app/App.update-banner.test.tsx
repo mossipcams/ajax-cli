@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
-import { COCKPIT_RELOAD_PARAM } from "@/shared/lib/reloadCockpitDocument";
+import { COCKPIT_RELOAD_PARAM, COCKPIT_RELOAD_WATCH_MS } from "@/shared/lib/reloadCockpitDocument";
 
 class StubWebSocket {
   readyState = 1;
@@ -166,8 +166,109 @@ describe("App update banner", () => {
     postTapFetch = true;
     banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
     expect(replace).toHaveBeenCalledExactlyOnceWith(`https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=42#/`);
     expect(reload).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("releases the reload latch when navigation is ignored so a later tap retries (#1007)", async () => {
+    vi.useFakeTimers();
+    let versionCalls = 0;
+    let replaceCalls = 0;
+    const replace = vi.fn(() => {
+      replaceCalls += 1;
+    });
+    const reload = vi.fn();
+    vi.spyOn(Date, "now").mockImplementation(() => 1_700_000_000_000 + replaceCalls);
+    vi.stubGlobal("location", {
+      ...window.location,
+      pathname: "/",
+      hash: "#/",
+      href: "https://ajax.local:8787/#/",
+      origin: "https://ajax.local:8787",
+      replace,
+      reload,
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") {
+        versionCalls += 1;
+        return Promise.resolve(jsonResponse({ version: versionCalls === 1 ? "v1" : "v2" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const banner = screen.getByTestId("update-banner");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(versionCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(30000);
+    await vi.waitFor(() => expect(banner).toBeVisible());
+
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
+
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(replace).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(COCKPIT_RELOAD_WATCH_MS);
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledTimes(2));
+    expect(replace).toHaveBeenLastCalledWith(
+      `https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=1700000000001#/`,
+    );
+    vi.restoreAllMocks();
+  });
+
+  it("releases the reload latch immediately when location.replace throws (#1007)", async () => {
+    vi.useFakeTimers();
+    let versionCalls = 0;
+    let replaceCalls = 0;
+    const replace = vi.fn(() => {
+      replaceCalls += 1;
+      if (replaceCalls === 1) throw new Error("blocked");
+    });
+    const reload = vi.fn();
+    vi.spyOn(Date, "now").mockImplementation(() => 40 + replaceCalls);
+    vi.stubGlobal("location", {
+      ...window.location,
+      pathname: "/",
+      hash: "#/",
+      href: "https://ajax.local:8787/#/",
+      origin: "https://ajax.local:8787",
+      replace,
+      reload,
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") {
+        versionCalls += 1;
+        return Promise.resolve(jsonResponse({ version: versionCalls === 1 ? "v1" : "v2" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const banner = screen.getByTestId("update-banner");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(versionCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(30000);
+    await vi.waitFor(() => expect(banner).toBeVisible());
+
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
+
+    banner.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledTimes(2));
+    expect(replace).toHaveBeenLastCalledWith(
+      `https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=41#/`,
+    );
     vi.restoreAllMocks();
   });
 });
