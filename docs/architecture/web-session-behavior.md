@@ -332,6 +332,13 @@ existing paths.
 - Operator answers to permission requests that remain pending (tests and legacy
   wire) are recorded as `permission_resolved` in the host transcript. Live Chat
   does not emit `permission_request` for auto-answered asks.
+- When the operator answers but the ACP request is already gone (for example
+  after host auto-approve), the host still records `permission_resolved` so
+  reconnect replay cannot resurrect the prompt
+  ([#1018](https://github.com/mossipcams/ajax-cli/issues/1018)).
+- Live Chat clears the head permission panel immediately on Approve/Reject;
+  it does not wait for a matching `permission_resolved` replay event
+  ([#1018](https://github.com/mossipcams/ajax-cli/issues/1018)).
 - Reconnect or full page reload replay must not resurrect a permission prompt
   whose `requestId` already has a matching `permission_resolved` entry.
 
