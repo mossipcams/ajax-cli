@@ -1,7 +1,7 @@
 use super::test_support::{
     fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
 };
-use super::transcript::MAX_IDLE_SESSIONS;
+use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
@@ -15,42 +15,44 @@ fn idle_eviction_preserves_slots_with_in_flight_turn() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--hold-prompt"], || {
-            directory
-                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire a");
-            directory
-                .submit_prompt(handle_a, "first".to_string())
-                .expect("first");
-            directory.release(handle_a);
-
-            for i in 0..MAX_IDLE_SESSIONS {
-                let handle = format!("web/evict-inflight-idle-{i}");
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            with_test_acp_extra_args(&["--hold-prompt"], || {
                 directory
-                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
-                    .expect("acquire idle");
-                directory.release(&handle);
-            }
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire a");
+                directory
+                    .submit_prompt(handle_a, "first".to_string())
+                    .expect("first");
+                directory.release(handle_a);
 
-            directory
-                .acquire(handle_c, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire c");
-            directory.release(handle_c);
+                for i in 0..MAX_IDLE_SESSIONS {
+                    let handle = format!("web/evict-inflight-idle-{i}");
+                    directory
+                        .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                        .expect("acquire idle");
+                    directory.release(&handle);
+                }
 
-            directory
-                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-                .expect("re-acquire a");
-            let (events, _) = directory.read_from(handle_a, 0);
-            assert!(
-                has_message(&events, "user", "first"),
-                "in-flight slot must survive idle eviction"
-            );
-            directory.cancel(handle_a, true).expect("cancel in-flight");
-            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
-                events
-                    .iter()
-                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+                directory
+                    .acquire(handle_c, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire c");
+                directory.release(handle_c);
+
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("re-acquire a");
+                let (events, _) = directory.read_from(handle_a, 0);
+                assert!(
+                    has_message(&events, "user", "first"),
+                    "in-flight slot must survive idle eviction"
+                );
+                directory.cancel(handle_a, true).expect("cancel in-flight");
+                pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                    events
+                        .iter()
+                        .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+                });
             });
         });
     });
@@ -66,44 +68,46 @@ fn idle_eviction_preserves_slots_with_queued_prompts() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--hold-prompt"], || {
-            directory
-                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire a");
-            directory
-                .submit_prompt(handle_a, "first".to_string())
-                .expect("first");
-            directory
-                .submit_prompt(handle_a, "kept".to_string())
-                .expect("kept");
-            directory.release(handle_a);
-
-            for i in 0..MAX_IDLE_SESSIONS {
-                let handle = format!("web/evict-idle-{i}");
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            with_test_acp_extra_args(&["--hold-prompt"], || {
                 directory
-                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
-                    .expect("acquire idle");
-                directory.release(&handle);
-            }
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire a");
+                directory
+                    .submit_prompt(handle_a, "first".to_string())
+                    .expect("first");
+                directory
+                    .submit_prompt(handle_a, "kept".to_string())
+                    .expect("kept");
+                directory.release(handle_a);
 
-            directory
-                .acquire(handle_c, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire c");
-            directory.release(handle_c);
+                for i in 0..MAX_IDLE_SESSIONS {
+                    let handle = format!("web/evict-idle-{i}");
+                    directory
+                        .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                        .expect("acquire idle");
+                    directory.release(&handle);
+                }
 
-            directory
-                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-                .expect("re-acquire a");
-            directory.cancel(handle_a, true).expect("cancel keep queue");
+                directory
+                    .acquire(handle_c, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire c");
+                directory.release(handle_c);
 
-            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
-                events.iter().any(|event| {
-                    matches!(
-                        event,
-                        SessionServerEvent::Message { text, .. } if text == "pong"
-                    )
-                }) && has_message(events, "user", "kept")
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("re-acquire a");
+                directory.cancel(handle_a, true).expect("cancel keep queue");
+
+                pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                    events.iter().any(|event| {
+                        matches!(
+                            event,
+                            SessionServerEvent::Message { text, .. } if text == "pong"
+                        )
+                    }) && has_message(events, "user", "kept")
+                });
             });
         });
     });
@@ -119,67 +123,124 @@ fn idle_eviction_reclaims_finished_disconnected_sessions() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
-    with_test_acp_program(&script, || {
-        directory
-            .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire a");
-        directory
-            .submit_prompt(handle_a, "ping".to_string())
-            .expect("prompt");
-        directory.release(handle_a);
-
-        pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
-            events.iter().any(|event| match event {
-                SessionServerEvent::TurnEnd { .. } => true,
-                SessionServerEvent::Message { text, .. } => text == "pong",
-                _ => false,
-            })
-        });
-
-        // The first pong/TurnEnd snapshot can still have `prompt_in_flight`
-        // set on the agent client, so production reports `evictable == false`.
-        // Wait until the session has drained to a true idle state before
-        // asserting eligibility, instead of racing on the first event.
-        pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
             directory
-                .eviction_snapshot(handle_a)
-                .is_some_and(|snapshot| snapshot.evictable)
-        });
-
-        let snapshot = directory.eviction_snapshot(handle_a).expect("snapshot");
-        assert!(
-            snapshot.evictable,
-            "finished disconnected session must become eviction-eligible"
-        );
-
-        let child_before = directory.child_id(handle_a).expect("child before");
-
-        for i in 0..MAX_IDLE_SESSIONS {
-            let handle = format!("web/evict-finished-idle-{i}");
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
             directory
-                .acquire(&handle, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire idle");
-            directory.release(&handle);
-        }
+                .submit_prompt(handle_a, "ping".to_string())
+                .expect("prompt");
+            directory.release(handle_a);
 
-        directory
-            .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire trigger");
-        directory.release(handle_trigger);
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                events.iter().any(|event| match event {
+                    SessionServerEvent::TurnEnd { .. } => true,
+                    SessionServerEvent::Message { text, .. } => text == "pong",
+                    _ => false,
+                })
+            });
 
-        directory
-            .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-            .expect("re-acquire a");
-        let child_after = directory.child_id(handle_a).expect("child after");
-        assert_ne!(
-            child_before, child_after,
-            "idle cap must evict the finished disconnected session"
-        );
-        let (events, _) = directory.read_from(handle_a, 0);
-        assert!(
-            has_message(&events, "user", "ping"),
-            "evicted session transcript reloads from disk on re-acquire"
-        );
+            // The first pong/TurnEnd snapshot can still have `prompt_in_flight`
+            // set on the agent client, so production reports `evictable == false`.
+            // Wait until the session has drained to a true idle state before
+            // asserting eligibility, instead of racing on the first event.
+            pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| snapshot.evictable)
+            });
+
+            let snapshot = directory.eviction_snapshot(handle_a).expect("snapshot");
+            assert!(
+                snapshot.evictable,
+                "finished disconnected session must become eviction-eligible"
+            );
+
+            let child_before = directory.child_id(handle_a).expect("child before");
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/evict-finished-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            let child_after = directory.child_id(handle_a).expect("child after");
+            assert_ne!(
+                child_before, child_after,
+                "idle cap must evict the finished disconnected session after grace"
+            );
+            let (events, _) = directory.read_from(handle_a, 0);
+            assert!(
+                has_message(&events, "user", "ping"),
+                "evicted session transcript reloads from disk on re-acquire"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn idle_eviction_preserves_recently_released_during_grace() {
+    let dir = scratch_dir("evict-grace");
+    let handle_a = "web/evict-grace-a";
+    let handle_trigger = "web/evict-grace-trigger";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::from_secs(3600), || {
+        with_test_acp_program(&script, || {
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
+            directory
+                .submit_prompt(handle_a, "ping".to_string())
+                .expect("prompt");
+            directory.release(handle_a);
+
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                events.iter().any(|event| match event {
+                    SessionServerEvent::TurnEnd { .. } => true,
+                    SessionServerEvent::Message { text, .. } => text == "pong",
+                    _ => false,
+                })
+            });
+
+            let child_before = directory.child_id(handle_a).expect("child before");
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/evict-grace-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            assert_eq!(
+                directory.child_id(handle_a),
+                Some(child_before),
+                "recently released slot must keep its ACP child during grace"
+            );
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -224,43 +285,45 @@ fn reattached_session_survives_idle_cap_while_held() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
-    with_test_acp_program(&script, || {
-        directory
-            .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire a");
-        directory.release(handle_a);
-        directory
-            .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
-            .expect("re-acquire a");
-        assert_eq!(
-            directory.is_marked_idle_release(handle_a),
-            Some(false),
-            "reattached session must not be in the idle-eviction pool"
-        );
-
-        let child_before = directory.child_id(handle_a).expect("child before");
-
-        for i in 0..MAX_IDLE_SESSIONS {
-            let handle = format!("web/reattach-survives-idle-{i}");
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
             directory
-                .acquire(&handle, &dir, "auto", AgentClient::Cursor)
-                .expect("acquire idle");
-            directory.release(&handle);
-        }
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
+            directory.release(handle_a);
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            assert_eq!(
+                directory.is_marked_idle_release(handle_a),
+                Some(false),
+                "reattached session must not be in the idle-eviction pool"
+            );
 
-        directory
-            .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire trigger");
-        directory.release(handle_trigger);
+            let child_before = directory.child_id(handle_a).expect("child before");
 
-        assert_eq!(
-            directory.child_id(handle_a),
-            Some(child_before),
-            "held reattached session must not be shut down during idle-cap eviction"
-        );
-        directory
-            .submit_prompt(handle_a, "ping".to_string())
-            .expect("prompt after eviction pressure");
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/reattach-survives-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            assert_eq!(
+                directory.child_id(handle_a),
+                Some(child_before),
+                "held reattached session must not be shut down during idle-cap eviction"
+            );
+            directory
+                .submit_prompt(handle_a, "ping".to_string())
+                .expect("prompt after eviction pressure");
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);

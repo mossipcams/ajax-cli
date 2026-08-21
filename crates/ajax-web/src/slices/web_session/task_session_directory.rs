@@ -94,14 +94,17 @@ impl TaskSessionDirectory {
     }
 
     async fn evict_idle_over_limit(&self) {
+        let grace = super::transcript::idle_release_grace();
         let candidates: Vec<(String, Instant, TaskSessionSender)> = {
             let sessions = self.sessions.lock().unwrap();
             sessions
                 .iter()
                 .filter_map(|(handle, entry)| {
-                    entry
-                        .last_released
-                        .map(|released| (handle.clone(), released, entry.command_tx.clone()))
+                    let released = entry.last_released?;
+                    if released.elapsed() < grace {
+                        return None;
+                    }
+                    Some((handle.clone(), released, entry.command_tx.clone()))
                 })
                 .collect()
         };
