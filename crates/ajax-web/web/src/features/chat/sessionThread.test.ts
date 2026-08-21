@@ -345,7 +345,7 @@ describe("sessionReducer", () => {
     expect(run([{ type: "usage", used: 0, size: 0 }]).usage).toBeNull();
   });
 
-  it("puts a permission request in the head and leaves a marker in the conversation", () => {
+  it("clears the permission head on decided without waiting for permission_resolved (#1018)", () => {
     const state = run([
       { type: "permission_request", requestId: "7", title: "Run tests?", detail: "cargo test" },
     ]);

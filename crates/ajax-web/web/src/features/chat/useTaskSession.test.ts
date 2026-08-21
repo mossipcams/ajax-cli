@@ -255,6 +255,40 @@ describe("useTaskSession", () => {
     unmount();
   });
 
+  it("clears the permission head immediately when the operator answers (#1018)", () => {
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    const transport = mockTransport(callbacks);
+
+    const { result, unmount } = renderHook(() =>
+      useTaskSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => callbacks[0]?.onReady("auto"));
+    act(() =>
+      callbacks[0]?.onEvent({
+        type: "permission_request",
+        requestId: "7",
+        title: "Run tests?",
+        detail: "cargo test",
+      }),
+    );
+    expect(result.current.state.decision).toEqual({
+      requestId: "7",
+      title: "Run tests?",
+      detail: "cargo test",
+    });
+
+    act(() => result.current.respondPermission(true));
+    expect(transport.respondPermission).toHaveBeenCalledWith("7", true);
+    expect(result.current.state.decision).toBeNull();
+    expect(result.current.state.items[0]).toMatchObject({
+      kind: "permission",
+      requestId: "7",
+      resolved: true,
+    });
+    unmount();
+  });
+
   it("keeps advertised config chips until the host snapshot confirms", () => {
     const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
     const transport = mockTransport(callbacks);
