@@ -8,7 +8,6 @@ import {
   TaskMetaDetails,
   visibleTaskActions,
 } from "@/features/task/public";
-import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 
 export interface TaskDetailsSheetProps {
   open: boolean;
@@ -17,10 +16,6 @@ export interface TaskDetailsSheetProps {
   mode: "chat" | "terminal";
   detail: BrowserTaskDetail;
   orchestrationChat?: boolean;
-  /** Live session model for harness swap in chat mode. */
-  sessionModel?: string;
-  /** Live advertised ACP config options when a session is connected. */
-  sessionConfigOptions?: LiveSessionConfigOption[];
   harnessSwapDisabled?: boolean;
   onOpenDiff?: () => void;
   onOpenTerminal?: () => void;
@@ -50,8 +45,6 @@ export default function TaskDetailsSheet({
   mode,
   detail,
   orchestrationChat = false,
-  sessionModel,
-  sessionConfigOptions,
   harnessSwapDisabled = false,
   onOpenDiff,
   onOpenTerminal,
@@ -175,8 +168,6 @@ export default function TaskDetailsSheet({
                   <HarnessSwap
                     handle={handle}
                     currentAgent={detail.agent}
-                    currentModel={sessionModel}
-                    liveConfigOptions={sessionConfigOptions}
                     disabled={harnessSwapDisabled}
                     onSwapped={handleHarnessSwapped}
                   />

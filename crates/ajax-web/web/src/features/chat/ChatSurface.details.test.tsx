@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { screen, act } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import {
@@ -9,6 +9,7 @@ import {
   openSwitchPanel,
   openTaskDetails,
   prepareChatSurface,
+  emitConnectedSnapshot,
   stylesSource,
 } from "./ChatSurface.testHarness";
 
@@ -25,11 +26,14 @@ describe("ChatSurface task details polish", () => {
   });
 
   it("styles sheet field labels with tracked uppercase chrome", () => {
-    const labelCss =
-      stylesSource.match(/\.session-details-sheet \.field-label\s*\{([^}]*)\}/)?.[1] ?? "";
+    const labelRule =
+      stylesSource.match(/\.session-details-sheet \.field-label[^{]*\{([^}]*)\}/) ?? [];
+    const labelCss = labelRule[1] ?? "";
     expect(labelCss).toMatch(/text-transform:\s*uppercase/);
     expect(labelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
     expect(labelCss).toMatch(/color:\s*var\(--ink-muted\)/);
+    // The live model sheet reuses the same chrome rather than restyling labels.
+    expect(labelRule[0] ?? "").toMatch(/\.session-model-switch-sheet \.field-label/);
   });
 
   it("lifts Close to 44px in the task details sheet", () => {
@@ -43,7 +47,19 @@ describe("ChatSurface task details polish", () => {
   it("exposes aria-expanded on Details and Switch", async () => {
     chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => chatH.ready?.("composer-2.5"));
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [
+          { value: "composer-2.5", name: "Composer 2.5" },
+          { value: "auto", name: "Auto" },
+        ],
+      },
+    ]);
 
     const details = screen.getByTestId("session-details");
     expect(details).toHaveAttribute("aria-expanded", "false");
@@ -55,10 +71,7 @@ describe("ChatSurface task details polish", () => {
     expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
     openSwitchPanel();
     expect(screen.getByTestId("harness-swap")).toHaveClass("is-open");
-    expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(await screen.findByTestId("harness-swap-harness-only")).toBeInTheDocument();
   });
 
   it("pins observation error under identity with the task-detail prefix", () => {

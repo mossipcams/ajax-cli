@@ -12,6 +12,7 @@ import { ActionBar, visibleTaskActions } from "@/features/task/public";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
+import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const stylesSource = readOrderedStylesSource(join(here, "../.."));
@@ -23,6 +24,7 @@ export const transport = {
   sendPrompt: vi.fn(() => "cmid-1"),
   sendCancel: vi.fn(),
   setModel: vi.fn(),
+  setConfigOption: vi.fn(),
   respondPermission: vi.fn(),
   dispose: vi.fn(),
 };
@@ -30,6 +32,7 @@ export const transport = {
 export const chatH = {
   emit: undefined as ((event: webSessionTransport.WebSessionServerEvent) => void) | undefined,
   ready: undefined as ((model: string) => void) | undefined,
+  snapshot: undefined as ((snapshot: webSessionTransport.SessionSnapshot) => void) | undefined,
   autoReady: true,
   frameQueue: [] as FrameRequestCallback[],
 };
@@ -45,6 +48,7 @@ export function stubSessionTransport() {
     (_handle, callbacks) => {
       chatH.emit = callbacks.onEvent;
       chatH.ready = callbacks.onReady;
+      chatH.snapshot = callbacks.onSnapshot;
       if (chatH.autoReady) callbacks.onReady("auto");
       return transport;
     },
@@ -57,6 +61,10 @@ export function openTaskDetails() {
 
 export function openSwitchPanel() {
   fireEvent.click(screen.getByTestId("harness-swap-open"));
+}
+
+export function openModelSwitchSheet() {
+  fireEvent.click(screen.getByTestId("session-model-open"));
 }
 
 export function ChatWithSheet(
@@ -73,7 +81,6 @@ export function ChatWithSheet(
   const handle = props.handle ?? "web/fix-login";
   const detail = props.detail ?? (taskDetail as BrowserTaskDetail);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [sessionModel, setSessionModel] = useState<string | undefined>();
   const [sessionBusy, setSessionBusy] = useState(false);
   const panelId = "test-task-panel";
 
@@ -116,8 +123,7 @@ export function ChatWithSheet(
             detailsTestId="session-details"
           />
         }
-        onSessionActivity={({ model, busy }) => {
-          setSessionModel(model);
+        onSessionActivity={({ busy }) => {
           setSessionBusy(busy);
         }}
         onBack={props.onBack}
@@ -130,7 +136,6 @@ export function ChatWithSheet(
         panelId={panelId}
         mode="chat"
         detail={detail}
-        sessionModel={sessionModel}
         harnessSwapDisabled={sessionBusy}
         onOpenTerminal={props.onOpenTerminal ?? (() => {})}
         onOpenDiff={props.onOpenDiff}
@@ -162,9 +167,24 @@ export function typeComposer(text: string) {
   fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 }
 
+export function emitConnectedSnapshot(model: string, options?: LiveSessionConfigOption[]) {
+  act(() => {
+    chatH.snapshot?.({
+      protocolVersion: 2,
+      cursor: 0,
+      model,
+      sessionConfigOptions: options,
+      turnState: "idle",
+      reset: false,
+    });
+    chatH.ready?.(model);
+  });
+}
+
 export function prepareChatSurface() {
   chatH.emit = undefined;
   chatH.ready = undefined;
+  chatH.snapshot = undefined;
   chatH.autoReady = true;
   chatH.frameQueue = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -174,19 +194,27 @@ export function prepareChatSurface() {
   vi.stubGlobal("cancelAnimationFrame", () => {});
   transport.sendPrompt.mockClear();
   transport.setModel.mockClear();
+  transport.setConfigOption.mockClear();
   transport.respondPermission.mockClear();
   localStorage.clear();
   sessionStorage.clear();
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        models: [
-          { id: "auto", label: "Auto" },
-          { id: "composer-2.5", label: "Composer 2.5" },
-        ],
-      }),
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/session/models")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            models: [
+              { id: "auto", label: "Auto" },
+              { id: "composer-2.5", label: "Composer 2.5" },
+              { id: "cursor-grok-4.6-high", label: "Grok 4.6 High" },
+            ],
+            default: "composer-2.5",
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
     }),
   );
   stubSessionTransport();

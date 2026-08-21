@@ -81,7 +81,6 @@ describe("TaskDetailsSheet chat entry", () => {
         panelId="task-panel"
         mode="chat"
         detail={detail({ agent: "cursor" })}
-        sessionModel="composer-2.5"
       />,
     );
 
@@ -99,7 +98,6 @@ describe("TaskDetailsSheet chat entry", () => {
         panelId="task-panel"
         mode="chat"
         detail={detail({ agent: "cursor" })}
-        sessionModel="composer-2.5"
         onSwappedAgent={onSwappedAgent}
         onMutated={onMutated}
       />,

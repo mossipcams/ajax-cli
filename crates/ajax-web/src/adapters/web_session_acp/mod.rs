@@ -8,7 +8,10 @@ mod config_options;
 mod sdk_connection;
 
 pub use config_option_descriptors::{config_option_descriptors, ConfigOptionDescriptor};
-pub use config_options::is_unspecified_model;
+pub use config_options::{
+    applied_model_id_for_persist, is_unspecified_model, option_triggers_model_persist,
+    wire_value_to_session_value, SessionConfigValue,
+};
 
 #[cfg(test)]
 mod apply_model_tests;
@@ -26,9 +29,10 @@ mod config_options_tests;
 mod spawn_tests;
 
 pub use apply_model::{
-    apply_model_pin, operator_pin_satisfied, read_applied_model, ApplyModelOutcome,
+    apply_config_option, apply_model_pin, operator_pin_satisfied, read_applied_model,
+    ApplyModelOutcome,
 };
-pub use catalog::{read_agent_model_catalog, AgentModelCatalog};
+pub use catalog::{read_agent_model_catalog, read_cursor_acp_model_labels, AgentModelCatalog};
 pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};
 
 #[cfg(test)]

@@ -419,6 +419,25 @@ impl AcpStdioClient {
             .map_err(|_| "ACP apply model timed out".to_string())?
     }
 
+    /// Apply one advertised config option on the live ACP session without respawning.
+    pub fn apply_config_option(
+        &self,
+        config_id: &str,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+    ) -> Result<ApplyModelOutcome, String> {
+        let (result_tx, result_rx) = mpsc::channel();
+        self.commands
+            .send(ClientCommand::ApplyConfigOption {
+                config_id: config_id.to_string(),
+                value,
+                result: result_tx,
+            })
+            .map_err(|_| "ACP connection is closed".to_string())?;
+        result_rx
+            .recv_timeout(HANDSHAKE_TIMEOUT)
+            .map_err(|_| "ACP apply config option timed out".to_string())?
+    }
+
     fn command_result(
         &self,
         command: impl FnOnce(mpsc::Sender<Result<(), String>>) -> ClientCommand,

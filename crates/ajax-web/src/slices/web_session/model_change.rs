@@ -1,4 +1,4 @@
-//! Same-harness model apply for Switch and WebSocket `set_model`.
+//! Harness Switch: same-harness is rejected; cross-harness resets ACP context.
 
 use super::normalize_session_model;
 use super::task_session_directory::TaskSessionDirectory;
@@ -18,23 +18,6 @@ pub(crate) fn agent_client_from_name(agent: &str) -> AgentClient {
         "pi" => AgentClient::Pi,
         _ => AgentClient::Other,
     }
-}
-
-/// Apply persisted `session_model` on a live slot when present; no-op without one.
-pub(crate) async fn apply_persisted_model(
-    directory: &TaskSessionDirectory,
-    handle: &str,
-    worktree_path: &Path,
-    model: Option<&str>,
-) -> Result<(), String> {
-    if !directory.has_live_entry(handle) {
-        return Ok(());
-    }
-    let model = normalize_session_model(model.unwrap_or("auto"))?;
-    directory
-        .apply_model(handle, worktree_path, &model)
-        .await
-        .map(|_| ())
 }
 
 /// After a cross-harness swap: reset the live slot or clear stored resume id.

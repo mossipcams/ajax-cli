@@ -203,7 +203,7 @@ export default function NewTaskSheet({
             onClick={handleBackdropClick}
           >
             <form
-              className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}`}
+              className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}${step === "model" ? " is-model-step" : ""}`}
               aria-label="New task"
               autoComplete="off"
               onSubmit={submit}

@@ -3,17 +3,18 @@ import { fireEvent, screen, act, waitFor, within } from "@testing-library/react"
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
-import { writeSessionModel } from "@/features/task/public";
-import * as useChatSpeechModule from "@/features/chat/speech/useChatSpeech";
 import * as api from "@/shared/lib/api";
+import * as useChatSpeechModule from "@/features/chat/speech/useChatSpeech";
 import * as webSessionTransport from "@/shared/lib/webSessionTransport";
 import {
   ChatWithSheet,
   chatH,
   mountChat,
+  openModelSwitchSheet,
   openSwitchPanel,
   openTaskDetails,
   prepareChatSurface,
+  emitConnectedSnapshot,
   send,
   stylesSource,
   transport,
@@ -121,10 +122,23 @@ describe("ChatSurface smoke", () => {
     expect(composer).not.toHaveFocus();
   });
 
-  it("does not blur the composer when tapping Mic or Send", () => {
-    mountChat();
+  it("does not blur the composer when tapping Mic, model, or Send", () => {
+    chatH.autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [{ value: "composer-2.5", name: "Composer 2.5" }],
+      },
+    ]);
     const composer = screen.getByLabelText("Message");
     composer.focus();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Choose model/i }));
+    expect(composer).toHaveFocus();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Send" }));
     expect(composer).toHaveFocus();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Start voice input" }));
@@ -426,9 +440,7 @@ describe("ChatSurface smoke", () => {
     const bodyBlock =
       stylesSource.match(/\.session-details-body\s*\{([^}]*)\}/)?.[1] ?? "";
     const modelPickerBlock =
-      stylesSource.match(
-        /\.session-details-sheet \.session-model-catalog \.model-picker[\s\S]*?\{([^}]*)\}/,
-      )?.[1] ?? "";
+      stylesSource.match(/\.session-model-catalog \.model-picker\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(scrimBlock).toMatch(/flex-direction:\s*column/);
     expect(scrimBlock).toMatch(/justify-content:\s*flex-end/);
@@ -439,6 +451,7 @@ describe("ChatSurface smoke", () => {
     expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
     expect(modelPickerBlock).toMatch(/max-height:\s*46vh/);
     expect(modelPickerBlock).toMatch(/overflow-y:\s*auto/);
+    expect(modelPickerBlock).toMatch(/pointer-events:\s*none/);
 
     mountChat();
     openTaskDetails();
@@ -455,17 +468,26 @@ describe("ChatSurface smoke", () => {
   it("keeps Switch collapsed until opened (#979)", async () => {
     chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => chatH.ready?.("composer-2.5"));
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [
+          { value: "composer-2.5", name: "Composer 2.5" },
+          { value: "auto", name: "Auto" },
+        ],
+      },
+    ]);
     openTaskDetails();
 
     expect(screen.getByTestId("harness-swap")).not.toHaveClass("is-open");
-    expect(screen.queryByRole("radio", { name: /Composer 2\.5/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("harness-swap-harness-only")).not.toBeInTheDocument();
 
     openSwitchPanel();
-    expect(await screen.findByRole("radio", { name: /Composer 2\.5/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(await screen.findByTestId("harness-swap-harness-only")).toBeInTheDocument();
   });
 
   it("does not render Rust Debug annotation strings in task details (#p1 clarify)", () => {
@@ -643,123 +665,108 @@ describe("ChatSurface smoke", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });
 
-  // Regression for #936 / #979: Switch preselects the live session model and
-  // persists changes through swap, not the removed in-session picker.
-  it("preselects the live session model in Switch and applies Auto through swap (#936, #979)", async () => {
+  // Connected Switch is harness-only; model changes use the model switch sheet.
+  it("shows harness-only Switch when sessionConfigOptions are live (#936, #979)", async () => {
     chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => chatH.ready?.("composer-2.5"));
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [
+          { value: "composer-2.5", name: "Composer 2.5" },
+          { value: "auto", name: "Auto" },
+        ],
+      },
+    ]);
     openTaskDetails();
     openSwitchPanel();
+    expect(await screen.findByTestId("harness-swap-harness-only")).toBeInTheDocument();
+    expect(screen.queryByTestId("model-picker")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-config-pickers")).not.toBeInTheDocument();
+    expect(transport.setConfigOption).not.toHaveBeenCalled();
+  });
 
-    const current = await screen.findByRole("radio", { name: /Composer 2\.5/i });
-    expect(current).toHaveAttribute("aria-checked", "true");
+  it("keeps live model controls out of the composer footer", async () => {
+    chatH.autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [
+          { value: "composer-2.5", name: "Composer 2.5" },
+          { value: "auto", name: "Auto" },
+        ],
+      },
+    ]);
 
-    const swapSpy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
-    fireEvent.click(screen.getByRole("radio", { name: /Auto/i }));
-    fireEvent.click(screen.getByTestId("harness-swap-apply"));
-    await waitFor(() => expect(swapSpy).toHaveBeenCalled());
-    expect(swapSpy).toHaveBeenCalledWith("web/fix-login", "cursor", undefined);
+    expect(screen.queryByTestId("session-config-pickers")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Choose model/i })).toBeEnabled();
+    openModelSwitchSheet();
+    expect(await screen.findByTestId("model-switch-sheet")).toBeInTheDocument();
+    expect(screen.getByTestId("session-config-pickers")).toBeInTheDocument();
+  });
+
+  it("calls transport.setConfigOption when picking a Cursor model from the model sheet", async () => {
+    chatH.autoReady = false;
+    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
+    emitConnectedSnapshot("grok-4.6", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "grok-4.6",
+        choices: [
+          { value: "grok-4.6", name: "Grok 4.6" },
+          { value: "composer-2.5", name: "Composer 2.5" },
+        ],
+      },
+      {
+        id: "reasoning",
+        category: "thought_level",
+        name: "Effort",
+        type: "select",
+        currentValue: "xhigh",
+        choices: [
+          { value: "xhigh", name: "Extra High" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ]);
+
+    openModelSwitchSheet();
+    fireEvent.click(
+      within(await screen.findByTestId("session-config-model")).getByRole("radio", {
+        name: "Composer 2.5",
+      }),
+    );
+    expect(transport.setConfigOption).toHaveBeenCalledWith("model", "composer-2.5");
     expect(transport.setModel).not.toHaveBeenCalled();
   });
 
-  it("shows a composite session model as selected in Switch (#936, #979)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          models: [{ id: "opus", label: "Opus" }],
-          default: "opus",
-          reasoning: {
-            id: "effort",
-            label: "Effort",
-            default: "medium",
-            options: [
-              { id: "low", label: "Low" },
-              { id: "high", label: "High" },
-            ],
-          },
-        }),
-      }),
-    );
-    chatH.autoReady = false;
-    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "claude" } });
-    act(() => chatH.ready?.("opus|effort=high"));
-    openTaskDetails();
-    openSwitchPanel();
-
-    const current = await screen.findByRole("radio", { name: /Opus/i });
-    expect(current).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "High" })).toHaveAttribute("aria-checked", "true");
-
-    const swapSpy = vi.spyOn(api, "swapTaskAgent").mockResolvedValue({ ok: true, response: {} });
-    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
-    fireEvent.click(screen.getByTestId("harness-swap-apply"));
-    await waitFor(() => expect(swapSpy).toHaveBeenCalled());
-    expect(swapSpy).toHaveBeenCalledWith("web/fix-login", "claude", "opus|effort=low");
-  });
-
-  it("lists the full model catalog in Switch without a shortlist (#948, #979, #997)", async () => {
-    const catalog = {
-      models: Array.from({ length: 12 }, (_, index) => ({
-        id: `model-${index}`,
-        label: `Catalog Model ${index}`,
-      })),
-      default: "model-0",
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => catalog,
-      }),
-    );
+  it("disables the model hotbar control until the session connects", () => {
     chatH.autoReady = false;
     mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => chatH.ready?.("model-2"));
-    openTaskDetails();
-    openSwitchPanel();
+    expect(screen.queryByRole("button", { name: /Choose model/i })).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getAllByRole("radio", { name: /Catalog Model/i })).toHaveLength(
-        catalog.models.length,
-      );
-    });
-    expect(screen.getByRole("radio", { name: "Catalog Model 2" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.queryByTestId("model-picker-toggle")).not.toBeInTheDocument();
-  });
-
-  // Regression for #952: Switch must reflect snapshot applied model, not task
-  // metadata or localStorage, when the host reports a different harness id.
-  it("preselects the host snapshot applied model in Switch (#952, #979)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          models: [
-            { id: "harness-default", label: "Harness default" },
-            { id: "composer-2.5", label: "Composer 2.5" },
-          ],
-          default: "harness-default",
-        }),
-      }),
-    );
-    writeSessionModel("composer-2.5");
-    chatH.autoReady = false;
-    mountChat({ detail: { ...(taskDetail as BrowserTaskDetail), agent: "cursor" } });
-    act(() => chatH.ready?.("harness-default"));
-
-    openTaskDetails();
-    openSwitchPanel();
-    const current = await screen.findByRole("radio", { name: /Harness default/i });
-    expect(current).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.queryByRole("radio", { name: /Composer 2\.5/i, checked: true }),
-    ).toBeNull();
+    emitConnectedSnapshot("composer-2.5", [
+      {
+        id: "model",
+        category: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer-2.5",
+        choices: [{ value: "composer-2.5", name: "Composer 2.5" }],
+      },
+    ]);
+    expect(screen.getByRole("button", { name: /Choose model/i })).toBeEnabled();
   });
 });

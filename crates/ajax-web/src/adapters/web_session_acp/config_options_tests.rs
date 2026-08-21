@@ -45,6 +45,76 @@ fn read_model_applied_uses_model_current_value_only() {
 }
 
 #[test]
+fn applied_model_id_for_persist_encodes_pipe_from_advertised_options() {
+    let options = parameterized_options();
+    assert_eq!(
+        applied_model_id_for_persist(&options).as_deref(),
+        Ok("composer-2.5|effort=high|fast=true")
+    );
+
+    let mut grok = reasoning_id_options();
+    if let SessionConfigKind::Select(select) = &mut grok[0].kind {
+        select.current_value = SessionConfigValueId::from("grok-4.6");
+    }
+    assert_eq!(
+        applied_model_id_for_persist(&grok).as_deref(),
+        Ok("grok-4.6|reasoning=high|fast=false")
+    );
+
+    if let SessionConfigKind::Select(select) = &mut grok[0].kind {
+        select.current_value = SessionConfigValueId::from("default[]");
+    }
+    assert_eq!(applied_model_id_for_persist(&grok).as_deref(), Ok("auto"));
+}
+
+#[test]
+fn wire_value_to_session_value_accepts_string_and_boolean() {
+    assert_eq!(
+        wire_value_to_session_value(SessionConfigValue::Select("composer-2.5".to_string())),
+        SessionConfigOptionValue::value_id("composer-2.5")
+    );
+    assert_eq!(
+        wire_value_to_session_value(SessionConfigValue::Boolean(true)),
+        SessionConfigOptionValue::boolean(true)
+    );
+}
+
+#[test]
+fn option_triggers_model_persist_for_every_restart_axis() {
+    let options = parameterized_options();
+    assert!(option_triggers_model_persist(&options, "model"));
+    assert!(option_triggers_model_persist(&options, "fast"));
+    assert!(option_triggers_model_persist(&options, "effort"));
+}
+
+#[test]
+fn validate_config_change_rejects_wrong_wire_types_before_acp() {
+    let options = parameterized_options();
+    assert!(
+        validate_config_change(&options, "model", &SessionConfigOptionValue::boolean(true))
+            .is_err()
+    );
+    assert!(validate_config_change(
+        &options,
+        "fast",
+        &SessionConfigOptionValue::value_id("true")
+    )
+    .is_err());
+    assert!(validate_config_change(
+        &options,
+        "model",
+        &SessionConfigOptionValue::value_id("not-advertised")
+    )
+    .is_err());
+    assert!(validate_config_change(
+        &options,
+        "model",
+        &SessionConfigOptionValue::value_id("grok-4.6")
+    )
+    .is_ok());
+}
+
+#[test]
 fn map_pin_to_split_apply_steps_issue_997() {
     let options = parameterized_options();
     let steps = map_pin_to_apply_steps(&options, "cursor-grok-4.6-high", true).expect("mapped");
@@ -171,6 +241,30 @@ fn split_apply_skips_thought_level_when_not_advertised() {
     assert!(!steps
         .iter()
         .any(|step| step.config_id == "effort" || step.config_id == "reasoning"));
+}
+
+#[test]
+fn find_option_by_category_prefers_effort_over_reasoning_issue_1010() {
+    let options = vec![
+        SessionConfigOption::select(
+            "reasoning",
+            "Reasoning",
+            "high",
+            vec![SessionConfigSelectOption::new("high", "High")],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+        SessionConfigOption::select(
+            "effort",
+            "Effort",
+            "high",
+            vec![SessionConfigSelectOption::new("high", "High")],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+    ];
+    assert_eq!(
+        thought_level_option(&options).map(|option| option.id.0.as_ref()),
+        Some("effort")
+    );
 }
 
 #[test]
@@ -302,4 +396,38 @@ fn config_option_descriptors_include_boolean_current_value() {
         .expect("fast descriptor");
     assert_eq!(fast.kind, "boolean");
     assert_eq!(fast.current_value, json!(true));
+}
+
+/// Cursor parameterized picker advertises Fast as a true/false select ([#1014]).
+#[test]
+fn fast_select_option_is_advertised_and_persistable_issue_1014() {
+    let options = vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5",
+            vec![SessionConfigSelectOption::new(
+                "composer-2.5",
+                "Composer 2.5",
+            )],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        SessionConfigOption::select(
+            "fast",
+            "Fast",
+            "false",
+            vec![
+                SessionConfigSelectOption::new("false", "Off"),
+                SessionConfigSelectOption::new("true", "Fast"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::ModelConfig),
+    ];
+    let fast = model_config_boolean_option(&options).expect("fast option");
+    assert_eq!(read_fast_current_value(fast), Some(false));
+    assert!(option_triggers_model_persist(&options, "fast"));
+    assert_eq!(
+        applied_model_id_for_persist(&options).as_deref(),
+        Ok("composer-2.5|fast=false")
+    );
 }

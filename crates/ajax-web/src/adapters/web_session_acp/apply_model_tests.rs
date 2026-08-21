@@ -38,6 +38,7 @@ fn unspecified_model_sentinel() {
     assert!(is_unspecified_model(None));
     assert!(is_unspecified_model(Some("")));
     assert!(is_unspecified_model(Some("auto")));
+    assert!(is_unspecified_model(Some("default")));
     assert!(!is_unspecified_model(Some("composer-2.5")));
 }
 

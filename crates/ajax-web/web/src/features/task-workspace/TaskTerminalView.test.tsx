@@ -526,9 +526,7 @@ describe("TaskTerminalView projection surface", () => {
     const bodyBlock =
       stylesSource.match(/\.session-details-body\s*\{([^}]*)\}/)?.[1] ?? "";
     const modelPickerBlock =
-      stylesSource.match(
-        /\.session-details-sheet \.session-model-catalog \.model-picker[\s\S]*?\{([^}]*)\}/,
-      )?.[1] ?? "";
+      stylesSource.match(/\.session-model-catalog \.model-picker\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(scrimBlock).toMatch(/flex-direction:\s*column/);
     expect(scrimBlock).toMatch(/justify-content:\s*flex-end/);
@@ -545,6 +543,7 @@ describe("TaskTerminalView projection surface", () => {
     expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
     expect(modelPickerBlock).toMatch(/max-height:\s*46vh/);
     expect(modelPickerBlock).toMatch(/overflow-y:\s*auto/);
+    expect(modelPickerBlock).toMatch(/pointer-events:\s*none/);
   });
 
   it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {

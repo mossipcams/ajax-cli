@@ -6,12 +6,12 @@ import { dirname, join } from "node:path";
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when the session-details model-picker cap was added in
-   * styles/session/shell.css so Effort / Fast / Switch stay reachable (#1004). */
-  sourceStylesCssBytes: 97_272,
-  builtAppCssBytes: 84_405,
-  builtAppCssGzipBytes: 15_260,
-  classSelectorLines: 528,
+   * Re-measured when Effort / Fast chips sat above the model list's iOS
+   * overflow hit target so taps could change the selection. */
+  sourceStylesCssBytes: 100_787,
+  builtAppCssBytes: 86_181,
+  builtAppCssGzipBytes: 15_497,
+  classSelectorLines: 551,
   hasSelectors: 18,
 } as const;
 
