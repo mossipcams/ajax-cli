@@ -142,6 +142,8 @@ export function useTaskSession({ handle, detail, onMutated, onConfigError }: Opt
       const decision = state.decision;
       if (!decision || !connected) return;
       transportRef.current?.respondPermission(decision.requestId, approved);
+      // #1018: clear the head immediately; do not wait for host permission_resolved.
+      dispatch({ type: "decided" });
     },
     [connected, state.decision],
   );

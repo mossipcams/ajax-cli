@@ -265,6 +265,31 @@ fn model_selection_from_advertised_options(
     options: &[SessionConfigOption],
 ) -> Option<ModelSelection> {
     let model = read_model_applied(Some(options))?;
+    let parsed = parse_cursor_model_intent(&model);
+    // Exploded ACP ids collapse to Ajax pipe-form so restart storage stays canonical.
+    if let Some(intent) = parsed.as_ref().filter(|intent| intent.effort.is_some()) {
+        let mut extras = Vec::new();
+        if let Some(effort) = &intent.effort {
+            extras.push(("effort".to_string(), effort.clone()));
+        }
+        extras.push((
+            "fast".to_string(),
+            if intent.fast.unwrap_or(false) {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ));
+        return Some(ModelSelection {
+            model: intent.base.clone(),
+            options: extras,
+        });
+    }
+    let model = parsed
+        .as_ref()
+        .map(|intent| intent.base.clone())
+        .unwrap_or(model);
     let mut extras = Vec::new();
     if let Some(thought) = thought_level_option(options) {
         if let Some(level) = read_select_current_value(thought) {
@@ -361,9 +386,72 @@ pub fn pin_satisfied(
         }
         return true;
     }
+    if cursor_canonical_pin(desired) {
+        if let Some(wanted) = parse_cursor_model_intent(desired) {
+            if !split_axis_contract_satisfies(options, &wanted) {
+                if let Some(applied) = applied_cursor_intent(options) {
+                    return cursor_model_intents_match(&wanted, &applied);
+                }
+            }
+        }
+    }
     map_pin_to_apply_steps(options, desired, model_pins_at_spawn)
         .ok()
         .is_some_and(|steps| steps.iter().all(|step| step_matches_current(options, step)))
+}
+
+fn cursor_canonical_pin(raw: &str) -> bool {
+    // ponytail: bare catalog ids parse as model-only selections; require pipe-form
+    // so intent matching stays on Ajax canonical pins, not spawn argv tokens.
+    raw.contains('|')
+        && parse_model_selection(raw).is_some_and(|selection| {
+            !selection.options.is_empty()
+                && selection
+                    .options
+                    .iter()
+                    .all(|(key, _)| key == "effort" || key == "fast")
+        })
+}
+
+fn applied_cursor_intent(options: &[SessionConfigOption]) -> Option<CursorModelIntent> {
+    let model = read_model_applied(Some(options))?;
+    let mut intent = parse_cursor_model_intent(&model)?;
+    if intent.effort.is_some() {
+        return Some(intent);
+    }
+    if let Some(thought) = thought_level_option(options) {
+        if let Some(level) = read_select_current_value(thought) {
+            intent.effort = Some(level);
+        }
+    }
+    if let Some(fast) = model_config_boolean_option(options) {
+        if let Some(on) = read_fast_current_value(fast) {
+            intent.fast = Some(on);
+        }
+    }
+    Some(intent)
+}
+
+fn split_axis_contract_satisfies(
+    options: &[SessionConfigOption],
+    intent: &CursorModelIntent,
+) -> bool {
+    let Some(model) = model_option(options) else {
+        return false;
+    };
+    if !option_value_advertised(model, &intent.base) {
+        return false;
+    }
+    if let Some(effort) = &intent.effort {
+        match thought_level_option(options) {
+            Some(thought) if option_value_advertised(thought, effort) => {}
+            _ => return false,
+        }
+    }
+    if intent.fast == Some(true) && model_config_boolean_option(options).is_none() {
+        return false;
+    }
+    true
 }
 
 /// True when the operator did not pin a specific harness model id.
@@ -387,11 +475,12 @@ pub fn map_pin_to_apply_steps(
                 "session model {raw:?} is invalid — model id must not contain whitespace or exceed 128 chars"
             )
         })?;
-        return map_selection_to_steps(options, &selection);
+        if !cursor_canonical_pin(raw) {
+            return map_selection_to_steps(options, &selection);
+        }
     }
     if let Some(intent) = parse_cursor_model_intent(raw) {
-        if model_config_boolean_option(options).is_some() || thought_level_option(options).is_some()
-        {
+        if split_axis_contract_satisfies(options, &intent) {
             return map_intent_to_split_steps(options, &intent);
         }
         return map_intent_to_model_select_steps(options, &intent, model_pins_at_spawn);
@@ -470,14 +559,15 @@ fn map_intent_to_split_steps(
         value: SessionConfigOptionValue::value_id(intent.base.clone()),
     }];
     if let Some(effort) = &intent.effort {
-        if let Some(thought) = thought_level_option(options) {
-            if option_value_advertised(thought, effort) {
-                steps.push(ConfigApplyStep {
-                    config_id: thought.id.0.to_string(),
-                    value: SessionConfigOptionValue::value_id(effort.clone()),
-                });
-            }
+        let thought = thought_level_option(options)
+            .ok_or_else(|| format!("harness did not advertise effort value {effort}"))?;
+        if !option_value_advertised(thought, effort) {
+            return Err(format!("harness did not advertise effort value {effort}"));
         }
+        steps.push(ConfigApplyStep {
+            config_id: thought.id.0.to_string(),
+            value: SessionConfigOptionValue::value_id(effort.clone()),
+        });
     }
     if let Some(fast) = model_config_boolean_option(options) {
         let want = intent.fast.unwrap_or(false);

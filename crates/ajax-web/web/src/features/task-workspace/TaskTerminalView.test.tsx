@@ -543,7 +543,9 @@ describe("TaskTerminalView projection surface", () => {
     expect(bodyBlock).toMatch(/overflow-y:\s*auto/);
     expect(modelPickerBlock).toMatch(/max-height:\s*46vh/);
     expect(modelPickerBlock).toMatch(/overflow-y:\s*auto/);
-    expect(modelPickerBlock).toMatch(/pointer-events:\s*none/);
+    expect(modelPickerBlock).toMatch(/overscroll-behavior:\s*contain/);
+    expect(modelPickerBlock).toMatch(/-webkit-overflow-scrolling:\s*touch/);
+    expect(modelPickerBlock).not.toMatch(/pointer-events:\s*none/); // #1022
   });
 
   it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {

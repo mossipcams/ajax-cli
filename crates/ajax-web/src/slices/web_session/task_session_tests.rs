@@ -312,6 +312,54 @@ fn cancel_keep_queue_true_preserves_queued_prompts() {
 }
 
 #[test]
+fn answer_permission_records_resolved_when_acp_request_is_gone_issue_1018() {
+    let dir = scratch_dir("permission-stale-answer");
+    let handle = "web/permission-stale-answer";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::PermissionRequest {
+                request_id: "p1".to_string(),
+                title: Some("Run?".to_string()),
+                detail: None,
+            },
+        );
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(
+            directory
+                .inner()
+                .answer_permission(handle, "p1", true, None),
+        )
+        .expect("stale permission answer should succeed");
+
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::PermissionResolved {
+                request_id,
+                approved: true,
+            } if request_id == "p1"
+        )));
+
+        let attach = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "auto".to_string(),
+            None,
+        ));
+        assert!(attach.snapshot.pending_permission.is_none());
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn permission_auto_approved_without_surfacing_operator_prompt() {
     let dir = scratch_dir("permission-auto");
     let handle = "web/permission-auto";
