@@ -3,7 +3,7 @@
 use super::task_session_spawn;
 
 use super::normalize::StreamNormalizer;
-use super::protocol::{SessionEventEnvelope, SessionSnapshot};
+use super::protocol::{SessionChrome, SessionEventEnvelope, SessionSnapshot};
 use super::replay::{build_attach, pending_elicitation, pending_permission};
 use super::transcript::TranscriptLog;
 use super::{
@@ -627,10 +627,12 @@ fn attach_snapshot(
         snapshot_model,
         state.busy(),
         client_cursor,
-        state.session_config_options.clone(),
-        state.session_available_commands.clone(),
-        state.session_prompt_capabilities.clone(),
-        state.session_title.clone(),
+        SessionChrome {
+            session_config_options: state.session_config_options.clone(),
+            available_commands: state.session_available_commands.clone(),
+            prompt_capabilities: state.session_prompt_capabilities.clone(),
+            session_title: state.session_title.clone(),
+        },
     );
     AttachSnapshot {
         generation: state.generation,
@@ -659,10 +661,12 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             true,
             pending_permission(&state.log),
             pending_elicitation(&state.log),
-            state.session_config_options.clone(),
-            state.session_available_commands.clone(),
-            state.session_prompt_capabilities.clone(),
-            state.session_title.clone(),
+            SessionChrome {
+                session_config_options: state.session_config_options.clone(),
+                available_commands: state.session_available_commands.clone(),
+                prompt_capabilities: state.session_prompt_capabilities.clone(),
+                session_title: state.session_title.clone(),
+            },
         ))
     } else if let Some(model) = state.pending_model_snapshot.take() {
         let config = state.pending_config_snapshot.take();
@@ -676,10 +680,12 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             false,
             pending_permission(&state.log),
             pending_elicitation(&state.log),
-            config.or_else(|| state.session_config_options.clone()),
-            state.session_available_commands.clone(),
-            state.session_prompt_capabilities.clone(),
-            state.session_title.clone(),
+            SessionChrome {
+                session_config_options: config.or_else(|| state.session_config_options.clone()),
+                available_commands: state.session_available_commands.clone(),
+                prompt_capabilities: state.session_prompt_capabilities.clone(),
+                session_title: state.session_title.clone(),
+            },
         ))
     } else if state.pending_title_snapshot
         || state.pending_commands_snapshot.is_some()
@@ -695,10 +701,12 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             false,
             pending_permission(&state.log),
             pending_elicitation(&state.log),
-            state.session_config_options.clone(),
-            state.session_available_commands.clone(),
-            state.session_prompt_capabilities.clone(),
-            state.session_title.clone(),
+            SessionChrome {
+                session_config_options: state.session_config_options.clone(),
+                available_commands: state.session_available_commands.clone(),
+                prompt_capabilities: state.session_prompt_capabilities.clone(),
+                session_title: state.session_title.clone(),
+            },
         ))
     } else {
         None

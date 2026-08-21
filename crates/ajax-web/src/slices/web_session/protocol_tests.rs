@@ -1,5 +1,6 @@
 use super::protocol::{
-    parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionSnapshot,
+    SESSION_PROTOCOL_VERSION,
 };
 use crate::slices::web_session::SessionServerEvent;
 
@@ -12,10 +13,7 @@ fn snapshot_serializes_protocol_v2_fields() {
         false,
         None,
         None,
-        None,
-        None,
-        None,
-        None,
+        SessionChrome::default(),
     );
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["type"], "snapshot");

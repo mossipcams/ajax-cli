@@ -2,6 +2,7 @@
 
 use super::{
     normalize_session_model,
+    protocol::SessionChrome,
     task_session::{
         send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch,
         TaskSessionCommand, TaskSessionSender,
@@ -369,10 +370,7 @@ impl TaskSessionDirectory {
             fallback_model,
             false,
             client_cursor,
-            None,
-            None,
-            None,
-            None,
+            SessionChrome::default(),
         );
         AttachSnapshot {
             generation: 0,

@@ -51,6 +51,7 @@ pub fn build_prompt_payload(
     if trimmed.is_empty() {
         return Err("prompt text is required".to_string());
     }
+    reject_disallowed_wire_blocks(wire_blocks, caps)?;
     let mut blocks = Vec::with_capacity(wire_blocks.len() + 1);
     blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
     for block in wire_blocks {

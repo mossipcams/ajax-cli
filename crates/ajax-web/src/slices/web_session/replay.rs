@@ -1,13 +1,10 @@
 //! Cursor validation and replay planning for protocol v2 attach.
 
 use super::protocol::{
-    PendingElicitation, PendingPermission, SessionEventEnvelope, SessionSnapshot,
+    PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
-use crate::adapters::web_session_acp::{
-    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplayPlan {
@@ -43,10 +40,7 @@ pub(crate) fn build_attach(
     model: String,
     busy: bool,
     client_cursor: Option<usize>,
-    session_config_options: Option<Vec<ConfigOptionDescriptor>>,
-    available_commands: Option<Vec<AvailableCommandDescriptor>>,
-    prompt_capabilities: Option<PromptCapabilityDescriptor>,
-    session_title: Option<String>,
+    chrome: SessionChrome,
 ) -> (SessionSnapshot, Vec<SessionEventEnvelope>) {
     let plan = plan_replay(client_cursor, log);
     let (replayed, next) = log.read_from_enveloped(plan.from);
@@ -57,10 +51,7 @@ pub(crate) fn build_attach(
         plan.reset,
         pending_permission(log),
         pending_elicitation(log),
-        session_config_options,
-        available_commands,
-        prompt_capabilities,
-        session_title,
+        chrome,
     );
     (snapshot, replayed)
 }

@@ -1,3 +1,4 @@
+use super::protocol::SessionChrome;
 use super::replay::{build_attach, plan_replay};
 use super::transcript::TranscriptLog;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
@@ -29,10 +30,7 @@ fn invalid_cursor_before_compaction_resets_replay() {
         "auto".to_string(),
         false,
         Some(0),
-        None,
-        None,
-        None,
-        None,
+        SessionChrome::default(),
     );
     assert!(snapshot.reset);
 }
@@ -51,10 +49,7 @@ fn incremental_replay_after_one_new_event() {
         "auto".to_string(),
         false,
         Some(1),
-        None,
-        None,
-        None,
-        None,
+        SessionChrome::default(),
     );
     assert!(!snapshot.reset);
     assert_eq!(replayed.len(), 1);
@@ -80,10 +75,7 @@ fn pending_permission_cleared_after_resolved_answer_issue_1018() {
         "auto".to_string(),
         false,
         None,
-        None,
-        None,
-        None,
-        None,
+        SessionChrome::default(),
     );
     assert!(snapshot.pending_permission.is_none());
 }

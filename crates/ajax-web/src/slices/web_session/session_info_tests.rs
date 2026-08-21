@@ -3,7 +3,7 @@
 use super::acp_drain::drain_acp_events;
 use super::acp_map::map_acp_session_notification;
 use super::acp_usage::UsageDeduper;
-use super::protocol::SessionSnapshot;
+use super::protocol::{SessionChrome, SessionSnapshot};
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
@@ -139,10 +139,12 @@ fn snapshot_serializes_session_title_field() {
         false,
         None,
         None,
-        None,
-        None,
-        None,
-        Some("Fix auth flow".to_string()),
+        SessionChrome {
+            session_config_options: None,
+            available_commands: None,
+            prompt_capabilities: None,
+            session_title: Some("Fix auth flow".to_string()),
+        },
     );
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["sessionTitle"], "Fix auth flow");

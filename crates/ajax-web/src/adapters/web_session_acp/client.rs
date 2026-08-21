@@ -344,11 +344,6 @@ impl AcpStdioClient {
         &self.session_id
     }
 
-    #[cfg(test)]
-    pub(crate) fn close_advertised(&self) -> bool {
-        self.close_advertised
-    }
-
     /// End the ACP child: optional `session/close`, then stdio teardown.
     /// Returns a warning when advertised close fails or times out.
     pub fn shutdown(&mut self) -> Option<String> {
@@ -453,7 +448,7 @@ impl AcpStdioClient {
     /// harness answers `Method not found` and keeps working — Stop did nothing.
     /// The agent ends the turn with `stopReason: "cancelled"`, which settles the
     /// prompt already in flight.
-    pub fn cancel(&mut self) -> Result<super::CancelOutcome, String> {
+    pub(crate) fn cancel(&mut self) -> Result<super::CancelOutcome, String> {
         let (result_tx, result_rx) = mpsc::channel();
         self.commands
             .send(ClientCommand::Cancel { result: result_tx })

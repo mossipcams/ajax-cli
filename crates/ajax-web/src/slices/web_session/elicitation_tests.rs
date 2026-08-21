@@ -1,3 +1,4 @@
+use super::protocol::SessionChrome;
 use super::replay::{build_attach, pending_elicitation};
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
@@ -27,10 +28,7 @@ fn pending_elicitation_cleared_after_resolved_answer() {
         "auto".to_string(),
         false,
         None,
-        None,
-        None,
-        None,
-        None,
+        SessionChrome::default(),
     );
     assert!(snapshot.pending_elicitation.is_none());
 }
@@ -52,7 +50,13 @@ fn pending_elicitation_survives_open_request_for_snapshot() {
     let pending = pending_elicitation(&log).expect("pending elicitation");
     assert_eq!(pending.request_id, "e1");
     assert_eq!(pending.message, "Pick target");
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), true, None, None, None, None, None);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        true,
+        None,
+        SessionChrome::default(),
+    );
     assert_eq!(
         snapshot
             .pending_elicitation
