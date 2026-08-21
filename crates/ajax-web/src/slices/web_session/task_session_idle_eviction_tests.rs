@@ -1,3 +1,4 @@
+use super::task_session::disk_read_from;
 use super::test_support::{
     fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
 };
@@ -5,7 +6,22 @@ use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
-use std::time::Duration;
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
+fn count_acp_process_exited_errors(events: &[SessionServerEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                SessionServerEvent::Error { message } if message == "ACP process exited"
+            )
+        })
+        .count()
+}
 
 #[test]
 fn idle_eviction_preserves_slots_with_in_flight_turn() {
@@ -272,6 +288,80 @@ fn acquire_clears_directory_idle_release_marker() {
             Some(false),
             "acquire must claim the slot in the same lock as sender lookup"
         );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn idle_disconnected_slot_pumps_host_exit_without_holder() {
+    let dir = scratch_dir("idle-pump-exit");
+    let handle = "web/idle-pump-exit";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::from_secs(3600), || {
+        with_test_acp_program(&script, || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt(handle, "ping".to_string())
+                .expect("prompt");
+            directory.release(handle);
+
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| match event {
+                    SessionServerEvent::TurnEnd { .. } => true,
+                    SessionServerEvent::Message { text, .. } => text == "pong",
+                    _ => false,
+                })
+            });
+            pump_until(&directory, handle, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle)
+                    .is_some_and(|snapshot| snapshot.evictable)
+            });
+
+            let child_before = directory.child_id(handle).expect("child before");
+            directory.kill_host_for_test(handle);
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let (events, _) = disk_read_from(&dir, handle, 0);
+                if count_acp_process_exited_errors(&events) >= 1 {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "poll loop must drain host exit while idle disconnected"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+
+            let (events, _) = disk_read_from(&dir, handle, 0);
+            assert_eq!(
+                count_acp_process_exited_errors(&events),
+                1,
+                "host exit must be recorded once"
+            );
+            thread::sleep(Duration::from_millis(300));
+            let (events, _) = disk_read_from(&dir, handle, 0);
+            assert_eq!(
+                count_acp_process_exited_errors(&events),
+                1,
+                "extra poll ticks must not duplicate ACP process exited errors"
+            );
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire after host exit");
+            let child_after = directory.child_id(handle).expect("child after");
+            assert_ne!(
+                child_before, child_after,
+                "re-acquire must respawn after poll observes host exit"
+            );
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
