@@ -60,4 +60,15 @@ describe("groupConversationTurns", () => {
     expect(turn.other.map((item) => item.id)).toEqual(["q1"]);
     expect(turn.work.map((item) => item.id)).toEqual(["q2"]);
   });
+
+  it("routes elicitations by whether they still need an answer", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Deploy"),
+      { kind: "elicitation", id: "e1", requestId: "r1", message: "Pick env", resolved: false },
+      { kind: "elicitation", id: "e2", requestId: "r2", message: "Confirmed", resolved: true },
+    ];
+    const [turn] = groupConversationTurns(items);
+    expect(turn.other.map((item) => item.id)).toEqual(["e1"]);
+    expect(turn.work.map((item) => item.id)).toEqual(["e2"]);
+  });
 });

@@ -60,6 +60,11 @@ export default function TaskWorkspace({
   const detailsPanelId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionTitle, setSessionTitle] = useState<string | undefined>();
+
+  useEffect(() => {
+    setSessionTitle(undefined);
+  }, [handle]);
 
   useEffect(() => {
     if (mode !== "chat") return;
@@ -170,6 +175,7 @@ export default function TaskWorkspace({
             <TaskWorkspaceHeader
               detail={taskDetail}
               handle={handle}
+              sessionTitle={sessionTitle}
               showStatusPill={false}
               onBack={onBack}
               onOpenDetails={taskDetail ? () => setDetailsOpen(true) : undefined}
@@ -178,8 +184,9 @@ export default function TaskWorkspace({
               detailsTestId="session-details"
             />
           }
-          onSessionActivity={({ busy }) => {
+          onSessionActivity={({ busy, sessionTitle: nextTitle }) => {
             setSessionBusy(busy);
+            setSessionTitle(nextTitle);
           }}
         />
         {detailsSheet}

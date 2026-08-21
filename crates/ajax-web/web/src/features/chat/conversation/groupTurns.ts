@@ -12,10 +12,11 @@ export interface ConversationTurn {
 }
 
 /** Protocol detail belongs behind the disclosure; only what the operator must
- * act on stays in the conversation. An unanswered permission is an action, so
- * it stays out here until it is resolved and becomes history. */
+ * act on stays in the conversation. An unanswered permission or elicitation is
+ * an action, so it stays out here until it is resolved and becomes history. */
 function isWorkItem(item: ConversationItem): boolean {
   if (item.kind === "permission") return item.resolved;
+  if (item.kind === "elicitation") return item.resolved;
   return item.kind === "thought" || item.kind === "tool" || item.kind === "plan";
 }
 

@@ -28,6 +28,11 @@
   outline: none;
 }
 
+.detail-title-stack {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .detail-title {
   margin: 0;
   font-family: var(--mono);
@@ -37,8 +42,16 @@
   line-height: 1.3;
   text-transform: none;
   color: var(--ink);
-  flex: 1 1 auto;
-  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-session-title {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: var(--text-body-sm);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 

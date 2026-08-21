@@ -105,6 +105,27 @@ describe("ToolCard", () => {
     expect(screen.getByTestId("session-tool-output")).toHaveAttribute("data-block-kind", "read");
   });
 
+  it("renders image and resource_link blocks in tool output", () => {
+    render(
+      <ToolCard
+        call={call({
+          status: "in_progress",
+          content: [
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+            {
+              type: "resource_link",
+              name: "README.md",
+              uri: "file:///README.md",
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("session-output-image")).toBeInTheDocument();
+    expect(screen.getByTestId("session-output-resource-link")).toHaveTextContent("README.md");
+  });
+
   it("previews the head for non-failed output and expands on demand", () => {
     const lines = Array.from({ length: CONTENT_PREVIEW_LINES + 3 }, (_, i) => `line ${i + 1}`).join(
       "\n",

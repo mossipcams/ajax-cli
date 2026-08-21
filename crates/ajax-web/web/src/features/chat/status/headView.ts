@@ -1,4 +1,4 @@
-import type { ChatSessionView, Decision, ToolCall } from "../session/public";
+import type { ChatSessionView, Decision, ElicitationDecision, ToolCall } from "../session/public";
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
@@ -118,11 +118,12 @@ function agentWorking(status: string | null): boolean {
 
 export function headState(
   decision: Decision | null,
+  elicitation: ElicitationDecision | null,
   busy: boolean,
   taskAttention: ChatTaskAttention | null,
   agentStatus: string | null,
 ): HeadState {
-  if (decision) return "decision";
+  if (decision || elicitation) return "decision";
   if (agentNeedsYou(agentStatus)) return "attention";
   if (agentWorking(agentStatus) || busy) return "working";
   if (taskAttention) return "attention";
@@ -164,8 +165,10 @@ export function buildHeadView(input: {
   const { session, taskAttention, tool, planStep, thoughtSnippet, activityAgeMs, connected } =
     input;
   const decision = session.permission.decision;
+  const elicitation = session.elicitation.decision;
   const state = headState(
     decision,
+    elicitation,
     session.turn.busy,
     taskAttention,
     session.status.acpState,

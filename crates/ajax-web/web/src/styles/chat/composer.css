@@ -144,3 +144,90 @@ html.keyboard-open .session-composer textarea {
   color: var(--ink-muted);
 }
 
+.session-composer-attachments {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.session-composer-attachments li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-size: var(--text-micro);
+}
+
+.session-composer-attachment-remove {
+  min-height: 32px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+}
+
+.session-composer-attach-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-composer-attach {
+  min-width: 44px;
+}
+
+.session-composer-slash-menu {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+  max-height: 180px;
+  overflow: auto;
+}
+
+.session-composer-slash-menu li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.session-composer-slash-menu button {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  align-items: baseline;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+}
+
+.session-composer-slash-menu button.is-selected,
+.session-composer-slash-menu button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+
+.session-composer-slash-name {
+  flex: none;
+  font-weight: 600;
+}
+
+.session-composer-slash-description {
+  flex: 1 1 auto;
+  color: var(--ink-muted);
+  font-size: var(--text-micro);
+}
+

@@ -150,6 +150,7 @@ pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),
         text: "Model context reset after restart. Prior turns are still visible here.".to_string(),
+        content_blocks: Vec::new(),
         item_id: "context-reset".to_string(),
         message_id: None,
     }
@@ -159,6 +160,7 @@ pub(crate) fn harness_switch_note(item_id: String) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),
         text: "Client switched harness. Context reset.".to_string(),
+        content_blocks: Vec::new(),
         item_id,
         message_id: None,
     }

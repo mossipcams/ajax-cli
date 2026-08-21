@@ -1,4 +1,5 @@
 export type {
+  ChatElicitationState,
   ChatModelState,
   ChatPermissionState,
   ChatSessionAction,
@@ -9,6 +10,7 @@ export type {
   ChatUsageState,
   ConversationItem,
   Decision,
+  ElicitationDecision,
   PlanEntry,
   ToolCall,
   ToolContent,

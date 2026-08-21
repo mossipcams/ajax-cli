@@ -30,6 +30,20 @@ const TranscriptRow = memo(function TranscriptRow({
         </div>
       );
 
+    case "elicitation":
+      return (
+        <div
+          className={`session-note tone-${item.resolved ? "muted" : "waiting"}`}
+          data-testid="session-elicitation-marker"
+          data-resolved={item.resolved ? "true" : "false"}
+        >
+          <span className="session-note-label">
+            {item.resolved ? "Answered" : "Agent request"}
+          </span>
+          <span className="session-note-text">{item.message}</span>
+        </div>
+      );
+
     case "note":
       return item.tone === "error" ? (
         <div className="session-note tone-error" data-testid="session-note-error">

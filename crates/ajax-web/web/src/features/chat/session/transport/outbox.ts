@@ -5,6 +5,7 @@ function promptFrame(prompt: PendingPrompt): string {
     type: "prompt",
     text: prompt.text,
     clientMessageId: prompt.clientMessageId,
+    ...(prompt.contentBlocks?.length ? { contentBlocks: prompt.contentBlocks } : {}),
   });
 }
 

@@ -68,6 +68,43 @@ existing paths.
   (id, category, name, type, currentValue, choices). Replace the list; do not
   merge. `config_option_update` refreshes applied state; it is not a transcript
   artifact.
+- Live slash commands follow ACP `available_commands_update`: after `session/new`
+  and any later replacement, the host stores the complete advertised list and
+  exposes it on the snapshot as `availableCommands` (`name`, `description`,
+  optional `inputHint`). Replace the list; do not merge. Updates are live session
+  capability state, not JSONL transcript rows. The chat composer completes
+  advertised `/name` tokens (keyboard Tab/Enter and tappable rows on iOS Safari)
+  and sends the operator's text unchanged on `session/prompt`; Ajax does not
+  implement local slash handlers.
+- Live prompt content capabilities come from ACP `initialize` `agentCapabilities.promptCapabilities`
+  (`image`, `embeddedContext`; never `audio`). The host stores the handshake values and
+  exposes them on the snapshot as `promptCapabilities`. Replace on handshake; do not
+  invent capabilities. The browser shows Attach only when `promptCapabilities.image`
+  or `promptCapabilities.embeddedContext` is true. It may attach `image` only when
+  `promptCapabilities.image` is true and embedded `resource` bodies only when
+  `promptCapabilities.embeddedContext` is true. The file picker does not synthesize
+  `resource_link` stubs for local paths; `resource_link` remains valid on the host wire
+  for real URIs. Before send, the browser downscales/compresses attached photos so the
+  prompt JSON frame fits the 256 KiB WebSocket cap with headroom for typed text.
+  WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
+  backward compatible; omitted `contentBlocks` is text-only. The host validates block
+  types against advertised capabilities, sends a real ACP `ContentBlock` array on
+  `session/prompt`, and records only operator text plus attachment names in JSONL
+  (no base64 in the operator transcript).
+- Non-text **output** from ACP `session/update` (agent/user/thought chunks and tool-call
+  content) maps `image`, `resource_link`, and embedded `resource` blocks into wire
+  `message.contentBlocks` and extended `tool_call.content` (text chunks and diffs
+  unchanged). The host normalizer accumulates non-text blocks per message lane alongside
+  streamed text. JSONL keeps compact wire shapes: prefer `uri` + `mimeType` over inline
+  base64 when the agent supplies a durable URI; otherwise image data stays on the replay
+  event. ACP `ToolCallContent::Terminal` and `terminal/*` are never advertised, mapped, or
+  rendered.
+- Live session chrome follows ACP `session_info_update`: when the agent advertises
+  a `title`, the host stores it as live session state and exposes it on the snapshot
+  as `sessionTitle` (omit when none; `title: null` clears). Updates republish to
+  connected browsers without reconnect or model change. This is agent-reported session
+  chrome only — it does not replace the Ajax task handle or become Core task truth.
+  Updates are not JSONL transcript rows.
 - Ajax `initialize` advertises `clientCapabilities.session.configOptions.boolean:
   {}` so harnesses may expose boolean Fast; filesystem and terminal capabilities
   remain false. Cursor `_meta.parameterizedModelPicker` is a vendor extra, not the
@@ -355,6 +392,42 @@ existing paths.
 - Reconnect or full page reload replay must not resurrect a permission prompt
   whose `requestId` already has a matching `permission_resolved` entry.
 
+## Form elicitation (slice 4)
+
+- Ajax `initialize` advertises `clientCapabilities.elicitation.form: {}` only.
+  URL elicitation is not advertised and requests in URL mode receive JSON-RPC
+  invalid params (`-32602`) on the host.
+- ACP `elicitation/create` in form mode is held on the host until the browser
+  operator answers. Accept sends schema-shaped `content`; Decline and Cancel
+  send the standard non-accept outcomes and do not include content.
+- Form schemas must not collect secrets, passwords, or tokens. The host rejects
+  secret-like field names before surfacing a prompt to the browser.
+- Live Chat treats elicitation as an agent request in the session head (not task
+  registry truth). The head shows a schema-driven form with Accept, Decline, and
+  Cancel; elicitation takes precedence over permission when both are pending.
+- Operator answers are recorded as `elicitation_resolved` in the host transcript.
+  Live Chat clears the head form immediately on answer; it does not wait for a
+  matching `elicitation_resolved` replay event.
+- Reconnect or full page reload replay includes `pendingElicitation` on the
+  session snapshot when an unanswered form elicitation remains open, using the
+  same pending-permission snapshot pattern.
+- `session/cancel` resolves any still-pending elicitation with the cancelled
+  outcome before sending cancel, mirroring permission cleanup.
+
+## Session close (slice 6)
+
+- During ACP `initialize`, the host reads `agentCapabilities.sessionCapabilities.close`
+  and stores whether `session/close` is advertised on the live stdio client.
+- When tearing down a live ACP child (TaskSession shutdown, harness Switch, slot
+  replacement, idle eviction, or client drop), the host sends ACP `session/close`
+  for the current session id and waits for the response (bounded timeout) before
+  killing stdio when close is advertised. When close is not advertised, teardown
+  keeps today's cancel-then-kill behavior.
+- ACP `session/close` ends only the agent-side session on the child. It does not
+  Drop the Ajax task, delete JSONL, or touch Ajax Terminal/tmux.
+- Close failure or timeout still tears down the child; the host appends a typed
+  `error` session event rather than hanging the slot.
+
 ## In-flight activity freshness
 
 - The host-reported unresolved prompt remains the only authority for whether a
@@ -373,7 +446,8 @@ existing paths.
 
 The transcript is a conversation, not the ACP event stream. It contains only
 user messages, assistant responses, one activity disclosure per turn,
-permission asks the operator still owes an answer to, errors, and hairline
+permission asks the operator still owes an answer to, agent form elicitation
+asks still open, errors, and hairline
 dividers for cancellations, reconnects, harness switches and context resets.
 
 - A turn chapter is the user message, its activity disclosure, and the assistant

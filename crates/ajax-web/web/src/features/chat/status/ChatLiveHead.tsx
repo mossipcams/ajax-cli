@@ -37,6 +37,7 @@ export default function ChatLiveHead({
   const workingHead =
     headState(
       view.permission.decision,
+      view.elicitation.decision,
       view.turn.busy,
       taskAttention,
       view.status.acpState,

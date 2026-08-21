@@ -7,6 +7,7 @@ fn note(text: &str) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        content_blocks: Vec::new(),
         item_id: format!("n-{text}"),
         message_id: None,
     }
@@ -23,7 +24,16 @@ fn invalid_cursor_before_compaction_resets_replay() {
     let plan = plan_replay(Some(0), &log);
     assert!(plan.reset);
     assert_eq!(plan.from, log.dropped);
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, Some(0), None);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(0),
+        None,
+        None,
+        None,
+        None,
+    );
     assert!(snapshot.reset);
 }
 
@@ -36,7 +46,16 @@ fn incremental_replay_after_one_new_event() {
     assert_eq!(plan.from, 1);
     let (events, _) = log.read_from(plan.from);
     assert_eq!(events, vec![note("two")]);
-    let (snapshot, replayed) = build_attach(&log, "auto".to_string(), false, Some(1), None);
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+    );
     assert!(!snapshot.reset);
     assert_eq!(replayed.len(), 1);
     assert_eq!(replayed[0].cursor, 1);
@@ -56,7 +75,16 @@ fn pending_permission_cleared_after_resolved_answer_issue_1018() {
             approved: true,
         },
     ]);
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, None, None);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
     assert!(snapshot.pending_permission.is_none());
 }
 

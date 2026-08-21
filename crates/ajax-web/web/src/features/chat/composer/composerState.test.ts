@@ -4,6 +4,7 @@ import {
   beginStopAndSend,
   clearQueue,
   composerIsStopping,
+  composerQueuedContentBlocks,
   composerQueuedText,
   queueFollowUp,
   restoreQueuedDraft,
@@ -30,9 +31,15 @@ describe("composerState", () => {
     expect(beginStopAndSend({ status: "idle" })).toEqual({ status: "idle" });
   });
 
-  it("restores queued text into the draft when edited", () => {
-    const restored = restoreQueuedDraft(queueFollowUp({ status: "idle" }, "Next"));
-    expect(restored).toEqual({ state: { status: "idle" }, draft: "Next" });
+  it("restores queued text and attachments into the draft when edited", () => {
+    const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+    const restored = restoreQueuedDraft(queueFollowUp({ status: "idle" }, "Next", blocks));
+    expect(restored).toEqual({
+      state: { status: "idle" },
+      draft: "Next",
+      contentBlocks: blocks,
+    });
+    expect(composerQueuedContentBlocks(restored!.state)).toBeUndefined();
     expect(restoreQueuedDraft(clearQueue({ status: "idle" }))).toBeNull();
   });
 });

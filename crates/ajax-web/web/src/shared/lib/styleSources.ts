@@ -11,7 +11,7 @@ export const BASELINE = {
    * Re-measured when model-list scroll hit targets were restored (#1022).
    * Re-measured again after pass-2 tool disclosure styling.
    * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020). */
-  sourceStylesCssBytes: 102_992,
+  sourceStylesCssBytes: 104_173,
   builtAppCssBytes: 88_958,
   builtAppCssGzipBytes: 15_786,
   classSelectorLines: 560,
@@ -32,6 +32,7 @@ export const STYLES_SOURCE_MODULE_RELS = [
   "styles/chat/markdown.css",
   "styles/chat/model.css",
   "styles/chat/permissions.css",
+  "styles/chat/elicitation.css",
   "styles/chat/queued.css",
   "styles/chat/scrolling.css",
   "styles/chat/status.css",
@@ -243,6 +244,7 @@ const STYLES_FEATURE_GROUPS = {
     "styles/chat/composer.css",
     "styles/chat/conversation.css",
     "styles/chat/permissions.css",
+    "styles/chat/elicitation.css",
     "styles/chat/status.css",
     "styles/chat/markdown.css",
     "styles/chat/model.css",

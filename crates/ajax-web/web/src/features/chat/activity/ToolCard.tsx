@@ -13,6 +13,7 @@
 
 import { useState } from "react";
 import type { ToolCall, ToolContent } from "../session/public";
+import OutputContentBlockView from "../conversation/OutputContentBlockView";
 import {
   cleanTitle,
   CONTENT_PREVIEW_LINES,
@@ -160,6 +161,9 @@ function ContentBlock({
         newText={content.newText}
       />
     );
+  }
+  if (content.type === "image" || content.type === "resource_link" || content.type === "resource") {
+    return <OutputContentBlockView block={content} />;
   }
   // Execute output arrives here as text: Ajax advertises no `terminal/*` client
   // capability, so there is never an embedded terminal to render instead.

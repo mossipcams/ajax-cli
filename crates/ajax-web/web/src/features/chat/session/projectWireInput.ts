@@ -11,11 +11,13 @@ function toolStatus(raw: string): ToolStatus {
 function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | null {
   switch (event.type) {
     case "message": {
-      if (!event.text) return null;
+      const contentBlocks = event.contentBlocks?.length ? event.contentBlocks : undefined;
+      if (!event.text && !contentBlocks?.length) return null;
       if (event.role === "thought") {
         return {
           type: "thought_message",
           text: event.text,
+          ...(contentBlocks ? { contentBlocks } : {}),
           itemId: event.itemId,
           messageId: event.messageId,
         };
@@ -24,6 +26,7 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
         return {
           type: "agent_message",
           text: event.text,
+          ...(contentBlocks ? { contentBlocks } : {}),
           itemId: event.itemId,
           messageId: event.messageId,
         };
@@ -32,6 +35,7 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
         return {
           type: "user_message",
           text: event.text,
+          ...(contentBlocks ? { contentBlocks } : {}),
           itemId: event.itemId,
           messageId: event.messageId,
         };
@@ -79,6 +83,19 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
       };
     case "permission_resolved":
       return { type: "permission_resolved", requestId: event.requestId };
+    case "elicitation_request":
+      return {
+        type: "elicitation_request",
+        requestId: event.requestId,
+        message: event.message,
+        schema: event.schema,
+      };
+    case "elicitation_resolved":
+      return {
+        type: "elicitation_resolved",
+        requestId: event.requestId,
+        action: event.action,
+      };
     case "status":
       return {
         type: "acp_status",
@@ -114,6 +131,14 @@ export function projectWireInput(
         requestId: input.pendingPermission.requestId,
         title: input.pendingPermission.title?.trim() || "Permission required",
         detail: input.pendingPermission.detail?.trim() || "",
+      });
+    }
+    if (input.pendingElicitation) {
+      events.push({
+        type: "elicitation_request",
+        requestId: input.pendingElicitation.requestId,
+        message: input.pendingElicitation.message,
+        schema: input.pendingElicitation.schema,
       });
     }
     return events.length ? events : null;
