@@ -19,7 +19,10 @@ import {
   restoreQueuedDraft,
   type ComposerState,
 } from "./composerState";
-import { flushQueuedFollowUp } from "./submit";
+import {
+  composerStateAfterFlush,
+  flushQueuedFollowUp,
+} from "./submit";
 import { useChatSpeech } from "./speech/useChatSpeech";
 
 export type ComposerCommands = {
@@ -79,8 +82,10 @@ export function ComposerProvider({
   children,
 }: ComposerProviderProps) {
   const draftRef = useRef("");
+  const composerStateRef = useRef<ComposerState>({ status: "idle" });
   const [draft, setDraft] = useState("");
   const [composerState, setComposerState] = useState<ComposerState>({ status: "idle" });
+  composerStateRef.current = composerState;
 
   const {
     speechModel,
@@ -140,15 +145,21 @@ export function ComposerProvider({
   ]);
 
   useEffect(() => {
-    setComposerState((current) =>
-      flushQueuedFollowUp({
-        composerState: current,
-        busy,
-        connected,
-        sendPrompt,
-        markStopped,
-      }),
-    );
+    const { intents } = flushQueuedFollowUp({
+      composerState: composerStateRef.current,
+      busy,
+      connected,
+    });
+    if (intents.length === 0) return;
+
+    let sendSucceeded = false;
+    for (const intent of intents) {
+      if (intent.type === "mark_stopped") markStopped();
+      if (intent.type === "send_prompt") sendSucceeded = sendPrompt(intent.text);
+    }
+    if (sendSucceeded) {
+      setComposerState((current) => composerStateAfterFlush(current, true));
+    }
   }, [busy, connected, markStopped, sendPrompt]);
 
   const editQueued = useCallback(() => {

@@ -88,21 +88,39 @@ export function removeQueuedFollowUp(state: ComposerState): ComposerState {
   return clearQueue(state);
 }
 
+export type FlushQueuedFollowUpIntent =
+  | { type: "mark_stopped" }
+  | { type: "send_prompt"; text: string };
+
+export type FlushQueuedFollowUpResult = {
+  state: ComposerState;
+  intents: FlushQueuedFollowUpIntent[];
+};
+
 /** The turn is over — either normally or because Stop & send cancelled it —
- * so the follow-up becomes the next prompt. Nothing dispatches while busy. */
+ * so the follow-up becomes the next prompt. Nothing dispatches while busy.
+ * Side effects belong in intents; apply them once outside a setState updater. */
 export function flushQueuedFollowUp(args: {
   composerState: ComposerState;
   busy: boolean;
   connected: boolean;
-  sendPrompt: (text: string) => boolean;
-  markStopped: () => void;
-}): ComposerState {
+}): FlushQueuedFollowUpResult {
   const queued = composerQueuedText(args.composerState);
-  if (queued === null || args.busy || !args.connected) return args.composerState;
-
-  if (composerIsStopping(args.composerState)) {
-    args.markStopped();
+  if (queued === null || args.busy || !args.connected) {
+    return { state: args.composerState, intents: [] };
   }
-  if (args.sendPrompt(queued)) return clearQueue(args.composerState);
-  return args.composerState;
+
+  const intents: FlushQueuedFollowUpIntent[] = [];
+  if (composerIsStopping(args.composerState)) {
+    intents.push({ type: "mark_stopped" });
+  }
+  intents.push({ type: "send_prompt", text: queued });
+  return { state: args.composerState, intents };
+}
+
+export function composerStateAfterFlush(
+  composerState: ComposerState,
+  sendSucceeded: boolean,
+): ComposerState {
+  return sendSucceeded ? clearQueue(composerState) : composerState;
 }
