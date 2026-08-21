@@ -85,12 +85,10 @@ describe("ChatComposer", () => {
 
     const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
     const input = screen.getByLabelText("Message");
-    await act(async () => {
-      fireEvent.paste(input, {
-        clipboardData: {
-          items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
-        },
-      });
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
+      },
     });
     expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
 

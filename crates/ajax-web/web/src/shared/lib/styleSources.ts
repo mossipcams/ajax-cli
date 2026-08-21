@@ -10,11 +10,12 @@ export const BASELINE = {
    * overflow hit target so taps could change the selection.
    * Re-measured when model-list scroll hit targets were restored (#1022).
    * Re-measured again after pass-2 tool disclosure styling.
-   * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020). */
-  sourceStylesCssBytes: 104_173,
-  builtAppCssBytes: 88_958,
-  builtAppCssGzipBytes: 15_786,
-  classSelectorLines: 560,
+   * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020).
+   * Re-measured after chat elicitation and output-content owned modules. */
+  sourceStylesCssBytes: 107_092,
+  builtAppCssBytes: 92_467,
+  builtAppCssGzipBytes: 16_295,
+  classSelectorLines: 594,
   hasSelectors: 18,
 } as const;
 
@@ -31,6 +32,7 @@ export const STYLES_SOURCE_MODULE_RELS = [
   "styles/chat/conversation.css",
   "styles/chat/markdown.css",
   "styles/chat/model.css",
+  "styles/chat/output-content.css",
   "styles/chat/permissions.css",
   "styles/chat/elicitation.css",
   "styles/chat/queued.css",
@@ -70,6 +72,7 @@ export const LOCKED_MAJOR_SECTIONS = [
   "RESULT PANEL",
   "SESSION ORCHESTRATION CHAT",
   "Permission panel",
+  "Agent form elicitation",
   "Live head / status",
   "Scrolling",
   "Jump to live",
@@ -248,6 +251,7 @@ const STYLES_FEATURE_GROUPS = {
     "styles/chat/status.css",
     "styles/chat/markdown.css",
     "styles/chat/model.css",
+    "styles/chat/output-content.css",
     "styles/chat/queued.css",
     "styles/chat/scrolling.css",
     "styles/chat/surface.css",

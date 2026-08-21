@@ -11,7 +11,7 @@ export default function OutputContentBlockView({ block }: { block: OutputContent
     if (!src) return null;
     return (
       <figure className="session-output-image" data-testid="session-output-image">
-        <img src={src} alt="" />
+        <img src={src} alt="Output" />
       </figure>
     );
   }

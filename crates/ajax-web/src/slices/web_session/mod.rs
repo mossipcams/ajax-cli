@@ -443,9 +443,13 @@ mod transcript_tests;
 mod available_commands_tests;
 #[cfg(test)]
 mod elicitation_tests;
+#[cfg(test)]
 mod output_content_tests;
+#[cfg(test)]
 mod prompt_capabilities_tests;
+#[cfg(test)]
 mod prompt_content_tests;
+#[cfg(test)]
 mod session_info_tests;
 
 #[cfg(test)]

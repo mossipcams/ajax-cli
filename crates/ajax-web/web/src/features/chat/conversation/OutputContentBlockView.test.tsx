@@ -9,8 +9,7 @@ describe("OutputContentBlockView", () => {
         block={{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }}
       />,
     );
-    const img = screen.getByTestId("session-output-image").querySelector("img");
-    expect(img).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
+    expect(screen.getByRole("img")).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
   });
 
   it("renders a resource link as name and uri", () => {
