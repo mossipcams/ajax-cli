@@ -2,6 +2,7 @@
 
 use super::{
     normalize_session_model,
+    protocol::SessionChrome,
     task_session::{
         send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch,
         TaskSessionCommand, TaskSessionSender,
@@ -228,11 +229,13 @@ impl TaskSessionDirectory {
         handle: &str,
         client_message_id: String,
         text: String,
+        content_blocks: Vec<super::prompt_content::PromptContentBlockWire>,
     ) -> Result<(), String> {
         let tx = self.command_tx(handle)?;
         send_command(&tx, |reply| TaskSessionCommand::SubmitPrompt {
             client_message_id,
             text,
+            content_blocks,
             reply,
         })
         .await?
@@ -259,6 +262,23 @@ impl TaskSessionDirectory {
             request_id: request_id.to_string(),
             approved,
             reason: reason.map(str::to_string),
+            reply,
+        })
+        .await?
+    }
+
+    pub async fn answer_elicitation(
+        &self,
+        handle: &str,
+        request_id: &str,
+        action: &str,
+        content: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        let tx = self.command_tx(handle)?;
+        send_command(&tx, |reply| TaskSessionCommand::AnswerElicitation {
+            request_id: request_id.to_string(),
+            action: action.to_string(),
+            content,
             reply,
         })
         .await?
@@ -345,8 +365,13 @@ impl TaskSessionDirectory {
         }
         let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-        let (snapshot, replayed) =
-            super::replay::build_attach(&log, fallback_model, false, client_cursor, None);
+        let (snapshot, replayed) = super::replay::build_attach(
+            &log,
+            fallback_model,
+            false,
+            client_cursor,
+            SessionChrome::default(),
+        );
         AttachSnapshot {
             generation: 0,
             snapshot,
@@ -433,7 +458,7 @@ impl TaskSessionDirectory {
 
     #[cfg(test)]
     pub async fn submit_prompt(&self, handle: &str, text: String) -> Result<(), String> {
-        self.submit_prompt_with_id(handle, String::new(), text)
+        self.submit_prompt_with_id(handle, String::new(), text, Vec::new())
             .await
     }
 
@@ -488,13 +513,14 @@ pub(crate) async fn apply_client_message(
     match message {
         SessionClientMessage::Prompt {
             text,
+            content_blocks,
             client_message_id,
         } => {
             if client_message_id.trim().is_empty() {
                 return Err("prompt clientMessageId is required".to_string());
             }
             directory
-                .submit_prompt_with_id(handle, client_message_id, text)
+                .submit_prompt_with_id(handle, client_message_id, text, content_blocks)
                 .await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
@@ -548,6 +574,16 @@ pub(crate) async fn apply_client_message(
         } => {
             directory
                 .answer_permission(handle, &request_id, approved, reason.as_deref())
+                .await?;
+            Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::Elicitation {
+            request_id,
+            action,
+            content,
+        } => {
+            directory
+                .answer_elicitation(handle, &request_id, &action, content)
                 .await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }

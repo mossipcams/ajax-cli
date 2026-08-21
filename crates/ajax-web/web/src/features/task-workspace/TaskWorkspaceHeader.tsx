@@ -5,6 +5,8 @@ export interface TaskWorkspaceHeaderProps {
   detail?: BrowserTaskDetail | null;
   /** Shown as the title when detail has not loaded yet. */
   handle?: string;
+  /** Agent-reported ACP session title; does not replace Core task identity. */
+  sessionTitle?: string;
   /** When false, omit the header status pill (chat live head owns task state). Default true. */
   showStatusPill?: boolean;
   onBack: () => void;
@@ -18,6 +20,7 @@ export interface TaskWorkspaceHeaderProps {
 export default function TaskWorkspaceHeader({
   detail,
   handle,
+  sessionTitle,
   showStatusPill = true,
   onBack,
   onOpenDetails,
@@ -37,7 +40,14 @@ export default function TaskWorkspaceHeader({
       <button type="button" className="back" onClick={onBack}>
         ← Back
       </button>
-      <h1 className="detail-title">{title}</h1>
+      <div className="detail-title-stack">
+        <h1 className="detail-title">{title}</h1>
+        {sessionTitle ? (
+          <p className="detail-session-title" data-testid="session-chrome-title">
+            {sessionTitle}
+          </p>
+        ) : null}
+      </div>
       <div className="detail-header-controls">
         {onOpenDetails ? (
           <button

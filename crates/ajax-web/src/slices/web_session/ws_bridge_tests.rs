@@ -89,6 +89,7 @@ fn apply_client_message_prompt_records_user_message_immediately() {
             &dir,
             SessionClientMessage::Prompt {
                 text: "hello".to_string(),
+                content_blocks: vec![],
                 client_message_id: "prompt-1".to_string(),
             },
             &mut generation,
@@ -363,6 +364,7 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
             &dir,
             SessionClientMessage::Prompt {
                 text: "hello".to_string(),
+                content_blocks: vec![],
                 client_message_id: "prompt-942".to_string(),
             },
             &mut generation,
@@ -669,6 +671,7 @@ fn product_flow_create_live_switch_reload_and_cross_harness() {
                 &dir,
                 SessionClientMessage::Prompt {
                     text: nonce.clone(),
+                    content_blocks: vec![],
                     client_message_id: "prompt-nonce".to_string(),
                 },
                 &mut generation,
@@ -799,6 +802,7 @@ fn product_flow_create_live_switch_reload_and_cross_harness() {
                 &dir,
                 SessionClientMessage::Prompt {
                     text: format!("{nonce}-after-swap"),
+                    content_blocks: vec![],
                     client_message_id: "prompt-after-swap".to_string(),
                 },
                 &mut generation,

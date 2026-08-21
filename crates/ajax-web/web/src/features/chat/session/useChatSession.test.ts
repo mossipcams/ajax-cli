@@ -16,6 +16,7 @@ function mockTransport(
     setModel: vi.fn(),
     setConfigOption: vi.fn(),
     respondPermission: vi.fn(),
+    respondElicitation: vi.fn(),
     dispose: vi.fn(),
   };
   vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
@@ -284,6 +285,46 @@ describe("useChatSession", () => {
     expect(result.current.view.conversation[0]).toMatchObject({
       kind: "permission",
       requestId: "7",
+      resolved: true,
+    });
+    unmount();
+  });
+
+  it("clears the elicitation head immediately when the operator answers", () => {
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    const transport = mockTransport(callbacks);
+    const schema = {
+      type: "object",
+      properties: { target: { type: "string", title: "Target" } },
+      required: ["target"],
+    };
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({ handle: "web/fix-login", detail: null }),
+    );
+
+    act(() => callbacks[0]?.onReady("auto"));
+    act(() =>
+      callbacks[0]?.onEvent({
+        type: "elicitation_request",
+        requestId: "e7",
+        message: "Pick a target",
+        schema,
+      }),
+    );
+    expect(result.current.view.elicitation.decision).toMatchObject({
+      requestId: "e7",
+      message: "Pick a target",
+    });
+
+    act(() => result.current.respondElicitation("accept", { target: "staging" }));
+    expect(transport.respondElicitation).toHaveBeenCalledWith("e7", "accept", {
+      target: "staging",
+    });
+    expect(result.current.view.elicitation.decision).toBeNull();
+    expect(result.current.view.conversation[0]).toMatchObject({
+      kind: "elicitation",
+      requestId: "e7",
       resolved: true,
     });
     unmount();

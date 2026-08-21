@@ -13,6 +13,13 @@ use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
+fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
+    if let Some(options) = report.config_options.as_deref() {
+        state.session_config_options = Some(config_option_descriptors(options));
+    }
+    state.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
+}
+
 pub(super) async fn acquire(
     state: &mut TaskSessionState,
     worktree_path: &Path,
@@ -66,9 +73,7 @@ pub(super) async fn acquire(
     state.client = Some(client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
-    if let Some(options) = report.config_options.as_deref() {
-        state.session_config_options = Some(config_option_descriptors(options));
-    }
+    apply_spawn_capabilities(state, &report);
     if let Some(error) = &report.model_apply_error {
         log.append(vec![SessionServerEvent::Error {
             message: error.clone(),
@@ -266,9 +271,7 @@ pub(super) async fn reset_harness_context(
     state.client = Some(new_client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
-    if let Some(options) = report.config_options.as_deref() {
-        state.session_config_options = Some(config_option_descriptors(options));
-    }
+    apply_spawn_capabilities(state, &report);
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
     state.acp_alive = true;
@@ -291,16 +294,24 @@ fn release_live_client(state: &mut TaskSessionState) -> Result<(), String> {
     apply_cancel_to_queue(&mut state.queued, false);
     if !client.host_exited() {
         let cancelled = client.cancel()?;
-        let resolved: Vec<SessionServerEvent> = cancelled
-            .into_iter()
-            .map(|request_id| SessionServerEvent::PermissionResolved {
+        let mut resolved = Vec::new();
+        for request_id in cancelled.permissions {
+            resolved.push(SessionServerEvent::PermissionResolved {
                 request_id,
                 approved: false,
-            })
-            .collect();
+            });
+        }
+        for request_id in cancelled.elicitations {
+            resolved.push(SessionServerEvent::ElicitationResolved {
+                request_id,
+                action: "cancel".to_string(),
+            });
+        }
         state.append_to_log(resolved);
     }
-    drop(client);
+    if let Some(message) = client.shutdown() {
+        state.append_to_log(vec![SessionServerEvent::Error { message }]);
+    }
     Ok(())
 }
 
@@ -323,9 +334,7 @@ fn install_replaced_client(
     state.client = Some(new_client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
-    if let Some(options) = report.config_options.as_deref() {
-        state.session_config_options = Some(config_option_descriptors(options));
-    }
+    apply_spawn_capabilities(state, report);
     if let Some(error) = &report.model_apply_error {
         state.append_to_log(vec![SessionServerEvent::Error {
             message: error.clone(),

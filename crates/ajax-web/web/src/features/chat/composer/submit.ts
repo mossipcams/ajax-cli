@@ -1,8 +1,10 @@
+import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
 import type { ComposerState } from "./composerState";
 import {
   beginStopAndSend,
   clearQueue,
   composerIsStopping,
+  composerQueuedContentBlocks,
   composerQueuedText,
   queueFollowUp,
   restoreQueuedDraft,
@@ -90,7 +92,7 @@ export function removeQueuedFollowUp(state: ComposerState): ComposerState {
 
 export type FlushQueuedFollowUpIntent =
   | { type: "mark_stopped" }
-  | { type: "send_prompt"; text: string };
+  | { type: "send_prompt"; text: string; contentBlocks?: PromptContentBlockWire[] };
 
 export type FlushQueuedFollowUpResult = {
   state: ComposerState;
@@ -114,7 +116,12 @@ export function flushQueuedFollowUp(args: {
   if (composerIsStopping(args.composerState)) {
     intents.push({ type: "mark_stopped" });
   }
-  intents.push({ type: "send_prompt", text: queued });
+  const contentBlocks = composerQueuedContentBlocks(args.composerState);
+  intents.push({
+    type: "send_prompt",
+    text: queued,
+    ...(contentBlocks?.length ? { contentBlocks } : {}),
+  });
   return { state: args.composerState, intents };
 }
 

@@ -5,7 +5,9 @@ use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
     normalize::StreamNormalizer, SessionServerEvent,
 };
-use crate::adapters::web_session_acp::{config_option_descriptors, AcpClientEvent, AcpStdioClient};
+use crate::adapters::web_session_acp::{
+    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpStdioClient,
+};
 use serde_json::{json, Value};
 
 pub(crate) struct AcpDrainOutcome {
@@ -15,6 +17,9 @@ pub(crate) struct AcpDrainOutcome {
     pub applied_model: Option<String>,
     pub session_config_options:
         Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
+    pub session_available_commands:
+        Option<Vec<crate::adapters::web_session_acp::AvailableCommandDescriptor>>,
+    pub session_title_update: Option<Option<String>>,
 }
 
 pub(crate) fn drain_acp_events(
@@ -26,6 +31,8 @@ pub(crate) fn drain_acp_events(
     let mut prompt_finished = false;
     let mut applied_model = None;
     let mut session_config_options = None;
+    let mut session_available_commands = None;
+    let mut session_title_update = None;
     let startup_info = client
         .session_new_result()
         .pointer("/_meta/piAcp/startupInfo")
@@ -38,6 +45,13 @@ pub(crate) fn drain_acp_events(
             } => {
                 applied_model = Some(model);
                 session_config_options = Some(config_option_descriptors(&config_options));
+            }
+            AcpClientEvent::AvailableCommandsUpdated { available_commands } => {
+                session_available_commands =
+                    Some(available_command_descriptors(&available_commands));
+            }
+            AcpClientEvent::SessionInfoUpdated { title } => {
+                session_title_update = Some(title);
             }
             AcpClientEvent::SessionUpdate(params) => {
                 let mut mapped = map_acp_session_notification(&params);
@@ -52,6 +66,17 @@ pub(crate) fn drain_acp_events(
             }
             AcpClientEvent::UnknownSessionUpdate(params) => {
                 events.extend(map_acp_session_update_with_startup(&params, startup_info));
+            }
+            AcpClientEvent::ElicitationRequest {
+                request_id,
+                message,
+                schema,
+            } => {
+                events.push(SessionServerEvent::ElicitationRequest {
+                    request_id,
+                    message,
+                    schema,
+                });
             }
             AcpClientEvent::ClientRequest { id, method, params } => {
                 if let Some(mut mapped) = map_acp_client_request(&method, &params) {
@@ -92,6 +117,8 @@ pub(crate) fn drain_acp_events(
         prompt_finished,
         applied_model,
         session_config_options,
+        session_available_commands,
+        session_title_update,
     }
 }
 

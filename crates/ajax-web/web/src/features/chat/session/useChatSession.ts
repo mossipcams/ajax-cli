@@ -9,6 +9,9 @@ import {
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { clearSessionTransportState, type WebSessionTransport } from "./transport/public";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
+import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
+import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
   modelLiveOption,
   readLiveSelectCurrent,
@@ -66,6 +69,10 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     setModelState({ confirmedModel: DEFAULT_SESSION_MODEL });
   }, [handle]);
 
+  const applyHostSessionTitle = useCallback((title: string | undefined) => {
+    setModelState((prev) => ({ ...prev, sessionTitle: title }));
+  }, []);
+
   detailRef.current = detail;
   connectionStateRef.current = connectionState;
 
@@ -89,9 +96,23 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
       const next = modelFromOptions(options);
       const confirmedModel = next ?? prev.confirmedModel;
       if (next) writeSessionModel(next);
-      return { confirmedModel, configOptions: options };
+      return { ...prev, confirmedModel, configOptions: options };
     });
   }, []);
+
+  const applyHostAvailableCommands = useCallback(
+    (commands: LiveAvailableCommand[] | undefined) => {
+      setModelState((prev) => ({ ...prev, availableCommands: commands }));
+    },
+    [],
+  );
+
+  const applyHostPromptCapabilities = useCallback(
+    (capabilities: LivePromptCapabilities | undefined) => {
+      setModelState((prev) => ({ ...prev, promptCapabilities: capabilities }));
+    },
+    [],
+  );
 
   useSessionConnection({
     handle,
@@ -106,6 +127,9 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     onSessionInvalidated: invalidateSession,
     onSessionModel: applyHostSessionModel,
     onSessionConfigOptions: applyHostConfigOptions,
+    onSessionAvailableCommands: applyHostAvailableCommands,
+    onSessionPromptCapabilities: applyHostPromptCapabilities,
+    onSessionTitle: applyHostSessionTitle,
     onSessionModelRejected: () => {},
     onConfigError: (message) => onConfigErrorRef.current?.(message),
   });
@@ -120,10 +144,10 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   }, [view.turn.busy]);
 
   const sendPrompt = useCallback(
-    (text: string): boolean => {
+    (text: string, contentBlocks: PromptContentBlockWire[] = []): boolean => {
       const trimmed = text.trim();
       if (!trimmed || !connected) return false;
-      if (!transportRef.current?.sendPrompt(trimmed)) return false;
+      if (!transportRef.current?.sendPrompt(trimmed, contentBlocks)) return false;
       if (!view.turn.busy) markActivity();
       dispatch({ type: "prompt", text: trimmed });
       return true;
@@ -157,6 +181,19 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     [connected, view.permission.decision],
   );
 
+  const respondElicitation = useCallback(
+    (
+      action: "accept" | "decline" | "cancel",
+      content?: Record<string, string | number | boolean | string[]>,
+    ) => {
+      const decision = view.elicitation.decision;
+      if (!decision || !connected) return;
+      transportRef.current?.respondElicitation(decision.requestId, action, content);
+      dispatch({ type: "elicitation_answered" });
+    },
+    [connected, view.elicitation.decision],
+  );
+
   const handleMutated = useCallback(() => {
     if (handle) clearSessionTransportState(handle);
     onMutated?.();
@@ -170,6 +207,9 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     activityAgeMs,
     sessionModel: modelState.confirmedModel,
     sessionConfigOptions: modelState.configOptions,
+    sessionAvailableCommands: modelState.availableCommands,
+    sessionPromptCapabilities: modelState.promptCapabilities,
+    sessionTitle: modelState.sessionTitle,
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     sendCancel,
@@ -177,6 +217,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     applyConfigOption,
     applyModel,
     respondPermission,
+    respondElicitation,
     onMutated: handleMutated,
   };
 }

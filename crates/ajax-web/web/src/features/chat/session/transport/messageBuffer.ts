@@ -3,6 +3,7 @@
 // updates; this layer does not merge deltas. Boundary events still flush any
 // pending lane before they reach the reducer.
 
+import type { OutputContentBlock } from "@/shared/lib/liveSessionOutputContent";
 import type { WebSessionServerEvent } from "./contracts";
 
 type Dispatch = (event: WebSessionServerEvent) => void;
@@ -12,8 +13,16 @@ interface LaneState {
   itemId: string;
   messageId?: string;
   text: string;
-  /** Last text dispatched for this lane; skips redundant reducer work. */
-  sentText?: string;
+  contentBlocks?: OutputContentBlock[];
+  /** Last payload dispatched for this lane; skips redundant reducer work. */
+  sentKey?: string;
+}
+
+function laneKey(lane: LaneState): string {
+  return JSON.stringify({
+    text: lane.text,
+    contentBlocks: lane.contentBlocks ?? [],
+  });
 }
 
 function isStreamedLane(
@@ -21,7 +30,6 @@ function isStreamedLane(
 ): event is WebSessionServerEvent & {
   type: "message";
   role: "agent" | "thought";
-  text: string;
   itemId: string;
 } {
   return (
@@ -48,12 +56,14 @@ export class MessageBuffer {
         lane.role = event.role;
         lane.messageId = event.messageId ?? lane.messageId;
         lane.text = event.text;
+        lane.contentBlocks = event.contentBlocks ?? lane.contentBlocks;
       } else {
         this.lanes.set(event.itemId, {
           role: event.role,
           itemId: event.itemId,
           messageId: event.messageId,
           text: event.text,
+          ...(event.contentBlocks ? { contentBlocks: event.contentBlocks } : {}),
         });
       }
       this.scheduleFlush();
@@ -91,14 +101,16 @@ export class MessageBuffer {
 
   private flushPending(): void {
     for (const lane of this.lanes.values()) {
-      if (!lane.text || lane.text === lane.sentText) continue;
-      lane.sentText = lane.text;
+      const key = laneKey(lane);
+      if ((!lane.text && !lane.contentBlocks?.length) || key === lane.sentKey) continue;
+      lane.sentKey = key;
       this.dispatch({
         type: "message",
         role: lane.role,
         text: lane.text,
         itemId: lane.itemId,
         ...(lane.messageId ? { messageId: lane.messageId } : {}),
+        ...(lane.contentBlocks?.length ? { contentBlocks: lane.contentBlocks } : {}),
       });
     }
   }

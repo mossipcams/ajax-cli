@@ -1,10 +1,21 @@
 //! Versioned WebSocket envelopes for orchestration chat (protocol v2).
 
 use super::SessionServerEvent;
-use crate::adapters::web_session_acp::ConfigOptionDescriptor;
+use crate::adapters::web_session_acp::{
+    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
+};
 use serde::{Deserialize, Serialize};
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 2;
+
+/// Live session chrome grouped for attach/snapshot construction.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionChrome {
+    pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
+    pub available_commands: Option<Vec<AvailableCommandDescriptor>>,
+    pub prompt_capabilities: Option<PromptCapabilityDescriptor>,
+    pub session_title: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingPermission {
@@ -14,6 +25,14 @@ pub struct PendingPermission {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingElicitation {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    pub message: String,
+    pub schema: serde_json::Value,
 }
 
 /// Attach state sent once per logical attach or generation change.
@@ -31,11 +50,31 @@ pub struct SessionSnapshot {
         rename = "sessionConfigOptions"
     )]
     pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "availableCommands"
+    )]
+    pub available_commands: Option<Vec<AvailableCommandDescriptor>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "promptCapabilities"
+    )]
+    pub prompt_capabilities: Option<PromptCapabilityDescriptor>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "sessionTitle"
+    )]
+    pub session_title: Option<String>,
     #[serde(rename = "turnState")]
     pub turn_state: String,
     pub reset: bool,
     #[serde(rename = "pendingPermission", skip_serializing_if = "Option::is_none")]
     pub pending_permission: Option<PendingPermission>,
+    #[serde(rename = "pendingElicitation", skip_serializing_if = "Option::is_none")]
+    pub pending_elicitation: Option<PendingElicitation>,
 }
 
 impl SessionSnapshot {
@@ -45,17 +84,22 @@ impl SessionSnapshot {
         busy: bool,
         reset: bool,
         pending_permission: Option<PendingPermission>,
-        session_config_options: Option<Vec<ConfigOptionDescriptor>>,
+        pending_elicitation: Option<PendingElicitation>,
+        chrome: SessionChrome,
     ) -> Self {
         Self {
             kind: "snapshot".to_string(),
             protocol_version: SESSION_PROTOCOL_VERSION,
             cursor,
             model,
-            session_config_options,
+            session_config_options: chrome.session_config_options,
+            available_commands: chrome.available_commands,
+            prompt_capabilities: chrome.prompt_capabilities,
+            session_title: chrome.session_title,
             turn_state: if busy { "busy" } else { "idle" }.to_string(),
             reset,
             pending_permission,
+            pending_elicitation,
         }
     }
 }

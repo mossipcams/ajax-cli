@@ -8,7 +8,7 @@ use agent_client_protocol::schema::{
         AgentCapabilities, ContentBlock, InitializeResponse, NewSessionRequest,
         RequestPermissionOutcome, RequestPermissionResponse, SelectedPermissionOutcome,
         SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-        SessionNotification, SessionUpdate,
+        SessionNotification, SessionUpdate, TextContent,
     },
     ProtocolVersion,
 };
@@ -23,6 +23,10 @@ use std::{
 
 fn fake_acp_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
+}
+
+fn prompt_blocks(text: &str) -> Vec<ContentBlock> {
+    vec![ContentBlock::Text(TextContent::new(text))]
 }
 
 fn scratch_dir(label: &str) -> PathBuf {
@@ -70,6 +74,17 @@ fn client_capabilities_do_not_claim_unimplemented_filesystem_or_terminal_support
     assert!(!capabilities.fs.read_text_file);
     assert!(!capabilities.fs.write_text_file);
     assert!(!capabilities.terminal);
+}
+
+#[test]
+fn client_capabilities_advertise_form_elicitation_only() {
+    let capabilities = super::sdk_connection::client_capabilities();
+    let elicitation = capabilities
+        .elicitation
+        .as_ref()
+        .expect("elicitation capabilities");
+    assert!(elicitation.form.is_some());
+    assert!(elicitation.url.is_none());
 }
 
 fn pump_until_pong_or_prompt_finished(client: &AcpStdioClient, timeout: Duration) {
@@ -403,7 +418,9 @@ fn fake_begin_prompt_receives_pong_and_turn_end() {
     with_test_acp_program(&script, || {
         let (mut client, _report) =
             AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
-        client.begin_prompt("ping").expect("begin_prompt");
+        client
+            .begin_prompt(&prompt_blocks("ping"))
+            .expect("begin_prompt");
         pump_until_pong_or_prompt_finished(&client, Duration::from_secs(5));
     });
 
@@ -421,7 +438,9 @@ fn fake_permission_request_auto_selects_allow_once_without_operator_response() {
         with_test_acp_extra_args(&["--permission"], || {
             let (mut client, _) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
-            client.begin_prompt("permission").expect("begin prompt");
+            client
+                .begin_prompt(&prompt_blocks("permission"))
+                .expect("begin prompt");
 
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
@@ -454,7 +473,9 @@ fn fake_permission_request_prefers_allow_always_when_advertised() {
         with_test_acp_extra_args(&["--permission-allow-always"], || {
             let (mut client, _) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
-            client.begin_prompt("permission").expect("begin prompt");
+            client
+                .begin_prompt(&prompt_blocks("permission"))
+                .expect("begin prompt");
 
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
@@ -487,7 +508,9 @@ fn fake_permission_reject_only_options_cancel_without_inventing_allow_id() {
         with_test_acp_extra_args(&["--permission-reject-only"], || {
             let (mut client, _) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
-            client.begin_prompt("permission").expect("begin prompt");
+            client
+                .begin_prompt(&prompt_blocks("permission"))
+                .expect("begin prompt");
 
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
@@ -526,7 +549,9 @@ fn fake_cancel_ends_in_flight_turn_after_auto_approved_permission() {
         with_test_acp_extra_args(&["--permission", "--permission-hold"], || {
             let (mut client, _) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
-            client.begin_prompt("permission").expect("begin prompt");
+            client
+                .begin_prompt(&prompt_blocks("permission"))
+                .expect("begin prompt");
 
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
@@ -568,9 +593,11 @@ fn fake_second_begin_prompt_while_in_flight_returns_err() {
     with_test_acp_program(&script, || {
         let (mut client, _report) =
             AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
-        client.begin_prompt("first").expect("first begin_prompt");
+        client
+            .begin_prompt(&prompt_blocks("first"))
+            .expect("first begin_prompt");
         let err = client
-            .begin_prompt("second")
+            .begin_prompt(&prompt_blocks("second"))
             .expect_err("second prompt must fail");
         assert!(err.contains("prompt already in flight"));
     });
@@ -645,7 +672,9 @@ fn fake_load_fail_falls_back_to_new_session() {
                     .expect("spawn after load fail");
             assert!(!report.resumed);
             assert!(!client2.session_id().is_empty());
-            client2.begin_prompt("after-fail").expect("begin_prompt");
+            client2
+                .begin_prompt(&prompt_blocks("after-fail"))
+                .expect("begin_prompt");
             pump_until_pong_or_prompt_finished(&client2, Duration::from_secs(5));
         });
     });
@@ -665,6 +694,139 @@ fn host_exited_and_kill_host_for_test() {
         let _pid = client.child_id();
         client.kill_host_for_test();
         assert!(client.host_exited());
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn wait_for_elicitation_request(client: &AcpStdioClient, timeout: Duration) -> String {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(AcpClientEvent::ElicitationRequest { request_id, .. }) = client.poll_event() {
+            return request_id;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for elicitation request");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn pump_until_elicitation_update(client: &AcpStdioClient, needle: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(event) = client.poll_event() {
+            match event {
+                AcpClientEvent::ElicitationRequest { .. } if needle == "request" => return,
+                AcpClientEvent::SessionUpdate(update)
+                    if session_update_text(&update) == Some(needle) =>
+                {
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for elicitation update: {needle}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn fake_form_elicitation_surfaces_request_and_accepts_with_schema_content() {
+    let dir = scratch_dir("elicitation-form-accept");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--elicitation-form"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client
+                .begin_prompt(&prompt_blocks("elicitation"))
+                .expect("begin prompt");
+            let request_id = wait_for_elicitation_request(&client, Duration::from_secs(5));
+
+            client
+                .respond_elicitation(
+                    &request_id,
+                    agent_client_protocol::schema::v1::ElicitationAction::Accept(
+                        agent_client_protocol::schema::v1::ElicitationAcceptAction::new().content(
+                            std::collections::BTreeMap::from([(
+                                "target".to_string(),
+                                agent_client_protocol::schema::v1::ElicitationContentValue::String(
+                                    "staging".into(),
+                                ),
+                            )]),
+                        ),
+                    ),
+                )
+                .expect("accept elicitation");
+
+            pump_until_elicitation_update(&client, "elicitation:accept", Duration::from_secs(5));
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_form_elicitation_decline_and_cancel_end_turn() {
+    let dir = scratch_dir("elicitation-form-decline");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--elicitation-form"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client
+                .begin_prompt(&prompt_blocks("elicitation"))
+                .expect("begin prompt");
+            let request_id = wait_for_elicitation_request(&client, Duration::from_secs(5));
+
+            client
+                .respond_elicitation(
+                    &request_id,
+                    agent_client_protocol::schema::v1::ElicitationAction::Decline,
+                )
+                .expect("decline elicitation");
+            pump_until_elicitation_update(&client, "elicitation:decline", Duration::from_secs(5));
+
+            client
+                .begin_prompt(&prompt_blocks("elicitation-2"))
+                .expect("second prompt");
+            let request_id = wait_for_elicitation_request(&client, Duration::from_secs(5));
+            client
+                .respond_elicitation(
+                    &request_id,
+                    agent_client_protocol::schema::v1::ElicitationAction::Cancel,
+                )
+                .expect("cancel elicitation");
+            pump_until_elicitation_update(&client, "elicitation:cancel", Duration::from_secs(5));
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_url_elicitation_is_refused_without_advertising_url_mode() {
+    let dir = scratch_dir("elicitation-url-refused");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--elicitation-url"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client
+                .begin_prompt(&prompt_blocks("elicitation-url"))
+                .expect("begin prompt");
+            pump_until_elicitation_update(
+                &client,
+                "elicitation:error:-32602",
+                Duration::from_secs(5),
+            );
+        });
     });
 
     let _ = fs::remove_dir_all(dir);

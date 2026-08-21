@@ -6,6 +6,7 @@ import { Conversation } from "./conversation/public";
 import ChatModelPresentation from "./model/ChatModelPresentation";
 import { useSessionModelNotice, useSessionModelSheet } from "./model/notice";
 import { PermissionPanel } from "./permissions/public";
+import { ElicitationPanel } from "./elicitation/public";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
 import { ChatScroller, ChatScrollThread, useChatScroller } from "./scrolling/public";
 import { blurComposerOnPointerDown } from "./scrolling/composerBlur";
@@ -31,6 +32,7 @@ interface Props {
     model: string;
     busy: boolean;
     sessionConfigOptions?: LiveSessionConfigOption[];
+    sessionTitle?: string;
   }) => void;
 }
 
@@ -49,6 +51,7 @@ function ChatSessionBody({
   markStopped,
   applyConfigOption,
   respondPermission,
+  respondElicitation,
   composerRef,
   notice,
   dismissNotice,
@@ -69,6 +72,7 @@ function ChatSessionBody({
   markStopped: ReturnType<typeof useChatSession>["markStopped"];
   applyConfigOption: ReturnType<typeof useChatSession>["applyConfigOption"];
   respondPermission: ReturnType<typeof useChatSession>["respondPermission"];
+  respondElicitation: ReturnType<typeof useChatSession>["respondElicitation"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   notice: string | null;
   dismissNotice: () => void;
@@ -76,7 +80,7 @@ function ChatSessionBody({
   setModelSheetOpen: (open: boolean) => void;
 }) {
   const { surfaceStyle, scrollToLatest } = useChatScroller();
-  const { confirmedModel, configOptions } = view.model;
+  const { confirmedModel, configOptions, availableCommands, promptCapabilities } = view.model;
 
   return (
     <>
@@ -92,7 +96,15 @@ function ChatSessionBody({
           activityAgeMs={activityAgeMs}
           connected={connected}
           permission={
-            view.permission.decision ? (
+            view.elicitation.decision ? (
+              <ElicitationPanel
+                decision={view.elicitation.decision}
+                connected={connected}
+                onAccept={(content) => respondElicitation("accept", content)}
+                onDecline={() => respondElicitation("decline")}
+                onCancel={() => respondElicitation("cancel")}
+              />
+            ) : view.permission.decision ? (
               <PermissionPanel
                 decision={view.permission.decision}
                 connected={connected}
@@ -110,6 +122,8 @@ function ChatSessionBody({
           connected={connected}
           busy={view.turn.busy}
           everOpened={everOpened}
+          availableCommands={availableCommands}
+          promptCapabilities={promptCapabilities}
           composerRef={composerRef}
           scrollToLatest={scrollToLatest}
           sendPrompt={sendPrompt}
@@ -176,11 +190,13 @@ export default function ChatSurface({
     activityAgeMs,
     sessionModel,
     sessionConfigOptions,
+    sessionTitle,
     sendPrompt,
     sendCancel,
     markStopped,
     applyConfigOption,
     respondPermission,
+    respondElicitation,
   } = useChatSession({ handle, detail, onMutated, onConfigError: showNotice });
 
   useEffect(() => {
@@ -188,8 +204,9 @@ export default function ChatSurface({
       model: sessionModel,
       busy: view.turn.busy,
       sessionConfigOptions,
+      sessionTitle,
     });
-  }, [sessionModel, sessionConfigOptions, view.turn.busy, onSessionActivity]);
+  }, [sessionModel, sessionConfigOptions, sessionTitle, view.turn.busy, onSessionActivity]);
 
   if (!handle) return null;
 
@@ -225,6 +242,7 @@ export default function ChatSurface({
           markStopped={markStopped}
           applyConfigOption={applyConfigOption}
           respondPermission={respondPermission}
+          respondElicitation={respondElicitation}
           composerRef={composerRef}
           notice={notice}
           dismissNotice={dismissNotice}

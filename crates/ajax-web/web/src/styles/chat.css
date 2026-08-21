@@ -1,8 +1,10 @@
 @import "./chat/surface.css";
 @import "./chat/permissions.css";
+@import "./chat/elicitation.css";
 @import "./chat/status.css";
 @import "./chat/scrolling.css";
 @import "./chat/conversation.css";
+@import "./chat/output-content.css";
 @import "./chat/markdown.css";
 @import "./chat/queued.css";
 @import "./chat/activity.css";
