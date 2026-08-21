@@ -1,9 +1,13 @@
 //! Cursor validation and replay planning for protocol v2 attach.
 
-use super::protocol::{PendingPermission, SessionEventEnvelope, SessionSnapshot};
+use super::protocol::{
+    PendingElicitation, PendingPermission, SessionEventEnvelope, SessionSnapshot,
+};
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
-use crate::adapters::web_session_acp::ConfigOptionDescriptor;
+use crate::adapters::web_session_acp::{
+    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplayPlan {
@@ -40,6 +44,9 @@ pub(crate) fn build_attach(
     busy: bool,
     client_cursor: Option<usize>,
     session_config_options: Option<Vec<ConfigOptionDescriptor>>,
+    available_commands: Option<Vec<AvailableCommandDescriptor>>,
+    prompt_capabilities: Option<PromptCapabilityDescriptor>,
+    session_title: Option<String>,
 ) -> (SessionSnapshot, Vec<SessionEventEnvelope>) {
     let plan = plan_replay(client_cursor, log);
     let (replayed, next) = log.read_from_enveloped(plan.from);
@@ -49,7 +56,11 @@ pub(crate) fn build_attach(
         busy,
         plan.reset,
         pending_permission(log),
+        pending_elicitation(log),
         session_config_options,
+        available_commands,
+        prompt_capabilities,
+        session_title,
     );
     (snapshot, replayed)
 }
@@ -70,6 +81,35 @@ pub(crate) fn pending_permission(log: &TranscriptLog) -> Option<PendingPermissio
                 });
             }
             SessionServerEvent::PermissionResolved { request_id, .. } => {
+                if open
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == *request_id)
+                {
+                    open = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    open
+}
+
+pub(crate) fn pending_elicitation(log: &TranscriptLog) -> Option<PendingElicitation> {
+    let mut open: Option<PendingElicitation> = None;
+    for event in &log.events {
+        match event {
+            SessionServerEvent::ElicitationRequest {
+                request_id,
+                message,
+                schema,
+            } => {
+                open = Some(PendingElicitation {
+                    request_id: request_id.clone(),
+                    message: message.clone(),
+                    schema: schema.clone(),
+                });
+            }
+            SessionServerEvent::ElicitationResolved { request_id, .. } => {
                 if open
                     .as_ref()
                     .is_some_and(|pending| pending.request_id == *request_id)

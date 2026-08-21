@@ -1,6 +1,10 @@
 // Authenticated orchestration-chat WebSocket transport (ACP-primary; not PTY).
 
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
+import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
+import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+import type { OutputContentBlock, ToolContent } from "@/shared/lib/liveSessionOutputContent";
 
 export const SESSION_PROTOCOL_VERSION = 2;
 
@@ -27,13 +31,18 @@ export interface WebSessionTransportPlatform {
   openSocket(url: string): WebSessionSocket;
 }
 
-export type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "diff"; path: string; oldText?: string | null; newText: string };
+export type { OutputContentBlock, ToolContent } from "@/shared/lib/liveSessionOutputContent";
 
 export type WebSessionServerEvent =
   | { type: "ready"; model?: string; busy?: boolean; reset?: boolean }
-  | { type: "message"; role: string; text: string; itemId?: string; messageId?: string }
+  | {
+      type: "message";
+      role: string;
+      text: string;
+      contentBlocks?: OutputContentBlock[];
+      itemId?: string;
+      messageId?: string;
+    }
   | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "artifact"; kind: string; title?: string | null; body?: string | null }
   | {
@@ -63,6 +72,13 @@ export type WebSessionServerEvent =
       detail?: string | null;
     }
   | { type: "permission_resolved"; requestId: string; approved: boolean }
+  | {
+      type: "elicitation_request";
+      requestId: string;
+      message: string;
+      schema: unknown;
+    }
+  | { type: "elicitation_resolved"; requestId: string; action: string }
   | { type: "status"; state: string; detail?: string | null }
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
@@ -73,12 +89,20 @@ export interface SessionSnapshot {
   cursor: number;
   model: string;
   sessionConfigOptions?: LiveSessionConfigOption[];
+  availableCommands?: LiveAvailableCommand[];
+  promptCapabilities?: LivePromptCapabilities;
+  sessionTitle?: string;
   turnState: "idle" | "busy";
   reset: boolean;
   pendingPermission?: {
     requestId: string;
     title?: string | null;
     detail?: string | null;
+  };
+  pendingElicitation?: {
+    requestId: string;
+    message: string;
+    schema: unknown;
   };
 }
 
@@ -97,13 +121,22 @@ export interface WebSessionTransportCallbacks {
 }
 
 export interface WebSessionTransport {
-  sendPrompt(text: string): string;
+  sendPrompt(text: string, contentBlocks?: PromptContentBlockWire[]): string;
   sendCancel(keepQueue?: boolean): void;
   /** @deprecated Use setConfigOption for live picks. */
   setModel(model: string): void;
   setConfigOption(configId: string, value: string | boolean): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
+  respondElicitation(
+    requestId: string,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, string | number | boolean | string[]>,
+  ): void;
   dispose(): void;
 }
 
-export type PendingPrompt = { text: string; clientMessageId: string };
+export type PendingPrompt = {
+  text: string;
+  clientMessageId: string;
+  contentBlocks?: PromptContentBlockWire[];
+};

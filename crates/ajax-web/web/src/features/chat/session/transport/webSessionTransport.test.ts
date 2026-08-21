@@ -443,6 +443,43 @@ describe("connectWebSessionTransport", () => {
     });
     transport.dispose();
   });
+
+  it("applies pendingElicitation from snapshot", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: snapshotJson({
+        pendingElicitation: {
+          requestId: "e1",
+          message: "Pick env",
+          schema: { type: "object", properties: {} },
+        },
+      }),
+    } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "elicitation_request",
+      requestId: "e1",
+      message: "Pick env",
+      schema: { type: "object", properties: {} },
+    });
+    transport.dispose();
+  });
+
+  it("sends elicitation accept with content", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    transport.respondElicitation("e1", "accept", { target: "staging" });
+    expect(JSON.parse(String(socket.sent[0]))).toEqual({
+      type: "elicitation",
+      requestId: "e1",
+      action: "accept",
+      content: { target: "staging" },
+    });
+    transport.dispose();
+  });
 });
 
 describe("parseServerEvent", () => {
@@ -536,6 +573,25 @@ describe("parseServerFrame", () => {
       kind: "event",
       cursor: 0,
       event: { type: "permission_request", requestId: "p1" },
+    });
+    expect(
+      parseServerFrame(
+        eventJson(0, {
+          type: "elicitation_request",
+          requestId: "e1",
+          message: "Pick env",
+          schema: { type: "object", properties: {} },
+        }),
+      ),
+    ).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: {
+        type: "elicitation_request",
+        requestId: "e1",
+        message: "Pick env",
+        schema: { type: "object", properties: {} },
+      },
     });
     expect(parseServerFrame(eventJson(0, { type: "error", message: "nope" }))).toEqual({
       kind: "event",

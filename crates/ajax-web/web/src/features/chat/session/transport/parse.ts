@@ -1,8 +1,14 @@
 import { parseLiveConfigOptions } from "@/shared/lib/liveSessionConfig";
+import { parseLiveAvailableCommands } from "@/shared/lib/liveSessionCommands";
+import { parseLivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
+import { parseLiveSessionTitle } from "@/shared/lib/liveSessionTitle";
+import {
+  parseOutputContentBlocks,
+  parseToolContentList,
+} from "@/shared/lib/liveSessionOutputContent";
 import {
   SESSION_PROTOCOL_VERSION,
   type ParsedServerFrame,
-  type ToolContent,
   type WebSessionServerEvent,
 } from "./contracts";
 
@@ -28,11 +34,15 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
         ...(typeof payload.busy === "boolean" ? { busy: payload.busy } : {}),
       };
     case "message": {
-      if (typeof payload.role !== "string" || typeof payload.text !== "string") return null;
+      const contentBlocks = parseOutputContentBlocks(payload.contentBlocks);
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (!text && contentBlocks.length === 0) return null;
+      if (typeof payload.role !== "string") return null;
       return {
         type: "message",
         role: payload.role,
-        text: payload.text,
+        text,
+        ...(contentBlocks.length ? { contentBlocks } : {}),
         ...(typeof payload.itemId === "string" ? { itemId: payload.itemId } : {}),
         ...(typeof payload.messageId === "string" ? { messageId: payload.messageId } : {}),
       };
@@ -70,7 +80,9 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
         ...(Array.isArray(payload.locations)
           ? { locations: payload.locations.filter((l): l is string => typeof l === "string") }
           : {}),
-        ...(Array.isArray(payload.content) ? { content: payload.content as ToolContent[] } : {}),
+        ...(Array.isArray(payload.content)
+          ? { content: parseToolContentList(payload.content) }
+          : {}),
       };
     }
     case "plan": {
@@ -136,6 +148,25 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
         requestId: payload.requestId,
         approved: payload.approved,
       };
+    case "elicitation_request":
+      if (typeof payload.requestId !== "string" || typeof payload.message !== "string") {
+        return null;
+      }
+      return {
+        type: "elicitation_request",
+        requestId: payload.requestId,
+        message: payload.message,
+        schema: payload.schema,
+      };
+    case "elicitation_resolved":
+      if (typeof payload.requestId !== "string" || typeof payload.action !== "string") {
+        return null;
+      }
+      return {
+        type: "elicitation_resolved",
+        requestId: payload.requestId,
+        action: payload.action,
+      };
     case "status":
       if (typeof payload.state !== "string") return null;
       return {
@@ -194,7 +225,23 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
               }
             : null;
       if (payload.pendingPermission !== undefined && !pending) return null;
+      const pendingElicitation =
+        payload.pendingElicitation === undefined
+          ? undefined
+          : isRecord(payload.pendingElicitation) &&
+              typeof payload.pendingElicitation.requestId === "string" &&
+              typeof payload.pendingElicitation.message === "string"
+            ? {
+                requestId: payload.pendingElicitation.requestId,
+                message: payload.pendingElicitation.message,
+                schema: payload.pendingElicitation.schema,
+              }
+            : null;
+      if (payload.pendingElicitation !== undefined && !pendingElicitation) return null;
       const sessionConfigOptions = parseLiveConfigOptions(payload.sessionConfigOptions);
+      const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
+      const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
+      const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
       return {
         kind: "snapshot",
         snapshot: {
@@ -205,7 +252,11 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           turnState: payload.turnState,
           reset: payload.reset,
           ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
+          ...(availableCommands !== undefined ? { availableCommands } : {}),
+          ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),
+          ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
+          ...(pendingElicitation ? { pendingElicitation } : {}),
         },
       };
     }
