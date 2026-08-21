@@ -4,16 +4,16 @@ use super::task_session_spawn;
 
 use super::normalize::StreamNormalizer;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
-use super::replay::{build_attach, pending_permission};
+use super::replay::{build_attach, pending_elicitation, pending_permission};
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{
         drain_acp_events, normalize_session_events, parse_json_rpc_id, permission_response,
     },
     acp_usage::UsageDeduper,
-    apply_cancel_to_queue, dispatch_prompt, PromptDispatch, SessionServerEvent,
+    apply_cancel_to_queue, prompt_content, QueuedPrompt, SessionServerEvent, MAX_QUEUED_PROMPTS,
 };
-use crate::adapters::web_session_acp::AcpStdioClient;
+use crate::adapters::web_session_acp::{AcpStdioClient, PromptCapabilityDescriptor};
 use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{collections::VecDeque, path::PathBuf, time::Instant};
@@ -47,6 +47,7 @@ pub(crate) enum TaskSessionCommand {
     SubmitPrompt {
         client_message_id: String,
         text: String,
+        content_blocks: Vec<prompt_content::PromptContentBlockWire>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     Cancel {
@@ -57,6 +58,12 @@ pub(crate) enum TaskSessionCommand {
         request_id: String,
         approved: bool,
         reason: Option<String>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    AnswerElicitation {
+        request_id: String,
+        action: String,
+        content: Option<serde_json::Value>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     ApplyModel {
@@ -146,7 +153,7 @@ pub(crate) struct TaskSessionState {
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
     pub(super) stream_normalizer: StreamNormalizer,
-    pub(super) queued: VecDeque<String>,
+    pub(super) queued: VecDeque<QueuedPrompt>,
     pub(super) last_released: Option<Instant>,
     pub(super) acp_alive: bool,
     pub(super) agent: AgentClient,
@@ -159,6 +166,16 @@ pub(crate) struct TaskSessionState {
         Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
     pub(super) pending_config_snapshot:
         Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
+    /// Live advertised slash commands for connected composer completion.
+    pub(super) session_available_commands:
+        Option<Vec<crate::adapters::web_session_acp::AvailableCommandDescriptor>>,
+    pub(super) pending_commands_snapshot:
+        Option<Vec<crate::adapters::web_session_acp::AvailableCommandDescriptor>>,
+    pub(super) session_prompt_capabilities: Option<PromptCapabilityDescriptor>,
+    pub(super) pending_capabilities_snapshot: Option<PromptCapabilityDescriptor>,
+    /// Agent-reported session title from ACP `session_info_update`.
+    pub(super) session_title: Option<String>,
+    pub(super) pending_title_snapshot: bool,
 }
 
 impl TaskSessionState {
@@ -203,9 +220,17 @@ impl TaskSessionState {
             self.session_config_options = Some(options.clone());
             self.pending_config_snapshot = Some(options);
         }
+        if let Some(commands) = outcome.session_available_commands {
+            self.session_available_commands = Some(commands.clone());
+            self.pending_commands_snapshot = Some(commands);
+        }
+        if let Some(title) = outcome.session_title_update {
+            self.session_title = title;
+            self.pending_title_snapshot = true;
+        }
         if outcome.prompt_finished {
             if let Some(next) = self.queued.pop_front() {
-                if let Err(error) = client.begin_prompt(&next) {
+                if let Err(error) = client.begin_prompt(&next.blocks) {
                     self.append_to_log(vec![SessionServerEvent::Error {
                         message: format!("queued prompt failed: {error}"),
                     }]);
@@ -256,6 +281,12 @@ pub(crate) fn spawn_task_session(
             pending_model_snapshot: None,
             session_config_options: None,
             pending_config_snapshot: None,
+            session_available_commands: None,
+            pending_commands_snapshot: None,
+            session_prompt_capabilities: None,
+            pending_capabilities_snapshot: None,
+            session_title: None,
+            pending_title_snapshot: false,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -278,7 +309,12 @@ pub(crate) fn spawn_task_session(
             }
         }
         if let Some(mut client) = state.client.take() {
-            let _ = client.cancel();
+            if !client.host_exited() {
+                let _ = client.cancel();
+            }
+            if let Some(message) = client.shutdown() {
+                state.append_to_log(vec![SessionServerEvent::Error { message }]);
+            }
         }
     });
     (tx, join)
@@ -304,9 +340,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::SubmitPrompt {
             client_message_id,
             text,
+            content_blocks,
             reply,
         } => {
-            let result = submit_prompt(state, client_message_id, text);
+            let result = submit_prompt(state, client_message_id, text, content_blocks);
             let _ = reply.send(result);
         }
         TaskSessionCommand::Cancel { keep_queue, reply } => {
@@ -320,6 +357,15 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             reply,
         } => {
             let result = answer_permission(state, &request_id, approved, reason.as_deref());
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::AnswerElicitation {
+            request_id,
+            action,
+            content,
+            reply,
+        } => {
+            let result = answer_elicitation(state, &request_id, &action, content.as_ref());
             let _ = reply.send(result);
         }
         TaskSessionCommand::ApplyModel {
@@ -403,7 +449,13 @@ fn submit_prompt(
     state: &mut TaskSessionState,
     client_message_id: String,
     text: String,
+    content_blocks: Vec<prompt_content::PromptContentBlockWire>,
 ) -> Result<(), String> {
+    let caps = state
+        .session_prompt_capabilities
+        .clone()
+        .unwrap_or_else(prompt_content::default_prompt_capabilities);
+    let payload = prompt_content::build_prompt_payload(&text, &content_blocks, &caps)?;
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };
@@ -423,30 +475,34 @@ fn submit_prompt(
     }
     let user_event = SessionServerEvent::Message {
         role: "user".to_string(),
-        text: text.clone(),
+        text: payload.transcript_text.clone(),
+        content_blocks: Vec::new(),
         item_id: state.stream_normalizer.fresh_item_id(),
         message_id: None,
     };
     let in_flight = client.prompt_in_flight();
-    match dispatch_prompt(in_flight, &mut state.queued, text.clone()) {
-        PromptDispatch::Queued => {
-            let mut events = vec![user_event];
-            if !client_message_id.is_empty() {
-                events.push(SessionServerEvent::PromptAccepted { client_message_id });
-            }
-            state.append_to_log(events);
-            Ok(())
+    if in_flight {
+        if state.queued.len() >= MAX_QUEUED_PROMPTS {
+            state.queued.pop_front();
         }
-        PromptDispatch::StartNow => {
-            client.begin_prompt(&text).map(|_| ())?;
-            let mut events = vec![user_event];
-            if !client_message_id.is_empty() {
-                events.push(SessionServerEvent::PromptAccepted { client_message_id });
-            }
-            state.append_to_log(events);
-            Ok(())
+        state.queued.push_back(QueuedPrompt {
+            transcript_text: payload.transcript_text,
+            blocks: payload.blocks,
+        });
+        let mut events = vec![user_event];
+        if !client_message_id.is_empty() {
+            events.push(SessionServerEvent::PromptAccepted { client_message_id });
         }
+        state.append_to_log(events);
+        return Ok(());
     }
+    client.begin_prompt(&payload.blocks).map(|_| ())?;
+    let mut events = vec![user_event];
+    if !client_message_id.is_empty() {
+        events.push(SessionServerEvent::PromptAccepted { client_message_id });
+    }
+    state.append_to_log(events);
+    Ok(())
 }
 
 fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> {
@@ -455,15 +511,65 @@ fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> 
     };
     apply_cancel_to_queue(&mut state.queued, keep_queue);
     let cancelled = client.cancel()?;
-    let resolved: Vec<SessionServerEvent> = cancelled
-        .into_iter()
-        .map(|request_id| SessionServerEvent::PermissionResolved {
+    let mut resolved = Vec::new();
+    for request_id in cancelled.permissions {
+        resolved.push(SessionServerEvent::PermissionResolved {
             request_id,
             approved: false,
-        })
-        .collect();
+        });
+    }
+    for request_id in cancelled.elicitations {
+        resolved.push(SessionServerEvent::ElicitationResolved {
+            request_id,
+            action: "cancel".to_string(),
+        });
+    }
     state.append_to_log(resolved);
     Ok(())
+}
+
+fn answer_elicitation(
+    state: &mut TaskSessionState,
+    request_id: &str,
+    action: &str,
+    content: Option<&serde_json::Value>,
+) -> Result<(), String> {
+    use crate::adapters::web_session_acp::sdk_elicitation::{
+        accept_action, wire_content_from_json,
+    };
+    use agent_client_protocol::schema::v1::ElicitationAction;
+
+    let Some(client) = state.client.as_mut() else {
+        return Err("session slot missing".to_string());
+    };
+    let acp_action = match action {
+        "accept" => {
+            let payload = content.ok_or_else(|| {
+                "elicitation accept requires content matching the requested schema".to_string()
+            })?;
+            accept_action(wire_content_from_json(payload)?)
+        }
+        "decline" => ElicitationAction::Decline,
+        "cancel" => ElicitationAction::Cancel,
+        other => return Err(format!("unsupported elicitation action: {other}")),
+    };
+    let respond_result = client.respond_elicitation(request_id, acp_action);
+    if respond_result.is_ok()
+        || respond_result
+            .as_ref()
+            .err()
+            .is_some_and(|message| message == "ACP elicitation request is no longer pending")
+    {
+        state.append_to_log(vec![SessionServerEvent::ElicitationResolved {
+            request_id: request_id.to_string(),
+            action: action.to_string(),
+        }]);
+    }
+    match respond_result {
+        Ok(()) => Ok(()),
+        Err(message) if message == "ACP elicitation request is no longer pending" => Ok(()),
+        Err(message) => Err(message),
+    }
 }
 
 fn answer_permission(
@@ -500,6 +606,7 @@ fn attach_snapshot(
     _model: String,
     client_cursor: Option<usize>,
 ) -> AttachSnapshot {
+    state.pump();
     let snapshot_model = snapshot_applied_model(state);
     let (snapshot, replayed) = build_attach(
         &state.log,
@@ -507,6 +614,9 @@ fn attach_snapshot(
         state.busy(),
         client_cursor,
         state.session_config_options.clone(),
+        state.session_available_commands.clone(),
+        state.session_prompt_capabilities.clone(),
+        state.session_title.clone(),
     );
     AttachSnapshot {
         generation: state.generation,
@@ -534,17 +644,47 @@ fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64
             state.busy(),
             true,
             pending_permission(&state.log),
+            pending_elicitation(&state.log),
             state.session_config_options.clone(),
+            state.session_available_commands.clone(),
+            state.session_prompt_capabilities.clone(),
+            state.session_title.clone(),
         ))
     } else if let Some(model) = state.pending_model_snapshot.take() {
         let config = state.pending_config_snapshot.take();
+        let _ = state.pending_commands_snapshot.take();
+        let _ = state.pending_capabilities_snapshot.take();
+        state.pending_title_snapshot = false;
         Some(SessionSnapshot::new(
             state.log.absolute_next_cursor(),
             model,
             state.busy(),
             false,
             pending_permission(&state.log),
+            pending_elicitation(&state.log),
             config.or_else(|| state.session_config_options.clone()),
+            state.session_available_commands.clone(),
+            state.session_prompt_capabilities.clone(),
+            state.session_title.clone(),
+        ))
+    } else if state.pending_title_snapshot
+        || state.pending_commands_snapshot.is_some()
+        || state.pending_capabilities_snapshot.is_some()
+    {
+        let _ = state.pending_commands_snapshot.take();
+        let _ = state.pending_capabilities_snapshot.take();
+        state.pending_title_snapshot = false;
+        Some(SessionSnapshot::new(
+            state.log.absolute_next_cursor(),
+            snapshot_applied_model(state),
+            state.busy(),
+            false,
+            pending_permission(&state.log),
+            pending_elicitation(&state.log),
+            state.session_config_options.clone(),
+            state.session_available_commands.clone(),
+            state.session_prompt_capabilities.clone(),
+            state.session_title.clone(),
         ))
     } else {
         None

@@ -9,12 +9,15 @@
 //! separates message, thought, tool call, tool content, plan, permission, and
 //! usage; anything flattened here is unrecoverable in the browser.
 
+use super::output_content::{
+    extract_output_block, extract_tool_content_item, map_output_block, map_output_block_to_tool,
+    OutputContentBlockWire,
+};
 use super::{PlanEntry, SessionServerEvent, ToolContent};
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, SessionNotification, SessionUpdate, ToolCall, ToolCallContent,
     ToolCallStatus, ToolCallUpdate, ToolKind, UsageUpdate,
 };
-use serde::Serialize;
 use serde_json::Value;
 
 pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
@@ -28,30 +31,30 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         .unwrap_or_default();
 
     match session_update {
-        "agent_message" | "agent_message_chunk" => message_event(
-            "agent",
-            extract_message_text(update_body),
-            extract_message_id(update_body),
-        ),
-        "user_message" | "user_message_chunk" => message_event(
-            "user",
-            extract_message_text(update_body),
-            extract_message_id(update_body),
-        ),
-        "thought" | "thought_chunk" => message_event(
-            "thought",
-            extract_message_text(update_body),
-            extract_message_id(update_body),
-        ),
+        "agent_message" | "agent_message_chunk" => {
+            let (text, blocks) = extract_message_payload(update_body);
+            message_event("agent", text, blocks, extract_message_id(update_body))
+        }
+        "user_message" | "user_message_chunk" => {
+            let (text, blocks) = extract_message_payload(update_body);
+            message_event("user", text, blocks, extract_message_id(update_body))
+        }
+        "thought" | "thought_chunk" => {
+            let (text, blocks) = extract_message_payload(update_body);
+            message_event("thought", text, blocks, extract_message_id(update_body))
+        }
         "tool_call" | "tool_call_update" => tool_call_event(update_body),
         "plan" | "plan_update" => vec![SessionServerEvent::Plan {
             entries: extract_plan_entries(update_body),
         }],
         "state_update" | "status" => status_event(update_body),
         "usage_update" => extract_usage(update_body),
-        // Capability announcements, not conversation: Cursor emits these on
-        // every session/new and they carry nothing an operator can act on.
-        "available_commands_update" | "current_mode_update" | "config_option_update" => Vec::new(),
+        // Capability announcements, not conversation. Slash commands are live
+        // session state (see drain); mode/config updates are also non-transcript.
+        "available_commands_update"
+        | "current_mode_update"
+        | "config_option_update"
+        | "session_info_update" => Vec::new(),
         other if !other.is_empty() => vec![SessionServerEvent::Artifact {
             kind: other.to_string(),
             title: None,
@@ -82,7 +85,7 @@ pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<Session
         }],
         SessionUpdate::CurrentModeUpdate(_) => Vec::new(),
         SessionUpdate::ConfigOptionUpdate(_) => Vec::new(),
-        SessionUpdate::SessionInfoUpdate(update) => typed_artifact("session_info", update),
+        SessionUpdate::SessionInfoUpdate(_) => Vec::new(),
         SessionUpdate::UsageUpdate(update) => typed_usage_event(update),
         SessionUpdate::AvailableCommandsUpdate(_) => Vec::new(),
         _ => Vec::new(),
@@ -90,14 +93,20 @@ pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<Session
 }
 
 fn typed_message_event(role: &str, chunk: &ContentChunk) -> Vec<SessionServerEvent> {
-    let ContentBlock::Text(text) = &chunk.content else {
-        return Vec::new();
-    };
-    // `messageId` is optional in ACP v1, so it refines the browser's grouping
-    // when a harness sends it and changes nothing when it does not.
+    let mut text = String::new();
+    let mut blocks = Vec::new();
+    match &chunk.content {
+        ContentBlock::Text(value) => text = value.text.clone(),
+        other => {
+            if let Some(block) = map_output_block(other) {
+                blocks.push(block);
+            }
+        }
+    }
     message_event(
         role,
-        text.text.clone(),
+        text,
+        blocks,
         chunk.message_id.as_ref().map(ToString::to_string),
     )
 }
@@ -174,24 +183,17 @@ fn map_tool_content(content: &[ToolCallContent]) -> Vec<ToolContent> {
                         text: text.text.clone(),
                     })
                 }
-                _ => None,
+                other => map_output_block_to_tool(other),
             },
             ToolCallContent::Diff(diff) => Some(ToolContent::Diff {
                 path: diff.path.display().to_string(),
                 old_text: diff.old_text.clone(),
                 new_text: diff.new_text.clone(),
             }),
+            ToolCallContent::Terminal(_) => None,
             _ => None,
         })
         .collect()
-}
-
-fn typed_artifact<T: Serialize>(kind: &str, update: &T) -> Vec<SessionServerEvent> {
-    vec![SessionServerEvent::Artifact {
-        kind: kind.to_string(),
-        title: None,
-        body: serde_json::to_string_pretty(update).ok(),
-    }]
 }
 
 fn tool_kind(kind: ToolKind) -> &'static str {
@@ -311,10 +313,8 @@ fn extract_tool_content(update_body: &Value) -> Vec<ToolContent> {
                             .unwrap_or_default()
                             .to_string(),
                     }),
-                    _ => {
-                        let text = extract_content_text(item.get("content").unwrap_or(item));
-                        (!text.trim().is_empty()).then_some(ToolContent::Text { text })
-                    }
+                    Some("terminal") => None,
+                    _ => extract_tool_content_item(item),
                 })
                 .collect()
         })
@@ -424,17 +424,72 @@ pub fn map_acp_client_request(method: &str, params: &Value) -> Option<SessionSer
 pub(crate) fn message_event(
     role: &str,
     text: String,
+    content_blocks: Vec<OutputContentBlockWire>,
     message_id: Option<String>,
 ) -> Vec<SessionServerEvent> {
-    if text.is_empty() {
+    if text.is_empty() && content_blocks.is_empty() {
         return Vec::new();
     }
     vec![SessionServerEvent::Message {
         role: role.to_string(),
         text,
+        content_blocks,
         item_id: String::new(),
         message_id,
     }]
+}
+
+fn extract_message_payload(update_body: &Value) -> (String, Vec<OutputContentBlockWire>) {
+    if let Some(text) = update_body.get("text").and_then(Value::as_str) {
+        return (text.to_string(), Vec::new());
+    }
+    if let Some(content) = update_body.get("content") {
+        return extract_content_payload(content);
+    }
+    if let Some(message) = update_body.get("message") {
+        return extract_content_payload(message);
+    }
+    (String::new(), Vec::new())
+}
+
+fn extract_content_payload(content: &Value) -> (String, Vec<OutputContentBlockWire>) {
+    match content {
+        Value::String(text) => (text.clone(), Vec::new()),
+        Value::Array(items) => {
+            let mut text = String::new();
+            let mut blocks = Vec::new();
+            for item in items {
+                if item.get("type").and_then(Value::as_str) == Some("text") {
+                    if let Some(chunk) = item.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(chunk);
+                    }
+                } else if let Some(block) = extract_output_block(item) {
+                    blocks.push(block);
+                }
+            }
+            (text, blocks)
+        }
+        Value::Object(_) => {
+            if content.get("type").and_then(Value::as_str) == Some("text") {
+                (
+                    content
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    Vec::new(),
+                )
+            } else if let Some(block) = extract_output_block(content) {
+                (String::new(), vec![block])
+            } else {
+                (extract_content_text(content), Vec::new())
+            }
+        }
+        _ => (String::new(), Vec::new()),
+    }
 }
 
 fn extract_message_id(update_body: &Value) -> Option<String> {
@@ -444,19 +499,6 @@ fn extract_message_id(update_body: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
-}
-
-fn extract_message_text(update_body: &Value) -> String {
-    if let Some(text) = update_body.get("text").and_then(Value::as_str) {
-        return text.to_string();
-    }
-    if let Some(content) = update_body.get("content") {
-        return extract_content_text(content);
-    }
-    if let Some(message) = update_body.get("message") {
-        return extract_content_text(message);
-    }
-    String::new()
 }
 
 fn extract_content_text(content: &Value) -> String {
