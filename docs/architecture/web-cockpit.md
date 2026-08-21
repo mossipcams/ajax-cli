@@ -262,6 +262,33 @@ request/notification I/O remain in `web_session_acp`; the slice maps
 agent/thought text to full-content updates with stable host `itemId` values
 before persistence.
 
+### Task-session module ownership
+
+Production sources under `slices::web_session` split orchestration-chat by
+mechanism. Architecture tests in `crates/ajax-web/src/architecture_web_session.rs`
+enforce the forbidden-import table below (production `.rs` only; test modules are
+excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
+
+| Module | Owns |
+| --- | --- |
+| `protocol` | v2 snapshot/event envelopes |
+| `acp_map` | ACP update → `SessionServerEvent` |
+| `normalize` | host stream normalization / item ids |
+| `acp_usage` | usage dedupe |
+| `replay` | cursor replay planning |
+| `transcript` | in-memory cursor and permission filter |
+| `ws_bridge` | socket forward to directory |
+| `session_cleanup` | registry-owned JSONL retention |
+| `model_change` | harness-switch reset via directory |
+| `task_session*` / `acp_drain` | command loop, spawn, ACP poll (may call adapters) |
+| `adapters::web_session_acp` | ACP stdio only |
+| `adapters::web_session_store` | JSONL only |
+| `runtime` production | cookie/origin, attach plan, delegate to `ws_bridge` |
+
+Each row's production code must not import sibling internals listed in the
+architecture test forbidden table (for example mapping modules must not reach
+into the store, ACP client, command loop, or runtime route layer).
+
 ### Task-session wire protocol (v2)
 
 Each attach sends one protocol v2 `snapshot` frame

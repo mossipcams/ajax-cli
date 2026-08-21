@@ -86,15 +86,19 @@ suite with four CI workers and two retries.
 
 Normal PR jobs:
 
-- `pr-title`, `changes`, `file-loc`, and `invariants` always run.
+- `pr-title`, `changes`, `file-loc`, and `invariants` always run (even on
+  docs/agent-only diffs).
 - `scripts/ci-changed-paths.mjs` emits `rust`, `web`, `lockfile`, and `full`
   from the PR diff. CI-script or workflow diffs, missing SHAs, and
   `workflow_dispatch` set `full=true`.
-- `rust-lint`, `rust-test`, and `rust-docs` run when `rust` or `full`.
-- `web-unit` and `web-e2e` run when `web` or `full`.
-- `audit` runs when `lockfile` or `full`.
+- Path-filtered gates (skipped on Release Please PRs):
+  - `rust-lint`, `rust-test`, and `rust-docs` run when `rust` or `full`.
+  - `web-unit` and `web-e2e` run when `web` or `full`.
+  - `architecture` (display name Architecture) runs `npm run verify:arch`
+    when `rust`, `web`, or `full`.
+  - `audit` runs when `lockfile` or `full`.
 - The aggregate `CI` job fails when a needed lane job is skipped or not
-  success. Docs/agent-only diffs skip the expensive lanes.
+  success. Docs/agent-only diffs skip the path-filtered gates.
 
 ## Who opens the PR
 

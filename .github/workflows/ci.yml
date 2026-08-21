@@ -260,6 +260,32 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  architecture:
+    name: Architecture
+    runs-on: ubuntu-latest
+    needs:
+      - pr-title
+      - changes
+    if: >-
+      ${{ !startsWith(github.head_ref, 'release-please--branches--main') &&
+      (needs.changes.outputs.full == 'true' || needs.changes.outputs.rust == 'true' ||
+      needs.changes.outputs.web == 'true') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+
+      - name: Architecture tests
+        run: npm run verify:arch
+
   audit:
     name: Cargo Audit
     runs-on: ubuntu-latest
@@ -374,6 +400,7 @@ jobs:
       - rust-lint
       - rust-test
       - rust-docs
+      - architecture
       - audit
       - web-unit
       - web-e2e
@@ -445,6 +472,10 @@ jobs:
             require_lane_jobs "web" \
               "${{ needs.web-unit.result }}" \
               "${{ needs.web-e2e.result }}"
+          fi
+
+          if [[ "$FULL" == "true" || "$RUST" == "true" || "$WEB" == "true" ]]; then
+            require_lane_jobs "architecture" "${{ needs.architecture.result }}"
           fi
 
           if [[ "$FULL" == "true" || "$LOCKFILE" == "true" ]]; then

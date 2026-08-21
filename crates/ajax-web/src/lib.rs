@@ -7,6 +7,9 @@ pub mod slices;
 #[cfg(test)]
 mod architecture;
 
+#[cfg(test)]
+mod architecture_web_session;
+
 /// Shared task/context fixtures for ajax-web unit tests. Substrate names
 /// follow the ajax conventions: `repo/handle`, branch `ajax/handle`, worktree
 /// `/repo/{repo}__worktrees/ajax-{handle}`, session `ajax-{repo}-{handle}`.
