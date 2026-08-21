@@ -239,6 +239,18 @@ set for a single-verb change.
 
 ## Validation (fast / slice-local)
 
+The named **Architecture** CI job runs `npm run verify:arch` on PRs whose diff
+touches rust, web, or full lanes (not on docs/agent-only or Release Please PRs).
+Run the same command locally before opening a PR that changes crate boundaries
+or web embed contracts. Chat capability import direction and the
+`styles/chat/` + `styles/task-workspace/` CSS inventory stay in the **Web Unit**
+job (`npm run web:lint` / ESLint), not in Architecture.
+
+Granular orchestration-chat module import rules (protocol vs mapping vs
+transcript vs bridge vs adapters vs runtime production) are enforced by
+`ajax-web` tests in `architecture_web_session.rs`; the module table lives in
+[`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md#task-session-module-ownership).
+
 Prefer focused verification first:
 
 ```bash

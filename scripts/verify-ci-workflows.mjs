@@ -22,6 +22,7 @@ const RELEASE_SKIP_JOBS = [
   "rust-lint",
   "rust-test",
   "rust-docs",
+  "architecture",
   "audit",
   "web-unit",
   "web-e2e",
@@ -31,6 +32,7 @@ const PATH_FILTERED_JOBS = [
   "rust-lint",
   "rust-test",
   "rust-docs",
+  "architecture",
   "audit",
   "web-unit",
   "web-e2e",
@@ -293,6 +295,11 @@ function verifyCi(ci, fail, root) {
     fail("ci.yml rust-test job must not force --test-threads=1.");
   }
 
+  const architectureSteps = JSON.stringify(jobs.architecture?.steps ?? []);
+  if (!architectureSteps.includes("npm run verify:arch")) {
+    fail("ci.yml architecture job must run npm run verify:arch.");
+  }
+
   for (const job of RELEASE_SKIP_JOBS) {
     if (!jobs[job]) {
       fail(`ci.yml must define the ${job} job.`);
@@ -399,7 +406,15 @@ function verifyCi(ci, fail, root) {
     }
   }
 
-  for (const job of ["rust-lint", "rust-test", "rust-docs", "web-unit", "web-e2e", "audit"]) {
+  for (const job of [
+    "rust-lint",
+    "rust-test",
+    "rust-docs",
+    "architecture",
+    "web-unit",
+    "web-e2e",
+    "audit",
+  ]) {
     if (!verify.includes(`needs.${job}.result`)) {
       fail(`Aggregate ci job must enforce ${job} when its lane is needed.`);
     }
