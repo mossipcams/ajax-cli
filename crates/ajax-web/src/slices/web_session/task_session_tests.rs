@@ -312,9 +312,9 @@ fn cancel_keep_queue_true_preserves_queued_prompts() {
 }
 
 #[test]
-fn answer_permission_records_permission_resolved() {
-    let dir = scratch_dir("permission");
-    let handle = "web/permission";
+fn permission_auto_approved_without_surfacing_operator_prompt() {
+    let dir = scratch_dir("permission-auto");
+    let handle = "web/permission-auto";
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
@@ -327,22 +327,17 @@ fn answer_permission_records_permission_resolved() {
                 .submit_prompt(handle, "permission".to_string())
                 .expect("prompt");
             pump_until(&directory, handle, Duration::from_secs(5), |events| {
-                events.iter().any(|event| matches!(
-                    event,
-                    SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
-                ))
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
             });
-            directory
-                .answer_permission(handle, "42", true, Some("ok"))
-                .expect("answer");
             let (events, _) = directory.read_from(handle, 0);
-            assert!(events.iter().any(|event| matches!(
-                event,
-                SessionServerEvent::PermissionResolved {
-                    request_id,
-                    approved: true,
-                } if request_id == "42"
-            )));
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::PermissionRequest { .. })),
+                "auto-approved permission must not surface: {events:?}"
+            );
         });
     });
 
@@ -350,14 +345,14 @@ fn answer_permission_records_permission_resolved() {
 }
 
 #[test]
-fn cancel_records_permission_resolved_for_prompts_it_answered() {
-    let dir = scratch_dir("cancel-permission");
-    let handle = "web/cancel-permission";
+fn cancel_ends_turn_after_auto_approved_permission_hold() {
+    let dir = scratch_dir("cancel-permission-hold");
+    let handle = "web/cancel-permission-hold";
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--permission"], || {
+        with_test_acp_extra_args(&["--permission", "--permission-hold"], || {
             directory
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire");
@@ -365,29 +360,35 @@ fn cancel_records_permission_resolved_for_prompts_it_answered() {
                 .submit_prompt(handle, "permission".to_string())
                 .expect("prompt");
             pump_until(&directory, handle, Duration::from_secs(5), |events| {
-                events.iter().any(|event| matches!(
-                    event,
-                    SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
-                ))
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { role, text, .. }
+                            if role == "agent" && text == "permission:selected:allow-once"
+                    )
+                })
             });
 
             directory.cancel(handle, false).expect("cancel");
 
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::TurnEnd {
+                            stop_reason: Some(reason)
+                        } if reason == "cancelled"
+                    )
+                })
+            });
+
             let (events, _) = directory.read_from(handle, 0);
             assert!(
-                events.iter().any(|event| matches!(
-                    event,
-                    SessionServerEvent::PermissionResolved {
-                        request_id,
-                        approved: false,
-                    } if request_id == "42"
-                )),
-                "cancel left the permission request unresolved: {events:?}"
+                !events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::PermissionRequest { .. })),
+                "auto-approved permission must not surface: {events:?}"
             );
-            assert!(!events.iter().any(|event| matches!(
-                event,
-                SessionServerEvent::PermissionRequest { request_id, .. } if request_id == "42"
-            )));
         });
     });
 

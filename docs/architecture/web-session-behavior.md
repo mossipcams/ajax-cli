@@ -129,12 +129,14 @@ existing paths.
 - Ajax orchestration sessions are trusted local automation, and the Settings
   toggle discloses that supported agents run with full tool access and without
   approval prompts. After session creation or restore, the host reads only ACP
-  `configOptions`, finds the exact `mode` option and an exact advertised value,
-  then sends `session/set_config_option`: `agent-full-access` for Codex or
-  `bypassPermissions` for Claude. It ignores legacy `modes` and never sends
-  `session/set_mode`; it also does not reinterpret model, thought-level, Pi, or
-  unknown Cursor options. Missing, unadvertised, or refused configuration keeps
-  the standard ACP permission flow as the safe fallback.
+  `configOptions`, finds the advertised `mode` option (`category: mode`, else id
+  `mode`), and sends `session/set_config_option` with the first advertised select
+  value from the documented full-access list (`agent-full-access`,
+  `bypassPermissions`, `agent`, `code`). It ignores legacy `modes` and never
+  sends `session/set_mode`; it also does not reinterpret model, thought-level, Pi,
+  or unknown Cursor options. Any remaining `session/request_permission` is
+  auto-approved on the host (`AllowAlways` when advertised, otherwise
+  `AllowOnce`; otherwise cancelled with a warning).
 
 ## Queue and cancellation across WebSocket reconnect
 
@@ -321,12 +323,15 @@ existing paths.
 
 - Unrecognized ACP `sessionUpdate` kinds (except dropped capability announcements) are
   stored as `artifact` events in the host transcript.
-- ACP `session/request_permission` is correlated by its JSON-RPC request id; an
-  approval or rejection selects a matching advertised ACP permission option,
-  and cancellation resolves every pending request with the standard cancelled
-  outcome before sending `session/cancel`.
-- Operator answers to ACP permission requests are recorded as
-  `permission_resolved` in the host transcript.
+- ACP `session/request_permission` is auto-approved on the host for trusted Ajax
+  Chat sessions: the adapter selects an advertised allow option (`AllowAlways`
+  when present, otherwise `AllowOnce`) or the standard cancelled outcome when no
+  allow option exists. Cancellation via `session/cancel` still resolves any
+  still-pending permission with the cancelled outcome before sending cancel; in
+  the normal path there should be none because the host answers immediately.
+- Operator answers to permission requests that remain pending (tests and legacy
+  wire) are recorded as `permission_resolved` in the host transcript. Live Chat
+  does not emit `permission_request` for auto-answered asks.
 - Reconnect or full page reload replay must not resurrect a permission prompt
   whose `requestId` already has a matching `permission_resolved` entry.
 

@@ -8,12 +8,16 @@ const holdPromptMode = process.argv.includes('--hold-prompt');
 const malformedMode = process.argv.includes('--malformed');
 const badInitialize = process.argv.includes('--bad-initialize');
 const permissionMode = process.argv.includes('--permission');
+const permissionRejectOnly = process.argv.includes('--permission-reject-only');
+const permissionAllowAlways = process.argv.includes('--permission-allow-always');
+const permissionHold = process.argv.includes('--permission-hold');
 const resumeMode = process.argv.includes('--resume') || process.argv.includes('--resume-fail');
 const resumeFail = process.argv.includes('--resume-fail');
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
 const cursorLiveModels = process.argv.includes('--cursor-live-models');
 const cursorParameterizedModels = process.argv.includes('--cursor-parameterized-models');
+const cursorMode = process.argv.includes('--cursor-mode');
 const acceptUnadvertisedGrokHigh = process.argv.includes('--accept-unadvertised-grok-high');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
@@ -100,6 +104,7 @@ function spawnModelFromArgv() {
 let currentModel = spawnModelFromArgv() ?? cliDefaultModel ?? 'harness-default';
 let currentEffort = 'high';
 let currentFast = cursorParameterizedModels ? true : null;
+let currentMode = 'default';
 let heldPromptId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
@@ -158,13 +163,27 @@ function modelConfigOptions() {
       );
     }
   }
-  return [{
+  const configOptions = [{
     id: 'model',
     name: 'Model',
     type: 'select',
     currentValue: currentModel,
     options,
   }];
+  if (cursorMode) {
+    configOptions.push({
+      id: 'mode',
+      name: 'Mode',
+      category: 'mode',
+      type: 'select',
+      currentValue: currentMode,
+      options: [
+        { value: 'default', name: 'Default' },
+        { value: 'agent', name: 'Agent' },
+      ],
+    });
+  }
+  return configOptions;
 }
 
 function send(obj) {
@@ -276,6 +295,8 @@ function handleRequest(msg) {
       } else {
         currentFast = selectValue === 'true';
       }
+    } else if (configId === 'mode') {
+      currentMode = selectValue || currentMode;
     }
     send({
       jsonrpc: '2.0',
@@ -292,8 +313,19 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/prompt') {
-    if (permissionMode) {
+    if (permissionMode || permissionRejectOnly || permissionAllowAlways) {
       heldPromptId = id;
+      const options = permissionRejectOnly
+        ? [{ optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }]
+        : permissionAllowAlways
+          ? [
+              { optionId: 'allow-always', name: 'Allow always', kind: 'allow_always' },
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+            ]
+          : [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
+            ];
       send({
         jsonrpc: '2.0',
         id: 42,
@@ -301,10 +333,7 @@ function handleRequest(msg) {
         params: {
           sessionId,
           toolCall: { toolCallId: 'call-1', title: 'Run tests' },
-          options: [
-            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
-            { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
-          ],
+          options,
         },
       });
       return;
@@ -359,9 +388,12 @@ rl.on('line', (line) => {
     if (msg.method !== 'session/cancel') replayUpdate(`notification:${msg.method}`);
     return;
   }
-  if (permissionMode && msg.id === 42 && msg.result) {
+  if ((permissionMode || permissionRejectOnly || permissionAllowAlways) && msg.id === 42 && msg.result) {
     const outcome = msg.result.outcome ?? {};
     replayUpdate(`permission:${outcome.outcome}:${outcome.optionId ?? ''}`);
+    if (permissionHold) {
+      return;
+    }
     send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn' } });
     heldPromptId = null;
     return;

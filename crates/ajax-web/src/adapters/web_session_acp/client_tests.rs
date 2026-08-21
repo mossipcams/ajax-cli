@@ -6,13 +6,14 @@ use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
     v1::{
         AgentCapabilities, ContentBlock, InitializeResponse, NewSessionRequest,
+        RequestPermissionOutcome, RequestPermissionResponse, SelectedPermissionOutcome,
         SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
         SessionNotification, SessionUpdate,
     },
     ProtocolVersion,
 };
 use ajax_core::models::AgentClient;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     fs,
     path::PathBuf,
@@ -139,41 +140,140 @@ fn trusted_permission_config_must_be_exact_and_advertised() {
         .category(SessionConfigOptionCategory::ThoughtLevel),
     ];
 
+    for agent in [
+        AgentClient::Codex,
+        AgentClient::Claude,
+        AgentClient::Pi,
+        AgentClient::Cursor,
+    ] {
+        assert_eq!(
+            preferred_permission_config(Some(&options)),
+            Some(("mode".to_string(), "agent-full-access")),
+            "harness {agent:?} should pick the first advertised full-access value"
+        );
+    }
     assert_eq!(
-        preferred_permission_config(AgentClient::Codex, Some(&options)),
-        Some(("mode".to_string(), "agent-full-access"))
-    );
-    assert_eq!(
-        preferred_permission_config(AgentClient::Claude, Some(&options)),
-        Some(("mode".to_string(), "bypassPermissions"))
-    );
-    assert_eq!(
-        preferred_permission_config(AgentClient::Pi, Some(&options)),
-        None
-    );
-    assert_eq!(
-        preferred_permission_config(AgentClient::Cursor, Some(&options)),
-        None
-    );
-    assert_eq!(
-        preferred_permission_config(
-            AgentClient::Codex,
-            Some(&[SessionConfigOption::select(
-                "mode",
-                "Mode",
-                "default",
-                vec![SessionConfigSelectOption::new("full-access", "Full Access",)],
-            )]),
-        ),
+        preferred_permission_config(Some(&[SessionConfigOption::select(
+            "mode",
+            "Mode",
+            "default",
+            vec![SessionConfigSelectOption::new("full-access", "Full Access",)],
+        )])),
         None,
         "display names and similar IDs must not trigger a security mode"
     );
     assert_eq!(
-        preferred_permission_config(AgentClient::Codex, Some(&options[1..])),
+        preferred_permission_config(Some(&options[1..])),
         None,
         "values advertised by non-mode config options must be ignored"
     );
-    assert_eq!(preferred_permission_config(AgentClient::Codex, None), None);
+    assert_eq!(preferred_permission_config(None), None);
+}
+
+#[test]
+fn trusted_permission_config_picks_first_advertised_full_access_value() {
+    let cursor_options = vec![SessionConfigOption::select(
+        "mode",
+        "Mode",
+        "default",
+        vec![
+            SessionConfigSelectOption::new("default", "Default"),
+            SessionConfigSelectOption::new("agent", "Agent"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Mode)];
+    assert_eq!(
+        preferred_permission_config(Some(&cursor_options)),
+        Some(("mode".to_string(), "agent"))
+    );
+
+    let claude_only = vec![SessionConfigOption::select(
+        "mode",
+        "Mode",
+        "default",
+        vec![
+            SessionConfigSelectOption::new("default", "Default"),
+            SessionConfigSelectOption::new("bypassPermissions", "Bypass Permissions"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Mode)];
+    assert_eq!(
+        preferred_permission_config(Some(&claude_only)),
+        Some(("mode".to_string(), "bypassPermissions"))
+    );
+
+    let already_applied = vec![SessionConfigOption::select(
+        "mode",
+        "Mode",
+        "agent-full-access",
+        vec![
+            SessionConfigSelectOption::new("default", "Default"),
+            SessionConfigSelectOption::new("agent-full-access", "Full Access"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Mode)];
+    assert_eq!(preferred_permission_config(Some(&already_applied)), None);
+
+    let code_only = vec![SessionConfigOption::select(
+        "mode",
+        "Mode",
+        "default",
+        vec![
+            SessionConfigSelectOption::new("default", "Default"),
+            SessionConfigSelectOption::new("code", "Code"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Mode)];
+    assert_eq!(
+        preferred_permission_config(Some(&code_only)),
+        Some(("mode".to_string(), "code"))
+    );
+}
+
+// Regression: Cursor spawn must apply advertised full-access mode via official
+// session/set_config_option {configId: mode, value: agent}, not session/set_mode.
+#[test]
+fn cursor_applies_full_access_mode_in_band_when_advertised() {
+    let dir = scratch_dir("mode-cursor-agent");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--cursor-mode"], || {
+            let (client, _report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Some(AcpClientEvent::SessionUpdate(update)) =
+                    client.wait_event(Duration::from_millis(100))
+                {
+                    let text = serde_json::to_string(&update).unwrap();
+                    if text.contains("model:session/set_config_option:mode:agent") {
+                        return;
+                    }
+                }
+            }
+            panic!("cursor never applied full-access mode in band when advertised");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn request_permission_response_serializes_official_acp_outcome_shape() {
+    let selected = RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+        SelectedPermissionOutcome::new("allow-once"),
+    ));
+    assert_eq!(
+        serde_json::to_value(selected).unwrap(),
+        serde_json::json!({"outcome": {"outcome": "selected", "optionId": "allow-once"}})
+    );
+
+    let cancelled = RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled);
+    assert_eq!(
+        serde_json::to_value(cancelled).unwrap(),
+        serde_json::json!({"outcome": {"outcome": "cancelled"}})
+    );
 }
 
 /// Cursor validates `session/new` params and rejects a missing
@@ -310,11 +410,11 @@ fn fake_begin_prompt_receives_pong_and_turn_end() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #880: the browser-facing approval remains a boolean, but the
-// ACP peer must receive the selected standard permission option.
+// Regression for #880: trusted Ajax Chat auto-approves ACP permission requests on
+// the host without surfacing an operator prompt.
 #[test]
-fn fake_permission_request_returns_a_selected_acp_outcome() {
-    let dir = scratch_dir("permission-selected");
+fn fake_permission_request_auto_selects_allow_once_without_operator_response() {
+    let dir = scratch_dir("permission-auto-allow-once");
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
@@ -326,16 +426,8 @@ fn fake_permission_request_returns_a_selected_acp_outcome() {
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
                 match client.wait_event(Duration::from_millis(100)) {
-                    Some(AcpClientEvent::ClientRequest { id, method, params }) => {
-                        assert_eq!(method, "session/request_permission");
-                        assert_eq!(params.pointer("/toolCall/title"), Some(&json!("Run tests")));
-                        assert_eq!(
-                            params.pointer("/options/0/optionId"),
-                            Some(&json!("allow-once"))
-                        );
-                        client
-                            .respond_client_request(&id, json!({ "approved": true }))
-                            .expect("approve permission");
+                    Some(AcpClientEvent::ClientRequest { method, .. }) => {
+                        panic!("auto-answered permission must not surface: {method}");
                     }
                     Some(AcpClientEvent::SessionUpdate(update))
                         if session_update_text(&update)
@@ -354,12 +446,12 @@ fn fake_permission_request_returns_a_selected_acp_outcome() {
 }
 
 #[test]
-fn fake_cancel_resolves_a_pending_permission_as_cancelled() {
-    let dir = scratch_dir("permission-cancelled");
+fn fake_permission_request_prefers_allow_always_when_advertised() {
+    let dir = scratch_dir("permission-auto-allow-always");
     let script = fake_acp_fixture();
 
     with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--permission"], || {
+        with_test_acp_extra_args(&["--permission-allow-always"], || {
             let (mut client, _) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
             client.begin_prompt("permission").expect("begin prompt");
@@ -367,18 +459,101 @@ fn fake_cancel_resolves_a_pending_permission_as_cancelled() {
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
                 match client.wait_event(Duration::from_millis(100)) {
-                    Some(AcpClientEvent::ClientRequest { .. }) => {
-                        client.cancel().expect("cancel");
+                    Some(AcpClientEvent::ClientRequest { method, .. }) => {
+                        panic!("auto-answered permission must not surface: {method}");
                     }
                     Some(AcpClientEvent::SessionUpdate(update))
-                        if session_update_text(&update) == Some("permission:cancelled:") =>
+                        if session_update_text(&update)
+                            == Some("permission:selected:allow-always") =>
                     {
                         return;
                     }
                     Some(_) | None => {}
                 }
             }
-            panic!("pending ACP permission was not cancelled");
+            panic!("allow-always ACP permission response was not observed");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_permission_reject_only_options_cancel_without_inventing_allow_id() {
+    let dir = scratch_dir("permission-reject-only");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--permission-reject-only"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client.begin_prompt("permission").expect("begin prompt");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match client.wait_event(Duration::from_millis(100)) {
+                    Some(AcpClientEvent::ClientRequest { method, .. }) => {
+                        panic!("auto-answered permission must not surface: {method}");
+                    }
+                    Some(AcpClientEvent::SessionUpdate(update))
+                        if session_update_text(&update) == Some("permission:cancelled:") =>
+                    {
+                        return;
+                    }
+                    Some(AcpClientEvent::SessionUpdate(update))
+                        if session_update_text(&update)
+                            .unwrap_or_default()
+                            .starts_with("permission:selected:") =>
+                    {
+                        panic!("reject-only permission must not invent an allow id");
+                    }
+                    Some(_) | None => {}
+                }
+            }
+            panic!("reject-only ACP permission was not cancelled");
+        });
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_cancel_ends_in_flight_turn_after_auto_approved_permission() {
+    let dir = scratch_dir("permission-cancel-turn");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--permission", "--permission-hold"], || {
+            let (mut client, _) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake");
+            client.begin_prompt("permission").expect("begin prompt");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Some(AcpClientEvent::SessionUpdate(update)) =
+                    client.wait_event(Duration::from_millis(100))
+                {
+                    if session_update_text(&update) == Some("permission:selected:allow-once") {
+                        break;
+                    }
+                }
+            }
+
+            client.cancel().expect("cancel");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if matches!(
+                    client.wait_event(Duration::from_millis(100)),
+                    Some(AcpClientEvent::RequestFinished {
+                        method: "session/prompt",
+                        ..
+                    })
+                ) {
+                    return;
+                }
+            }
+            panic!("cancel did not end the in-flight turn after auto-approved permission");
         });
     });
 
