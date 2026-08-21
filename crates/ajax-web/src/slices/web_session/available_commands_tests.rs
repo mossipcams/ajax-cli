@@ -24,9 +24,22 @@ fn drain_stores_available_commands_without_transcript_events() {
             let (client, _report) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
             let mut deduper = UsageDeduper::default();
-            let outcome = drain_acp_events(&client, &mut deduper);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut session_available_commands = None;
+            let mut all_events = Vec::new();
+            while std::time::Instant::now() < deadline {
+                let outcome = drain_acp_events(&client, &mut deduper);
+                if let Some(commands) = outcome.session_available_commands {
+                    session_available_commands = Some(commands);
+                }
+                all_events.extend(outcome.events);
+                if session_available_commands.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             assert_eq!(
-                outcome.session_available_commands,
+                session_available_commands,
                 Some(vec![
                     AvailableCommandDescriptor {
                         name: "web".to_string(),
@@ -38,9 +51,10 @@ fn drain_stores_available_commands_without_transcript_events() {
                         description: "Show help".to_string(),
                         input_hint: None,
                     },
-                ])
+                ]),
+                "expected available_commands_update within deadline"
             );
-            assert!(outcome.events.is_empty());
+            assert!(all_events.is_empty());
         });
     });
 

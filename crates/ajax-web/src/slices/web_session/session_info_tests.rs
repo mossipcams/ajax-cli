@@ -22,12 +22,26 @@ fn drain_stores_session_title_without_transcript_events() {
             let (client, _report) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
             let mut deduper = UsageDeduper::default();
-            let outcome = drain_acp_events(&client, &mut deduper);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut session_title_update = None;
+            let mut all_events = Vec::new();
+            while std::time::Instant::now() < deadline {
+                let outcome = drain_acp_events(&client, &mut deduper);
+                if let Some(title) = outcome.session_title_update {
+                    session_title_update = Some(title);
+                }
+                all_events.extend(outcome.events);
+                if session_title_update.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             assert_eq!(
-                outcome.session_title_update,
-                Some(Some("Initial session title".to_string()))
+                session_title_update,
+                Some(Some("Initial session title".to_string())),
+                "expected session_info_update within deadline"
             );
-            assert!(outcome.events.is_empty());
+            assert!(all_events.is_empty());
         });
     });
 
