@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StrictMode } from "react";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, screen, fireEvent } from "@testing-library/react";
 import mainSource from "@/app/main.tsx?raw";
 import App from "@/app/App";
 import cockpit from "@/fixtures/cockpit.json";
+import {
+  ChatWithSheet,
+  prepareChatSurface,
+  send,
+  typeComposer,
+  transport,
+} from "@/features/chat/ChatSurface.testHarness";
 
 // StrictMode double-invokes effects in development. The Playwright suite runs
 // against the Vite dev server, so socket cardinality is covered there
@@ -97,5 +104,25 @@ describe("StrictMode lifecycle safety", () => {
     const added = addSpy.mock.calls.filter(([type]) => type === "focus").length;
     const removed = removeSpy.mock.calls.filter(([type]) => type === "focus").length;
     expect(removed).toBe(added);
+  });
+
+  it("emits one Stopped note after stop-and-send when the turn ends", () => {
+    prepareChatSurface();
+    render(
+      <StrictMode>
+        <ChatWithSheet />
+      </StrictMode>,
+    );
+
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+    typeComposer("Next");
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+
+    send({ type: "turn_end", stopReason: "cancelled" });
+
+    expect(screen.getAllByTestId("session-note-info")).toHaveLength(1);
+    expect(screen.getByTestId("session-note-info")).toHaveTextContent("Stopped");
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next");
   });
 });

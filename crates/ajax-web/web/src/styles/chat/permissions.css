@@ -1,0 +1,39 @@
+/* Permission panel -------------------------------------------------------- */
+/* Decision — the loudest thing on the surface when it exists. */
+.session-decision {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--paper-tint);
+  border: 1px solid var(--rule);
+}
+
+.session-decision-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.session-decision-detail {
+  margin: 6px 0 0;
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.session-decision-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* DESIGN.md reserves 44px for the primary tap target; the shared `.pill` is the
+   34px chip variant, so this route lifts its decisive actions to the primary
+   height rather than changing `.pill` for every surface. */
+.session-decision-actions .pill {
+  min-height: 44px;
+  flex: 1 1 auto;
+}

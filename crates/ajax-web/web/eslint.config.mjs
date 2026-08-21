@@ -193,6 +193,139 @@ export default tseslint.config(
     },
   },
   {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: ["**/src/features/chat/session/transport/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^\\.\\./(reducer|useChatSession|projectWireInput|model)(/|$)",
+              message:
+                "session/transport must not import session reducers or presentation-facing session modules.",
+            },
+            {
+              regex: "^@/features/chat/(composer|conversation|activity|scrolling|permissions|model|status)/",
+              message: "session/transport must not import Chat presentation capabilities.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: ["**/src/features/chat/session/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/chat/(composer|conversation|activity|scrolling|permissions|model|status)/",
+              message: "session must not import Chat presentation capabilities.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx", "**/ChatSurface.tsx"],
+    files: ["**/src/features/chat/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/chat/session/transport/(?!public$).+",
+              message:
+                "Raw transport modules stay inside session; import session/public or session/transport/public only.",
+            },
+            {
+              regex: "^\\.\\./session/transport/(?!public$).+",
+              message:
+                "Raw transport modules stay inside session; import session/public or session/transport/public only.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: ["**/src/features/chat/composer/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/chat/(conversation|activity|scrolling|permissions|model|status)/",
+              message: "composer must not import sibling Chat capabilities.",
+            },
+            {
+              regex: "^\\.\\./(conversation|activity|scrolling|permissions|model|status)/",
+              message: "composer must not import sibling Chat capabilities.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: ["**/src/features/chat/conversation/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/chat/(composer|scrolling|permissions|model|status)/",
+              message:
+                "conversation may import activity/public only; other capability imports are forbidden.",
+            },
+            {
+              regex: "^\\.\\./(composer|scrolling|permissions|model|status)/",
+              message:
+                "conversation may import activity/public only; other capability imports are forbidden.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ["**/*.test.{ts,tsx}", "**/*.testHarness.tsx"],
+    files: [
+      "**/src/features/chat/activity/**/*.{ts,tsx}",
+      "**/src/features/chat/scrolling/**/*.{ts,tsx}",
+      "**/src/features/chat/permissions/**/*.{ts,tsx}",
+      "**/src/features/chat/model/**/*.{ts,tsx}",
+      "**/src/features/chat/status/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@/features/chat/(composer|conversation|activity|scrolling|permissions|model|status)/",
+              message: "Chat capabilities must not import sibling capability internals.",
+            },
+            {
+              regex: "^\\.\\./(composer|conversation|activity|scrolling|permissions|model|status)/",
+              message: "Chat capabilities must not import sibling capability internals.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/features/terminal/**/*.{ts,tsx}"],
     rules: {

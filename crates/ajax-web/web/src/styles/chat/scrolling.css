@@ -1,0 +1,76 @@
+/* Scrolling --------------------------------------------------------------- */
+/* Fills the remaining column above the composer and is the only scroll surface. */
+.session-thread {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding: 8px 12px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Position changes here are corrections, not journeys: opening at the latest
+     content, collapsing activity, revealing a paragraph. An animated scroll
+     would show the operator the travel instead of the destination. */
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
+  overscroll-behavior-x: none;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* Softens the cut where scrolled rows meet the head's hairline, so a clipped
+     line reads as "more above" instead of broken paint. The fade is shorter
+     than the resting top padding, so nothing softens at rest. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px);
+}
+
+.session-thread::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Anchor a short conversation to the composer instead of stranding it at the
+   top over dead space. `margin-top: auto` rather than `justify-content` on the
+   scroller: the auto margin collapses to zero once content overflows, so the
+   top of a long transcript stays reachable. */
+.session-thread > :first-child {
+  margin-top: auto;
+}
+
+.session-thread-empty {
+  margin: auto 0;
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: var(--text-body);
+}
+
+/* Jump to live ------------------------------------------------------------ */
+.session-jump {
+  position: absolute;
+  left: 50%;
+  /* Sits above the in-thread composer (no separate Send chrome). */
+  bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 8px 18px;
+  min-height: 44px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--elev-2);
+  cursor: pointer;
+}
+
+.session-jump:hover,
+.session-jump:focus-visible {
+  border-color: var(--ink-soft);
+  outline: none;
+}

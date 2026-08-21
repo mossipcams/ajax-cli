@@ -1,0 +1,51 @@
+/* Queued follow-up ---------------------------------------------------------- */
+/* Not sent yet, so it is not the operator's message in the record: same shape,
+   dimmed, and carrying the two words that say what Enter does next. */
+.session-queued {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.session-queued .session-said {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.session-queued-label {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.session-queued-hint {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-micro);
+}
+
+.session-queued-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.session-queued-actions button {
+  min-height: 44px;
+  padding: 4px 10px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--text-label);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-queued-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
