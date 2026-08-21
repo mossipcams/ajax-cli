@@ -208,10 +208,10 @@ impl TaskSessionState {
     }
 
     fn pump(&mut self) {
-        let Some(client) = self.client.as_mut() else {
-            return;
+        let outcome = match self.client.as_mut() {
+            Some(client) => drain_acp_events(client, &mut self.usage_deduper),
+            None => return,
         };
-        let outcome = drain_acp_events(client, &mut self.usage_deduper);
         if let Some(model) = outcome.applied_model {
             self.applied_model = model;
             self.pending_model_snapshot = Some(self.applied_model.clone());
@@ -230,19 +230,35 @@ impl TaskSessionState {
         }
         if outcome.prompt_finished {
             if let Some(next) = self.queued.pop_front() {
-                if let Err(error) = client.begin_prompt(&next.blocks) {
+                let begin_error = self
+                    .client
+                    .as_mut()
+                    .and_then(|client| client.begin_prompt(&next.blocks).err());
+                if let Some(error) = begin_error {
                     self.append_to_log(vec![SessionServerEvent::Error {
                         message: format!("queued prompt failed: {error}"),
                     }]);
                 }
             }
         }
-        if outcome.host_exited {
-            self.acp_alive = false;
-        }
+        let host_gone = outcome.host_exited
+            || self
+                .client
+                .as_mut()
+                .is_some_and(|client| client.host_exited());
+        let host_exit_from_drain = outcome.host_exited;
         if !outcome.events.is_empty() {
             let normalized = normalize_session_events(&mut self.stream_normalizer, outcome.events);
             self.append_to_log(normalized);
+        }
+        if host_gone {
+            let record_host_exit = self.acp_alive && !host_exit_from_drain;
+            self.acp_alive = false;
+            if record_host_exit {
+                self.append_to_log(vec![SessionServerEvent::Error {
+                    message: "ACP process exited".to_string(),
+                }]);
+            }
         }
     }
 
@@ -300,9 +316,7 @@ pub(crate) fn spawn_task_session(
                     }
                 }
                 _ = poll.tick() => {
-                    if state.client.is_some()
-                        && (state.busy() || !state.is_idle() || !state.queued.is_empty())
-                    {
+                    if state.client.is_some() {
                         state.pump();
                     }
                 }

@@ -216,9 +216,15 @@ existing paths.
 - Each live `TaskSession` Tokio task continues draining its ACP child and host
   queue after the last socket closes, so an in-flight or queued turn does not
   depend on browser presence.
+- The per-task poll loop drains stdio whenever a live ACP client is installed,
+  including finished disconnected slots during `IDLE_RELEASE_GRACE` (zero
+  holders, no in-flight turn, empty host queue). That keeps host exit and late
+  ACP events observable before reconnect and avoids unnecessary respawn on
+  backgrounded tabs.
 - Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
 - The per-task Tokio command loop continues after the last WebSocket subscriber
-  detaches while a turn is in flight or the host queue is non-empty.
+  detaches while a turn is in flight or the host queue is non-empty, and keeps
+  draining idle grace-retained slots until eviction or shutdown.
 
 ## Shutdown and slot retention
 
@@ -236,11 +242,12 @@ existing paths.
   work.
 - After WebSocket detach, finished disconnected slots stay out of the idle-LRU
   pool for **15 minutes** (`IDLE_RELEASE_GRACE`). During that grace window the
-  live ACP child is kept so a backgrounded PWA or Safari tab can reconnect
-  without paying a full spawn handshake. Once grace expires, the slot becomes an
-  ordinary idle-LRU candidate (oldest released first) and the idle cap can
-  reclaim it. Reattach clears the release marker; in-flight turns, queued
-  prompts, and held slots are never evicted regardless of grace.
+  live ACP child is kept and the poll loop keeps draining it so a backgrounded
+  PWA or Safari tab can reconnect without paying a full spawn handshake. Once
+  grace expires, the slot becomes an ordinary idle-LRU candidate (oldest
+  released first) and the idle cap can reclaim it. Reattach clears the release
+  marker; in-flight turns, queued prompts, and held slots are never evicted
+  regardless of grace.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
