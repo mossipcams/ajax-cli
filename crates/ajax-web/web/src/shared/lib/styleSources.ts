@@ -6,12 +6,11 @@ import { dirname, join } from "node:path";
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when Effort / Fast chips sat above the model list's iOS
-   * overflow hit target so taps could change the selection. */
-  sourceStylesCssBytes: 100_787,
-  builtAppCssBytes: 86_181,
-  builtAppCssGzipBytes: 15_497,
-  classSelectorLines: 551,
+   * Re-measured when model-list scroll hit targets were restored (#1022). */
+  sourceStylesCssBytes: 100_309,
+  builtAppCssBytes: 85_993,
+  builtAppCssGzipBytes: 15_472,
+  classSelectorLines: 549,
   hasSelectors: 18,
 } as const;
 
