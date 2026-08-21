@@ -330,6 +330,10 @@ describe("sessionReducer", () => {
     expect(thoughtSnippet("Checking\n  the router")).toBe("Checking the router");
     expect(thoughtSnippet("x".repeat(130))).toHaveLength(120);
     expect(thoughtSnippet("x".repeat(130)).endsWith("…")).toBe(true);
+    const long =
+      "Looking for the lifecycle hook in the router module that handles session state transitions";
+    expect(thoughtSnippet(long, 60)).toMatch(/\bthat…$/);
+    expect(thoughtSnippet(long, 60)).not.toMatch(/…\w/);
   });
 
   it("tracks context pressure as one current value, not a row per update", () => {

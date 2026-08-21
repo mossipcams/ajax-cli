@@ -18,7 +18,14 @@
 // surface-containment test below closes that class.
 
 import { test, expect, type Locator } from "@playwright/test";
-import { mockFetch, COCKPIT_FIXTURE } from "./fixtures";
+import {
+  mockFetch,
+  COCKPIT_FIXTURE,
+  DETAIL_FIXTURE,
+  sessionEventJson,
+  sessionSnapshotJson,
+  type SessionServerEvent,
+} from "./fixtures";
 
 // ---- design tokens (must match styles.css :root) -------------------------
 
@@ -185,6 +192,8 @@ test("task detail panels and action buttons are styled", async ({ page }, testIn
   // Status glyph+label paints with the tone color (waiting -> warn).
   const pill = page.locator(".interact-pill").first();
   expect(await pill.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
+  // Waiting pill leading mark ships in the mono stack (#1020).
+  expect(await pill.evaluate((el) => getComputedStyle(el, "::before").content)).toBe('"◦"');
 
   // Detail title uses the compact mono heading, not default h1.
   const title = page.locator(".detail-title");
@@ -204,4 +213,160 @@ test("settings view sections are styled", async ({ page }) => {
   });
   expect(style.borderTopWidth).toBe("1px");
   expect(style.paddingTop).toBe("16px");
+});
+
+test("session chat failure surface and single disclosure indent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  let nextCursor = 0;
+  const send = (socket: { send: (data: string) => void }, event: SessionServerEvent) => {
+    socket.send(sessionEventJson(nextCursor++, event));
+  };
+
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
+    socket.onMessage((message) => {
+      if (typeof message !== "string") return;
+      const event = JSON.parse(message) as { type?: string };
+      if (event.type !== "prompt") return;
+      send(socket, { type: "message", role: "user", text: "Run tests" });
+      send(socket, {
+        type: "tool_call",
+        callId: "fail-1",
+        title: "cargo test",
+        kind: "execute",
+        status: "failed",
+        content: [{ type: "text", text: "assertion `left == right` failed" }],
+      });
+      send(socket, { type: "message", role: "agent", text: "Tests failed." });
+      send(socket, { type: "turn_end", stopReason: "end_turn" });
+    });
+  });
+
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible({ timeout: 10_000 });
+  await page.getByLabel("Message").fill("Run tests");
+  await page.getByLabel("Message").press("Enter");
+
+  await expect(page.getByTestId("session-tool-output")).toContainText("assertion");
+
+  const layout = await page.evaluate(() => {
+    const turnWork = document.querySelector('[data-testid="session-turn-work"]') as HTMLElement;
+    const failureBody = document.querySelector(".session-toolcard-body.is-failure") as HTMLElement;
+    const output = document.querySelector('[data-testid="session-tool-output"]') as HTMLElement;
+    const failureStyle = failureBody ? getComputedStyle(failureBody) : null;
+    const turnBox = turnWork.getBoundingClientRect();
+    const outputBox = output.getBoundingClientRect();
+    return {
+      failureBorderLeft: failureStyle?.borderLeftWidth ?? "0px",
+      failureBg: failureStyle?.backgroundColor ?? "",
+      outputLeft: outputBox.left,
+      turnLeft: turnBox.left,
+      // One rail indent (~24px), not a stacked card-body indent (~48px).
+      indentPx: outputBox.left - turnBox.left,
+    };
+  });
+
+  expect(layout.failureBorderLeft).not.toBe("0px");
+  expect(layout.failureBg).not.toBe(TRANSPARENT);
+  // One disclosure rail (~24px from the turn edge), not a stacked card-body indent (~48px).
+  expect(layout.indentPx).toBeGreaterThan(20);
+  expect(layout.indentPx).toBeLessThan(44);
+
+  await expect(page.getByTestId("session-head-status")).toHaveCount(0);
+});
+
+test("session chat text block kinds paint distinct surfaces", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  let nextCursor = 0;
+  const send = (socket: { send: (data: string) => void }, event: SessionServerEvent) => {
+    socket.send(sessionEventJson(nextCursor++, event));
+  };
+
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
+    socket.onMessage((message) => {
+      if (typeof message !== "string") return;
+      const event = JSON.parse(message) as { type?: string };
+      if (event.type !== "prompt") return;
+      send(socket, { type: "message", role: "user", text: "Inspect files" });
+      send(socket, {
+        type: "tool_call",
+        callId: "search-1",
+        title: "search",
+        kind: "search",
+        status: "failed",
+        content: [{ type: "text", text: "src/main.rs\nsrc/lib.rs" }],
+      });
+      send(socket, {
+        type: "tool_call",
+        callId: "read-1",
+        title: "read",
+        kind: "read",
+        status: "failed",
+        content: [{ type: "text", text: "fn main() {}" }],
+      });
+      send(socket, {
+        type: "tool_call",
+        callId: "run-1",
+        title: "cargo test",
+        kind: "execute",
+        status: "failed",
+        content: [{ type: "text", text: "test result: FAILED" }],
+      });
+      send(socket, { type: "message", role: "agent", text: "Done." });
+      send(socket, { type: "turn_end", stopReason: "end_turn" });
+    });
+  });
+
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible({ timeout: 10_000 });
+  await page.getByLabel("Message").fill("Inspect files");
+  await page.getByLabel("Message").press("Enter");
+
+  await expect(page.locator('[data-block-kind="search"]')).toBeVisible();
+
+  const surfaces = await page.evaluate(() => {
+    const paint = (el: Element) => {
+      const s = getComputedStyle(el);
+      return {
+        borderStyle: s.borderStyle,
+        borderTopWidth: s.borderTopWidth,
+        borderLeftWidth: s.borderLeftWidth,
+        backgroundColor: s.backgroundColor,
+      };
+    };
+    const search = document.querySelector('[data-block-kind="search"]');
+    const read = document.querySelector('[data-block-kind="read"]');
+    const output = document.querySelector('[data-block-kind="output"]');
+    if (!search || !read || !output) return null;
+    return {
+      search: paint(search),
+      read: paint(read),
+      output: paint(output),
+    };
+  });
+
+  expect(surfaces).not.toBeNull();
+  const { search, read, output } = surfaces!;
+
+  const signature = (s: typeof search) =>
+    `${s.borderStyle}|${s.borderTopWidth}|${s.borderLeftWidth}|${s.backgroundColor}`;
+
+  expect(new Set([signature(search), signature(read), signature(output)]).size).toBe(3);
 });

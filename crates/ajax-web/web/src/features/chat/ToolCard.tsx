@@ -15,12 +15,15 @@ import { useState } from "react";
 import type { ToolCall, ToolContent } from "./sessionThread";
 import {
   cleanTitle,
+  CONTENT_PREVIEW_LINES,
   diffLines,
   elapsedMs,
   formatElapsed,
   middleSplit,
   shortPath,
+  textPreview,
   toolMark,
+  toolRowLabel,
   toolStatusNote,
   toolTarget,
   TOOL_TONES,
@@ -96,7 +99,59 @@ function signClass(sign: " " | "-" | "+"): string {
   return "same";
 }
 
-function ContentBlock({ content }: { content: ToolContent }) {
+type OutputBlockKind = "search" | "read" | "output";
+
+function outputBlockKind(kind: string): OutputBlockKind {
+  if (kind === "search") return "search";
+  if (kind === "read") return "read";
+  return "output";
+}
+
+function TextOutputBlock({
+  text,
+  failed,
+  blockKind,
+}: {
+  text: string;
+  failed: boolean;
+  blockKind: OutputBlockKind;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const { preview, hiddenLines } = textPreview(text, CONTENT_PREVIEW_LINES, failed);
+  const truncated = hiddenLines > 0 && !showAll;
+
+  return (
+    <>
+      <pre
+        className={`session-tool-output session-block-${blockKind}`}
+        data-testid="session-tool-output"
+        data-block-kind={blockKind}
+      >
+        {truncated ? preview : text}
+      </pre>
+      {hiddenLines > 0 ? (
+        <button
+          type="button"
+          className="session-tool-output-expand"
+          data-testid="session-tool-output-expand"
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Show less" : `${hiddenLines} more line${hiddenLines === 1 ? "" : "s"}`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function ContentBlock({
+  content,
+  failed,
+  kind,
+}: {
+  content: ToolContent;
+  failed: boolean;
+  kind: string;
+}) {
   if (content.type === "diff") {
     return (
       <DiffBlock
@@ -109,19 +164,23 @@ function ContentBlock({ content }: { content: ToolContent }) {
   // Execute output arrives here as text: Ajax advertises no `terminal/*` client
   // capability, so there is never an embedded terminal to render instead.
   return (
-    <pre className="session-tool-output" data-testid="session-tool-output">
-      {content.text}
-    </pre>
+    <TextOutputBlock text={content.text} failed={failed} blockKind={outputBlockKind(kind)} />
   );
 }
 
+function defaultExpanded(call: ToolCall): boolean {
+  if (call.status === "completed") return false;
+  return call.content.length > 0;
+}
+
 export default function ToolCard({ call }: { call: ToolCall }) {
-  const settled = call.status === "completed";
   const [open, setOpen] = useState<boolean | null>(null);
-  const expanded = (open ?? !settled) && call.content.length > 0;
+  const expanded = (open ?? defaultExpanded(call)) && call.content.length > 0;
   const tone = TOOL_TONES[call.kind] ?? "muted";
+  const rowLabel = toolRowLabel(call);
   const target = toolTarget(call);
   const label = cleanTitle(call.title) || target;
+  const failed = call.status === "failed";
 
   return (
     <section
@@ -133,13 +192,13 @@ export default function ToolCard({ call }: { call: ToolCall }) {
       <ActivityRow
         className="session-toolcard-head"
         mark={toolMark(call.kind)}
-        target={target}
+        target={rowLabel}
         mono
         // Elapsed is the resting right column; a word replaces it only when the
         // call is running, queued, or broken.
         meta={toolStatusNote(call.status) ?? formatElapsed(elapsedMs(call))}
-        // The row shows the target; the accessible name keeps what ran.
-        aria-label={target === label ? label : `${label} · ${target}`}
+        // The row shows the action; the accessible name keeps what ran.
+        aria-label={rowLabel === label ? label : `${rowLabel} · ${target}`}
         title={call.locations[0] ?? label}
         // Nothing to show, nothing to toggle — but the row still states what ran.
         disabled={call.content.length === 0}
@@ -148,9 +207,12 @@ export default function ToolCard({ call }: { call: ToolCall }) {
       />
 
       {expanded ? (
-        <div className="session-toolcard-body">
+        <div
+          className={`session-toolcard-body${failed ? " is-failure" : ""}`}
+          {...(failed ? { "data-testid": "session-tool-failure-body" } : {})}
+        >
           {call.content.map((content, index) => (
-            <ContentBlock key={index} content={content} />
+            <ContentBlock key={index} content={content} failed={failed} kind={call.kind} />
           ))}
         </div>
       ) : null}
