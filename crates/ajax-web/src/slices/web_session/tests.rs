@@ -1,4 +1,5 @@
 use super::*;
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::models::AgentClient;
 use std::collections::VecDeque;
 
@@ -288,10 +289,100 @@ fn map_message_preserves_message_id_when_present() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hi".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: Some("msg_7".to_string()),
         }]
     );
+}
+
+#[test]
+fn map_agent_message_carries_image_and_resource_link_blocks() {
+    use super::output_content::OutputContentBlockWire;
+
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+                "type": "image",
+                "mimeType": "image/png",
+                "uri": "https://example.com/shot.png"
+            }
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::Message { content_blocks, .. } = &events[0] else {
+        panic!("expected message, got {events:?}");
+    };
+    assert_eq!(
+        content_blocks,
+        &vec![OutputContentBlockWire::Image {
+            mime_type: "image/png".to_string(),
+            uri: Some("https://example.com/shot.png".to_string()),
+            data: None,
+        }]
+    );
+
+    let link = serde_json::json!({
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+                "type": "resource_link",
+                "name": "README.md",
+                "uri": "file:///README.md"
+            }
+        }
+    });
+    let events = map_acp_session_update(&link);
+    let SessionServerEvent::Message { content_blocks, .. } = &events[0] else {
+        panic!("expected message, got {events:?}");
+    };
+    assert!(matches!(
+        content_blocks.first(),
+        Some(OutputContentBlockWire::ResourceLink { name, .. }) if name == "README.md"
+    ));
+}
+
+#[test]
+fn map_tool_call_carries_image_and_omits_terminal() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_img",
+            "title": "Screenshot",
+            "kind": "other",
+            "status": "completed",
+            "content": [
+                {
+                    "type": "content",
+                    "content": {
+                        "type": "image",
+                        "mimeType": "image/png",
+                        "data": "aGVsbG8="
+                    }
+                },
+                {
+                    "type": "content",
+                    "content": {
+                        "type": "resource_link",
+                        "name": "notes.txt",
+                        "uri": "file:///notes.txt"
+                    }
+                },
+                { "type": "terminal", "terminalId": "term-1" }
+            ]
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::ToolCall { content, .. } = &events[0] else {
+        panic!("expected tool call, got {events:?}");
+    };
+    assert_eq!(content.len(), 2);
+    assert!(matches!(content[0], ToolContent::Image { .. }));
+    assert!(matches!(content[1], ToolContent::ResourceLink { .. }));
+    assert!(!content
+        .iter()
+        .any(|item| matches!(item, ToolContent::Text { .. })));
 }
 
 #[test]
@@ -331,6 +422,7 @@ fn map_thought_uses_its_own_role_so_chat_can_separate_reasoning() {
         vec![SessionServerEvent::Message {
             role: "thought".to_string(),
             text: "Checking the router".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         }]
@@ -378,11 +470,16 @@ fn unknown_update_body_is_pretty_printed_not_a_single_line_dump() {
     assert!(body.as_deref().unwrap_or_default().contains('\n'));
 }
 
-/// Cursor emits these on every `session/new`; they are capability
-/// announcements, not conversation, and must not reach the transcript.
+/// Cursor emits `current_mode_update` on some harnesses; it is superseded by
+/// config `mode` and must not reach the transcript. Slash commands are live
+/// session state, not transcript rows.
 #[test]
-fn capability_announcements_are_dropped() {
-    for kind in ["available_commands_update", "current_mode_update"] {
+fn capability_announcements_stay_out_of_transcript() {
+    for kind in [
+        "available_commands_update",
+        "current_mode_update",
+        "session_info_update",
+    ] {
         let update = serde_json::json!({
             "update": { "sessionUpdate": kind, "availableCommands": [] }
         });
@@ -446,6 +543,7 @@ fn map_agent_message_chunk_to_browser_message() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "Working on it".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         }]
@@ -467,6 +565,7 @@ fn map_agent_message_chunk_preserves_newline_only_delta() {
         vec![SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "\n".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         }]
@@ -486,11 +585,18 @@ fn cancel_message_keep_queue_true() {
     assert_eq!(msg, SessionClientMessage::Cancel { keep_queue: true });
 }
 
+fn queued_prompt(text: &str) -> QueuedPrompt {
+    QueuedPrompt {
+        transcript_text: text.to_string(),
+        blocks: vec![ContentBlock::Text(TextContent::new(text))],
+    }
+}
+
 #[test]
 fn dispatch_prompt_starts_when_idle() {
     let mut queued = VecDeque::new();
     assert_eq!(
-        dispatch_prompt(false, &mut queued, "hello".to_string()),
+        dispatch_prompt(false, &mut queued, queued_prompt("hello")),
         PromptDispatch::StartNow
     );
     assert!(queued.is_empty());
@@ -500,43 +606,51 @@ fn dispatch_prompt_starts_when_idle() {
 fn dispatch_prompt_queues_when_in_flight() {
     let mut queued = VecDeque::new();
     assert_eq!(
-        dispatch_prompt(true, &mut queued, "next".to_string()),
+        dispatch_prompt(true, &mut queued, queued_prompt("next")),
         PromptDispatch::Queued
     );
-    assert_eq!(queued, VecDeque::from(["next".to_string()]));
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].transcript_text, "next");
 }
 
 #[test]
 fn dispatch_prompt_cap_drops_oldest() {
-    let mut queued: VecDeque<String> = (0..MAX_QUEUED_PROMPTS)
-        .map(|i| format!("old-{i}"))
+    let mut queued: VecDeque<QueuedPrompt> = (0..MAX_QUEUED_PROMPTS)
+        .map(|i| queued_prompt(&format!("old-{i}")))
         .collect();
     assert_eq!(
-        dispatch_prompt(true, &mut queued, "new".to_string()),
+        dispatch_prompt(true, &mut queued, queued_prompt("new")),
         PromptDispatch::Queued
     );
     assert_eq!(queued.len(), MAX_QUEUED_PROMPTS);
-    assert_eq!(queued.front().map(String::as_str), Some("old-1"));
-    assert_eq!(queued.back().map(String::as_str), Some("new"));
+    assert_eq!(
+        queued.front().map(|item| item.transcript_text.as_str()),
+        Some("old-1")
+    );
+    assert_eq!(
+        queued.back().map(|item| item.transcript_text.as_str()),
+        Some("new")
+    );
 }
 
 #[test]
 fn clear_prompt_queue_empties_queued() {
-    let mut queued = VecDeque::from(["a".to_string(), "b".to_string()]);
+    let mut queued = VecDeque::from([queued_prompt("a"), queued_prompt("b")]);
     clear_prompt_queue(&mut queued);
     assert!(queued.is_empty());
 }
 
 #[test]
 fn apply_cancel_to_queue_keep_true_leaves_queue() {
-    let mut queued = VecDeque::from(["next".to_string()]);
+    let mut queued = VecDeque::from([queued_prompt("next")]);
     apply_cancel_to_queue(&mut queued, true);
-    assert_eq!(queued, VecDeque::from(["next".to_string()]));
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].transcript_text, "next");
 }
 
 #[test]
 fn apply_cancel_to_queue_keep_false_clears() {
-    let mut queued = VecDeque::from(["next".to_string()]);
+    let mut queued = VecDeque::from([queued_prompt("next")]);
     apply_cancel_to_queue(&mut queued, false);
     assert!(queued.is_empty());
 }

@@ -5,6 +5,8 @@ mod acp_map;
 pub(crate) mod acp_usage;
 pub(crate) mod model_change;
 mod normalize;
+mod output_content;
+mod prompt_content;
 mod protocol;
 mod replay;
 mod session_cleanup;
@@ -40,6 +42,8 @@ pub enum SessionClientMessage {
     #[serde(rename = "prompt")]
     Prompt {
         text: String,
+        #[serde(default, rename = "contentBlocks")]
+        content_blocks: Vec<prompt_content::PromptContentBlockWire>,
         #[serde(rename = "clientMessageId")]
         client_message_id: String,
     },
@@ -64,6 +68,14 @@ pub enum SessionClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    #[serde(rename = "elicitation")]
+    Elicitation {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +95,13 @@ pub enum SessionServerEvent {
     Message {
         role: String,
         text: String,
+        /// Non-text ACP output blocks (image, resource_link, embedded resource).
+        #[serde(
+            default,
+            rename = "contentBlocks",
+            skip_serializing_if = "Vec::is_empty"
+        )]
+        content_blocks: Vec<output_content::OutputContentBlockWire>,
         /// Stable host-generated identity for replace-by-id replay in the browser.
         #[serde(rename = "itemId", default)]
         item_id: String,
@@ -121,6 +140,21 @@ pub enum SessionServerEvent {
         #[serde(rename = "requestId")]
         request_id: String,
         approved: bool,
+    },
+    #[serde(rename = "elicitation_request")]
+    ElicitationRequest {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        message: String,
+        schema: serde_json::Value,
+    },
+    /// Operator answered an agent elicitation. Recorded so reconnect/reload
+    /// replay does not resurrect an already-decided prompt.
+    #[serde(rename = "elicitation_resolved")]
+    ElicitationResolved {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        action: String,
     },
     #[serde(rename = "tool_call")]
     ToolCall {
@@ -227,9 +261,8 @@ pub struct PlanEntry {
     pub status: String,
 }
 
-/// Output attached to a tool call. Mirrors the two `ToolCallContent` variants
-/// Ajax can receive; `terminal` is absent because Ajax advertises no
-/// `terminal/*` client capability for an agent to create one with.
+/// Output attached to a tool call. Mirrors ACP `ToolCallContent` minus
+/// `terminal`: Ajax advertises no `terminal/*` client capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ToolContent {
@@ -243,6 +276,36 @@ pub enum ToolContent {
         #[serde(rename = "newText")]
         new_text: String,
     },
+    #[serde(rename = "image")]
+    Image {
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uri: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+    },
+    #[serde(rename = "resource_link")]
+    ResourceLink {
+        name: String,
+        uri: String,
+        #[serde(default, rename = "mimeType", skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    #[serde(rename = "resource")]
+    Resource {
+        uri: String,
+        #[serde(default, rename = "mimeType", skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blob: Option<String>,
+    },
 }
 
 /// Cursor ACP allows one in-flight `session/prompt`; additional prompts queue here.
@@ -254,30 +317,37 @@ pub enum PromptDispatch {
     Queued,
 }
 
+/// One validated prompt waiting behind an in-flight turn.
+#[derive(Debug, Clone)]
+pub struct QueuedPrompt {
+    pub transcript_text: String,
+    pub blocks: Vec<agent_client_protocol::schema::v1::ContentBlock>,
+}
+
 /// Decide whether to start a prompt now or enqueue it behind the in-flight turn.
 pub fn dispatch_prompt(
     prompt_in_flight: bool,
-    queued: &mut VecDeque<String>,
-    text: String,
+    queued: &mut VecDeque<QueuedPrompt>,
+    payload: QueuedPrompt,
 ) -> PromptDispatch {
     if prompt_in_flight {
         // ponytail: cap at 8 queued prompts; upgrade path is block + error event to the operator.
         if queued.len() >= MAX_QUEUED_PROMPTS {
             queued.pop_front();
         }
-        queued.push_back(text);
+        queued.push_back(payload);
         PromptDispatch::Queued
     } else {
         PromptDispatch::StartNow
     }
 }
 
-pub fn clear_prompt_queue(queued: &mut VecDeque<String>) {
+pub fn clear_prompt_queue(queued: &mut VecDeque<QueuedPrompt>) {
     queued.clear();
 }
 
 /// Cancel clears queued prompts unless the operator asked to keep them.
-pub fn apply_cancel_to_queue(queued: &mut VecDeque<String>, keep_queue: bool) {
+pub fn apply_cancel_to_queue(queued: &mut VecDeque<QueuedPrompt>, keep_queue: bool) {
     if !keep_queue {
         clear_prompt_queue(queued);
     }
@@ -370,6 +440,15 @@ mod task_session_idle_eviction_tests;
 mod transcript_tests;
 
 #[cfg(test)]
+mod available_commands_tests;
+#[cfg(test)]
+mod elicitation_tests;
+mod output_content_tests;
+mod prompt_capabilities_tests;
+mod prompt_content_tests;
+mod session_info_tests;
+
+#[cfg(test)]
 mod acp_drain_tests;
 
 #[cfg(test)]
@@ -380,6 +459,9 @@ mod ws_bridge_tests;
 
 #[cfg(test)]
 mod session_cleanup_tests;
+
+#[cfg(test)]
+mod session_close_tests;
 
 #[cfg(test)]
 pub(crate) mod test_support;

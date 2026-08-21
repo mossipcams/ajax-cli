@@ -17,11 +17,23 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     micArmed,
     toggleMic,
     onDraftChange,
-    onKeyDown,
+    onComposerKeyDown,
     submitComposer,
     connected,
     everOpened,
     busy,
+    slashMatches,
+    slashMenuOpen,
+    slashSelection,
+    insertSlashMatch,
+    attachments,
+    removeAttachment,
+    attachFiles,
+    onComposerPaste,
+    attachInputRef,
+    attachAccept,
+    canAttach,
+    attachmentError,
   } = useComposerContext();
 
   return (
@@ -32,6 +44,52 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
       onSubmit={submitComposer}
     >
       {notice}
+      {attachmentError ? (
+        <p className="session-composer-attachment-error" role="alert">
+          {attachmentError}
+        </p>
+      ) : null}
+      {attachments.length ? (
+        <ul className="session-composer-attachments" data-testid="session-composer-attachments">
+          {attachments.map((attachment) => (
+            <li key={attachment.id}>
+              <span>{attachment.label}</span>
+              <button
+                type="button"
+                className="session-composer-attachment-remove"
+                aria-label={`Remove ${attachment.label}`}
+                onClick={() => removeAttachment(attachment.id)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {slashMenuOpen ? (
+        <ul
+          className="session-composer-slash-menu"
+          data-testid="session-composer-slash-menu"
+          role="listbox"
+          aria-label="Slash commands"
+        >
+          {slashMatches.map((command, index) => (
+            <li key={command.name}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={index === slashSelection}
+                className={index === slashSelection ? "is-selected" : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => insertSlashMatch(command)}
+              >
+                <span className="session-composer-slash-name">/{command.name}</span>
+                <span className="session-composer-slash-description">{command.description}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="session-composer-row">
         <textarea
           rows={1}
@@ -54,14 +112,34 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             const next = e.target.value;
             onDraftChange(next, next.length < draft.length);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              onKeyDown(e.key, e.shiftKey);
-            }
-          }}
+          onKeyDown={onComposerKeyDown}
+          onPaste={onComposerPaste}
         />
         <div className="session-composer-actions">
+          <input
+            ref={attachInputRef}
+            type="file"
+            className="session-composer-attach-input"
+            accept={attachAccept}
+            multiple
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(event) => {
+              const files = event.target.files;
+              if (files?.length) void attachFiles(files);
+              event.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="session-composer-button session-composer-attach"
+            aria-label="Attach file or photo"
+            disabled={!connected || !canAttach}
+            hidden={!canAttach}
+            onClick={() => attachInputRef.current?.click()}
+          >
+            Attach
+          </button>
           {modelControl}
           <button
             type="button"
