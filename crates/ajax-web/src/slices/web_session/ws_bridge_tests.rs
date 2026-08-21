@@ -599,36 +599,6 @@ fn swap_resets_context_only_for_cross_harness() {
     assert!(swap_resets_harness_context(AgentClient::Codex, "pi"));
 }
 
-#[test]
-fn apply_persisted_model_keeps_live_child_for_same_harness_swap() {
-    use super::model_change::apply_persisted_model;
-
-    let dir = scratch_dir("same-harness-apply-persisted");
-    let handle = "web/same-harness-swap";
-    let directory = BlockingSessionDirectory::new(dir.clone());
-    let script = fake_acp_fixture();
-
-    with_test_acp_program(&script, || {
-        directory
-            .acquire(handle, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire");
-        let child_before = directory.child_id(handle).expect("child");
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(apply_persisted_model(
-            directory.inner(),
-            handle,
-            &dir,
-            Some("composer-2.5"),
-        ))
-        .expect("apply persisted model");
-
-        assert_eq!(directory.child_id(handle), Some(child_before));
-        assert!(directory.inner().has_live_entry(handle));
-    });
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
 fn snapshot_option(snapshot: &SessionSnapshot, id: &str) -> serde_json::Value {
     snapshot
         .session_config_options

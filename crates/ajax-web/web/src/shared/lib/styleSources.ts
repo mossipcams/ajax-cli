@@ -6,12 +6,12 @@ import { dirname, join } from "node:path";
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when New Task's model step pinned Effort / Fast outside the
-   * scrolling catalog so the 46vh viewport cap could not hide them (#1004). */
-  sourceStylesCssBytes: 100_217,
-  builtAppCssBytes: 85_917,
-  builtAppCssGzipBytes: 15_459,
-  classSelectorLines: 549,
+   * Re-measured when Effort / Fast chips sat above the model list's iOS
+   * overflow hit target so taps could change the selection. */
+  sourceStylesCssBytes: 100_787,
+  builtAppCssBytes: 86_181,
+  builtAppCssGzipBytes: 15_497,
+  classSelectorLines: 551,
   hasSelectors: 18,
 } as const;
 
