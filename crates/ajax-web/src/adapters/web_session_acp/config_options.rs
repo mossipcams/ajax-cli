@@ -387,11 +387,12 @@ pub fn pin_satisfied(
         return true;
     }
     if cursor_canonical_pin(desired) {
-        if let (Some(wanted), Some(applied)) = (
-            parse_cursor_model_intent(desired),
-            applied_cursor_intent(options),
-        ) {
-            return cursor_model_intents_match(&wanted, &applied);
+        if let Some(wanted) = parse_cursor_model_intent(desired) {
+            if !split_axis_contract_satisfies(options, &wanted) {
+                if let Some(applied) = applied_cursor_intent(options) {
+                    return cursor_model_intents_match(&wanted, &applied);
+                }
+            }
         }
     }
     map_pin_to_apply_steps(options, desired, model_pins_at_spawn)

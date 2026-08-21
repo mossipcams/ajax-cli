@@ -175,7 +175,9 @@ fn boolean_fast_never_uses_string_false_on_wire() {
 
 fn model_step_is(steps: &[ConfigApplyStep], value: &str) -> bool {
     let want = SessionConfigOptionValue::value_id(value.to_string());
-    steps.iter().any(|step| step.config_id == "model" && step.value == want)
+    steps
+        .iter()
+        .any(|step| step.config_id == "model" && step.value == want)
 }
 
 fn thinking_pin() -> &'static str {
@@ -291,9 +293,10 @@ fn map_rejects_when_effort_variant_is_missing() {
 
     let mut split = split_thinking_options();
     if let SessionConfigKind::Select(select) = &mut split[1].kind {
-        select.options = SessionConfigSelectOptions::Ungrouped(vec![
-            SessionConfigSelectOption::new("medium", "Medium"),
-        ]);
+        select.options =
+            SessionConfigSelectOptions::Ungrouped(vec![SessionConfigSelectOption::new(
+                "medium", "Medium",
+            )]);
     }
     assert!(map_pin_to_apply_steps(&split, thinking_pin(), true).is_err());
 }
@@ -345,11 +348,7 @@ fn catalog_pin_requires_advertised_handshake_not_spawn_argv_echo_issue_997() {
         ],
     )
     .category(SessionConfigOptionCategory::Model)];
-    assert!(!pin_satisfied(
-        Some(&options),
-        "cursor-grok-4.6-high",
-        true
-    ));
+    assert!(!pin_satisfied(Some(&options), "cursor-grok-4.6-high", true));
 }
 
 fn reasoning_id_options() -> Vec<SessionConfigOption> {
