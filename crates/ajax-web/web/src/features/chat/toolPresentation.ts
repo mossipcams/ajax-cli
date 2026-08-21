@@ -65,13 +65,106 @@ export function toolTarget(call: { title: string; locations: string[]; callId: s
   return cleanTitle(call.title) || call.callId;
 }
 
+/** Present tense for the live "currently doing" line. Past tense for settled
+ * rows lives beside it so the two cannot drift apart. */
+export const OPERATION_VERBS: Record<string, string> = {
+  read: "Reading",
+  edit: "Editing",
+  delete: "Deleting",
+  move: "Moving",
+  search: "Searching",
+  execute: "Running",
+  think: "Thinking about",
+  fetch: "Fetching",
+};
+
+export const OPERATION_VERBS_PAST: Record<string, string> = {
+  read: "Read",
+  edit: "Edited",
+  delete: "Deleted",
+  move: "Moved",
+  search: "Searched",
+  execute: "Ran",
+  think: "Thought about",
+  fetch: "Fetched",
+};
+
+/** Filename when the call touched a path; the command itself when it ran one;
+ * "files" for a search with no location. */
+export function toolRowTarget(call: {
+  kind: string;
+  title: string;
+  locations: string[];
+  callId: string;
+}): string {
+  const location = call.locations[0];
+  if (location) {
+    const parts = location.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? shortPath(location);
+  }
+  if (call.kind === "search") return "files";
+  return cleanTitle(call.title) || call.callId;
+}
+
+/** Verb-first row label: "Read serve.rs", "Ran cargo nextest …". */
+export function toolRowLabel(call: {
+  kind: string;
+  title: string;
+  locations: string[];
+  callId: string;
+}): string {
+  const verb = OPERATION_VERBS_PAST[call.kind] ?? "Used";
+  return `${verb} ${toolRowTarget(call)}`;
+}
+
+const TOKEN_BOUNDARY = /[\s/\\:;,.|]/;
+
+function isTokenBoundary(text: string, index: number): boolean {
+  if (index <= 0 || index >= text.length) return true;
+  return TOKEN_BOUNDARY.test(text[index - 1]!) || TOKEN_BOUNDARY.test(text[index]!);
+}
+
 /** Both ends of a target distinguish it; the middle rarely does. Two commands
  * that differ only past the width of the column are a rendering failure, so the
  * tail is held aside and only the head is allowed to ellipsize — middle
- * truncation that follows the real column width without measuring it. */
+ * truncation that follows the real column width without measuring it. The split
+ * lands on a token boundary so a shortened command still reads as a command. */
 export function middleSplit(text: string, tail = 14): [string, string] {
   if (text.length <= tail * 2) return [text, ""];
-  return [text.slice(0, text.length - tail), text.slice(text.length - tail)];
+
+  const targetTailStart = text.length - tail;
+  let splitAt = targetTailStart;
+  while (splitAt > 0 && !isTokenBoundary(text, splitAt)) splitAt -= 1;
+
+  if (splitAt < text.length - tail * 2) {
+    splitAt = targetTailStart;
+    while (splitAt < text.length && !isTokenBoundary(text, splitAt)) splitAt += 1;
+  }
+
+  if (splitAt <= 0 || splitAt >= text.length) return [text, ""];
+  return [text.slice(0, splitAt), text.slice(splitAt)];
+}
+
+/** How many lines of tool output to show before the expand control. */
+export const CONTENT_PREVIEW_LINES = 8;
+
+export function textPreview(
+  text: string,
+  maxLines: number,
+  fromEnd: boolean,
+): { preview: string; hiddenLines: number } {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return { preview: text, hiddenLines: 0 };
+  if (fromEnd) {
+    return {
+      preview: lines.slice(-maxLines).join("\n"),
+      hiddenLines: lines.length - maxLines,
+    };
+  }
+  return {
+    preview: lines.slice(0, maxLines).join("\n"),
+    hiddenLines: lines.length - maxLines,
+  };
 }
 
 /** Wall time, rounded to what an operator would say out loud. Under a second is

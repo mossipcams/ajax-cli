@@ -6,11 +6,15 @@ import { dirname, join } from "node:path";
 /** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when model-list scroll hit targets were restored (#1022). */
-  sourceStylesCssBytes: 100_309,
-  builtAppCssBytes: 85_993,
-  builtAppCssGzipBytes: 15_472,
-  classSelectorLines: 549,
+   * Re-measured when Effort / Fast chips sat above the model list's iOS
+   * overflow hit target so taps could change the selection.
+   * Re-measured when model-list scroll hit targets were restored (#1022).
+   * Re-measured again after pass-2 tool disclosure styling.
+   * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020). */
+  sourceStylesCssBytes: 102_387,
+  builtAppCssBytes: 88_408,
+  builtAppCssGzipBytes: 15_787,
+  classSelectorLines: 561,
   hasSelectors: 18,
 } as const;
 

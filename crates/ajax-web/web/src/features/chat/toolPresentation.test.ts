@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
   cleanTitle,
+  CONTENT_PREVIEW_LINES,
   diffLines,
   formatElapsed,
   middleSplit,
+  OPERATION_VERBS,
+  OPERATION_VERBS_PAST,
   shortPath,
+  textPreview,
   toolMark,
+  toolRowLabel,
+  toolRowTarget,
   toolStatusNote,
   toolTarget,
 } from "./toolPresentation";
@@ -76,12 +82,95 @@ describe("cleanTitle", () => {
 describe("middleSplit", () => {
   it("holds the distinguishing tail aside so only the middle can be lost", () => {
     const [head, tail] = middleSplit("gh issue list --repo mossipcams/ajax-cli --state open");
-    expect(tail).toBe("i --state open");
+    expect(tail).toBe("ajax-cli --state open");
+    expect(head).toBe("gh issue list --repo mossipcams/");
     expect(`${head}${tail}`).toBe("gh issue list --repo mossipcams/ajax-cli --state open");
+  });
+
+  it("breaks at a token boundary so commands stay readable", () => {
+    const command = "cargo nextest run -p ajax-gateway --test gateway::";
+    const [head, tail] = middleSplit(command);
+    expect(head + tail).toBe(command);
+    expect(head.endsWith("…")).toBe(false);
+    expect(tail).not.toMatch(/^ures/);
+    expect(head).not.toMatch(/-p…$/);
   });
 
   it("leaves a short target whole", () => {
     expect(middleSplit("src/lib.rs")).toEqual(["src/lib.rs", ""]);
+  });
+});
+
+describe("toolRowLabel", () => {
+  it("reads verb-first with the filename", () => {
+    expect(
+      toolRowLabel({
+        kind: "read",
+        title: "Read File",
+        locations: ["/repo/crates/gateway/src/serve.rs"],
+        callId: "c1",
+      }),
+    ).toBe("Read serve.rs");
+  });
+
+  it("names a search with no location as files", () => {
+    expect(
+      toolRowLabel({
+        kind: "search",
+        title: "Search files",
+        locations: [],
+        callId: "c1",
+      }),
+    ).toBe("Searched files");
+  });
+
+  it("never gives the same label to read and edit of one path", () => {
+    const base = {
+      title: "Touch file",
+      locations: ["/repo/src/serve.rs"],
+      callId: "c1",
+    };
+    expect(toolRowLabel({ ...base, kind: "read" })).not.toBe(
+      toolRowLabel({ ...base, kind: "edit" }),
+    );
+  });
+
+  it("keeps the live and settled verb maps aligned on kinds", () => {
+    expect(Object.keys(OPERATION_VERBS).sort()).toEqual(Object.keys(OPERATION_VERBS_PAST).sort());
+  });
+});
+
+describe("toolRowTarget", () => {
+  it("uses the command when there is no path", () => {
+    expect(
+      toolRowTarget({
+        kind: "execute",
+        title: "`cargo nextest run`",
+        locations: [],
+        callId: "c1",
+      }),
+    ).toBe("cargo nextest run");
+  });
+});
+
+describe("textPreview", () => {
+  const lines = Array.from({ length: CONTENT_PREVIEW_LINES + 2 }, (_, i) => `row-${i + 1}`).join(
+    "\n",
+  );
+
+  it("shows the first lines by default", () => {
+    const { preview, hiddenLines } = textPreview(lines, CONTENT_PREVIEW_LINES, false);
+    expect(preview.startsWith("row-1")).toBe(true);
+    expect(preview).not.toContain(`row-${CONTENT_PREVIEW_LINES + 2}`);
+    expect(hiddenLines).toBe(2);
+  });
+
+  it("shows the last lines for a failure", () => {
+    const { preview, hiddenLines } = textPreview(lines, CONTENT_PREVIEW_LINES, true);
+    expect(preview.endsWith(`row-${CONTENT_PREVIEW_LINES + 2}`)).toBe(true);
+    expect(preview).not.toContain("row-1\n");
+    expect(preview.startsWith("row-1")).toBe(false);
+    expect(hiddenLines).toBe(2);
   });
 });
 
