@@ -55,16 +55,10 @@
 
 .session-model-catalog .model-picker {
   /* Cap only the advertised list so Effort / Fast stay reachable under it, and
-     the sheet body remains the single outer scroller. Empty overflow space
-     must not eat Effort / Fast taps on iOS. */
+     the sheet body remains the single outer scroller. */
   max-height: 46vh;
   overflow-y: auto;
   overscroll-behavior: contain;
-  pointer-events: none;
-  -webkit-overflow-scrolling: auto;
-}
-
-.session-model-catalog .model-option {
-  pointer-events: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
