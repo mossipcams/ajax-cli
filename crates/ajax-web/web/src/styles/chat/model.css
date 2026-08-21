@@ -1,0 +1,168 @@
+/* Model controls — live session model sheet, composer hotbar, and config pickers. */
+.session-model-catalog .model-picker {
+  /* Cap only the advertised list so Effort / Fast stay reachable under it, and
+     the sheet body remains the single outer scroller. */
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-composer-model {
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  min-width: 44px;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-composer-model-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.session-composer-model:hover,
+.session-composer-model:focus-visible {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+}
+
+.session-model-switch-sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  gap: 14px;
+  width: min(var(--shell), 100%);
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+    calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  animation: sheet-rise 220ms var(--ease-spring);
+}
+
+.session-model-switch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-model-switch-current {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+}
+
+/* Live model sheet: the advertised list, then Effort and Fast, in the same
+   picker vocabulary New task uses. Each label sits tight to its own control
+   while the outer gap separates the groups. */
+.session-config-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.session-config-group {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--paper-raised);
+  pointer-events: auto;
+}
+
+.session-model-catalog {
+  position: relative;
+  z-index: 0;
+}
+
+.session-config-pickers .model-picker,
+.session-config-pickers .reasoning-picker {
+  margin-top: 0;
+}
+
+.session-model-switch-sheet .session-sheet-header .pill,
+.session-model-switch-sheet .session-sheet-close {
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
+.session-model-switch-sheet .field-label {
+  display: block;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.session-model-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-model-current-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.session-model-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-body-sm);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.session-model-change,
+.session-model-done {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.session-model-change:hover:not(:disabled),
+.session-model-done:hover {
+  border-color: var(--ink-soft);
+}
+
+.session-model-change:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.session-model-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

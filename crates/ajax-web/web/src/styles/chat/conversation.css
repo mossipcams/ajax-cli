@@ -1,0 +1,130 @@
+/* Conversation ------------------------------------------------------------ */
+/* The operator's own words keep the one messenger convention that carries
+   meaning: a side and a surface. A raised step and a hairline are enough to
+   read as "mine" — a saturated fill made every question shout over the answer
+   it was asking for. */
+.session-said {
+  align-self: flex-end;
+  max-width: min(88%, 30rem);
+  padding: 9px 13px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--text-body);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Agent prose gets no bubble: it is long, it contains code, and it needs the
+   full measure. It also arrives whole paragraphs at a time, so there is no
+   "streaming" treatment to distinguish — settled text is the only text. */
+.session-reply {
+  align-self: stretch;
+  min-width: 0;
+  padding: 2px 0 8px;
+  color: var(--ink);
+  font-size: var(--text-body);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* Cancellation, reconnect, harness switch, context reset: the session changed
+   under the operator, and the conversation says so in one hairline line. */
+.session-divider {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  color: var(--ink-faint);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.session-divider::before,
+.session-divider::after {
+  content: "";
+  flex: 1 1 0%;
+  height: 1px;
+  background: var(--rule);
+}
+
+/* A marker row, not a shout. The uppercase tracked cadence is DESIGN.md chrome
+   and stays on the label; the payload beside it is a command or a whole
+   sentence, and both are destroyed by being case-folded. */
+.session-note {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 0 4px;
+  color: var(--tone, var(--ink-muted));
+  overflow-wrap: anywhere;
+}
+
+.session-note-label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+
+.session-note-text {
+  font-size: var(--text-body-sm);
+  line-height: 1.45;
+}
+
+.session-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* One disclosure per turn: the current operation while it runs, the summary
+   once it settles, the whole timeline when asked for. */
+.session-turn-work {
+  align-self: stretch;
+  min-width: 0;
+}
+
+.session-turn-work-summary {
+  margin: 2px 0;
+}
+
+.session-turn-work-summary .session-row-target {
+  color: var(--ink-faint);
+}
+
+/* Expanded, the timeline is a subordinate column under the row that opened it,
+   not a second conversation. */
+.session-turn-work[data-expanded="true"] > :not(.session-turn-work-summary) {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--rule);
+}
+
+/* Collapsed, the summary row is the only thing left saying a call in here
+   broke. Faint grey is not that. */
+.session-turn-work.has-failure .session-turn-work-summary .session-row-mark {
+  color: var(--danger);
+}
+
+.session-turn-work.has-failure .session-turn-work-summary .session-row-target {
+  color: var(--ink-soft);
+}
+
+/* While the turn runs the row is a live readout, so it carries the running
+   tone rather than sitting at log grey. */
+.session-turn-work[data-live="true"] .session-turn-work-summary .session-row-mark {
+  color: var(--accent);
+}
+
+.session-turn-work[data-live="true"] .session-turn-work-summary .session-row-target {
+  color: var(--ink-muted);
+}

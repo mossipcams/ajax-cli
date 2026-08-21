@@ -34,19 +34,26 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
-`features/task/public.ts`, `features/settings/public.ts`). Task owns the
-reusable desired-model catalog and `ModelPicker` used by New Task and harness
-Switch; Chat owns applying a selected model to the live ACP session. Settings
-owns orchestration-chat enablement storage (`orchestrationChatPreference.ts`);
-App passes the value to New Task and Task Workspace. ESLint
-(`npm run web:lint`) enforces these paths on production files; tests may import
-fixtures across boundaries.
+`features/task/public.ts`, `features/settings/public.ts`). Inside Ajax Chat,
+`ChatSurface.tsx` is the sole composer of top-level capabilities
+(`composer/`, `conversation/`, `scrolling/`, `status/`, `permissions/`,
+`model/`, `session/`). Capabilities import `session/public` and shared UI only;
+`conversation/` may also import `activity/public`. Raw protocol transport stays
+in `features/chat/session/transport/` and does not escape `session/public`.
+Task owns the reusable desired-model catalog and `ModelPicker` used by New Task
+and harness Switch; Chat owns applying a selected model to the live ACP session.
+Settings owns orchestration-chat enablement storage
+(`orchestrationChatPreference.ts`); App passes the value to New Task and Task
+Workspace. ESLint (`npm run web:lint`) enforces these paths on production files;
+tests may import fixtures across boundaries.
 
 Chat and Terminal are peer views of the same task. Neither owns task metadata,
 task actions, harness switching, mode preference, or Diff routing. Those stay
 with workspace composition (`TaskDetailsSheet`, head-action composition, and
 terminal header Details wiring in `features/task-workspace`; terminal footer
-`Task details` disclosure remains in `TaskMetaDetails`).
+`Task details` disclosure remains in `TaskMetaDetails`). Chat-owned CSS lives
+under `styles/chat/`; task-details sheet CSS lives under
+`styles/task-workspace/`. Both ship through the single `styles.css` manifest.
 
 Interactive tasks (tmux send-keys launch) and tasks whose projection is not
 `session_capable` open Terminal (`#/t/<handle>`) instead of Chat. A per-task
@@ -59,10 +66,11 @@ specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **on** (`ajax.web.session.orchestrationChat` in
 localStorage; only an explicit `false` disables it). When off, dashboard and
 embedded terminal behavior is unchanged.
-The browser `webSessionTransport` client, `useTaskSession` hook, and pure
-`sessionReducer` fold validated protocol v2 frames into view state; they retain
-only unacknowledged prompt IDs, the last applied transcript cursor, and
-transient UI state. They do not own the transcript, prompt queue, or ACP process.
+The browser session client lives under `features/chat/session/transport/`; the
+`useChatSession` hook and pure session reducers fold validated protocol v2 frames
+into typed `ChatSessionView` state; they retain only unacknowledged prompt IDs,
+the last applied transcript cursor, and transient UI state. They do not own the
+transcript, prompt queue, or ACP process.
 
 The Settings **Orchestration chat session** toggle (`ajax.web.session.orchestrationChat`,
 default **on**, storage in `features/settings/orchestrationChatPreference.ts`)
@@ -71,7 +79,8 @@ prompts for supported agents, and makes task creation provisioned: with it on,
 the New task sheet calls `startTask` with `orchestration_chat: true` for the
 chosen harness. When the flag is on,
 `#/session/<handle>` renders the Task Workspace in chat mode: the shared task
-header, then ChatSurface (live head + transcript + composer) for
+header, then ChatSurface (composition only: live head, transcript, composer,
+model chrome, and permission slot) for
 session-capable tasks that prefer chat; **Ajax terminal** in task details switches
 to `#/t/<handle>` and remembers that choice in browser localStorage
 (`ajax.web.taskView.terminal`). **Ajax chat** in the footer Task details

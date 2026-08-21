@@ -26,14 +26,18 @@ describe("ChatSurface task details polish", () => {
   });
 
   it("styles sheet field labels with tracked uppercase chrome", () => {
-    const labelRule =
-      stylesSource.match(/\.session-details-sheet \.field-label[^{]*\{([^}]*)\}/) ?? [];
-    const labelCss = labelRule[1] ?? "";
-    expect(labelCss).toMatch(/text-transform:\s*uppercase/);
-    expect(labelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
-    expect(labelCss).toMatch(/color:\s*var\(--ink-muted\)/);
-    // The live model sheet reuses the same chrome rather than restyling labels.
-    expect(labelRule[0] ?? "").toMatch(/\.session-model-switch-sheet \.field-label/);
+    const detailsLabelRule =
+      stylesSource.match(/\.session-details-sheet \.field-label\s*\{([^}]*)\}/) ?? [];
+    const detailsLabelCss = detailsLabelRule[1] ?? "";
+    expect(detailsLabelCss).toMatch(/text-transform:\s*uppercase/);
+    expect(detailsLabelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
+    expect(detailsLabelCss).toMatch(/color:\s*var\(--ink-muted\)/);
+    const modelLabelRule =
+      stylesSource.match(/\.session-model-switch-sheet \.field-label\s*\{([^}]*)\}/) ?? [];
+    const modelLabelCss = modelLabelRule[1] ?? "";
+    expect(modelLabelCss).toMatch(/text-transform:\s*uppercase/);
+    expect(modelLabelCss).toMatch(/letter-spacing:\s*var\(--tracking-label\)/);
+    expect(modelLabelCss).toMatch(/color:\s*var\(--ink-muted\)/);
   });
 
   it("lifts Close to 44px in the task details sheet", () => {
@@ -116,12 +120,24 @@ describe("ChatSurface ownership", () => {
     expect(chatSurfaceSource).not.toMatch(/visibleTaskActions/);
   });
 
+  it("composes capabilities through public modules only", () => {
+    expect(chatSurfaceSource).toMatch(/\.\/composer\/public/);
+    expect(chatSurfaceSource).toMatch(/\.\/conversation\/public/);
+    expect(chatSurfaceSource).toMatch(/\.\/scrolling\/public/);
+    expect(chatSurfaceSource).toMatch(/\.\/session\/public/);
+    expect(chatSurfaceSource).toMatch(/\.\/status\/ChatLiveHead/);
+    expect(chatSurfaceSource).toMatch(/\.\/model\/ChatModelPresentation/);
+    expect(chatSurfaceSource).not.toMatch(/\.\/session\/reducer/);
+    expect(chatSurfaceSource).not.toMatch(/\.\/session\/transport\/contracts/);
+    expect(chatSurfaceSource).not.toMatch(/buildHeadView/);
+    expect(chatSurfaceSource).toMatch(/\.\/model\/notice/);
+  });
+
   it("does not import terminal speech or xterm types", () => {
     expect(chatSurfaceSource).not.toMatch(/@\/features\/terminal\/useTaskTerminalSpeech/);
     expect(chatSurfaceSource).not.toMatch(/@xterm\/xterm/);
     expect(chatSurfaceSource).not.toMatch(/terminalConnection/);
     expect(chatSurfaceSource).not.toMatch(/useSessionChatViewport/);
-    expect(chatSurfaceSource).toMatch(/\.\/speech\/useChatSpeech/);
-    expect(chatSurfaceSource).toMatch(/\.\/viewport\/useChatViewport/);
+    expect(chatSurfaceSource).not.toMatch(/\.\/speech\/useChatSpeech/);
   });
 });

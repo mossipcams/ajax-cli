@@ -5,7 +5,8 @@
 @import "./styles/foundation.css";
 @import "./styles/app-shell.css";
 @import "./styles/settings.css";
-@import "./styles/session.css";
+@import "./styles/chat.css";
+@import "./styles/task-workspace.css";
 @import "./styles/app-shell-continuation.css";
 @import "./styles/task.css";
 @import "./styles/app-shell-layout.css";

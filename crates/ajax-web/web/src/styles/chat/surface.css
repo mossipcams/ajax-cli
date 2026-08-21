@@ -1,0 +1,84 @@
+/* SESSION ORCHESTRATION CHAT ---------------------------------------------- */
+/* Instrument stack: a live head that never scrolls away over a settled
+   transcript that holds its position. See the direction contract at the top of
+   features/chat/ChatSurface.tsx. */
+.app-shell--session .app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 0 12px;
+  gap: 0;
+}
+
+/* Anchors the jump-to-live pill. Chat route owns its own horizontal gutter on
+   the thread so the composer can full-bleed without clipping. */
+.session-page.session-chat {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Bounded flex column: LiveHead + transcript scroller + composer sibling. */
+.session-chat-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The transcript owns scrolling, so every ancestor between the app viewport and
+   .session-thread must be a bounded flex column. The outlet section defaults to
+   display:block, which broke the chain and let the whole route scroll — that is
+   what floated the composer up over the transcript. */
+[data-testid="route-scroll"]:has([data-outlet="session"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  /* The generic route padding is dead space here: this route renders no bottom
+     nav and no page lead, so its 72px of nav clearance only stranded the
+     composer that far above the keyboard. Session omits .cockpit-chrome, so
+     this scroller owns safe-area top as well as landscape notch insets. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+[data-testid="route-scroll"]:has([data-outlet="session"]) .session-page {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+

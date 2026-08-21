@@ -1,11 +1,10 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource, WebAction } from "@/shared/lib/types";
-import { ChatSurface } from "@/features/chat/public";
+import { ChatSurface, clearSessionOutbox, type ChatTaskAttention } from "@/features/chat/public";
 import { ActionBar, TaskLoadError, visibleTaskActions } from "@/features/task/public";
 import TaskTerminalView from "./TaskTerminalView";
 import Skeleton from "@/shared/ui/Skeleton";
 import { sessionHash, taskHash } from "@/shared/lib/routes";
-import { clearSessionOutbox } from "@/shared/lib/webSessionTransport";
 import TaskDetailsSheet from "./TaskDetailsSheet";
 import TaskWorkspaceHeader from "./TaskWorkspaceHeader";
 import {
@@ -78,6 +77,14 @@ export default function TaskWorkspace({
   const taskDetail = detail.data;
   const actions = taskDetail ? visibleTaskActions(taskDetail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
+
+  const taskAttention: ChatTaskAttention | null =
+    taskDetail?.status === "waiting" || taskDetail?.status === "error"
+      ? {
+          status: taskDetail.status,
+          explanation: taskDetail.status_explanation,
+        }
+      : null;
 
   let headActions: ReactNode = null;
   if (mode === "chat" && taskDetail && safeActions.length) {
@@ -158,6 +165,7 @@ export default function TaskWorkspace({
           onOpenDiff={onOpenDiff}
           onMutated={onMutated}
           headActions={headActions}
+          taskAttention={taskAttention}
           workspaceHeader={
             <TaskWorkspaceHeader
               detail={taskDetail}

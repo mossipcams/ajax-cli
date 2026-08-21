@@ -5,11 +5,12 @@ import { useEffect, useState, type ComponentProps } from "react";
 import { render, fireEvent, screen, act } from "@testing-library/react";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import ChatSurface from "./ChatSurface";
+import type { ChatTaskAttention } from "./status/public";
 import chatSurfaceSource from "./ChatSurface?raw";
 import TaskDetailsSheet from "@/features/task-workspace/TaskDetailsSheet";
 import TaskWorkspaceHeader from "@/features/task-workspace/TaskWorkspaceHeader";
 import { ActionBar, visibleTaskActions } from "@/features/task/public";
-import * as webSessionTransport from "@/shared/lib/webSessionTransport";
+import * as webSessionTransport from "./session/transport/public";
 import taskDetail from "@/fixtures/task-detail.json";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
@@ -90,6 +91,11 @@ export function ChatWithSheet(
 
   const actions = visibleTaskActions(detail.actions);
   const safeActions = actions.filter((action) => !action.destructive);
+  const taskAttention: ChatTaskAttention | null =
+    props.taskAttention ??
+    (detail.status === "waiting" || detail.status === "error"
+      ? { status: detail.status, explanation: detail.status_explanation }
+      : null);
   const defaultHeadActions = safeActions.length ? (
     <div data-testid="session-head-actions">
       <ActionBar
@@ -112,6 +118,7 @@ export function ChatWithSheet(
         detail={detail}
         detailStatus={props.detailStatus ?? "ready"}
         headActions={props.headActions ?? defaultHeadActions}
+        taskAttention={taskAttention}
         workspaceHeader={
           <TaskWorkspaceHeader
             detail={detail}

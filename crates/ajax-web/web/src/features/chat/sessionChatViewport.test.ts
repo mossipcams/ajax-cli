@@ -4,9 +4,9 @@ import {
   releaseSessionViewportOwnership,
   sessionSurfaceStyle,
   SESSION_VIEWPORT_ATTR,
-} from "./sessionChatViewport";
+} from "@/shared/lib/sessionViewport";
 
-describe("sessionChatViewport", () => {
+describe("session viewport helpers", () => {
   afterEach(() => {
     releaseSessionViewportOwnership();
   });
