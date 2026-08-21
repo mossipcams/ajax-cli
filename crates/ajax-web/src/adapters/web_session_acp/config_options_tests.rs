@@ -4,7 +4,7 @@ use super::config_option_descriptors::config_option_descriptors;
 use super::config_options::*;
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
-    SessionConfigSelectOption, SessionConfigValueId,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId,
 };
 use serde_json::json;
 
@@ -173,6 +173,184 @@ fn boolean_fast_never_uses_string_false_on_wire() {
     assert_eq!(fast.value, SessionConfigOptionValue::boolean(false));
 }
 
+fn model_step_is(steps: &[ConfigApplyStep], value: &str) -> bool {
+    let want = SessionConfigOptionValue::value_id(value.to_string());
+    steps
+        .iter()
+        .any(|step| step.config_id == "model" && step.value == want)
+}
+
+fn thinking_pin() -> &'static str {
+    "claude-opus-5-thinking|effort=high|fast=false"
+}
+
+fn exploded_thinking_options() -> Vec<SessionConfigOption> {
+    vec![SessionConfigOption::select(
+        "model",
+        "Model",
+        "composer-2.5",
+        vec![
+            SessionConfigSelectOption::new("composer-2.5", "Composer"),
+            SessionConfigSelectOption::new(
+                "claude-opus-5-thinking-high",
+                "Claude Opus 5 Thinking High",
+            ),
+            SessionConfigSelectOption::new(
+                "claude-opus-5-thinking-high-fast",
+                "Claude Opus 5 Thinking High Fast",
+            ),
+            SessionConfigSelectOption::new("claude-opus-5-high", "Claude Opus 5 High"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Model)]
+}
+
+fn split_thinking_options() -> Vec<SessionConfigOption> {
+    vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            "composer-2.5",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5", "Composer"),
+                SessionConfigSelectOption::new("claude-opus-5-thinking", "Claude Opus 5 Thinking"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        SessionConfigOption::select(
+            "effort",
+            "Effort",
+            "medium",
+            vec![
+                SessionConfigSelectOption::new("high", "High"),
+                SessionConfigSelectOption::new("medium", "Medium"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+        SessionConfigOption::boolean("fast", "Fast", true)
+            .category(SessionConfigOptionCategory::ModelConfig),
+    ]
+}
+
+fn both_thinking_variants_options() -> Vec<SessionConfigOption> {
+    let mut options = split_thinking_options();
+    if let SessionConfigKind::Select(select) = &mut options[0].kind {
+        select.options = SessionConfigSelectOptions::Ungrouped(vec![
+            SessionConfigSelectOption::new("composer-2.5", "Composer"),
+            SessionConfigSelectOption::new("claude-opus-5-thinking", "Claude Opus 5 Thinking"),
+            SessionConfigSelectOption::new(
+                "claude-opus-5-thinking-high",
+                "Claude Opus 5 Thinking High",
+            ),
+        ]);
+    }
+    options
+}
+
+#[test]
+fn map_split_axis_sends_base_effort_and_fast() {
+    let options = split_thinking_options();
+    let steps = map_pin_to_apply_steps(&options, thinking_pin(), true).expect("mapped");
+    assert!(model_step_is(&steps, "claude-opus-5-thinking"));
+    assert!(steps.iter().any(|step| {
+        step.config_id == "effort" && step.value == SessionConfigOptionValue::value_id("high")
+    }));
+    assert!(steps.iter().any(|step| {
+        step.config_id == "fast" && step.value == SessionConfigOptionValue::boolean(false)
+    }));
+}
+
+#[test]
+fn map_exploded_ids_only_sends_full_intent_match() {
+    let options = exploded_thinking_options();
+    let steps = map_pin_to_apply_steps(&options, thinking_pin(), true).expect("mapped");
+    assert!(model_step_is(&steps, "claude-opus-5-thinking-high"));
+    assert_eq!(steps.len(), 1);
+}
+
+#[test]
+fn map_prefers_split_axis_when_base_and_exploded_are_both_advertised() {
+    let options = both_thinking_variants_options();
+    let steps = map_pin_to_apply_steps(&options, thinking_pin(), true).expect("mapped");
+    assert!(model_step_is(&steps, "claude-opus-5-thinking"));
+    assert!(!model_step_is(&steps, "claude-opus-5-thinking-high"));
+    assert!(steps.iter().any(|step| step.config_id == "effort"));
+}
+
+#[test]
+fn map_rejects_when_effort_variant_is_missing() {
+    let mut options = exploded_thinking_options();
+    if let SessionConfigKind::Select(select) = &mut options[0].kind {
+        select.options = SessionConfigSelectOptions::Ungrouped(vec![
+            SessionConfigSelectOption::new("composer-2.5", "Composer"),
+            SessionConfigSelectOption::new(
+                "claude-opus-5-thinking-medium",
+                "Claude Opus 5 Thinking Medium",
+            ),
+        ]);
+    }
+    assert!(map_pin_to_apply_steps(&options, thinking_pin(), true).is_err());
+
+    let mut split = split_thinking_options();
+    if let SessionConfigKind::Select(select) = &mut split[1].kind {
+        select.options =
+            SessionConfigSelectOptions::Ungrouped(vec![SessionConfigSelectOption::new(
+                "medium", "Medium",
+            )]);
+    }
+    assert!(map_pin_to_apply_steps(&split, thinking_pin(), true).is_err());
+}
+
+#[test]
+fn map_exploded_fast_true_and_false() {
+    let options = exploded_thinking_options();
+    let off = map_pin_to_apply_steps(&options, thinking_pin(), true).expect("off");
+    assert!(model_step_is(&off, "claude-opus-5-thinking-high"));
+    let on = map_pin_to_apply_steps(
+        &options,
+        "claude-opus-5-thinking|effort=high|fast=true",
+        true,
+    )
+    .expect("on");
+    assert!(model_step_is(&on, "claude-opus-5-thinking-high-fast"));
+}
+
+#[test]
+fn map_catalog_exploded_id_sends_advertised_exploded_value() {
+    let options = exploded_thinking_options();
+    let steps =
+        map_pin_to_apply_steps(&options, "claude-opus-5-thinking-high", true).expect("mapped");
+    assert!(model_step_is(&steps, "claude-opus-5-thinking-high"));
+}
+
+#[test]
+fn persist_collapses_exploded_current_value_to_ajax_pipe_form() {
+    let mut options = exploded_thinking_options();
+    if let SessionConfigKind::Select(select) = &mut options[0].kind {
+        select.current_value = SessionConfigValueId::from("claude-opus-5-thinking-high");
+    }
+    assert_eq!(
+        applied_model_id_for_persist(&options).as_deref(),
+        Ok(thinking_pin())
+    );
+    assert!(pin_satisfied(Some(&options), thinking_pin(), true));
+}
+
+#[test]
+fn catalog_pin_requires_advertised_handshake_not_spawn_argv_echo_issue_997() {
+    let options = vec![SessionConfigOption::select(
+        "model",
+        "Model",
+        "cursor-grok-4.6-high",
+        vec![
+            SessionConfigSelectOption::new("composer-2.5[fast=true]", "Composer Fast"),
+            SessionConfigSelectOption::new("grok-4.6[effort=high,fast=true]", "Grok High Fast"),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Model)];
+    assert!(!pin_satisfied(Some(&options), "cursor-grok-4.6-high", true));
+}
+
 fn reasoning_id_options() -> Vec<SessionConfigOption> {
     vec![
         SessionConfigOption::select(
@@ -214,7 +392,7 @@ fn map_pipe_form_uses_advertised_reasoning_id() {
 }
 
 #[test]
-fn split_apply_skips_thought_level_when_not_advertised() {
+fn split_apply_rejects_when_effort_is_not_advertised() {
     let options = vec![
         SessionConfigOption::select(
             "model",
@@ -229,18 +407,7 @@ fn split_apply_skips_thought_level_when_not_advertised() {
         SessionConfigOption::boolean("fast", "Fast", true)
             .category(SessionConfigOptionCategory::ModelConfig),
     ];
-    let steps = map_pin_to_apply_steps(&options, "cursor-grok-4.6-high", true).expect("mapped");
-    assert!(steps.iter().any(|step| {
-        step.config_id == "model"
-            && step.value
-                == SessionConfigOptionValue::value_id(SessionConfigValueId::from("grok-4.6"))
-    }));
-    assert!(steps.iter().any(|step| {
-        step.config_id == "fast" && step.value == SessionConfigOptionValue::boolean(false)
-    }));
-    assert!(!steps
-        .iter()
-        .any(|step| step.config_id == "effort" || step.config_id == "reasoning"));
+    assert!(map_pin_to_apply_steps(&options, "cursor-grok-4.6-high", true).is_err());
 }
 
 #[test]

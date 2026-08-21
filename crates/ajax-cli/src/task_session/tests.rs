@@ -249,6 +249,24 @@ fn task_poll_classification_keeps_task_open_on_terminal_side_app_switch_hangup()
 }
 
 #[test]
+fn task_poll_classification_drains_master_output_before_hup_close() {
+    assert_eq!(
+        super::classify_task_poll_events(
+            PollFlags::empty(),
+            PollFlags::POLLIN | PollFlags::POLLHUP
+        ),
+        super::TaskPollAction::Pump {
+            tty_ready: false,
+            master_ready: true,
+        }
+    );
+    assert_eq!(
+        super::classify_task_poll_events(PollFlags::empty(), PollFlags::POLLHUP),
+        super::TaskPollAction::Close
+    );
+}
+
+#[test]
 fn interrupted_task_pty_poll_is_retried_in_same_attach_loop() {
     assert_eq!(
         super::classify_task_poll_error(nix::errno::Errno::EINTR),
