@@ -116,6 +116,7 @@ export function ChatWithSheet(
           <TaskWorkspaceHeader
             detail={detail}
             handle={handle}
+            showStatusPill={false}
             onBack={props.onBack ?? (() => {})}
             onOpenDetails={() => setDetailsOpen(true)}
             detailsOpen={detailsOpen}

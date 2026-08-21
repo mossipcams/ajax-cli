@@ -173,7 +173,14 @@ Grok levels, otherwise catalog `efforts[]` when the selected base has more than
 one), and a **Fast** Off/On row when live
 boolean Fast is advertised or the catalog row has `hasFast` (default Off; Auto is
 never Fast). New Task and Switch persist pipe-form `session_model` such as
-`grok-4.6|effort=high|fast=false`. The catalog endpoint serves the complete list —
+`grok-4.6|effort=high|fast=false`. In-band apply maps that full selection onto
+advertised `configOptions`: send base plus effort/Fast when that split-axis
+contract exists; otherwise send one exploded catalog id that matches the whole
+Cursor intent (`claude-opus-5-thinking-high` for
+`claude-opus-5-thinking|effort=high|fast=false`). Reject before ACP when neither
+is an exact full match. After a successful apply, `snapshot.model` stays the
+harness `currentValue`; task `session_model` storage keeps Ajax collapsed
+pipe-form. The catalog endpoint serves the complete list —
 Cursor from collapsed `agent models`, the bridges from their own `session/new`
 handshake.
 

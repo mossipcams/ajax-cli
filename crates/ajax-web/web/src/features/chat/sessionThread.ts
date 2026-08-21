@@ -215,11 +215,13 @@ export function latestThought(items: ConversationItem[]): string | null {
   return null;
 }
 
-/** One quiet line for the head: collapse whitespace and trim length. */
+/** One quiet line for the head: collapse whitespace and trim on a word boundary. */
 export function thoughtSnippet(text: string, maxLen = 120): string {
   const line = text.replace(/\s+/g, " ").trim();
   if (line.length <= maxLen) return line;
-  return `${line.slice(0, maxLen - 1)}…`;
+  const cut = line.lastIndexOf(" ", maxLen - 1);
+  const end = cut > 0 ? cut : maxLen - 1;
+  return `${line.slice(0, end)}…`;
 }
 
 /** Omit over a union collapses to its shared keys, so distribute it. */

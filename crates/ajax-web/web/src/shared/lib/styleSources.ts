@@ -7,11 +7,14 @@ import { dirname, join } from "node:path";
 export const BASELINE = {
   /** Sum of styles.css + imported module bytes after T5 measured optimization.
    * Re-measured when Effort / Fast chips sat above the model list's iOS
-   * overflow hit target so taps could change the selection. */
-  sourceStylesCssBytes: 100_787,
-  builtAppCssBytes: 86_181,
-  builtAppCssGzipBytes: 15_497,
-  classSelectorLines: 551,
+   * overflow hit target so taps could change the selection.
+   * Re-measured when model-list scroll hit targets were restored (#1022).
+   * Re-measured again after pass-2 tool disclosure styling.
+   * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020). */
+  sourceStylesCssBytes: 102_387,
+  builtAppCssBytes: 88_408,
+  builtAppCssGzipBytes: 15_787,
+  classSelectorLines: 561,
   hasSelectors: 18,
 } as const;
 

@@ -262,7 +262,7 @@ describe("Transcript — turn activity disclosure", () => {
 
     expect(screen.queryByTestId("session-tool-diff")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-turn-work-summary"));
-    fireEvent.click(screen.getByRole("button", { name: /Edit config/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Edited config\.ts/i }));
 
     const diff = screen.getByTestId("session-tool-diff");
     expect(diff).toHaveTextContent("-port = 1");
@@ -322,6 +322,24 @@ describe("Transcript — turn activity disclosure", () => {
   it("sets reasoning as a grid row rather than an italic aside", () => {
     expect(stylesSource.match(/\.session-thinking\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
       /font-style/,
+    );
+  });
+
+  it("omits the other-step filler from the collapsed summary", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      tool("s1", { kind: "search", status: "completed" }),
+      agentProse("a1", "Done."),
+    ];
+    render(<Transcript items={items} busy={false} />);
+
+    const summary = screen.getByTestId("session-turn-work-summary").textContent ?? "";
+    expect(summary).not.toMatch(/other step/i);
+  });
+
+  it("disclosure body blocks sit flush to the rail without a second card indent", () => {
+    expect(stylesSource.match(/\.session-toolcard-body\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
+      /padding:[^;]*24px/,
     );
   });
 });

@@ -5,6 +5,8 @@ export interface TaskWorkspaceHeaderProps {
   detail?: BrowserTaskDetail | null;
   /** Shown as the title when detail has not loaded yet. */
   handle?: string;
+  /** When false, omit the header status pill (chat live head owns task state). Default true. */
+  showStatusPill?: boolean;
   onBack: () => void;
   onOpenDetails?: () => void;
   detailsOpen?: boolean;
@@ -16,13 +18,14 @@ export interface TaskWorkspaceHeaderProps {
 export default function TaskWorkspaceHeader({
   detail,
   handle,
+  showStatusPill = true,
   onBack,
   onOpenDetails,
   detailsOpen = false,
   detailsPanelId,
   detailsTestId = "task-details",
 }: TaskWorkspaceHeaderProps) {
-  const meta = detail ? statusMeta(detail.status) : null;
+  const meta = detail && showStatusPill ? statusMeta(detail.status) : null;
   const title = detail?.title || detail?.qualified_handle || handle || "";
 
   return (

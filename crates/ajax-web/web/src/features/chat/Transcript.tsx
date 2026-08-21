@@ -23,7 +23,13 @@ import {
   type PlanEntry,
   type ToolCall,
 } from "./sessionThread";
-import { cleanTitle, elapsedMs, formatElapsed, toolTarget } from "./toolPresentation";
+import {
+  cleanTitle,
+  elapsedMs,
+  formatElapsed,
+  OPERATION_VERBS,
+  toolTarget,
+} from "./toolPresentation";
 
 /** Complete paragraphs only. A partial sentence arriving word by word is the
  * protocol leaking into the conversation, so a live answer is cut back to its
@@ -83,19 +89,6 @@ function PlanChecklist({ entries }: { entries: PlanEntry[] }) {
   );
 }
 
-/** What the row says while the call is happening, in the operator's words —
- * "Running cargo test…", not `execute`. */
-const OPERATION_VERBS: Record<string, string> = {
-  read: "Reading",
-  edit: "Editing",
-  delete: "Deleting",
-  move: "Moving",
-  search: "Searching",
-  execute: "Running",
-  think: "Thinking about",
-  fetch: "Fetching",
-};
-
 function tools(items: ConversationItem[]): ToolCall[] {
   return items.flatMap((item) => (item.kind === "tool" ? [item.call] : []));
 }
@@ -135,11 +128,9 @@ export function activitySummary(items: ConversationItem[]): string {
   const read = kinds("read");
   const edited = kinds("edit", "move", "delete");
   const ran = kinds("execute");
-  const other = calls.length - read - edited - ran;
   if (read) parts.push(`read ${count(read, "file", "files")}`);
   if (edited) parts.push(`edited ${count(edited, "file", "files")}`);
   if (ran) parts.push(`ran ${count(ran, "command", "commands")}`);
-  if (other) parts.push(count(other, "other step", "other steps"));
 
   if (!parts.length) {
     if (items.some((item) => item.kind === "plan")) parts.push("planning");

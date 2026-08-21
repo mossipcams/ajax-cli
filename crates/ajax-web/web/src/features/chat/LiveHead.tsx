@@ -52,6 +52,17 @@ export function headTone(state: HeadState, detail: BrowserTaskDetail | null): st
   return "idle";
 }
 
+/** Task waiting/error is already in the shared workspace header — the live head
+ * carries the explanation and actions, not a second status label. */
+export function isTaskLevelAttention(
+  state: HeadState,
+  detail: BrowserTaskDetail | null,
+  decision: Decision | null,
+): boolean {
+  if (state !== "attention" || !detail || decision) return false;
+  return detail.status === "waiting" || detail.status === "error";
+}
+
 /** Context pressure from ACP `usage_update`. Shown whenever the harness reports
  * a non-zero window; high pressure gets a warning tone at 90%+. */
 function UsageMeter({ usage }: { usage: Usage }) {
@@ -153,6 +164,11 @@ export default function LiveHead({
   const quiet = state === "working" && activityAgeMs >= 60_000;
   const hasToolOrPlan = Boolean(tool || planStep);
   const showThinking = state === "working" && !hasToolOrPlan && !thoughtSnippet;
+  const taskAttention = isTaskLevelAttention(state, detail, decision);
+  const showHeadLine = !taskAttention;
+  const attentionText =
+    detail?.status_explanation?.trim() ||
+    (detail?.status === "error" ? "The task reported an error." : "Waiting for you.");
   return (
     <section
       className={`session-head tone-${tone}`}
@@ -161,32 +177,34 @@ export default function LiveHead({
     >
       {/* The live region is scoped to the state line and tool row: wrapping the
           whole head made every thought chunk re-announce Stop too. */}
-      <div className="session-head-line" aria-live="polite">
-        <span
-          className={`status-dot${state === "working" && !quiet ? " is-live" : ""}`}
-          aria-hidden="true"
-        />
-        <span className="session-head-label">
-          {quiet ? "No recent activity" : STATE_LABELS[state]}
-        </span>
-        {!connected ? (
-          <span className="session-head-offline" data-testid="session-head-offline">
-            Reconnecting
+      {showHeadLine ? (
+        <div className="session-head-line" aria-live="polite">
+          <span
+            className={`status-dot${state === "working" && !quiet ? " is-live" : ""}`}
+            aria-hidden="true"
+          />
+          <span className="session-head-label">
+            {quiet ? "No recent activity" : STATE_LABELS[state]}
           </span>
-        ) : null}
-        <div className="session-head-controls">
-          {state === "working" ? (
-            <button
-              type="button"
-              className="session-head-stop"
-              data-testid="session-cancel"
-              onClick={onStop}
-            >
-              Stop
-            </button>
+          {!connected ? (
+            <span className="session-head-offline" data-testid="session-head-offline">
+              Reconnecting
+            </span>
           ) : null}
+          <div className="session-head-controls">
+            {state === "working" ? (
+              <button
+                type="button"
+                className="session-head-stop"
+                data-testid="session-cancel"
+                onClick={onStop}
+              >
+                Stop
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {state === "decision" && decision ? (
         <div className="session-decision" data-testid="session-decision" role="alert">
@@ -240,8 +258,7 @@ export default function LiveHead({
       {state === "attention" && detail ? (
         <div className="session-attention">
           <p className="session-head-quiet" data-testid="session-attention">
-            {detail.status_explanation?.trim() ||
-              (detail.status === "error" ? "The task reported an error." : "Waiting for you.")}
+            {attentionText}
           </p>
           {/* The head must answer "what do I do" precisely when the task needs a
               human. Render the server's own actions, in the server's order —

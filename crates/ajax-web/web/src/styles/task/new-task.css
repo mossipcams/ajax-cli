@@ -174,15 +174,6 @@
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
-  /* iOS -webkit-overflow-scrolling layers steal clicks from Effort / Fast
-     even when z-index paints those chips on top. Let empty list space fall
-     through; rows keep their own hits. */
-  pointer-events: none;
-  -webkit-overflow-scrolling: auto;
-}
-
-.sheet-card.is-model-step .model-option {
-  pointer-events: auto;
 }
 
 /* iOS promotes overflow:scroll into a layer that can steal taps from

@@ -54,7 +54,7 @@
   flex: none;
 }
 
-/* STATUS — CLI cockpit glyph + label (▸ ? ! ✓ ·), painted with the tone
+/* STATUS — CLI cockpit glyph + label (▸ ◦ ! ✓ ·), painted with the tone
    color. Lives in the header row so state is always in view. */
 .interact-pill {
   display: inline-flex;
@@ -80,7 +80,7 @@
 .interact-pill.tone-waiting::before,
 .interact-pill.tone-attention::before,
 .interact-pill.tone-ready::before {
-  content: "?";
+  content: "◦";
 }
 
 .interact-pill.tone-error::before,

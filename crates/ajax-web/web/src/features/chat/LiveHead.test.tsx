@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import LiveHead, { formatTurnUsage, headState, headTone } from "./LiveHead";
+import LiveHead, { formatTurnUsage, headState, headTone, isTaskLevelAttention } from "./LiveHead";
 
 const noop = vi.fn();
 
@@ -59,6 +59,41 @@ describe("headState precedence", () => {
 describe("headTone", () => {
   it("uses error tone for task detail errors", () => {
     expect(headTone("attention", { status: "error" } as never)).toBe("error");
+  });
+});
+
+describe("isTaskLevelAttention", () => {
+  it("is true for task waiting or error without an ACP decision", () => {
+    expect(isTaskLevelAttention("attention", { status: "waiting" } as never, null)).toBe(true);
+    expect(isTaskLevelAttention("attention", { status: "error" } as never, null)).toBe(true);
+  });
+
+  it("is false when an ACP decision or non-attention state owns the head", () => {
+    expect(
+      isTaskLevelAttention(
+        "attention",
+        { status: "waiting" } as never,
+        { requestId: "1", title: "Run?", detail: "" },
+      ),
+    ).toBe(false);
+    expect(isTaskLevelAttention("working", { status: "waiting" } as never, null)).toBe(false);
+  });
+});
+
+describe("LiveHead task attention chrome", () => {
+  it("shows one explanation line without duplicating the needs-you label", () => {
+    mountHead({
+      state: "attention",
+      tone: "waiting",
+      detail: {
+        status: "waiting",
+        status_explanation: "Waiting for review",
+      } as never,
+      actions: <button type="button">Review</button>,
+    });
+    expect(screen.queryByText("Needs you")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-attention")).toHaveTextContent("Waiting for review");
+    expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
   });
 });
 

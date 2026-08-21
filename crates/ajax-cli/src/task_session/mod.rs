@@ -375,14 +375,15 @@ pub(super) fn classify_task_poll_events(
     if master_flags.contains(PollFlags::POLLNVAL) {
         return TaskPollAction::Close;
     }
-    if master_flags.intersects(PollFlags::POLLERR | PollFlags::POLLHUP) {
+    let master_ready = master_flags.contains(PollFlags::POLLIN);
+    if master_flags.intersects(PollFlags::POLLERR | PollFlags::POLLHUP) && !master_ready {
         return TaskPollAction::Close;
     }
 
     let transient_tty_event = tty_flags.intersects(PollFlags::POLLERR | PollFlags::POLLHUP);
     TaskPollAction::Pump {
         tty_ready: tty_flags.contains(PollFlags::POLLIN) && !transient_tty_event,
-        master_ready: master_flags.contains(PollFlags::POLLIN),
+        master_ready,
     }
 }
 

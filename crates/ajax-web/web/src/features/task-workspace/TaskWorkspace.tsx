@@ -162,6 +162,7 @@ export default function TaskWorkspace({
             <TaskWorkspaceHeader
               detail={taskDetail}
               handle={handle}
+              showStatusPill={false}
               onBack={onBack}
               onOpenDetails={taskDetail ? () => setDetailsOpen(true) : undefined}
               detailsOpen={detailsOpen}

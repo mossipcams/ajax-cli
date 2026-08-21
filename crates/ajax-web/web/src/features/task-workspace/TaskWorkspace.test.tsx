@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import TaskWorkspace from "./TaskWorkspace";
 import taskDetail from "@/fixtures/task-detail.json";
 import { writeOrchestrationChatEnabled } from "@/features/settings/public";
@@ -108,7 +108,9 @@ describe("TaskWorkspace", () => {
     );
 
     expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
-    expect(screen.getByTestId("mobile-chrome-header")).toBeInTheDocument();
+    const header = screen.getByTestId("mobile-chrome-header");
+    expect(header).toBeInTheDocument();
+    expect(within(header).queryByText("Waiting", { exact: true })).not.toBeInTheDocument();
     expect(window.location.hash).not.toBe(sessionHash("web/fix-login"));
   });
 
