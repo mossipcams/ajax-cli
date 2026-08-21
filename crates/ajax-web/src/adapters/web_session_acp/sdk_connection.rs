@@ -5,7 +5,8 @@ use super::apply_model::{
 };
 use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
 use super::config_options::{
-    mode_option, read_model_applied, replace_config_options, sync_session_result_config_options,
+    mode_option, read_model_applied, replace_config_options, select_value_advertised,
+    sync_session_result_config_options,
 };
 use agent_client_protocol::{
     on_receive_notification, on_receive_request,
@@ -17,8 +18,7 @@ use agent_client_protocol::{
             PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
             RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
             SessionConfigKind, SessionConfigOption, SessionConfigOptionsCapabilities,
-            SessionConfigSelectOptions, SessionNotification, SessionUpdate,
-            SetSessionConfigOptionRequest, TextContent,
+            SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, TextContent,
         },
         ProtocolVersion,
     },
@@ -159,8 +159,6 @@ async fn run_async(options: RunOptions) {
     let permissions: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
     let connection_events = events.clone();
     let notification_events = events.clone();
-    let permission_events = events.clone();
-    let permission_store = Arc::clone(&permissions);
     let live_session: Arc<Mutex<Option<LiveSession>>> = Arc::new(Mutex::new(None));
     let live_for_notifications = Arc::clone(&live_session);
     let transport = traced_transport(stdin, stdout, events.clone());
@@ -207,22 +205,17 @@ async fn run_async(options: RunOptions) {
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, _connection| {
                 let request_id = responder.id().to_string();
-                let id = serde_json::to_value(responder.id())
+                let outcome = auto_approve_permission(&request.options);
+                if matches!(outcome, RequestPermissionOutcome::Cancelled) {
+                    tracing::warn!(
+                        target: "ajax_web",
+                        request_id = %request_id,
+                        "ACP permission request has no allow options; cancelling"
+                    );
+                }
+                responder
+                    .respond(RequestPermissionResponse::new(outcome))
                     .map_err(agent_client_protocol::Error::into_internal_error)?;
-                let params = serde_json::to_value(&request)
-                    .map_err(agent_client_protocol::Error::into_internal_error)?;
-                permission_store.lock().unwrap().insert(
-                    request_id,
-                    PendingPermission {
-                        responder,
-                        options: request.options.clone(),
-                    },
-                );
-                let _ = permission_events.send(AcpClientEvent::ClientRequest {
-                    id,
-                    method: "session/request_permission".to_string(),
-                    params,
-                });
                 Ok(())
             },
             on_receive_request!(),
@@ -447,33 +440,21 @@ async fn send_load(
     .ok()
 }
 
+/// Documented full-access mode select values, in preferred apply order.
+const FULL_ACCESS_MODE_VALUES: &[&str] =
+    &["agent-full-access", "bypassPermissions", "agent", "code"];
+
 pub(super) fn preferred_permission_config(
-    agent: AgentClient,
     config_options: Option<&[SessionConfigOption]>,
 ) -> Option<(String, &'static str)> {
-    let expected = match agent {
-        AgentClient::Codex => "agent-full-access",
-        AgentClient::Claude => "bypassPermissions",
-        AgentClient::Cursor | AgentClient::Pi | AgentClient::Other => return None,
-    };
     let option = mode_option(config_options?)?;
     let SessionConfigKind::Select(select) = &option.kind else {
         return None;
     };
-    let advertised = match &select.options {
-        SessionConfigSelectOptions::Ungrouped(options) => options
-            .iter()
-            .any(|option| option.value.0.as_ref() == expected),
-        SessionConfigSelectOptions::Grouped(groups) => groups.iter().any(|group| {
-            group
-                .options
-                .iter()
-                .any(|option| option.value.0.as_ref() == expected)
-        }),
-        _ => false,
-    };
-    (advertised && select.current_value.0.as_ref() != expected)
-        .then_some((option.id.0.to_string(), expected))
+    let value = FULL_ACCESS_MODE_VALUES
+        .iter()
+        .find(|&&value| select_value_advertised(select, value))?;
+    (select.current_value.0.as_ref() != *value).then_some((option.id.0.to_string(), *value))
 }
 
 async fn apply_permission_config(
@@ -482,7 +463,7 @@ async fn apply_permission_config(
     session_id: &str,
     config_options: Option<&[SessionConfigOption]>,
 ) {
-    let Some((config_id, value)) = preferred_permission_config(agent, config_options) else {
+    let Some((config_id, value)) = preferred_permission_config(config_options) else {
         return;
     };
     let result = tokio::time::timeout(
@@ -663,6 +644,42 @@ async fn command_loop(
     }
 }
 
+fn auto_approve_permission(options: &[PermissionOption]) -> RequestPermissionOutcome {
+    allow_permission_outcome(options).unwrap_or(RequestPermissionOutcome::Cancelled)
+}
+
+fn allow_permission_outcome(options: &[PermissionOption]) -> Option<RequestPermissionOutcome> {
+    for kind in [
+        PermissionOptionKind::AllowAlways,
+        PermissionOptionKind::AllowOnce,
+    ] {
+        if let Some(option) = options.iter().find(|option| option.kind == kind) {
+            return Some(RequestPermissionOutcome::Selected(
+                SelectedPermissionOutcome::new(option.option_id.clone()),
+            ));
+        }
+    }
+    None
+}
+
+fn permission_outcome_for(
+    options: &[PermissionOption],
+    approved: bool,
+) -> Option<RequestPermissionOutcome> {
+    if approved {
+        return allow_permission_outcome(options);
+    }
+    let selected = options.iter().find(|option| {
+        matches!(
+            option.kind,
+            PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways
+        )
+    })?;
+    Some(RequestPermissionOutcome::Selected(
+        SelectedPermissionOutcome::new(selected.option_id.clone()),
+    ))
+}
+
 fn respond_permission(
     permissions: &PendingPermissions,
     request_id: &str,
@@ -673,21 +690,8 @@ fn respond_permission(
         .unwrap()
         .remove(request_id)
         .ok_or_else(|| "ACP permission request is no longer pending".to_string())?;
-    let selected = pending.options.iter().find(|option| {
-        matches!(
-            (approved, option.kind),
-            (
-                true,
-                PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways
-            ) | (
-                false,
-                PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways
-            )
-        )
-    });
-    let outcome = selected.map_or(RequestPermissionOutcome::Cancelled, |option| {
-        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option.option_id.clone()))
-    });
+    let outcome = permission_outcome_for(&pending.options, approved)
+        .unwrap_or(RequestPermissionOutcome::Cancelled);
     pending
         .responder
         .respond(RequestPermissionResponse::new(outcome))

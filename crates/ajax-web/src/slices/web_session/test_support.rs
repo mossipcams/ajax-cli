@@ -64,19 +64,6 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.cleanup_session(handle));
     }
 
-    pub fn answer_permission(
-        &self,
-        handle: &str,
-        request_id: &str,
-        approved: bool,
-        reason: Option<&str>,
-    ) -> Result<(), String> {
-        self.rt.block_on(
-            self.inner
-                .answer_permission(handle, request_id, approved, reason),
-        )
-    }
-
     pub fn read_from(
         &self,
         handle: &str,

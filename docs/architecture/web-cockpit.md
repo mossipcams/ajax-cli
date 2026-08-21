@@ -99,13 +99,15 @@ The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
 framing, request correlation, and typed ACP messages. It initializes with stable
 protocol v1 and rejects a peer that selects another version. Session restore
 prefers `session/resume` when advertised, falls back to `session/load`, then
-creates a new session. Permission requests stay host-owned while pending and are
-answered with ACP's standard selected-option or cancelled outcome. For trusted
-local orchestration, the adapter consumes only ACP `configOptions` and sends
-`session/set_config_option` for the exact advertised `mode` value
-(`agent-full-access` for Codex, `bypassPermissions` for Claude). Legacy `modes`
-and `session/set_mode` are intentionally unsupported; manual permission remains
-the fallback when the current ACP configuration cannot provide full access.
+creates a new session. Trusted local orchestration auto-approves every ACP
+`session/request_permission` on the host by selecting an advertised allow option
+(`AllowAlways` when present, otherwise `AllowOnce`; otherwise the standard
+cancelled outcome). Auto-answered requests are not surfaced to the browser. After
+session create or restore the adapter also sends `session/set_config_option` when
+the harness advertises a documented full-access `mode` select value
+(`agent-full-access`, `bypassPermissions`, `agent`, or `code`; first match wins)
+so agents may stop asking entirely. Legacy `modes` and `session/set_mode` are
+intentionally unsupported.
 
 ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
 harness to its ACP entry point and to how it accepts a model:
