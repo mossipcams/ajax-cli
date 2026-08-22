@@ -7,7 +7,7 @@ const DEV_DEPLOY_POLL_MS = 1500;
 export function useDevDeployQuery() {
   return useQuery({
     queryKey: queryKeys.devDeploy(),
-    queryFn: fetchDevDeploy,
+    queryFn: ({ signal }) => fetchDevDeploy(signal),
     refetchInterval: (query) =>
       query.state.data?.deploy.active ? DEV_DEPLOY_POLL_MS : false,
   });

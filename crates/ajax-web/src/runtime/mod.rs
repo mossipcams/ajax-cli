@@ -21,10 +21,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::{
-    io::{BufRead, BufReader},
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
-    process::{Command as ProcessCommand, Stdio},
     sync::Arc,
     thread,
     time::Duration,
@@ -619,7 +616,7 @@ where
     let slot = Arc::clone(&state.dev_deploy);
     let worktree = source.worktree_path.clone();
     thread::spawn(move || {
-        run_test_in_dev_job(slot, script, source, worktree);
+        dev_deploy::run_test_in_dev_job(slot, script, source, worktree);
     });
 
     let status = dev_deploy::lock_slot(&state.dev_deploy).status();
@@ -632,91 +629,6 @@ where
         }),
     )
     .unwrap_or_else(|error| response_from_web_error(error, None))
-}
-
-fn run_test_in_dev_job(
-    slot: Arc<dev_deploy::SharedDevDeploySlot>,
-    script: PathBuf,
-    source: dev_deploy::DevDeploySource,
-    worktree: PathBuf,
-) {
-    let mut child = match ProcessCommand::new(&script)
-        .args(dev_deploy::test_in_dev_command_args(&worktree))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            dev_deploy::lock_slot(&slot)
-                .set_failed(format!("could not spawn restart script: {error}"));
-            return;
-        }
-    };
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let slot_for_stdout = Arc::clone(&slot);
-    let stdout_thread = stdout.map(|stdout| {
-        thread::spawn(move || {
-            let mut log = String::new();
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if line.contains("AJAX_DEV_DEPLOY_PHASE=restarting") {
-                    dev_deploy::lock_slot(&slot_for_stdout).set_restarting();
-                }
-                log.push_str(&line);
-                log.push('\n');
-            }
-            log
-        })
-    });
-    let stderr_thread = stderr.map(|stderr| {
-        thread::spawn(move || {
-            let mut log = String::new();
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                log.push_str(&line);
-                log.push('\n');
-            }
-            log
-        })
-    });
-
-    let status = child.wait();
-    let stdout_log = stdout_thread
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default();
-    let stderr_log = stderr_thread
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default();
-    let combined = format!("{stdout_log}{stderr_log}");
-
-    match status {
-        Ok(status) if status.success() => {
-            dev_deploy::lock_slot(&slot).set_ready(&source);
-        }
-        Ok(status) => {
-            let tail = combined
-                .lines()
-                .rev()
-                .take(12)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n");
-            let message = if tail.is_empty() {
-                format!("dev deploy failed with status {status}")
-            } else {
-                format!("dev deploy failed with status {status}\n{tail}")
-            };
-            // Build/restart failure leaves the previous running instance (script
-            // restores the prior slot binary when restart fails after install).
-            dev_deploy::lock_slot(&slot).set_failed(message);
-        }
-        Err(error) => {
-            dev_deploy::lock_slot(&slot).set_failed(format!("dev deploy wait failed: {error}"));
-        }
-    }
 }
 
 async fn axum_fallback(uri: Uri) -> AxumResponse {

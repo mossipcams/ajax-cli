@@ -68,11 +68,14 @@ function classifyStatus(status: number): ApiErrorKind {
   return "http";
 }
 
-function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestInit {
+function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS, querySignal?: AbortSignal): RequestInit {
+  const signal = querySignal
+    ? AbortSignal.any([AbortSignal.timeout(timeoutMs), querySignal])
+    : AbortSignal.timeout(timeoutMs);
   return {
     cache: "no-store",
     credentials: "same-origin",
-    signal: AbortSignal.timeout(timeoutMs),
+    signal,
   };
 }
 
@@ -173,8 +176,12 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
   }
 }
 
-async function getJson(path: string, timeoutMs: number = GET_REQUEST_TIMEOUT_MS): Promise<unknown> {
-  const response = await fetchProtectedWithSessionRenewal(path, getOptions(timeoutMs));
+async function getJson(
+  path: string,
+  timeoutMs: number = GET_REQUEST_TIMEOUT_MS,
+  querySignal?: AbortSignal,
+): Promise<unknown> {
+  const response = await fetchProtectedWithSessionRenewal(path, getOptions(timeoutMs, querySignal));
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
   }
@@ -496,8 +503,8 @@ export async function startTestInStable(): Promise<OperationResponse> {
 
 export { TEST_IN_STABLE_TIMEOUT_MS };
 
-export async function fetchDevDeploy(): Promise<DevDeployResponse> {
-  const value = await getJson("/api/dev-deploy");
+export async function fetchDevDeploy(querySignal?: AbortSignal): Promise<DevDeployResponse> {
+  const value = await getJson("/api/dev-deploy", GET_REQUEST_TIMEOUT_MS, querySignal);
   return value as DevDeployResponse;
 }
 
