@@ -11,11 +11,13 @@ export const BASELINE = {
    * Re-measured when model-list scroll hit targets were restored (#1022).
    * Re-measured again after pass-2 tool disclosure styling.
    * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020).
-   * Re-measured after chat elicitation and output-content owned modules. */
-  sourceStylesCssBytes: 107_092,
-  builtAppCssBytes: 92_467,
-  builtAppCssGzipBytes: 16_295,
-  classSelectorLines: 594,
+   * Re-measured after chat elicitation and output-content owned modules.
+   * Re-measured after composer hotbar CSS and session tap-dismiss shell height
+   * (mossipcams/ajax-cli#1032). */
+  sourceStylesCssBytes: 107_793,
+  builtAppCssBytes: 93_101,
+  builtAppCssGzipBytes: 16_385,
+  classSelectorLines: 600,
   hasSelectors: 18,
 } as const;
 

@@ -41,6 +41,16 @@
   box-sizing: border-box;
 }
 
+/* Tap-dismiss on iOS regular Safari leaves visualViewport shrunk while
+   initViewport restores --app-height to layout innerHeight. foundation.css
+   keeps html/body/#app on 100dvh, which can sit below innerHeight and strand
+   the composer above a keyboard-sized void — inherit the restored band. */
+html[data-session-viewport="owned"]:not(.keyboard-open),
+html[data-session-viewport="owned"]:not(.keyboard-open) body,
+html[data-session-viewport="owned"]:not(.keyboard-open) #app {
+  height: var(--app-height, 100dvh);
+}
+
 .session-title {
   flex: 1 1 auto;
   min-width: 0;
