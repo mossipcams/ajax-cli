@@ -269,6 +269,7 @@ fn two_active_tasks_context() -> CommandContext<InMemoryRegistry> {
         AgentClient::Codex,
     );
     task.lifecycle_status = LifecycleStatus::Active;
+    associate_task_with_pr(&mut task, 43, "3333333");
     context.registry.create_task(task).unwrap();
     context
 }

@@ -154,6 +154,26 @@ pub(super) fn context_with_active_task() -> CommandContext<InMemoryRegistry> {
     let mut task = task_fixture();
     task.lifecycle_status = LifecycleStatus::Active;
     task.git_status = Some(clean_git_status());
+    crate::diff_review::remember_pull_requests(
+        &mut task,
+        &[crate::diff_review::PullRequestRef {
+            number: 42,
+            title: "Fix login".into(),
+            url: "https://example.test/pull/42".into(),
+            state: crate::diff_review::PullRequestState::Open,
+            head_ref: TASK_BRANCH.into(),
+            head_sha: Some("2222222".into()),
+        }],
+    );
+    crate::runtime_refresh::ci_monitor::store_state(
+        &mut task,
+        &crate::runtime_refresh::ci_monitor::CiMonitorState {
+            pr_number: Some(42),
+            head_sha: Some("2222222".into()),
+            last_pr_discovery_at: Some(unix_seconds_for_test(SystemTime::now())),
+            ..Default::default()
+        },
+    );
     registry.create_task(task).unwrap();
 
     CommandContext::new(config, registry)

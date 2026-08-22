@@ -38,9 +38,29 @@ fn sample_context() -> CommandContext<InMemoryRegistry> {
     );
     task.lifecycle_status = LifecycleStatus::Reviewable;
     task.add_side_flag(SideFlag::NeedsInput);
+    associate_task_with_pr(&mut task, 42, "2222222");
     registry.create_task(task).unwrap();
 
     CommandContext::new(config, registry)
+}
+
+fn associate_task_with_pr(task: &mut Task, number: u64, head_sha: &str) {
+    ajax_core::diff_review::remember_pull_requests(
+        task,
+        &[ajax_core::diff_review::PullRequestRef {
+            number,
+            title: "Test PR".into(),
+            url: format!("https://example.test/pull/{number}"),
+            state: ajax_core::diff_review::PullRequestState::Open,
+            head_ref: task.branch.clone(),
+            head_sha: Some(head_sha.into()),
+        }],
+    );
+    task.metadata.insert(
+        "ajax_ci_monitor".into(),
+        serde_json::json!({ "pr_number": number, "head_sha": head_sha, "last_pr_discovery_at": 1 })
+            .to_string(),
+    );
 }
 
 fn git_list_remote_branches_command() -> CommandSpec {
@@ -319,18 +339,9 @@ fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
 
 // from suite_2.rs
 fn expected_ci_probe_command() -> CommandSpec {
-    CommandSpec::new(
-        "gh",
-        [
-            "pr",
-            "checks",
-            "ajax/fix-login",
-            "--json",
-            "name,state,link",
-        ],
-    )
-    .with_cwd("/tmp/worktrees/web-fix-login")
-    .with_timeout(std::time::Duration::from_secs(30))
+    CommandSpec::new("gh", ["pr", "checks", "42", "--json", "name,state,link"])
+        .with_cwd("/tmp/worktrees/web-fix-login")
+        .with_timeout(std::time::Duration::from_secs(30))
 }
 
 // from suite_2.rs

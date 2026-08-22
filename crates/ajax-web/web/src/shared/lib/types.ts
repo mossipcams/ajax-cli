@@ -168,6 +168,11 @@ export interface BrowserTaskDetail {
   lifecycle: string;
   agent: string;
   agent_status: string;
+  ci_agent_delivery?: {
+    notification_id: string;
+    status: "queued" | "accepted" | "error";
+    detail?: string | null;
+  } | null;
   status: TaskStatus;
   status_explanation?: string | null;
   runtime_observation_error?: string | null;

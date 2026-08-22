@@ -579,7 +579,7 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                 [
                     "pr",
                     "checks",
-                    "ajax/fix-sidebar",
+                    "43",
                     "--json",
                     "name,state,link",
                 ],

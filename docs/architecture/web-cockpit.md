@@ -931,6 +931,13 @@ Home Screen install; without install/subscribe there is no phone ping. This
 does not permit service worker registration, offline mutation, or browser-owned
 task truth.
 
+The existing server background tick performs a Full refresh every 30 seconds
+regardless of browser foreground presence or push subscriptions. Those signals
+gate web push only; they never gate task-associated PR/CI discovery or agent
+notification delivery. Task details project persisted delivery evidence as
+`queued`, `accepted`, or a retained `error`; the browser does not poll GitHub,
+select PRs, deduplicate failures, or route prompts.
+
 Attention delivery fires once per actionable episode and only for statuses
 the operator can act on. Actionable Waiting is allowlisted to `Waiting for
 input` / `Waiting for approval` (structured hooks/lifecycle events, including

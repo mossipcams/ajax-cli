@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod agent_capability;
+pub mod agent_notification;
 pub mod agent_prompt;
 pub mod agent_status;
 pub mod analysis;

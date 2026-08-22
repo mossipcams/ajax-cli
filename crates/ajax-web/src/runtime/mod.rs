@@ -154,10 +154,8 @@ where
     })
 }
 
-/// Background Full refresh when push subscriptions exist and the operator is
-/// not in the foreground Cockpit. Presence is only refreshed by visible-tab
-/// cockpit polls (`X-Ajax-Foreground`) plus real operate/terminal use — not by
-/// background/Simulator data polls — so connection speed stays unchanged.
+/// Background Full refresh always advances low-frequency runtime and CI
+/// evidence. Browser presence and push subscriptions gate only web push.
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -170,15 +168,20 @@ where
         interval.tick().await; // consume the immediate first tick
         loop {
             interval.tick().await;
-            if tick_state.browser_connected() {
-                continue;
-            }
-            if !tick_state.push.has_subscriptions() {
-                continue;
-            }
-            let _ = refresh_cockpit_and_cache(&tick_state, RefreshTier::Full, true).await;
+            let (tier, deliver_push) = background_refresh_plan(
+                tick_state.browser_connected(),
+                tick_state.push.has_subscriptions(),
+            );
+            let _ = refresh_cockpit_and_cache(&tick_state, tier, deliver_push).await;
         }
     });
+}
+
+fn background_refresh_plan(
+    browser_connected: bool,
+    has_subscriptions: bool,
+) -> (RefreshTier, bool) {
+    (RefreshTier::Full, !browser_connected && has_subscriptions)
 }
 
 pub(crate) struct TlsListener {

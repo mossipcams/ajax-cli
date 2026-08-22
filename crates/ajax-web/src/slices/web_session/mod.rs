@@ -3,6 +3,8 @@
 mod acp_drain;
 mod acp_map;
 pub(crate) mod acp_usage;
+#[path = "../ci_agent_delivery.rs"]
+mod ci_agent_delivery;
 pub(crate) mod model_change;
 mod normalize;
 mod protocol;
@@ -15,6 +17,7 @@ mod transcript;
 mod ws_bridge;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
+pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
