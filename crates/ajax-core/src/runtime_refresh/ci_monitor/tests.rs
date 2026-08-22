@@ -175,3 +175,9 @@ fn refresh_polls_active_checks_and_records_pass() {
         CiAttemptStatus::Passed
     );
 }
+
+#[test]
+fn ci_monitor_live_probe_forces_ci_failure() {
+    // Temporary live probe: intentionally fails so GitHub CI reports red for ajax_ci_monitor polling.
+    panic!("ci_monitor live probe: force CI failure");
+}
