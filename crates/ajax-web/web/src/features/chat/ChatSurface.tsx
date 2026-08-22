@@ -27,6 +27,22 @@ function isChatTranscriptTextTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest(CHAT_TRANSCRIPT_TEXT_SELECTOR));
 }
 
+function hasActiveChatTranscriptTextSelection(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  const anchor = selection.anchorNode;
+  if (!anchor) return false;
+  const element = anchor instanceof Element ? anchor : anchor.parentElement;
+  if (!element) return false;
+  return Boolean(element.closest(CHAT_TRANSCRIPT_TEXT_SELECTOR));
+}
+
+/** Ignore transcript touches only while native text highlighting is active. */
+function shouldIgnoreChatTranscriptSwipeTarget(target: EventTarget | null): boolean {
+  if (!isChatTranscriptTextTarget(target)) return false;
+  return hasActiveChatTranscriptTextSelection();
+}
+
 interface Props {
   handle: string | null;
   detail: BrowserTaskDetail | null;
@@ -187,7 +203,7 @@ export default function ChatSurface({
   const { swiping, style } = useSwipePageTransition(rootRef, {
     onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
-    shouldIgnoreTarget: isChatTranscriptTextTarget,
+    shouldIgnoreTarget: shouldIgnoreChatTranscriptSwipeTarget,
   });
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const { notice, showNotice, dismissNotice } = useSessionModelNotice();
