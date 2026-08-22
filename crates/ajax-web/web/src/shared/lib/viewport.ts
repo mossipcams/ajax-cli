@@ -1,3 +1,8 @@
+import {
+  layoutViewportShrinksWithKeyboard,
+  SESSION_VIEWPORT_ATTR,
+} from "@/shared/lib/sessionViewport";
+
 /**
  * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
  *
@@ -100,11 +105,40 @@ export function initViewport(): () => void {
     root.style.removeProperty(APP_TOP_VAR);
   };
 
+  const isSessionViewportOwned = () =>
+    root.getAttribute(SESSION_VIEWPORT_ATTR) === "owned";
+
   const resolveViewportHeight = (): number | null => {
-    if (isUsableHeight(vv.height)) return vv.height;
     const layoutHeight = window.innerHeight;
+    if (isUsableHeight(vv.height)) {
+      // Session chat tap-dismiss often leaves visualViewport shrunk after blur.
+      // Prefer layout height so --app-height does not strand the shell above a void.
+      if (
+        !keyboardOpen &&
+        isSessionViewportOwned() &&
+        !layoutViewportShrinksWithKeyboard(layoutHeight, vv.height) &&
+        layoutHeight - vv.height > KEYBOARD_CLOSE_DELTA_PX
+      ) {
+        return layoutHeight;
+      }
+      return vv.height;
+    }
     if (isUsableHeight(layoutHeight)) return layoutHeight;
     return null;
+  };
+
+  const restoreGeometryAfterKeyboardDismiss = () => {
+    const layoutHeight = window.innerHeight;
+    const visualHeight = vv.height;
+    if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
+      setAppHeight(layoutHeight);
+      setAppTop(0);
+      baselineHeight = layoutHeight;
+    } else {
+      syncViewportGeometry();
+      baselineHeight = visualHeight;
+    }
+    baselineWidth = window.innerWidth;
   };
 
   const resolveViewportTop = (): number => {
@@ -147,6 +181,13 @@ export function initViewport(): () => void {
     resetDocumentScroll();
   };
 
+  const isFormControlFocused = () => {
+    const active = document.activeElement;
+    if (!active) return false;
+    const tag = active.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  };
+
   const onViewportResize = () => {
     const current = vv.height;
     const currentWidth = window.innerWidth;
@@ -165,13 +206,18 @@ export function initViewport(): () => void {
       // Rotation: a real geometry change, close immediately.
       cancelCloseSettle();
       dismissKeyboardOpen();
-      syncViewportGeometry();
+      setAppHeight(current);
+      setAppTop(resolveViewportTop());
       baselineHeight = current;
       baselineWidth = currentWidth;
       return;
     }
     const delta = baselineHeight - current;
     if (delta > KEYBOARD_OPEN_DELTA_PX && !keyboardOpen) {
+      if (isSessionViewportOwned() && !isFormControlFocused()) {
+        restoreGeometryAfterKeyboardDismiss();
+        return;
+      }
       cancelCloseSettle();
       keyboardOpen = true;
       root.classList.add(KEYBOARD_OPEN_CLASS);
@@ -186,9 +232,7 @@ export function initViewport(): () => void {
           const settledDelta = baselineHeight - vv.height;
           if (settledDelta < KEYBOARD_CLOSE_DELTA_PX) {
             dismissKeyboardOpen();
-            syncViewportGeometry();
-            baselineHeight = vv.height;
-            baselineWidth = window.innerWidth;
+            restoreGeometryAfterKeyboardDismiss();
           }
         }, KEYBOARD_CLOSE_SETTLE_MS);
       }
@@ -243,19 +287,7 @@ export function initViewport(): () => void {
     cancelCloseSettle();
     const wasKeyboardOpen = keyboardOpen;
     dismissKeyboardOpen();
-
-    const visualHeight = vv.height;
-    const layoutHeight = window.innerHeight;
-    if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
-      // visualViewport can stay stale-small after resume; rebase to layout height.
-      setAppHeight(layoutHeight);
-      setAppTop(0);
-      baselineHeight = layoutHeight;
-    } else {
-      syncViewportGeometry();
-      rebaseBaselineFromResolved();
-    }
-    baselineWidth = window.innerWidth;
+    restoreGeometryAfterKeyboardDismiss();
     if (!wasKeyboardOpen) {
       resetDocumentScroll();
     }
@@ -277,8 +309,19 @@ export function initViewport(): () => void {
     onForegroundResync();
   };
 
+  const onSessionComposerFocusOut = () => {
+    requestAnimationFrame(() => {
+      if (isFormControlFocused()) return;
+      if (root.getAttribute(SESSION_VIEWPORT_ATTR) !== "owned") return;
+      cancelCloseSettle();
+      dismissKeyboardOpen();
+      restoreGeometryAfterKeyboardDismiss();
+    });
+  };
+
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
+  document.addEventListener("focusout", onSessionComposerFocusOut, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pageshow", onPageShow);
   document.addEventListener("gesturestart", onGesture);
@@ -291,6 +334,7 @@ export function initViewport(): () => void {
     cancelCloseSettle();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
+    document.removeEventListener("focusout", onSessionComposerFocusOut, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", onPageShow);
     document.removeEventListener("gesturestart", onGesture);

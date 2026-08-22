@@ -292,6 +292,7 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
     expect(geo.surfacePaddingBottom).toBe(0);
     expect(geo.appViewportPosition).not.toBe("fixed");
+    expect(geo.gapComposerLayout).toBeLessThan(48);
     const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight - geo.threadScrollTop);
     expect(blankRegion).toBeLessThan(during.surfacePaddingBottom);
     expect(blankRegion).toBeLessThan(80);

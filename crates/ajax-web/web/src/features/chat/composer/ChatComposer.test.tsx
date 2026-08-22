@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { fireEvent, screen, act } from "@testing-library/react";
+import { fireEvent, screen, act, within } from "@testing-library/react";
 import * as useChatSpeechModule from "@/features/chat/composer/speech/useChatSpeech";
+import { claimSessionViewportOwnership } from "@/shared/lib/sessionViewport";
+import { initViewport, isKeyboardOpen } from "@/shared/lib/viewport";
 import {
   chatH,
   mountChat,
@@ -15,6 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
   sessionStorage.clear();
+  document.documentElement.removeAttribute("data-session-viewport");
 });
 
 describe("ChatComposer", () => {
@@ -248,5 +251,102 @@ describe("ChatComposer", () => {
     fireEvent.click(screen.getByRole("option", { name: /\/help/ }));
     expect(transport.sendPrompt).not.toHaveBeenCalled();
     expect(input).toHaveValue("/help");
+  });
+
+  it("places attach, model, mic, and send on a hotbar above the full-width field", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    const composer = screen.getByTestId("session-composer");
+    const hotbar = screen.getByTestId("session-composer-hotbar");
+    const textarea = screen.getByLabelText("Message");
+
+    expect(hotbar).toBeInTheDocument();
+    expect(composer).toContainElement(hotbar);
+    expect(composer).toContainElement(textarea);
+    expect(hotbar.compareDocumentPosition(textarea)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(hotbar).not.toContainElement(textarea);
+    const hotbarScope = within(hotbar);
+    expect(hotbarScope.getByRole("button", { name: "Attach" })).toBeInTheDocument();
+    expect(hotbarScope.getByRole("button", { name: /voice input/i })).toBeInTheDocument();
+    expect(hotbarScope.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("uses icon-only attach and send controls with accessible names", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    const attach = screen.getByRole("button", { name: "Attach" });
+    const sendButton = screen.getByRole("button", { name: "Send" });
+
+    expect(attach).toHaveTextContent("");
+    expect(sendButton).toHaveTextContent("");
+  });
+
+  it("clears stale keyboard band geometry after composer blur when visualViewport stays shrunken", () => {
+    const vvListeners: Record<string, Array<() => void>> = {};
+    let vvHeight = 800;
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    });
+    vi.stubGlobal("visualViewport", {
+      get height() {
+        return vvHeight;
+      },
+      get offsetTop() {
+        return 0;
+      },
+      addEventListener: (type: string, handler: () => void) => {
+        (vvListeners[type] ??= []).push(handler);
+      },
+      removeEventListener: vi.fn(),
+    });
+    window.scrollTo = vi.fn();
+
+    claimSessionViewportOwnership();
+    const dispose = initViewport();
+    mountChat();
+
+    const textarea = screen.getByLabelText("Message");
+    act(() => textarea.focus());
+    vvHeight = 500;
+    for (const handler of vvListeners.resize ?? []) handler();
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("500px");
+
+    act(() => {
+      textarea.blur();
+      document.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(
+      screen.getByTestId("session-chat-surface").style.paddingBottom,
+    ).toBe("");
+
+    dispose();
   });
 });
