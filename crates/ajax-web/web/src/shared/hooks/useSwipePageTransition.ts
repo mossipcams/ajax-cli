@@ -277,7 +277,11 @@ export function useSwipePageTransition(
 
     const onTouchMove = (event: TouchEvent) => {
       if (!touchTargetRef.current) return;
-      if (shouldSuppressPageSwipe(event.target ?? touchTargetRef.current)) {
+      const target = event.target ?? touchTargetRef.current;
+      if (
+        shouldSuppressPageSwipe(target) ||
+        optsRef.current.shouldIgnoreTarget?.(target)
+      ) {
         reset();
         return;
       }
@@ -301,7 +305,10 @@ export function useSwipePageTransition(
 
     const onTouchEnd = () => {
       if (!touchTargetRef.current) return;
-      if (shouldSuppressPageSwipe(touchTargetRef.current)) {
+      if (
+        shouldSuppressPageSwipe(touchTargetRef.current) ||
+        optsRef.current.shouldIgnoreTarget?.(touchTargetRef.current)
+      ) {
         reset();
         return;
       }
