@@ -1,6 +1,8 @@
 import { useEffect, type MutableRefObject, type RefObject } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
+import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
+import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 import {
   connectWebSessionTransport,
   MessageBuffer,
@@ -44,6 +46,12 @@ interface Options {
   onSessionModel?: (model: string) => void;
   /** Live advertised ACP config options from the host snapshot. */
   onSessionConfigOptions?: (options: LiveSessionConfigOption[] | undefined) => void;
+  /** Live advertised ACP slash commands from the host snapshot. */
+  onSessionAvailableCommands?: (commands: LiveAvailableCommand[] | undefined) => void;
+  /** Live advertised ACP prompt capabilities from the host snapshot. */
+  onSessionPromptCapabilities?: (capabilities: LivePromptCapabilities | undefined) => void;
+  /** Agent-reported session title from the host snapshot. */
+  onSessionTitle?: (title: string | undefined) => void;
   /** Revert an optimistic in-session model change after a host error. */
   onSessionModelRejected?: () => void;
   /** Surface config-option apply failures as dismissable notices. */
@@ -64,6 +72,9 @@ export function useSessionConnection({
   onSessionInvalidated,
   onSessionModel,
   onSessionConfigOptions,
+  onSessionAvailableCommands,
+  onSessionPromptCapabilities,
+  onSessionTitle,
   onSessionModelRejected,
   onConfigError,
 }: Options): void {
@@ -107,6 +118,9 @@ export function useSessionConnection({
     const applySnapshot = (snapshot: SessionSnapshot) => {
       onSessionModel?.(snapshot.model);
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
+      onSessionAvailableCommands?.(snapshot.availableCommands);
+      onSessionPromptCapabilities?.(snapshot.promptCapabilities);
+      onSessionTitle?.(snapshot.sessionTitle);
     };
 
     const open = () => {

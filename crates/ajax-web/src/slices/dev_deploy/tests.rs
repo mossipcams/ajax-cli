@@ -236,6 +236,70 @@ fn test_in_dev_args_never_target_stable() {
     assert!(!args.iter().any(|arg| arg == "8787"));
 }
 
+// GitHub issue #1035: Test in Dev must invoke the restart script with the task
+// worktree and dev profile, not no-op or stable.
+#[test]
+fn issue_1035_run_test_in_dev_job_invokes_worktree_restart_with_dev_profile() {
+    let root = std::env::temp_dir().join(format!("ajax-issue-1035-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create temp root");
+    let args_file = root.join("args.txt");
+    let script = root.join("mock-restart.sh");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+            args_file.display()
+        ),
+    )
+    .expect("write mock restart script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod mock script");
+    }
+
+    let worktree = root.join("ajax-cli__worktrees").join("feat-demo");
+    fs::create_dir_all(&worktree).expect("create worktree dir");
+    let source = DevDeploySource {
+        task_handle: "ajax-cli/demo".into(),
+        title: "Demo".into(),
+        branch: "feat/demo".into(),
+        worktree_path: worktree.clone(),
+        commit_sha: "abc123".into(),
+        dirty: false,
+    };
+    let slot = Arc::new(Mutex::new(DevDeploySlot::default()));
+    slot.lock().unwrap().begin(&source).unwrap();
+
+    run_test_in_dev_job(Arc::clone(&slot), script, source, worktree.clone());
+
+    let args = fs::read_to_string(&args_file).expect("mock restart script should run");
+    assert!(
+        args.contains("--worktree"),
+        "expected --worktree in restart args, got:\n{args}"
+    );
+    assert!(
+        args.contains(&worktree.display().to_string()),
+        "expected worktree path in restart args, got:\n{args}"
+    );
+    assert!(
+        args.contains("--profile"),
+        "expected --profile in restart args"
+    );
+    assert!(
+        args.contains("dev"),
+        "expected dev profile in restart args, got:\n{args}"
+    );
+    assert!(
+        !args.contains("stable"),
+        "Test in Dev must never target stable, got:\n{args}"
+    );
+    assert_eq!(lock_slot(&slot).status().phase, DevDeployPhase::DevReady);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn short_sha_parsing_trims_commit_subject() {
     assert_eq!(

@@ -21,7 +21,7 @@ use std::{
 
 use super::apply_model::{operator_pin_satisfied, ApplyModelOutcome};
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
-use agent_client_protocol::schema::v1::{SessionConfigOption, SessionNotification};
+use agent_client_protocol::schema::v1::{ContentBlock, SessionConfigOption, SessionNotification};
 
 #[cfg(test)]
 use std::{cell::RefCell, path::PathBuf};
@@ -78,6 +78,24 @@ pub(crate) fn set_test_acp_command(command: Option<(&Path, &[&str])>) {
     });
 }
 
+/// Restores thread-local and global extra args when `with_test_acp_extra_args` exits,
+/// including on panic, so a failing test cannot leak argv into a later one.
+#[cfg(test)]
+struct TestAcpExtraArgsGuard {
+    saved_thread: Vec<String>,
+    saved_global: Vec<String>,
+}
+
+#[cfg(test)]
+impl Drop for TestAcpExtraArgsGuard {
+    fn drop(&mut self) {
+        TEST_ACP_EXTRA_ARGS.with(|slot| {
+            *slot.borrow_mut() = self.saved_thread.clone();
+        });
+        *TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap() = self.saved_global.clone();
+    }
+}
+
 /// Add argv tokens for the next test ACP spawns inside `f` (e.g. `--load-fail`).
 #[cfg(test)]
 pub(crate) fn with_test_acp_extra_args<F, R>(args: &[&str], f: F) -> R
@@ -90,10 +108,11 @@ where
         *slot.borrow_mut() = extra.clone();
         let saved_global = TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap().clone();
         *TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap() = extra;
-        let result = f();
-        *slot.borrow_mut() = saved;
-        *TEST_ACP_EXTRA_ARGS_GLOBAL.lock().unwrap() = saved_global;
-        result
+        let _guard = TestAcpExtraArgsGuard {
+            saved_thread: saved,
+            saved_global,
+        };
+        f()
     })
 }
 
@@ -125,12 +144,23 @@ pub enum AcpClientEvent {
         applied_model: String,
         config_options: Vec<SessionConfigOption>,
     },
+    AvailableCommandsUpdated {
+        available_commands: Vec<agent_client_protocol::schema::v1::AvailableCommand>,
+    },
+    SessionInfoUpdated {
+        title: Option<String>,
+    },
     SessionUpdate(Box<SessionNotification>),
     UnknownSessionUpdate(Value),
     ClientRequest {
         id: Value,
         method: String,
         params: Value,
+    },
+    ElicitationRequest {
+        request_id: String,
+        message: String,
+        schema: Value,
     },
     RequestFinished {
         id: u64,
@@ -143,12 +173,17 @@ pub enum AcpClientEvent {
 
 pub struct SpawnReport {
     pub load_session_advertised: bool,
+    pub close_advertised: bool,
     pub resumed: bool,
     /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     pub applied_model: String,
     pub model_apply_error: Option<String>,
     pub config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
+    pub prompt_capabilities: super::PromptCapabilityDescriptor,
 }
+
+/// Bound on ACP `session/close` during child teardown.
+const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct AcpStdioClient {
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
@@ -156,9 +191,11 @@ pub struct AcpStdioClient {
     next_id: u64,
     busy: Arc<AtomicBool>,
     session_id: String,
+    close_advertised: bool,
     /// Kept because each harness advertises its model catalog here.
     session_new_result: Value,
     child: Child,
+    torn_down: bool,
     _connection: thread::JoinHandle<()>,
 }
 
@@ -268,7 +305,9 @@ impl AcpStdioClient {
         let ConnectionReady {
             session_id,
             session_new_result,
-            config_options: _,
+            config_options,
+            prompt_capabilities,
+            close_advertised,
             load_session_advertised,
             resumed,
             applied_model,
@@ -276,6 +315,7 @@ impl AcpStdioClient {
         } = ready;
         if resumed {
             while event_rx.try_recv().is_ok() {}
+            let _ = command_tx.send(ClientCommand::InstallLiveSession);
         }
         let client = Self {
             commands: command_tx,
@@ -283,22 +323,63 @@ impl AcpStdioClient {
             next_id: 1,
             busy,
             session_id,
+            close_advertised,
             session_new_result,
             child,
+            torn_down: false,
             _connection: connection,
         };
         let report = SpawnReport {
             load_session_advertised,
+            close_advertised,
             resumed,
             applied_model,
             model_apply_error,
-            config_options: ready.config_options,
+            config_options,
+            prompt_capabilities,
         };
         Ok((client, report))
     }
 
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// End the ACP child: optional `session/close`, then stdio teardown.
+    /// Returns a warning when advertised close fails or times out.
+    pub fn shutdown(&mut self) -> Option<String> {
+        self.tear_down()
+    }
+
+    fn tear_down(&mut self) -> Option<String> {
+        if self.torn_down {
+            return None;
+        }
+        self.torn_down = true;
+        let mut close_error = None;
+        if self.close_advertised {
+            let (result_tx, result_rx) = mpsc::channel();
+            if self
+                .commands
+                .send(ClientCommand::CloseSession { result: result_tx })
+                .is_ok()
+            {
+                close_error = match result_rx.recv_timeout(CLOSE_SESSION_TIMEOUT) {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error),
+                    Err(_) => Some(format!(
+                        "ACP session/close timed out after {}s",
+                        CLOSE_SESSION_TIMEOUT.as_secs()
+                    )),
+                };
+            } else {
+                close_error = Some("ACP connection is closed".to_string());
+            }
+        }
+        let _ = self.commands.send(ClientCommand::Shutdown);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        close_error
     }
 
     /// True when the ACP OS process has exited. Reconnect must respawn, not
@@ -330,7 +411,7 @@ impl AcpStdioClient {
         self.events.recv_timeout(timeout).ok()
     }
 
-    pub fn begin_prompt(&mut self, text: &str) -> Result<u64, String> {
+    pub fn begin_prompt(&mut self, blocks: &[ContentBlock]) -> Result<u64, String> {
         if self.busy.swap(true, Ordering::AcqRel) {
             return Err("prompt already in flight".to_string());
         }
@@ -341,7 +422,7 @@ impl AcpStdioClient {
             .commands
             .send(ClientCommand::Prompt {
                 id,
-                text: text.to_string(),
+                blocks: blocks.to_vec(),
                 result: result_tx,
             })
             .is_err()
@@ -368,7 +449,7 @@ impl AcpStdioClient {
     /// harness answers `Method not found` and keeps working — Stop did nothing.
     /// The agent ends the turn with `stopReason: "cancelled"`, which settles the
     /// prompt already in flight.
-    pub fn cancel(&mut self) -> Result<Vec<String>, String> {
+    pub(crate) fn cancel(&mut self) -> Result<super::CancelOutcome, String> {
         let (result_tx, result_rx) = mpsc::channel();
         self.commands
             .send(ClientCommand::Cancel { result: result_tx })
@@ -395,6 +476,19 @@ impl AcpStdioClient {
         self.command_result(|result| ClientCommand::RespondPermission {
             request_id,
             approved,
+            result,
+        })
+    }
+
+    pub fn respond_elicitation(
+        &mut self,
+        request_id: &str,
+        action: agent_client_protocol::schema::v1::ElicitationAction,
+    ) -> Result<(), String> {
+        let id = request_id.to_string();
+        self.command_result(move |result| ClientCommand::RespondElicitation {
+            request_id: id,
+            action,
             result,
         })
     }
@@ -454,9 +548,7 @@ impl AcpStdioClient {
 
 impl Drop for AcpStdioClient {
     fn drop(&mut self) {
-        let _ = self.commands.send(ClientCommand::Shutdown);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = self.tear_down();
     }
 }
 

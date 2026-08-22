@@ -1,0 +1,43 @@
+.session-output-image {
+  margin: 0.75rem 0 0;
+}
+
+.session-output-image img {
+  display: block;
+  max-width: min(100%, 28rem);
+  max-height: 18rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--session-border, rgba(127, 127, 127, 0.25));
+  object-fit: contain;
+}
+
+.session-output-resource {
+  margin: 0.75rem 0 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--session-border, rgba(127, 127, 127, 0.25));
+  background: var(--session-surface-muted, rgba(127, 127, 127, 0.08));
+}
+
+.session-output-resource-name {
+  display: block;
+  font-weight: 600;
+}
+
+.session-output-resource-uri,
+.session-output-resource-text {
+  display: block;
+  margin-top: 0.25rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.session-output-resource-text {
+  white-space: pre-wrap;
+}
+
+.session-toolcard-body .session-output-image:first-child,
+.session-toolcard-body .session-output-resource:first-child {
+  margin-top: 0;
+}

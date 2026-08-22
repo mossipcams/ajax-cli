@@ -44,6 +44,7 @@ beforeEach(() => {
   disposers = [];
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
+  document.documentElement.removeAttribute("data-session-viewport");
   setVisibilityState("visible");
   vi.stubGlobal("visualViewport", {
     get height() {
@@ -115,6 +116,62 @@ describe("initViewport", () => {
     settleClose();
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(false);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+  });
+
+  it("keeps --app-height at layout height after keyboard close when visualViewport stays stale", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    document.body.appendChild(composer);
+    start();
+    composer.focus();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    composer.blur();
+    vvHeight = 800;
+    dispatchVV("resize");
+    settleClose();
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+
+    composer.remove();
+  });
+
+  it("restores layout height when session composer blurs with a stale visualViewport", async () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    });
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    document.body.appendChild(shell);
+
+    start();
+    composer.focus();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
+
+    composer.blur();
+    document.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+
+    shell.remove();
+    document.documentElement.removeAttribute("data-session-viewport");
   });
 
   it("absorbs a transient viewport expansion while typing (no teardown)", () => {

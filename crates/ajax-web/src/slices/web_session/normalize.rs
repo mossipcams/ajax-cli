@@ -1,6 +1,7 @@
 //! Host-owned stream normalization: ACP delta or cumulative chunks become one
 //! full-content item update with a stable host item id.
 
+use super::output_content::OutputContentBlockWire;
 use super::SessionServerEvent;
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ pub(crate) struct StreamNormalizer {
 struct LaneState {
     item_id: String,
     text: String,
+    content_blocks: Vec<OutputContentBlockWire>,
 }
 
 impl StreamNormalizer {
@@ -32,10 +34,11 @@ impl StreamNormalizer {
             SessionServerEvent::Message {
                 role,
                 text,
+                content_blocks,
                 message_id,
                 ..
             } if matches!(role.as_str(), "agent" | "thought" | "user") => {
-                if text.is_empty() {
+                if text.is_empty() && content_blocks.is_empty() {
                     return Vec::new();
                 }
                 let key = lane_key(&role, &message_id);
@@ -47,11 +50,18 @@ impl StreamNormalizer {
                 let lane = self.lanes.entry(key).or_insert_with(|| LaneState {
                     item_id: item_id.clone(),
                     text: String::new(),
+                    content_blocks: Vec::new(),
                 });
                 lane.text = merge_stream_text(&lane.text, &text);
+                for block in content_blocks {
+                    if !lane.content_blocks.contains(&block) {
+                        lane.content_blocks.push(block);
+                    }
+                }
                 vec![SessionServerEvent::Message {
                     role,
                     text: lane.text.clone(),
+                    content_blocks: lane.content_blocks.clone(),
                     message_id,
                     item_id: lane.item_id.clone(),
                 }]

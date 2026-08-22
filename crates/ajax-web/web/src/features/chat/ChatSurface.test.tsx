@@ -93,6 +93,27 @@ describe("ChatSurface smoke", () => {
     vi.useRealTimers();
   });
 
+  it("does not open Diff Review when swiping on transcript text", async () => {
+    vi.useFakeTimers();
+    const onOpenDiff = vi.fn();
+    mountChat({ onOpenDiff });
+    send({ type: "message", role: "agent", text: "Selectable answer", itemId: "a1" });
+    send({ type: "turn_end", stopReason: "end_turn" });
+
+    const root = screen.getByTestId("session-chat");
+    const message = screen.getByTestId("session-message-agent");
+    Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
+
+    fireEvent.touchStart(message, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchMove(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onOpenDiff).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("closes the task details sheet when Drop confirm arms (#947)", () => {
     const { rerender } = mountChat({ pendingConfirmAction: null });
     fireEvent.click(screen.getByTestId("session-details"));

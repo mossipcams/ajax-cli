@@ -20,18 +20,23 @@ describe("flushQueuedFollowUp", () => {
   });
 
   it("plans mark_stopped and send_prompt when stopping after cancel", () => {
-    const stopping = beginStopAndSend(queueFollowUp({ status: "idle" }, "Next"));
+    const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+    const stopping = beginStopAndSend(queueFollowUp({ status: "idle" }, "Next", blocks));
     expect(flushQueuedFollowUp({ composerState: stopping, busy: false, connected: true })).toEqual({
       state: stopping,
-      intents: [{ type: "mark_stopped" }, { type: "send_prompt", text: "Next" }],
+      intents: [
+        { type: "mark_stopped" },
+        { type: "send_prompt", text: "Next", contentBlocks: blocks },
+      ],
     });
   });
 
   it("plans only send_prompt when a queued follow-up outlives a normal turn end", () => {
-    const queued = queueFollowUp({ status: "idle" }, "Next");
+    const blocks = [{ type: "resource" as const, uri: "file:///notes.txt", text: "hello" }];
+    const queued = queueFollowUp({ status: "idle" }, "Next", blocks);
     expect(flushQueuedFollowUp({ composerState: queued, busy: false, connected: true })).toEqual({
       state: queued,
-      intents: [{ type: "send_prompt", text: "Next" }],
+      intents: [{ type: "send_prompt", text: "Next", contentBlocks: blocks }],
     });
   });
 

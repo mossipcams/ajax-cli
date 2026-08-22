@@ -163,6 +163,64 @@ describe("TestInDevPanel", () => {
     await waitFor(() => expect(onResult).toHaveBeenCalledWith("Test in Dev failed to start", null, true));
   });
 
+  // GitHub issue #1035: TanStack Query mount fetch must not overwrite the
+  // accepted deploy-start response and hide an in-progress Test in Dev run.
+  it("issue #1035 keeps building state when a stale status fetch completes after start", async () => {
+    let releaseInitialFetch!: () => void;
+    fetchDevDeploy.mockImplementation((signal?: AbortSignal) =>
+      new Promise((resolve, reject) => {
+        releaseInitialFetch = () =>
+          resolve({
+            ok: true,
+            deploy: {
+              phase: "ready_to_deploy",
+              phase_label: "Ready to deploy",
+              shared_slot: true,
+              active: false,
+              error: null,
+              occupant: null,
+            },
+          });
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("The operation was aborted.", "AbortError")),
+          { once: true },
+        );
+      }),
+    );
+    startDevDeploy.mockResolvedValue({
+      ok: true,
+      deploy: {
+        phase: "building",
+        phase_label: "Building",
+        shared_slot: true,
+        active: true,
+        error: null,
+        occupant: {
+          task_handle: "ajax-cli/demo",
+          title: "Demo",
+          branch: "feat/demo",
+          commit_sha: "abc123",
+          dirty: true,
+          deployed_at_unix_secs: 0,
+        },
+      },
+    });
+
+    render(<TestInDevPanel taskHandle="ajax-cli/demo" />);
+    fireEvent.click(screen.getByTestId("test-in-dev-button"));
+    await waitFor(() => expect(startDevDeploy).toHaveBeenCalledWith("ajax-cli/demo"));
+    await waitFor(() =>
+      expect(screen.getByTestId("test-in-dev-button")).toHaveTextContent("Building"),
+    );
+
+    releaseInitialFetch();
+    await waitFor(() =>
+      expect(screen.getByTestId("test-in-dev-button")).toHaveTextContent("Building"),
+    );
+    expect(screen.getByTestId("test-in-dev-button")).toBeDisabled();
+  });
+
   it("starts deploy only once under same-turn double click", async () => {
     fetchDevDeploy.mockResolvedValue({
       ok: true,

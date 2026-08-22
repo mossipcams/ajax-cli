@@ -23,6 +23,16 @@ const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
 const exclusiveSessionNew = process.argv.includes('--exclusive-session-new');
 const modelRefuse = process.argv.includes('--model-refuse');
+const slashCommands = process.argv.includes('--slash-commands');
+const slashCommandsReplace = process.argv.includes('--slash-commands-replace');
+const sessionInfo = process.argv.includes('--session-info');
+const sessionInfoReplace = process.argv.includes('--session-info-replace');
+const elicitationForm = process.argv.includes('--elicitation-form');
+const elicitationUrl = process.argv.includes('--elicitation-url');
+const promptCapabilities = process.argv.includes('--prompt-capabilities');
+const richOutput = process.argv.includes('--rich-output');
+const sessionClose = process.argv.includes('--session-close');
+const sessionCloseFail = process.argv.includes('--session-close-fail');
 const sessionId = 'fake-sess-1';
 const cliDefaultModel = process.argv.includes('--cli-default-model')
   ? (cursorParameterizedModels ? 'composer-2.5' : 'composer-2.5[fast=true]')
@@ -106,6 +116,7 @@ let currentEffort = 'high';
 let currentFast = cursorParameterizedModels ? true : null;
 let currentMode = 'default';
 let heldPromptId = null;
+let heldElicitationId = null;
 let holdRemaining = holdPromptMode ? 1 : 0;
 
 function modelConfigOptions() {
@@ -204,6 +215,100 @@ function replayUpdate(text) {
   });
 }
 
+function replayRichOutput() {
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: {
+          type: 'image',
+          mimeType: 'image/png',
+          uri: 'https://example.com/shot.png',
+        },
+      },
+    },
+  });
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-rich',
+        title: 'Attach screenshot',
+        kind: 'other',
+        status: 'completed',
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'resource_link',
+              name: 'README.md',
+              uri: 'file:///README.md',
+            },
+          },
+          { type: 'terminal', terminalId: 'term-ignored' },
+        ],
+      },
+    },
+  });
+}
+
+function sendAvailableCommands(commands) {
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands: commands,
+      },
+    },
+  });
+}
+
+function sendSessionInfo(title) {
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: 'session_info_update',
+        title,
+      },
+    },
+  });
+}
+
+function defaultSlashCommands() {
+  return [
+    {
+      name: 'web',
+      description: 'Query the web',
+      input: { hint: 'query' },
+    },
+    {
+      name: 'help',
+      description: 'Show help',
+    },
+  ];
+}
+
+function replacementSlashCommands() {
+  return [
+    {
+      name: 'plan',
+      description: 'Create a plan',
+    },
+  ];
+}
+
 function handleRequest(msg) {
   const { id, method, params } = msg;
   if (method === 'initialize') {
@@ -219,7 +324,13 @@ function handleRequest(msg) {
         protocolVersion,
         agentCapabilities: {
           loadSession: true,
-          sessionCapabilities: resumeMode ? { resume: {} } : {},
+          sessionCapabilities: {
+            ...(resumeMode ? { resume: {} } : {}),
+            ...(sessionClose ? { close: {} } : {}),
+          },
+          ...(promptCapabilities
+            ? { promptCapabilities: { image: true, embeddedContext: true } }
+            : {}),
         },
       },
     });
@@ -235,7 +346,25 @@ function handleRequest(msg) {
         configOptions: modelConfigOptions(),
       },
     });
+    if (slashCommands) sendAvailableCommands(defaultSlashCommands());
+    if (sessionInfo) sendSessionInfo('Initial session title');
     if (malformedMode) process.stdout.write('{not-json}\n');
+    return;
+  }
+  if (method === 'session/close') {
+    fs.writeFileSync(
+      path.join(process.cwd(), '.fake-acp-session-close-called'),
+      params?.sessionId ?? sessionId,
+    );
+    if (sessionCloseFail) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: 'close failed' },
+      });
+      return;
+    }
+    send({ jsonrpc: '2.0', id, result: {} });
     return;
   }
   if (method === 'session/load' || method === 'session/resume') {
@@ -313,6 +442,65 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/prompt') {
+    if (slashCommandsReplace) {
+      sendAvailableCommands(replacementSlashCommands());
+    }
+    if (sessionInfoReplace) {
+      sendSessionInfo('Renamed session');
+    }
+    if (elicitationForm) {
+      heldPromptId = id;
+      heldElicitationId = 77;
+      send({
+        jsonrpc: '2.0',
+        id: heldElicitationId,
+        method: 'elicitation/create',
+        params: {
+          mode: 'form',
+          sessionId,
+          message: 'Pick deployment target',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              target: {
+                type: 'string',
+                title: 'Target',
+                enum: ['staging', 'production'],
+              },
+              confirmed: {
+                type: 'boolean',
+                title: 'Confirmed',
+              },
+              replicas: {
+                type: 'number',
+                title: 'Replicas',
+                minimum: 1,
+                maximum: 5,
+              },
+            },
+            required: ['target'],
+          },
+        },
+      });
+      return;
+    }
+    if (elicitationUrl) {
+      heldPromptId = id;
+      heldElicitationId = 78;
+      send({
+        jsonrpc: '2.0',
+        id: heldElicitationId,
+        method: 'elicitation/create',
+        params: {
+          mode: 'url',
+          sessionId,
+          message: 'Open the link',
+          elicitationId: 'elicit-url-1',
+          url: 'https://example.com/oauth',
+        },
+      });
+      return;
+    }
     if (permissionMode || permissionRejectOnly || permissionAllowAlways) {
       heldPromptId = id;
       const options = permissionRejectOnly
@@ -343,7 +531,14 @@ function handleRequest(msg) {
       heldPromptId = id;
       return;
     }
-    replayUpdate('pong');
+    const kinds = Array.isArray(params?.prompt)
+      ? params.prompt.map((block) => block?.type || 'unknown').join(',')
+      : 'text';
+    if (richOutput) {
+      replayRichOutput();
+    } else {
+      replayUpdate(kinds === 'text' ? 'pong' : `prompt:${kinds}`);
+    }
     send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
     return;
   }
@@ -386,6 +581,21 @@ rl.on('line', (line) => {
       heldPromptId = null;
     }
     if (msg.method !== 'session/cancel') replayUpdate(`notification:${msg.method}`);
+    return;
+  }
+  if (heldElicitationId !== null && msg.id === heldElicitationId && msg.error) {
+    replayUpdate(`elicitation:error:${msg.error.code ?? 'unknown'}`);
+    send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn' } });
+    heldPromptId = null;
+    heldElicitationId = null;
+    return;
+  }
+  if (heldElicitationId !== null && msg.id === heldElicitationId && msg.result) {
+    const action = msg.result.action ?? 'unknown';
+    replayUpdate(`elicitation:${action}`);
+    send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn' } });
+    heldPromptId = null;
+    heldElicitationId = null;
     return;
   }
   if ((permissionMode || permissionRejectOnly || permissionAllowAlways) && msg.id === 42 && msg.result) {

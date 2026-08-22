@@ -1,11 +1,20 @@
 use super::protocol::{
-    parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionSnapshot,
+    SESSION_PROTOCOL_VERSION,
 };
 use crate::slices::web_session::SessionServerEvent;
 
 #[test]
 fn snapshot_serializes_protocol_v2_fields() {
-    let snapshot = SessionSnapshot::new(7, "composer-2.5".to_string(), true, false, None, None);
+    let snapshot = SessionSnapshot::new(
+        7,
+        "composer-2.5".to_string(),
+        true,
+        false,
+        None,
+        None,
+        SessionChrome::default(),
+    );
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["type"], "snapshot");
     assert_eq!(json["protocolVersion"], SESSION_PROTOCOL_VERSION);

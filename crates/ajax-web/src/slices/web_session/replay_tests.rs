@@ -1,3 +1,4 @@
+use super::protocol::SessionChrome;
 use super::replay::{build_attach, plan_replay};
 use super::transcript::TranscriptLog;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
@@ -7,6 +8,7 @@ fn note(text: &str) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        content_blocks: Vec::new(),
         item_id: format!("n-{text}"),
         message_id: None,
     }
@@ -23,7 +25,13 @@ fn invalid_cursor_before_compaction_resets_replay() {
     let plan = plan_replay(Some(0), &log);
     assert!(plan.reset);
     assert_eq!(plan.from, log.dropped);
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, Some(0), None);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(0),
+        SessionChrome::default(),
+    );
     assert!(snapshot.reset);
 }
 
@@ -36,10 +44,33 @@ fn incremental_replay_after_one_new_event() {
     assert_eq!(plan.from, 1);
     let (events, _) = log.read_from(plan.from);
     assert_eq!(events, vec![note("two")]);
-    let (snapshot, replayed) = build_attach(&log, "auto".to_string(), false, Some(1), None);
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(1),
+        SessionChrome::default(),
+    );
     assert!(!snapshot.reset);
     assert_eq!(replayed.len(), 1);
     assert_eq!(replayed[0].cursor, 1);
+}
+
+#[test]
+fn cold_attach_without_client_cursor_resets_replay_issue_1031() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("cached")]);
+    let plan = plan_replay(None, &log);
+    assert!(plan.reset);
+    assert_eq!(plan.from, 0);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
 }
 
 #[test]
@@ -56,7 +87,13 @@ fn pending_permission_cleared_after_resolved_answer_issue_1018() {
             approved: true,
         },
     ]);
-    let (snapshot, _) = build_attach(&log, "auto".to_string(), false, None, None);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
     assert!(snapshot.pending_permission.is_none());
 }
 

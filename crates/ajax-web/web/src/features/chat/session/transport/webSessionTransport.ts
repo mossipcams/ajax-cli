@@ -65,9 +65,26 @@ export function connectWebSessionTransport(
             ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
           });
         }
+        if (frame.snapshot.pendingElicitation) {
+          const pending = frame.snapshot.pendingElicitation;
+          callbacks.onEvent({
+            type: "elicitation_request",
+            requestId: pending.requestId,
+            message: pending.message,
+            schema: pending.schema,
+          });
+        }
         callbacks.onReady(frame.snapshot.model.trim() || "auto");
         for (const prompt of pendingPrompts) sendPromptNow(prompt);
       } else {
+        if (frame.snapshot.reset) {
+          callbacks.onEvent({
+            type: "ready",
+            model: frame.snapshot.model,
+            busy: frame.snapshot.turnState === "busy",
+            reset: true,
+          });
+        }
         callbacks.onReady(frame.snapshot.model.trim() || "auto");
       }
       return;
@@ -106,7 +123,12 @@ export function connectWebSessionTransport(
   }
 
   function sendPromptNow(prompt: PendingPrompt) {
-    sendJson({ type: "prompt", text: prompt.text, clientMessageId: prompt.clientMessageId });
+    sendJson({
+      type: "prompt",
+      text: prompt.text,
+      clientMessageId: prompt.clientMessageId,
+      ...(prompt.contentBlocks?.length ? { contentBlocks: prompt.contentBlocks } : {}),
+    });
   }
 
   socket = platform.openSocket(sessionSocketUrl(handle, model, resumeCursor));
@@ -119,10 +141,14 @@ export function connectWebSessionTransport(
   });
 
   return {
-    sendPrompt(text) {
+    sendPrompt(text, contentBlocks = []) {
       const trimmed = text.trim();
       if (!trimmed) return "";
-      const prompt = { text: trimmed, clientMessageId: newPromptId() };
+      const prompt: PendingPrompt = {
+        text: trimmed,
+        clientMessageId: newPromptId(),
+        ...(contentBlocks.length ? { contentBlocks } : {}),
+      };
       if (!frameFits(prompt)) {
         callbacks.onEvent({ type: "error", message: PROMPT_TOO_LONG });
         return "";
@@ -159,6 +185,14 @@ export function connectWebSessionTransport(
         requestId,
         approved,
         ...(reason ? { reason } : {}),
+      });
+    },
+    respondElicitation(requestId, action, content) {
+      sendJson({
+        type: "elicitation",
+        requestId,
+        action,
+        ...(action === "accept" && content ? { content } : {}),
       });
     },
     dispose() {

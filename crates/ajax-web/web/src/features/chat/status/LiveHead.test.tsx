@@ -25,28 +25,28 @@ function mountHead(
 describe("headState precedence", () => {
   it("prefers permission decision over agent status", () => {
     expect(
-      headState({ requestId: "1", title: "Run?", detail: "" }, true, null, "running"),
+      headState({ requestId: "1", title: "Run?", detail: "" }, null, false, null, "running"),
     ).toBe("decision");
   });
 
   it("maps ACP waiting and requires_action to attention", () => {
-    expect(headState(null, false, null, "waiting")).toBe("attention");
-    expect(headState(null, false, null, "requires_action")).toBe("attention");
+    expect(headState(null, null, false, null, "waiting")).toBe("attention");
+    expect(headState(null, null, false, null, "requires_action")).toBe("attention");
   });
 
   it("maps ACP running or session busy to working", () => {
-    expect(headState(null, false, null, "running")).toBe("working");
-    expect(headState(null, true, null, "idle")).toBe("working");
+    expect(headState(null, null, false, null, "running")).toBe("working");
+    expect(headState(null, null, true, null, "idle")).toBe("working");
   });
 
   it("maps task attention waiting/error to attention", () => {
-    expect(headState(null, false, { status: "waiting" }, "idle")).toBe("attention");
-    expect(headState(null, false, { status: "error" }, "idle")).toBe("attention");
+    expect(headState(null, null, false, { status: "waiting" }, "idle")).toBe("attention");
+    expect(headState(null, null, false, { status: "error" }, "idle")).toBe("attention");
   });
 
   it("defaults to idle when nothing else applies", () => {
-    expect(headState(null, false, null, "idle")).toBe("idle");
-    expect(headState(null, false, null, null)).toBe("idle");
+    expect(headState(null, null, false, null, "idle")).toBe("idle");
+    expect(headState(null, null, false, null, null)).toBe("idle");
   });
 });
 
@@ -170,6 +170,7 @@ describe("buildHeadView", () => {
         conversation: [],
         turn: { busy: false, proseOpen: true },
         permission: { decision: null, resolvedIds: [] },
+        elicitation: { decision: null, resolvedIds: [] },
         status: { acpState: "idle", detail: null },
         usage: { context: null, turn: null },
         model: {},

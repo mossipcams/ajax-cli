@@ -423,6 +423,75 @@ describe("connectWebSessionTransport", () => {
     });
   });
 
+  it("#1031 dispatches ready with reset when a later snapshot requests full replay", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 2 }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: snapshotJson({ reset: true, cursor: 5, model: "gpt-5.6-sol" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "ready",
+      model: "gpt-5.6-sol",
+      busy: false,
+      reset: true,
+    });
+  });
+
+  it("#1031 replaces cached rows when cold attach advertises reset before replay tail", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: true, cursor: 2 }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(0, {
+        type: "message",
+        role: "agent",
+        text: "Authoritative",
+        itemId: "i-auth",
+      }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(1, { type: "turn_end", stopReason: "end_turn" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ready", reset: true }),
+    );
+    expect(cbs.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message", text: "Authoritative", itemId: "i-auth" }),
+    );
+  });
+
+  it("incremental reconnect keeps reset false on a later snapshot", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket), undefined, 2);
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 2 }),
+    } as MessageEvent);
+    vi.mocked(cbs.onEvent).mockClear();
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 4, model: "gpt-5.6-sol" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ready", reset: true }),
+    );
+  });
+
   it("applies pendingPermission from snapshot", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
@@ -440,6 +509,43 @@ describe("connectWebSessionTransport", () => {
       type: "permission_request",
       requestId: "p1",
       title: "Run tests?",
+    });
+    transport.dispose();
+  });
+
+  it("applies pendingElicitation from snapshot", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: snapshotJson({
+        pendingElicitation: {
+          requestId: "e1",
+          message: "Pick env",
+          schema: { type: "object", properties: {} },
+        },
+      }),
+    } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "elicitation_request",
+      requestId: "e1",
+      message: "Pick env",
+      schema: { type: "object", properties: {} },
+    });
+    transport.dispose();
+  });
+
+  it("sends elicitation accept with content", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    transport.respondElicitation("e1", "accept", { target: "staging" });
+    expect(JSON.parse(String(socket.sent[0]))).toEqual({
+      type: "elicitation",
+      requestId: "e1",
+      action: "accept",
+      content: { target: "staging" },
     });
     transport.dispose();
   });
@@ -536,6 +642,25 @@ describe("parseServerFrame", () => {
       kind: "event",
       cursor: 0,
       event: { type: "permission_request", requestId: "p1" },
+    });
+    expect(
+      parseServerFrame(
+        eventJson(0, {
+          type: "elicitation_request",
+          requestId: "e1",
+          message: "Pick env",
+          schema: { type: "object", properties: {} },
+        }),
+      ),
+    ).toEqual({
+      kind: "event",
+      cursor: 0,
+      event: {
+        type: "elicitation_request",
+        requestId: "e1",
+        message: "Pick env",
+        schema: { type: "object", properties: {} },
+      },
     });
     expect(parseServerFrame(eventJson(0, { type: "error", message: "nope" }))).toEqual({
       kind: "event",

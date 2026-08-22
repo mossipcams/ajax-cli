@@ -2,6 +2,7 @@
 
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::adapters::{
     acp_launch_for_agent, cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
     cursor_unspecified_spawn_satisfied, CURSOR_DEFAULT_SPAWN_MODEL,
@@ -80,7 +81,9 @@ fn live_cursor_prompt_and_session_load() {
     let session_id = client.session_id().to_string();
 
     client
-        .begin_prompt("Reply with exactly the word pong and nothing else.")
+        .begin_prompt(&[ContentBlock::Text(TextContent::new(
+            "Reply with exactly the word pong and nothing else.",
+        ))])
         .expect("begin_prompt");
 
     let deadline = Instant::now() + Duration::from_secs(45);

@@ -440,6 +440,7 @@ fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
                         crate::slices::web_session::SessionServerEvent::Message {
                             role: "user".to_string(),
                             text: "prior turn".to_string(),
+                            content_blocks: Vec::new(),
                             item_id: "prior-user".to_string(),
                             message_id: None,
                         },

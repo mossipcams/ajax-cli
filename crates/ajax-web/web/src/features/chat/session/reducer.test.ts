@@ -98,7 +98,7 @@ describe("ready settles the turn state", () => {
     ]);
   });
 
-  it("clears reducer when snapshot reset is true before replay tail", () => {
+  it("#1031 clears cached reducer rows when snapshot reset is true before replay tail", () => {
     const prior = run([agentMsg("one", "i1")]);
     const reset = reduceWire(asReducer(prior), { type: "ready", busy: false, reset: true });
     const afterTail = reduceWire(reset, agentMsg("two", "i2"));
@@ -373,6 +373,45 @@ describe("reduceChatSession", () => {
     }).view;
     expect(replayed.permission.decision).toBeNull();
     expect(replayed.conversation.filter((item) => item.kind === "permission")).toHaveLength(1);
+  });
+
+  it("clears the elicitation head on elicitation_answered without waiting for elicitation_resolved", () => {
+    const schema = {
+      type: "object",
+      properties: { target: { type: "string", title: "Target" } },
+    };
+    const state = run([
+      {
+        type: "elicitation_request",
+        requestId: "e1",
+        message: "Pick a target",
+        schema,
+      },
+    ]);
+    expect(state.elicitation.decision).toMatchObject({
+      requestId: "e1",
+      message: "Pick a target",
+    });
+    expect(state.conversation).toEqual([
+      expect.objectContaining({ kind: "elicitation", requestId: "e1", resolved: false }),
+    ]);
+
+    const answered = reduceChatSession(asReducer(state), { type: "elicitation_answered" }).view;
+    expect(answered.elicitation.decision).toBeNull();
+    expect(answered.conversation[0]).toMatchObject({ kind: "elicitation", resolved: true });
+  });
+
+  it("clears a resurrected elicitation when elicitation_resolved replays", () => {
+    const schema = {
+      type: "object",
+      properties: { target: { type: "string", title: "Target" } },
+    };
+    const state = run([
+      { type: "elicitation_request", requestId: "e1", message: "Pick a target", schema },
+      { type: "elicitation_resolved", requestId: "e1", action: "accept" },
+    ]);
+    expect(state.elicitation.decision).toBeNull();
+    expect(state.conversation[0]).toMatchObject({ kind: "elicitation", resolved: true });
   });
 
   it("tracks the turn: busy on prompt, settled on turn_end", () => {

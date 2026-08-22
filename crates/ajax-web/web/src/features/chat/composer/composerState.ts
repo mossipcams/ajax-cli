@@ -1,34 +1,63 @@
+import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+
 /** Browser composer queue: one editable follow-up, not a second host FIFO. */
 export type ComposerState =
   | { status: "idle" }
-  | { status: "queued"; text: string }
-  | { status: "stopping"; text: string };
+  | { status: "queued"; text: string; contentBlocks?: PromptContentBlockWire[] }
+  | { status: "stopping"; text: string; contentBlocks?: PromptContentBlockWire[] };
 
 export function composerQueuedText(state: ComposerState): string | null {
   if (state.status === "idle") return null;
   return state.text;
 }
 
+export function composerQueuedContentBlocks(
+  state: ComposerState,
+): PromptContentBlockWire[] | undefined {
+  if (state.status === "idle") return undefined;
+  return state.contentBlocks;
+}
+
 export function composerIsStopping(state: ComposerState): boolean {
   return state.status === "stopping";
 }
 
-export function queueFollowUp(_state: ComposerState, text: string): ComposerState {
-  return { status: "queued", text };
+export function queueFollowUp(
+  _state: ComposerState,
+  text: string,
+  contentBlocks?: PromptContentBlockWire[],
+): ComposerState {
+  return {
+    status: "queued",
+    text,
+    ...(contentBlocks?.length ? { contentBlocks } : {}),
+  };
 }
 
 export function beginStopAndSend(state: ComposerState): ComposerState {
   if (state.status === "idle") return state;
-  return { status: "stopping", text: state.text };
+  return {
+    status: "stopping",
+    text: state.text,
+    ...(state.contentBlocks?.length ? { contentBlocks: state.contentBlocks } : {}),
+  };
 }
 
 export function clearQueue(_state: ComposerState = { status: "idle" }): ComposerState {
   return { status: "idle" };
 }
 
-export function restoreQueuedDraft(state: ComposerState): { state: ComposerState; draft: string } | null {
+export function restoreQueuedDraft(state: ComposerState): {
+  state: ComposerState;
+  draft: string;
+  contentBlocks?: PromptContentBlockWire[];
+} | null {
   if (state.status === "idle") return null;
-  return { state: { status: "idle" }, draft: state.text };
+  return {
+    state: { status: "idle" },
+    draft: state.text,
+    ...(state.contentBlocks?.length ? { contentBlocks: state.contentBlocks } : {}),
+  };
 }
 
 /** stopping cannot exist without queued text — enforced by the union shape. */

@@ -29,6 +29,7 @@ pub(crate) async fn deliver(
             &handle,
             notification.id().to_string(),
             notification.prompt(),
+            Vec::new(),
         )
         .await;
     directory.release(&handle).await;

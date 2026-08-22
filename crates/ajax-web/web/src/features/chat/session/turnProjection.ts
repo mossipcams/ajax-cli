@@ -2,6 +2,7 @@ import type {
   ChatSessionEvent,
   ChatSessionReducerState,
   ConversationItem,
+  OutputContentBlock,
 } from "./model";
 
 type DraftItem = ConversationItem extends infer T
@@ -45,28 +46,59 @@ function replaceAt(
   });
 }
 
+function mergeContentBlocks(
+  previous: OutputContentBlock[] | undefined,
+  incoming: OutputContentBlock[] | undefined,
+): OutputContentBlock[] | undefined {
+  if (!incoming?.length) return previous;
+  const merged = [...(previous ?? [])];
+  for (const block of incoming) {
+    if (!merged.some((existing) => JSON.stringify(existing) === JSON.stringify(block))) {
+      merged.push(block);
+    }
+  }
+  return merged.length ? merged : undefined;
+}
+
 function upsertMessage(
   state: ChatSessionReducerState,
   item:
-    | { kind: "prose"; role: "user" | "agent"; text: string; itemId: string; messageId?: string }
-    | { kind: "thought"; text: string; itemId: string; messageId?: string },
+    | {
+        kind: "prose";
+        role: "user" | "agent";
+        text: string;
+        contentBlocks?: OutputContentBlock[];
+        itemId: string;
+        messageId?: string;
+      }
+    | {
+        kind: "thought";
+        text: string;
+        contentBlocks?: OutputContentBlock[];
+        itemId: string;
+        messageId?: string;
+      },
 ): ChatSessionReducerState {
   const index = state.view.conversation.findIndex((row) => row.id === item.itemId);
   if (index >= 0) {
     const existing = state.view.conversation[index];
     if (existing.kind === "prose" && item.kind === "prose") {
-      if (existing.text === item.text) return state;
+      const contentBlocks = mergeContentBlocks(existing.contentBlocks, item.contentBlocks);
+      if (existing.text === item.text && contentBlocks === existing.contentBlocks) return state;
       return replaceAt(state, index, {
         ...existing,
         text: item.text,
+        ...(contentBlocks ? { contentBlocks } : {}),
         messageId: item.messageId ?? existing.messageId,
       });
     }
     if (existing.kind === "thought" && item.kind === "thought") {
-      if (existing.text === item.text) return state;
+      const contentBlocks = mergeContentBlocks(existing.contentBlocks, item.contentBlocks);
+      if (existing.text === item.text && contentBlocks === existing.contentBlocks) return state;
       return replaceAt(state, index, {
         ...existing,
         text: item.text,
+        ...(contentBlocks ? { contentBlocks } : {}),
         messageId: item.messageId ?? existing.messageId,
       });
     }
@@ -83,6 +115,7 @@ function upsertMessage(
             id: item.itemId,
             role: item.role,
             text: item.text,
+            ...(item.contentBlocks ? { contentBlocks: item.contentBlocks } : {}),
             messageId: item.messageId,
           },
         ],
@@ -100,6 +133,7 @@ function upsertMessage(
           kind: "thought",
           id: item.itemId,
           text: item.text,
+          ...(item.contentBlocks ? { contentBlocks: item.contentBlocks } : {}),
           messageId: item.messageId,
         },
       ],
@@ -113,21 +147,47 @@ function upsertOrPushUser(
   text: string,
   itemId?: string,
   messageId?: string,
+  contentBlocks?: OutputContentBlock[],
 ): ChatSessionReducerState {
   if (itemId) {
     const tail = state.view.conversation[state.view.conversation.length - 1];
-    if (tail?.kind === "prose" && tail.role === "user" && tail.text === text) {
+    if (
+      tail?.kind === "prose" &&
+      tail.role === "user" &&
+      tail.text === text &&
+      JSON.stringify(tail.contentBlocks ?? []) === JSON.stringify(contentBlocks ?? [])
+    ) {
       return replaceAt(state, state.view.conversation.length - 1, {
         ...tail,
         id: itemId,
         messageId: messageId ?? tail.messageId,
       });
     }
-    return upsertMessage(state, { kind: "prose", role: "user", text, itemId, messageId });
+    return upsertMessage(state, {
+      kind: "prose",
+      role: "user",
+      text,
+      contentBlocks,
+      itemId,
+      messageId,
+    });
   }
   const tail = state.view.conversation[state.view.conversation.length - 1];
-  if (tail?.kind === "prose" && tail.role === "user" && tail.text === text) return state;
-  return push(state, { kind: "prose", role: "user", text, messageId });
+  if (
+    tail?.kind === "prose" &&
+    tail.role === "user" &&
+    tail.text === text &&
+    JSON.stringify(tail.contentBlocks ?? []) === JSON.stringify(contentBlocks ?? [])
+  ) {
+    return state;
+  }
+  return push(state, {
+    kind: "prose",
+    role: "user",
+    text,
+    ...(contentBlocks ? { contentBlocks } : {}),
+    messageId,
+  });
 }
 
 export function applyTurnEvent(
@@ -136,12 +196,13 @@ export function applyTurnEvent(
 ): ChatSessionReducerState {
   switch (event.type) {
     case "agent_message": {
-      if (!event.text) return state;
+      if (!event.text && !event.contentBlocks?.length) return state;
       if (!event.itemId) {
         const pushed = push(state, {
           kind: "prose",
           role: "agent",
           text: event.text,
+          ...(event.contentBlocks ? { contentBlocks: event.contentBlocks } : {}),
           messageId: event.messageId,
         });
         return bumpRevision({
@@ -156,6 +217,7 @@ export function applyTurnEvent(
         kind: "prose",
         role: "agent",
         text: event.text,
+        contentBlocks: event.contentBlocks,
         itemId: event.itemId,
         messageId: event.messageId,
       });
@@ -165,11 +227,12 @@ export function applyTurnEvent(
       });
     }
     case "thought_message": {
-      if (!event.text) return state;
+      if (!event.text && !event.contentBlocks?.length) return state;
       if (!event.itemId) {
         const pushed = push(state, {
           kind: "thought",
           text: event.text,
+          ...(event.contentBlocks ? { contentBlocks: event.contentBlocks } : {}),
           messageId: event.messageId,
         });
         return bumpRevision({
@@ -183,6 +246,7 @@ export function applyTurnEvent(
       const next = upsertMessage(state, {
         kind: "thought",
         text: event.text,
+        contentBlocks: event.contentBlocks,
         itemId: event.itemId,
         messageId: event.messageId,
       });
@@ -192,7 +256,13 @@ export function applyTurnEvent(
       });
     }
     case "user_message":
-      return upsertOrPushUser(state, event.text, event.itemId, event.messageId);
+      return upsertOrPushUser(
+        state,
+        event.text,
+        event.itemId,
+        event.messageId,
+        event.contentBlocks,
+      );
     case "host_note":
       return push(state, { kind: "note", tone: "info", text: event.text });
     case "system_message":

@@ -8,17 +8,22 @@ use super::config_options::{
     mode_option, read_model_applied, replace_config_options, select_value_advertised,
     sync_session_result_config_options,
 };
+use super::sdk_elicitation::{
+    advertised_elicitation_capabilities, cancel_elicitations, handle_create_elicitation,
+    respond_elicitation, PendingElicitations,
+};
 use agent_client_protocol::{
     on_receive_notification, on_receive_request,
     schema::{
         v1::{
             BooleanConfigOptionCapabilities, CancelNotification, ClientCapabilities,
-            ClientSessionCapabilities, ContentBlock, Implementation, InitializeRequest,
-            LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionKind,
-            PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-            RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
-            SessionConfigKind, SessionConfigOption, SessionConfigOptionsCapabilities,
-            SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, TextContent,
+            ClientSessionCapabilities, CloseSessionRequest, ContentBlock, CreateElicitationRequest,
+            Implementation, InitializeRequest, LoadSessionRequest, NewSessionRequest,
+            PermissionOption, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
+            RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+            SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
+            SessionConfigOptionsCapabilities, SessionInfoUpdate, SessionNotification,
+            SessionUpdate, SetSessionConfigOptionRequest,
         },
         ProtocolVersion,
     },
@@ -44,26 +49,37 @@ pub(super) struct ConnectionReady {
     pub session_id: String,
     pub session_new_result: Value,
     pub config_options: Option<Vec<SessionConfigOption>>,
+    pub prompt_capabilities: super::PromptCapabilityDescriptor,
+    pub close_advertised: bool,
     pub load_session_advertised: bool,
     pub resumed: bool,
     pub applied_model: String,
     pub model_apply_error: Option<String>,
 }
 
+pub(crate) struct CancelOutcome {
+    pub permissions: Vec<String>,
+    pub elicitations: Vec<String>,
+}
+
 pub(super) enum ClientCommand {
     Prompt {
         id: u64,
-        text: String,
+        blocks: Vec<ContentBlock>,
         result: Sender<Result<(), String>>,
     },
     Cancel {
-        /// Request ids of the permission prompts this cancel answered, so the
-        /// host can record them as resolved.
-        result: Sender<Result<Vec<String>, String>>,
+        /// Request ids of permission and elicitation prompts this cancel answered.
+        result: Sender<Result<CancelOutcome, String>>,
     },
     RespondPermission {
         request_id: String,
         approved: bool,
+        result: Sender<Result<(), String>>,
+    },
+    RespondElicitation {
+        request_id: String,
+        action: agent_client_protocol::schema::v1::ElicitationAction,
         result: Sender<Result<(), String>>,
     },
     ApplyModelPin {
@@ -75,6 +91,11 @@ pub(super) enum ClientCommand {
         value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
         result: Sender<Result<ApplyModelOutcome, String>>,
     },
+    CloseSession {
+        result: Sender<Result<(), String>>,
+    },
+    /// Resume/load handshake finished on the host; allow live transcript updates.
+    InstallLiveSession,
     Shutdown,
 }
 
@@ -85,12 +106,31 @@ struct LiveSession {
     agent: AgentClient,
 }
 
+/// Shared runtime state for live session commands and handshake transcript gating.
+struct SessionRuntime {
+    live: Mutex<Option<LiveSession>>,
+    suppress_handshake_transcript: AtomicBool,
+}
+
+type SessionRuntimeHandle = Arc<SessionRuntime>;
+
 struct PendingPermission {
     responder: Responder<RequestPermissionResponse>,
     options: Vec<PermissionOption>,
 }
 
 type PendingPermissions = Arc<Mutex<HashMap<String, PendingPermission>>>;
+
+/// Capability-only `session/update` kinds that may flow during resume/load handshake.
+fn is_resume_load_capability_update(update: &SessionUpdate) -> bool {
+    matches!(
+        update,
+        SessionUpdate::ConfigOptionUpdate(_)
+            | SessionUpdate::AvailableCommandsUpdate(_)
+            | SessionUpdate::SessionInfoUpdate(_)
+            | SessionUpdate::CurrentModeUpdate(_)
+    )
+}
 
 pub(super) struct RunOptions {
     pub stdin: ChildStdin,
@@ -123,6 +163,7 @@ pub(super) fn client_capabilities() -> ClientCapabilities {
         .session(ClientSessionCapabilities::new().config_options(
             SessionConfigOptionsCapabilities::new().boolean(BooleanConfigOptionCapabilities::new()),
         ))
+        .elicitation(advertised_elicitation_capabilities())
         .meta(meta)
 }
 
@@ -157,10 +198,16 @@ async fn run_async(options: RunOptions) {
         ..
     } = options;
     let permissions: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
+    let elicitations: PendingElicitations = Arc::new(Mutex::new(HashMap::new()));
+    let elicitations_for_requests = Arc::clone(&elicitations);
+    let elicitation_events = events.clone();
     let connection_events = events.clone();
     let notification_events = events.clone();
-    let live_session: Arc<Mutex<Option<LiveSession>>> = Arc::new(Mutex::new(None));
-    let live_for_notifications = Arc::clone(&live_session);
+    let runtime: SessionRuntimeHandle = Arc::new(SessionRuntime {
+        live: Mutex::new(None),
+        suppress_handshake_transcript: AtomicBool::new(false),
+    });
+    let runtime_for_notifications = Arc::clone(&runtime);
     let transport = traced_transport(stdin, stdout, events.clone());
 
     let connection_result = Client
@@ -174,10 +221,19 @@ async fn run_async(options: RunOptions) {
                 let params = notification.params().clone();
                 let event = match serde_json::from_value::<SessionNotification>(params.clone()) {
                     Ok(notification) => {
+                        if runtime_for_notifications
+                            .suppress_handshake_transcript
+                            .load(Ordering::Acquire)
+                            && !is_resume_load_capability_update(&notification.update)
+                        {
+                            return Ok(());
+                        }
                         if let SessionUpdate::ConfigOptionUpdate(update) = notification.update {
                             let applied = read_model_applied(Some(&update.config_options))
                                 .unwrap_or_default();
-                            if let Some(live) = live_for_notifications.lock().unwrap().as_mut() {
+                            if let Some(live) =
+                                runtime_for_notifications.live.lock().unwrap().as_mut()
+                            {
                                 replace_config_options(
                                     &mut live.config_options,
                                     update.config_options.clone(),
@@ -191,11 +247,33 @@ async fn run_async(options: RunOptions) {
                                 applied_model: applied,
                                 config_options: update.config_options,
                             }
+                        } else if let SessionUpdate::AvailableCommandsUpdate(update) =
+                            notification.update
+                        {
+                            AcpClientEvent::AvailableCommandsUpdated {
+                                available_commands: update.available_commands,
+                            }
+                        } else if let SessionUpdate::SessionInfoUpdate(update) = notification.update
+                        {
+                            match session_title_from_update(&update) {
+                                Some(title) => AcpClientEvent::SessionInfoUpdated {
+                                    title: title.clone(),
+                                },
+                                None => return Ok(()),
+                            }
                         } else {
                             AcpClientEvent::SessionUpdate(Box::new(notification))
                         }
                     }
-                    Err(_) => AcpClientEvent::UnknownSessionUpdate(params),
+                    Err(_) => {
+                        if runtime_for_notifications
+                            .suppress_handshake_transcript
+                            .load(Ordering::Acquire)
+                        {
+                            return Ok(());
+                        }
+                        AcpClientEvent::UnknownSessionUpdate(params)
+                    }
                 };
                 let _ = notification_events.send(event);
                 Ok(())
@@ -220,6 +298,17 @@ async fn run_async(options: RunOptions) {
             },
             on_receive_request!(),
         )
+        .on_receive_request(
+            async move |request: CreateElicitationRequest, responder, _connection| {
+                handle_create_elicitation(
+                    request,
+                    responder,
+                    &elicitations_for_requests,
+                    &elicitation_events,
+                )
+            },
+            on_receive_request!(),
+        )
         .connect_with(transport, async move |connection| {
             let started = initialize_session(
                 &connection,
@@ -227,6 +316,7 @@ async fn run_async(options: RunOptions) {
                 &cwd,
                 apply_pin.as_deref(),
                 resume_session_id.as_deref(),
+                Arc::clone(&runtime),
             )
             .await;
             let connection_ready = match started {
@@ -242,7 +332,7 @@ async fn run_async(options: RunOptions) {
                 config_options: connection_ready.config_options.clone(),
                 agent,
             };
-            *live_session.lock().unwrap() = Some(live);
+            *runtime.live.lock().unwrap() = Some(live);
             if ready.send(Ok(connection_ready)).is_err() {
                 return Ok(());
             }
@@ -252,7 +342,8 @@ async fn run_async(options: RunOptions) {
                 connection_events.clone(),
                 busy,
                 permissions,
-                live_session,
+                elicitations,
+                runtime,
             )
             .await;
             Ok(())
@@ -301,6 +392,7 @@ async fn initialize_session(
     cwd: &PathBuf,
     apply_pin: Option<&str>,
     resume_session_id: Option<&str>,
+    runtime: SessionRuntimeHandle,
 ) -> Result<ConnectionReady, String> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(client_capabilities())
@@ -320,6 +412,11 @@ async fn initialize_session(
     }
 
     let load_session_advertised = initialized.agent_capabilities.load_session;
+    let close_advertised = initialized
+        .agent_capabilities
+        .session_capabilities
+        .close
+        .is_some();
     let resume_advertised = initialized
         .agent_capabilities
         .session_capabilities
@@ -329,6 +426,9 @@ async fn initialize_session(
     let mut session_id = None;
     let mut config_options = None;
     if let Some(resume_id) = resume_session_id {
+        runtime
+            .suppress_handshake_transcript
+            .store(true, Ordering::Release);
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
                 resumed = true;
@@ -343,6 +443,10 @@ async fn initialize_session(
         }
         if resumed {
             session_id = Some(resume_id.to_string());
+        } else {
+            runtime
+                .suppress_handshake_transcript
+                .store(false, Ordering::Release);
         }
     }
 
@@ -395,6 +499,10 @@ async fn initialize_session(
         session_id,
         session_new_result,
         config_options,
+        prompt_capabilities: super::prompt_capability_descriptor(
+            &initialized.agent_capabilities.prompt_capabilities,
+        ),
+        close_advertised,
         load_session_advertised,
         resumed,
         applied_model,
@@ -488,16 +596,22 @@ async fn command_loop(
     events: Sender<AcpClientEvent>,
     busy: Arc<AtomicBool>,
     permissions: PendingPermissions,
-    live_session: Arc<Mutex<Option<LiveSession>>>,
+    elicitations: PendingElicitations,
+    runtime: SessionRuntimeHandle,
 ) {
     while let Some(command) = commands.recv().await {
         match command {
+            ClientCommand::InstallLiveSession => {
+                runtime
+                    .suppress_handshake_transcript
+                    .store(false, Ordering::Release);
+            }
             ClientCommand::ApplyModelPin {
                 desired_model,
                 result,
             } => {
                 let Some((agent, session_id, session_result, config_options)) =
-                    live_session.lock().unwrap().as_ref().map(|live| {
+                    runtime.live.lock().unwrap().as_ref().map(|live| {
                         (
                             live.agent,
                             live.session_id.clone(),
@@ -519,7 +633,7 @@ async fn command_loop(
                     model_pins_at_spawn,
                 )
                 .await;
-                if let Ok(mut live_guard) = live_session.lock() {
+                if let Ok(mut live_guard) = runtime.live.lock() {
                     if let Some(live) = live_guard.as_mut() {
                         if outcome.error.is_none() {
                             if let Some(options) = outcome.config_options.clone() {
@@ -545,7 +659,8 @@ async fn command_loop(
                 value,
                 result,
             } => {
-                let Some((session_id, config_options)) = live_session
+                let Some((session_id, config_options)) = runtime
+                    .live
                     .lock()
                     .unwrap()
                     .as_ref()
@@ -562,7 +677,7 @@ async fn command_loop(
                 )
                 .await;
                 if outcome.error.is_none() {
-                    if let Ok(mut live_guard) = live_session.lock() {
+                    if let Ok(mut live_guard) = runtime.live.lock() {
                         if let Some(live) = live_guard.as_mut() {
                             if let Some(options) = outcome.config_options.clone() {
                                 replace_config_options(&mut live.config_options, options.clone());
@@ -582,15 +697,12 @@ async fn command_loop(
                 }
                 let _ = result.send(Ok(outcome));
             }
-            ClientCommand::Prompt { id, text, result } => {
-                let mut live_guard = live_session.lock().unwrap();
+            ClientCommand::Prompt { id, blocks, result } => {
+                let mut live_guard = runtime.live.lock().unwrap();
                 let Some(live) = live_guard.as_mut() else {
                     break;
                 };
-                let request = PromptRequest::new(
-                    live.session_id.clone(),
-                    vec![ContentBlock::Text(TextContent::new(text))],
-                );
+                let request = PromptRequest::new(live.session_id.clone(), blocks);
                 let sent = connection.send_request(request);
                 let prompt_events = events.clone();
                 let prompt_busy = Arc::clone(&busy);
@@ -617,15 +729,19 @@ async fn command_loop(
                 }
             }
             ClientCommand::Cancel { result } => {
-                let mut live_guard = live_session.lock().unwrap();
+                let mut live_guard = runtime.live.lock().unwrap();
                 let Some(live) = live_guard.as_mut() else {
                     break;
                 };
-                let cancelled = cancel_permissions(&permissions);
+                let cancelled_permissions = cancel_permissions(&permissions);
+                let cancelled_elicitations = cancel_elicitations(&elicitations);
                 let sent =
                     connection.send_notification(CancelNotification::new(live.session_id.clone()));
                 let _ = result.send(match sent {
-                    Ok(()) => Ok(cancelled),
+                    Ok(()) => Ok(CancelOutcome {
+                        permissions: cancelled_permissions,
+                        elicitations: cancelled_elicitations,
+                    }),
                     Err(error) => Err(error.to_string()),
                 });
             }
@@ -636,6 +752,42 @@ async fn command_loop(
             } => {
                 let response = respond_permission(&permissions, &request_id, approved);
                 let _ = result.send(response);
+            }
+            ClientCommand::RespondElicitation {
+                request_id,
+                action,
+                result,
+            } => {
+                let response = respond_elicitation(&elicitations, &request_id, action);
+                let _ = result.send(response);
+            }
+            ClientCommand::CloseSession { result } => {
+                let session_id = runtime
+                    .live
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|live| live.session_id.clone());
+                let Some(session_id) = session_id else {
+                    let _ = result.send(Err("ACP session is not live".to_string()));
+                    break;
+                };
+                let close_result = tokio::time::timeout(
+                    HANDSHAKE_TIMEOUT,
+                    connection
+                        .send_request(CloseSessionRequest::new(session_id))
+                        .block_task(),
+                )
+                .await
+                .map_err(|_| timeout_error("session/close"))
+                .and_then(|response| {
+                    response.map_err(|error| format!("ACP session/close failed: {error}"))
+                })
+                .map(|_| ());
+                if let Err(error) = &close_result {
+                    tracing::warn!(target: "ajax_web", error = %error, "ACP session/close failed during shutdown");
+                }
+                let _ = result.send(close_result);
             }
             ClientCommand::Shutdown => {
                 break;
@@ -715,4 +867,20 @@ fn cancel_permissions(permissions: &PendingPermissions) -> Vec<String> {
 
 fn timeout_error(method: &str) -> String {
     format!("{method} timed out after {}s", HANDSHAKE_TIMEOUT.as_secs())
+}
+
+/// `title: null` clears live chrome; omitted `title` is a no-op update.
+fn session_title_from_update(update: &SessionInfoUpdate) -> Option<Option<String>> {
+    match update.title.as_opt_ref() {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(title)) => {
+            let trimmed = title.trim();
+            if trimmed.is_empty() {
+                Some(None)
+            } else {
+                Some(Some(trimmed.to_string()))
+            }
+        }
+    }
 }

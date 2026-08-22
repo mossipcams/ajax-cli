@@ -15,12 +15,14 @@ fn normalizer_assigns_stable_item_ids_and_full_text() {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hel".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "hello".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },
@@ -41,12 +43,14 @@ fn cumulative_and_delta_harnesses_converge() {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "The ".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "bug".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },
@@ -55,12 +59,14 @@ fn cumulative_and_delta_harnesses_converge() {
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "The ".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },
         SessionServerEvent::Message {
             role: "agent".to_string(),
             text: "The bug".to_string(),
+            content_blocks: Vec::new(),
             item_id: String::new(),
             message_id: None,
         },

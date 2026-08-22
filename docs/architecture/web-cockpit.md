@@ -37,6 +37,7 @@ through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/task/public.ts`, `features/settings/public.ts`). Inside Ajax Chat,
 `ChatSurface.tsx` is the sole composer of top-level capabilities
 (`composer/`, `conversation/`, `scrolling/`, `status/`, `permissions/`,
+`elicitation/`,
 `model/`, `session/`). Capabilities import `session/public` and shared UI only;
 `conversation/` may also import `activity/public`. Raw protocol transport stays
 in `features/chat/session/transport/` and does not escape `session/public`.
@@ -80,7 +81,7 @@ the New task sheet calls `startTask` with `orchestration_chat: true` for the
 chosen harness. When the flag is on,
 `#/session/<handle>` renders the Task Workspace in chat mode: the shared task
 header, then ChatSurface (composition only: live head, transcript, composer,
-model chrome, and permission slot) for
+model chrome, and permission/elicitation slot) for
 session-capable tasks that prefer chat; **Ajax terminal** in task details switches
 to `#/t/<handle>` and remembers that choice in browser localStorage
 (`ajax.web.taskView.terminal`). **Ajax chat** in the footer Task details
@@ -111,7 +112,11 @@ prefers `session/resume` when advertised, falls back to `session/load`, then
 creates a new session. Trusted local orchestration auto-approves every ACP
 `session/request_permission` on the host by selecting an advertised allow option
 (`AllowAlways` when present, otherwise `AllowOnce`; otherwise the standard
-cancelled outcome). Auto-answered requests are not surfaced to the browser. After
+cancelled outcome). Auto-answered requests are not surfaced to the browser.
+Ajax advertises form elicitation only (`clientCapabilities.elicitation.form: {}`);
+URL elicitation is refused on the host. Pending form elicitation is replayed on
+reconnect via `pendingElicitation` on the session snapshot and answered through
+the browser head form (Accept / Decline / Cancel). After
 session create or restore the adapter also sends `session/set_config_option` when
 the harness advertises a documented full-access `mode` select value
 (`agent-full-access`, `bypassPermissions`, `agent`, or `code`; first match wins)
@@ -228,10 +233,51 @@ operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
 Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
 `_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
 capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` as
-the live connected-control contract. New Task still lists models from
+the live connected-control contract and optional `availableCommands` as the live
+slash-command contract (pass-through on `session/prompt`; not transcript) and optional
+`promptCapabilities` as the live rich-prompt attach contract (from ACP initialize; not
+transcript) and optional `sessionTitle` as live agent-reported session chrome (from ACP
+`session_info_update`; not transcript or Core task truth). New Task still lists models from
 `GET /api/session/models`. `snapshot.model` is the model option's `currentValue`
 only. In-band refusal leaves `session_model` as the prior restart pin and
 `snapshot.model` on harness-reported evidence.
+
+**Slash commands (ACP).** When `snapshot.availableCommands` is present, the chat
+composer offers prefix completion for advertised `/name` commands (Tab, Enter, arrow
+keys, and tap-to-insert on iOS Safari). Submitting `/name` plus optional args sends
+that exact string on `session/prompt`; Ajax does not parse or rewrite slash input.
+
+**Rich prompt content (ACP).** When `snapshot.promptCapabilities` advertises `image`
+and/or `embeddedContext`, the chat composer exposes a tappable Attach control
+(iOS Safari–safe; not hover-only) and accepts image paste when `image` is
+advertised. The file picker attaches `image` blocks when `image` is advertised
+and embedded `resource` bodies when `embeddedContext` is advertised; it does
+not synthesize `resource_link` stubs for local files. `resource_link` remains
+valid on the host wire for real URIs supplied by agents or other surfaces.
+Submitting still requires typed text and sends
+`{ type: "prompt", text, clientMessageId, contentBlocks? }`; the browser
+downscales/compresses attached photos so the JSON frame fits the 256 KiB WebSocket
+cap with headroom for typed text before send. If compression cannot fit the frame,
+the composer keeps the attachment and surfaces a specific error (not the generic
+“shorten the message” prompt). The host forwards a full ACP `ContentBlock` array
+and keeps JSONL to text plus attachment names only.
+
+**Non-text output (ACP).** Agent/user/thought message updates and tool-call content may
+carry `image`, `resource_link`, or embedded `resource` blocks. The host maps them into
+`message.contentBlocks` and extended `tool_call.content` wire payloads (text and diffs
+unchanged). JSONL omits redundant base64 when a durable `uri` is present; otherwise image
+data stays on the replayed event. Ajax does not advertise or render ACP `terminal/*`
+embeds.
+
+**Session title (ACP).** When `snapshot.sessionTitle` is present, the task workspace
+header shows it under the Core task title (`detail.title` / handle). It does not rename
+the task in Core or replace the Ajax handle.
+
+**Session close (ACP).** When the agent advertises `sessionCapabilities.close`, the
+host sends `session/close` before stdio teardown on harness Switch, slot replacement,
+idle eviction, and TaskSession shutdown. Close ends the ACP session on the child only;
+Ajax task truth, JSONL transcripts, and tmux terminals are unchanged. Close failure
+or timeout still tears down the child and surfaces a session error event.
 
 **Connected model controls (MVP).** When `snapshot.sessionConfigOptions` advertises
 model, effort/thought-level, and/or Fast options, the chat composer hotbar exposes
@@ -255,6 +301,7 @@ Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 `web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
 one `TaskSession` Tokio command loop per handle): FIFO prompt queueing,
 one-in-flight turns, cancellation, model switching, permission answers,
+elicitation answers,
 idempotency, subscriber fan-out, idle LRU retention, and transcript cursors.
 JSONL persistence lives in `adapters::web_session_store`. ACP stdio and typed
 request/notification I/O remain in `web_session_acp`; the slice maps
@@ -293,7 +340,8 @@ into the store, ACP client, command loop, or runtime route layer).
 
 Each attach sends one protocol v2 `snapshot` frame
 (`protocolVersion`, `cursor`, `model`, `turnState`, `reset`, optional
-`pendingPermission`, optional `sessionConfigOptions`) followed by cursor-bearing
+`pendingPermission`, optional `sessionConfigOptions`, optional `availableCommands`, optional
+`promptCapabilities`, optional `sessionTitle`) followed by cursor-bearing
 `event` envelopes whose
 `payload` is the existing typed session event union. The `model` field is the
 harness-reported applied id after handshake apply, not the task desired pin
@@ -749,6 +797,22 @@ Flow:
 
 Test in Dev (`--worktree`) keeps the same slot-binary install under
 `.ajax-dev-web/bin` and must never target profile stable.
+
+Operator flow:
+
+1. Task details POST `/api/dev-deploy` with `{ task_handle }` only. The host
+   resolves the ajax-cli worktree from registry state, rejects non-ajax tasks and
+   unmanaged paths, and spawns `scripts/dev-web-restart.sh --worktree <path>
+   --profile dev --port 8788` (never stable).
+2. JSON `{ ok: true, deploy }` returns `202 Accepted` while the slot moves through
+   `building` → `restarting` → `dev_ready` / `failed`.
+3. The browser panel polls `GET /api/dev-deploy` only while `deploy.active` is
+   true. After a successful start POST, the client cancels any in-flight status
+   read before seeding query cache so a stale ready snapshot cannot hide the run
+   (GitHub issue #1035).
+
+Restart-script resolution order: the selected worktree's
+`scripts/dev-web-restart.sh`, then `AJAX_WEB_RESTART_SCRIPT`.
 
 ### PostHog Cloud telemetry
 

@@ -74,6 +74,19 @@ describe("TaskWorkspaceHeader", () => {
   it("renders the handle while task detail is loading", () => {
     render(<TaskWorkspaceHeader handle="web/fix-login" onBack={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "web/fix-login" })).toBeInTheDocument();
+    expect(screen.queryByTestId("session-chrome-title")).not.toBeInTheDocument();
     expect(screen.queryByTestId("task-details")).not.toBeInTheDocument();
+  });
+
+  it("shows agent session title without replacing the task heading", () => {
+    render(
+      <TaskWorkspaceHeader
+        detail={detail()}
+        sessionTitle="Fix auth flow"
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Fix login" })).toBeInTheDocument();
+    expect(screen.getByTestId("session-chrome-title")).toHaveTextContent("Fix auth flow");
   });
 });

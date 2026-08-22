@@ -58,10 +58,12 @@ impl BlockingSessionDirectory {
         client_message_id: String,
         text: String,
     ) -> Result<(), String> {
-        self.rt.block_on(
-            self.inner
-                .submit_prompt_with_id(handle, client_message_id, text),
-        )
+        self.rt.block_on(self.inner.submit_prompt_with_id(
+            handle,
+            client_message_id,
+            text,
+            Vec::new(),
+        ))
     }
 
     pub fn cancel(&self, handle: &str, keep_queue: bool) -> Result<(), String> {
@@ -131,6 +133,7 @@ pub(crate) fn note(text: &str) -> super::SessionServerEvent {
     super::SessionServerEvent::Message {
         role: "agent".to_string(),
         text: text.to_string(),
+        content_blocks: Vec::new(),
         item_id: format!("note-{text}"),
         message_id: None,
     }
