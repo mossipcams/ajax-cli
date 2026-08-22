@@ -94,6 +94,8 @@ pub(super) enum ClientCommand {
     CloseSession {
         result: Sender<Result<(), String>>,
     },
+    /// Resume/load handshake finished on the host; allow live transcript updates.
+    InstallLiveSession,
     Shutdown,
 }
 
@@ -110,6 +112,17 @@ struct PendingPermission {
 }
 
 type PendingPermissions = Arc<Mutex<HashMap<String, PendingPermission>>>;
+
+/// Capability-only `session/update` kinds that may flow during resume/load handshake.
+fn is_resume_load_capability_update(update: &SessionUpdate) -> bool {
+    matches!(
+        update,
+        SessionUpdate::ConfigOptionUpdate(_)
+            | SessionUpdate::AvailableCommandsUpdate(_)
+            | SessionUpdate::SessionInfoUpdate(_)
+            | SessionUpdate::CurrentModeUpdate(_)
+    )
+}
 
 pub(super) struct RunOptions {
     pub stdin: ChildStdin,
@@ -184,6 +197,8 @@ async fn run_async(options: RunOptions) {
     let notification_events = events.clone();
     let live_session: Arc<Mutex<Option<LiveSession>>> = Arc::new(Mutex::new(None));
     let live_for_notifications = Arc::clone(&live_session);
+    let suppress_handshake_transcript = Arc::new(AtomicBool::new(false));
+    let suppress_for_notifications = Arc::clone(&suppress_handshake_transcript);
     let transport = traced_transport(stdin, stdout, events.clone());
 
     let connection_result = Client
@@ -197,6 +212,11 @@ async fn run_async(options: RunOptions) {
                 let params = notification.params().clone();
                 let event = match serde_json::from_value::<SessionNotification>(params.clone()) {
                     Ok(notification) => {
+                        if suppress_for_notifications.load(Ordering::Acquire)
+                            && !is_resume_load_capability_update(&notification.update)
+                        {
+                            return Ok(());
+                        }
                         if let SessionUpdate::ConfigOptionUpdate(update) = notification.update {
                             let applied = read_model_applied(Some(&update.config_options))
                                 .unwrap_or_default();
@@ -232,7 +252,12 @@ async fn run_async(options: RunOptions) {
                             AcpClientEvent::SessionUpdate(Box::new(notification))
                         }
                     }
-                    Err(_) => AcpClientEvent::UnknownSessionUpdate(params),
+                    Err(_) => {
+                        if suppress_for_notifications.load(Ordering::Acquire) {
+                            return Ok(());
+                        }
+                        AcpClientEvent::UnknownSessionUpdate(params)
+                    }
                 };
                 let _ = notification_events.send(event);
                 Ok(())
@@ -275,6 +300,7 @@ async fn run_async(options: RunOptions) {
                 &cwd,
                 apply_pin.as_deref(),
                 resume_session_id.as_deref(),
+                Arc::clone(&suppress_handshake_transcript),
             )
             .await;
             let connection_ready = match started {
@@ -302,6 +328,7 @@ async fn run_async(options: RunOptions) {
                 permissions,
                 elicitations,
                 live_session,
+                suppress_handshake_transcript,
             )
             .await;
             Ok(())
@@ -350,6 +377,7 @@ async fn initialize_session(
     cwd: &PathBuf,
     apply_pin: Option<&str>,
     resume_session_id: Option<&str>,
+    suppress_handshake_transcript: Arc<AtomicBool>,
 ) -> Result<ConnectionReady, String> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(client_capabilities())
@@ -383,6 +411,7 @@ async fn initialize_session(
     let mut session_id = None;
     let mut config_options = None;
     if let Some(resume_id) = resume_session_id {
+        suppress_handshake_transcript.store(true, Ordering::Release);
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
                 resumed = true;
@@ -397,6 +426,8 @@ async fn initialize_session(
         }
         if resumed {
             session_id = Some(resume_id.to_string());
+        } else {
+            suppress_handshake_transcript.store(false, Ordering::Release);
         }
     }
 
@@ -548,9 +579,13 @@ async fn command_loop(
     permissions: PendingPermissions,
     elicitations: PendingElicitations,
     live_session: Arc<Mutex<Option<LiveSession>>>,
+    suppress_handshake_transcript: Arc<AtomicBool>,
 ) {
     while let Some(command) = commands.recv().await {
         match command {
+            ClientCommand::InstallLiveSession => {
+                suppress_handshake_transcript.store(false, Ordering::Release);
+            }
             ClientCommand::ApplyModelPin {
                 desired_model,
                 result,

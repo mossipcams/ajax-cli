@@ -544,6 +544,48 @@ fn g1_load_fail_appends_context_reset_note() {
 }
 
 #[test]
+fn issue_1031_load_replay_not_in_transcript_after_attach_pump() {
+    let dir = scratch_dir("load-drain-pump");
+    let script = fake_acp_fixture();
+    let handle = "web/issue-1031-load-pump";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: "seed".to_string(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".to_string(),
+                message_id: None,
+            },
+        );
+        let (_, cursor) = directory.read_from(handle, 0);
+        directory.kill_host_for_test(handle);
+
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire after successful load");
+        directory.pump(handle);
+
+        let (delta, _) = directory.read_from(handle, cursor);
+        assert!(
+            !delta.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::Message { text, .. } if text == "replayed"
+            )),
+            "load replay must not reach JSONL after attach pump (#1031)"
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn g1_successful_load_drains_replay_from_transcript() {
     let dir = scratch_dir("load-drain");
     let script = fake_acp_fixture();

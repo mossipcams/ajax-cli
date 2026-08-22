@@ -605,6 +605,7 @@ fn fake_second_begin_prompt_while_in_flight_returns_err() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression #1031: resume/load transcript replay must not reach JSONL after install.
 #[test]
 fn fake_resume_drains_replayed_session_updates() {
     let dir = scratch_dir("resume-drain");
