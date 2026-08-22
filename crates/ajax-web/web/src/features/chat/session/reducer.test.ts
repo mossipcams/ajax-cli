@@ -98,7 +98,7 @@ describe("ready settles the turn state", () => {
     ]);
   });
 
-  it("clears reducer when snapshot reset is true before replay tail", () => {
+  it("#1031 clears cached reducer rows when snapshot reset is true before replay tail", () => {
     const prior = run([agentMsg("one", "i1")]);
     const reset = reduceWire(asReducer(prior), { type: "ready", busy: false, reset: true });
     const afterTail = reduceWire(reset, agentMsg("two", "i2"));

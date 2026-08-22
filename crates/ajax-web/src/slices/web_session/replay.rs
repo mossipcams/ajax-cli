@@ -18,7 +18,7 @@ pub(crate) fn plan_replay(client_cursor: Option<usize>, log: &TranscriptLog) -> 
     let dropped = log.dropped;
     let Some(client) = client_cursor else {
         return ReplayPlan {
-            reset: false,
+            reset: true,
             from: 0,
         };
     };

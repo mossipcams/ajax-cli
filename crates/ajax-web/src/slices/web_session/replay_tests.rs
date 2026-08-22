@@ -57,6 +57,23 @@ fn incremental_replay_after_one_new_event() {
 }
 
 #[test]
+fn cold_attach_without_client_cursor_resets_replay_issue_1031() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("cached")]);
+    let plan = plan_replay(None, &log);
+    assert!(plan.reset);
+    assert_eq!(plan.from, 0);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+}
+
+#[test]
 fn pending_permission_cleared_after_resolved_answer_issue_1018() {
     let mut log = TranscriptLog::default();
     log.append(vec![
