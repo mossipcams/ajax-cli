@@ -52,8 +52,8 @@
 .session-jump {
   position: absolute;
   left: 50%;
-  /* Sits above the in-thread composer (no separate Send chrome). */
-  bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+  /* Sits above the hotbar + full-width composer field. */
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 3;
   padding: 8px 18px;
