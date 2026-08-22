@@ -4,8 +4,12 @@ use crate::adapters::http::{json_response, Response};
 use crate::slices::cockpit;
 use crate::{slices::actions::supported_web_action, WebError};
 use ajax_core::{
-    adapters::CommandRunner, commands::CommandContext, models::OperatorAction,
-    registry::InMemoryRegistry, runtime_refresh::RefreshTier,
+    adapters::CommandRunner,
+    agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
+    commands::CommandContext,
+    models::{OperatorAction, Task},
+    registry::InMemoryRegistry,
+    runtime_refresh::RefreshTier,
 };
 use serde::Deserialize;
 
@@ -24,6 +28,16 @@ pub trait RuntimeBridge<C: CommandRunner> {
         tier: RefreshTier,
         deliver_notifications: bool,
     ) -> Result<bool, WebError>;
+
+    fn deliver_agent_notification(
+        &mut self,
+        _context: &CommandContext<InMemoryRegistry>,
+        _runner: &mut C,
+        _task: &Task,
+        _notification: &AgentNotification,
+    ) -> Result<AgentNotificationDeliveryStatus, String> {
+        Err("native agent notification delivery unavailable".to_string())
+    }
 
     fn execute_operate(
         &mut self,
@@ -82,21 +96,6 @@ pub(crate) struct MobileActionRequest {
     pub(crate) confirmed: bool,
     #[serde(default)]
     pub(crate) branch_adoption: Option<ajax_core::commands::BranchAdoptionPlan>,
-}
-
-pub(crate) fn handle_refreshed_cockpit_request<C: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    tier: RefreshTier,
-    deliver_notifications: bool,
-) -> Result<Response, WebError> {
-    let _state_changed = bridge.refresh_cockpit(context, runner, tier, deliver_notifications)?;
-    json_response(
-        200,
-        serde_json::to_value(cockpit::browser_cockpit_view(context))
-            .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
-    )
 }
 
 pub(crate) fn handle_action_request<C: CommandRunner>(

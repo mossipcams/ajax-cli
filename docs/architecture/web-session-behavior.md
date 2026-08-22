@@ -200,6 +200,11 @@ existing paths.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
+- A CI failure notification uses the same `submit_prompt_with_id` command and
+  FIFO, with its deterministic failure-episode ID as `clientMessageId`. Delivery
+  may acquire/resume an existing persisted ACP session through the normal path,
+  then queues and releases it; it never creates a new ACP session solely for CI
+  and never races the in-flight turn.
 - The browser keeps an unacknowledged-prompt outbox for resend and at most **one**
   editable follow-up held in the composer; it does not maintain a second FIFO
   queue. Submitting while a turn is in flight queues that follow-up in the

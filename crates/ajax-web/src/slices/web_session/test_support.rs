@@ -40,6 +40,14 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.release(handle));
     }
 
+    pub fn drop_session(&self, handle: &str) {
+        self.rt.block_on(self.inner.drop_session(handle));
+    }
+
+    pub fn runtime_handle(&self) -> tokio::runtime::Handle {
+        self.rt.handle().clone()
+    }
+
     pub fn submit_prompt(&self, handle: &str, text: String) -> Result<(), String> {
         self.rt.block_on(self.inner.submit_prompt(handle, text))
     }
@@ -64,10 +72,6 @@ impl BlockingSessionDirectory {
 
     pub fn cleanup_session(&self, handle: &str) {
         self.rt.block_on(self.inner.cleanup_session(handle));
-    }
-
-    pub fn drop_session(&self, handle: &str) {
-        self.rt.block_on(self.inner.drop_session(handle));
     }
 
     pub fn read_from(

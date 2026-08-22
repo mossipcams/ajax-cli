@@ -125,7 +125,7 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
         Some("web/fix-login\tRunning - Agent working\tFix login")
     );
     let mut expected = tmux_live_commands_with_running_reconcile();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -148,7 +148,7 @@ fn status_command_refreshes_live_state_from_tmux() {
         .unwrap()
         .has_side_flag(SideFlag::NeedsInput));
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -167,7 +167,7 @@ fn status_command_renders_json_from_refreshed_live_state() {
         "agent running"
     );
     let mut expected = tmux_live_commands_with_running_reconcile();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -208,7 +208,7 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
         assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
         let mut expected = tmux_live_commands_with_running_reconcile();
-        expected.push(expected_ci_probe_command());
+        extend_expected_ci_monitor_commands(&mut expected);
         assert_eq!(runner.commands, expected, "{command:?}");
         let _ = std::fs::remove_dir_all(cache_dir);
     }
@@ -231,7 +231,7 @@ fn read_commands_share_live_refresh_contract() {
             .unwrap_or_else(|error| panic!("{args:?} failed: {error}"));
         assert!(!output.is_empty(), "{args:?} should render a response");
         let mut expected = tmux_live_commands_with_running_reconcile();
-        expected.push(expected_ci_probe_command());
+        extend_expected_ci_monitor_commands(&mut expected);
         assert_eq!(runner.commands, expected, "{args:?}");
         let _ = std::fs::remove_dir_all(cache_dir);
     }
@@ -288,6 +288,7 @@ fn read_refresh_failure_keeps_task_visible_with_missing_tmux_attention() {
     task.remove_side_flag(SideFlag::NeedsInput);
     let mut outputs = git_live_outputs();
     outputs.push(output(0, "other-session\n"));
+    outputs.extend(ci_monitor_live_outputs());
     let mut runner = QueuedRunner::new(outputs);
     let output =
         run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
@@ -314,6 +315,7 @@ fn read_refresh_failure_keeps_task_visible_with_missing_tmux_attention() {
                     "--porcelain"
                 ]
             ),
+            expected_ci_discovery_command(),
             expected_ci_probe_command(),
         ]
     );
@@ -413,7 +415,7 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     );
     assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
 }
@@ -540,6 +542,15 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
             0,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\najax-web-fix-sidebar\ttask\t/tmp/worktrees/web-fix-sidebar\n",
         ),
+        output(0, "codex is working\n"),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\nworktree /tmp/worktrees/web-fix-sidebar\nHEAD 3333333\nbranch refs/heads/ajax/fix-sidebar\n\n",
+        ),
+        ci_pr_list_output(),
+        ci_pr_checks_output(),
+        ci_pr_list_output_for(43, "ajax/fix-sidebar", "3333333"),
+        ci_pr_checks_output(),
     ]);
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
     assert!(changed);
@@ -573,19 +584,13 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "--porcelain",
                 ],
             ),
+            expected_ci_discovery_command(),
             expected_ci_probe_command(),
-            CommandSpec::new(
-                "gh",
-                [
-                    "pr",
-                    "checks",
-                    "ajax/fix-sidebar",
-                    "--json",
-                    "name,state,link",
-                ],
-            )
-            .with_cwd("/tmp/worktrees/web-fix-sidebar")
-            .with_timeout(std::time::Duration::from_secs(30)),
+            expected_ci_discovery_command_for_branch(
+                "/tmp/worktrees/web-fix-sidebar",
+                "ajax/fix-sidebar",
+            ),
+            expected_ci_probe_command_for_pr("/tmp/worktrees/web-fix-sidebar", 43),
         ]
     );
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -605,6 +610,8 @@ fn live_refresh_nonzero_window_listing_preserves_evidence_and_stops_before_pane_
             1,
             "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
         ),
+        ci_pr_list_output(),
+        ci_pr_checks_output(),
     ]);
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
@@ -615,6 +622,7 @@ fn live_refresh_nonzero_window_listing_preserves_evidence_and_stops_before_pane_
         vec![
             expected_commands[0].clone(),
             expected_commands[1].clone(),
+            expected_ci_discovery_command(),
             expected_ci_probe_command(),
         ]
     );

@@ -9,6 +9,7 @@
   "lifecycle": "Reviewable",
   "agent": "Codex",
   "agent_status": "Waiting",
+  "ci_agent_delivery": null,
   "status": "waiting",
   "status_explanation": "Waiting for approval",
   "runtime_observation_error": null,

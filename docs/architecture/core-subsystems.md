@@ -119,21 +119,28 @@ that require rediscovery. Native Cockpit uses in-memory context and saves on
 change; web reloads SQLite only when the state file mtime advances or after a
 mutating operation persisted to disk.
 
-`refresh_runtime_context_with_tier` also observes GitHub PR checks through
-`CommandRunner` and `adapters::github::GithubChecksAdapter`. The adapter runs
-`gh pr checks --json name,state,link`. Failed checks reduce to
+`refresh_runtime_context_with_tier` also observes GitHub PRs and checks through
+`CommandRunner` and `adapters::github::GithubChecksAdapter`. The existing
+`ajax_pull_requests` / `PullRequestRef` metadata is the only task-to-PR
+association. Full refresh discovers the open branch PR every 300 seconds and
+runs `gh pr checks <number> --json name,state,link` only for that associated
+open PR: every 30 seconds while pending or failed, and every 300 seconds after a
+stable pass. A changed head SHA starts a new attempt; closed or merged PRs retire
+the attempt.
+
+Failed checks reduce to
 `LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from
 local `check failed` evidence.
 Passing or pending checks clear GitHub-sourced CI evidence and drop `TestsFailed`
 unless the live status is a local check failure (`CiFailed` with summary
-`check failed`). Probes are rate-limited by the per-task `ci_checks_probed_at`
-metadata timestamp: 30 seconds while the live status is a GitHub-sourced CI
-failure (`ci failed: …`), otherwise 300 seconds. Probes run on `RefreshTier::Full` only, not
-`RefreshTier::Live`. Unobservable probes
+`check failed`). Probes run on `RefreshTier::Full` only, not `RefreshTier::Live`.
+Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
-never project the task to Error. Notification dedup keys on operator status
-class only (`Waiting` / `Error`), so explanation churn inside one class stays
-one episode; a class change (Waiting→Error) re-fires.
+never project the task to Error. The CI attempt reducer stores all failed check
+names, links, and available run/check identities in deterministic order. It
+emits transport-neutral `AgentNotification::CiFailed` once per failed episode.
+A rerun can emit once more only after a pending transition and a distinct
+available identity; incremental completion within one episode does not re-fire.
 
 ### Live Status
 

@@ -1,6 +1,6 @@
 //! Task/cockpit/diff/terminal/STT/operate Axum handlers.
 
-use crate::runtime::bridge::{handle_refreshed_cockpit_request, RuntimeBridge};
+use crate::runtime::bridge::RuntimeBridge;
 use crate::runtime::state::{CockpitCacheEntry, WebAppState};
 use crate::{
     adapters::http::{
@@ -9,7 +9,15 @@ use crate::{
     slices::cockpit,
     WebError,
 };
-use ajax_core::{adapters::CommandRunner, runtime_refresh::RefreshTier};
+use ajax_core::{
+    adapters::CommandRunner,
+    agent_notification::{
+        pending_for_task, record_delivery, AgentNotificationDelivery,
+        AgentNotificationDeliveryStatus,
+    },
+    registry::Registry,
+    runtime_refresh::RefreshTier,
+};
 use axum::{
     extract::{Path as AxumPath, Request as AxumRequest, State},
     http::HeaderMap,
@@ -116,23 +124,29 @@ where
             guard.revision,
         )
     };
-    let result = handle_refreshed_cockpit_request(
-        &mut context,
-        &mut runner,
-        &mut bridge,
-        tier,
-        deliver_notifications,
-    );
+    let mut result = bridge
+        .refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications)
+        .map(|_| ());
+    if result.is_ok() && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
+    {
+        if let Err(error) = bridge.persist_registry_snapshot(&mut context) {
+            result = Err(error);
+        }
+    }
     if deliver_notifications
         && result.is_ok()
         && crate::slices::push::deliver_attention_pushes(&mut context, &state.push)
     {
         let _ = bridge.persist_registry_snapshot(&mut context);
     }
-    let cached_response = match &result {
-        Ok(response) => Some(response.clone()),
-        Err(_) => None,
-    };
+    let result = result.and_then(|()| {
+        json_response(
+            200,
+            serde_json::to_value(cockpit::browser_cockpit_view(&context))
+                .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
+        )
+    });
+    let cached_response = result.as_ref().ok().cloned();
     {
         let mut guard = state.shared();
         if guard.revision == base_revision {
@@ -151,6 +165,53 @@ where
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
     }
+}
+
+fn deliver_agent_notifications<C, B>(
+    state: &WebAppState<C, B>,
+    context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    runner: &mut C,
+    bridge: &mut B,
+) -> bool
+where
+    C: CommandRunner,
+    B: RuntimeBridge<C>,
+{
+    let pending = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter_map(|task| pending_for_task(task).map(|notification| (task.clone(), notification)))
+        .collect::<Vec<_>>();
+    let mut changed = false;
+    for (task, notification) in pending {
+        let outcome = if task.skip_interactive_agent() {
+            tokio::runtime::Handle::current().block_on(
+                crate::slices::web_session::deliver_agent_notification(
+                    &state.task_session_directory,
+                    &task,
+                    &notification,
+                ),
+            )
+        } else {
+            bridge.deliver_agent_notification(context, runner, &task, &notification)
+        };
+        let (status, detail) = match outcome {
+            Ok(status) => (status, None),
+            Err(error) => (AgentNotificationDeliveryStatus::Error, Some(error)),
+        };
+        if let Some(task) = context.registry.get_task_mut(notification.task_id()) {
+            changed |= record_delivery(
+                task,
+                AgentNotificationDelivery {
+                    notification_id: notification.id().to_string(),
+                    status,
+                    detail,
+                },
+            );
+        }
+    }
+    changed
 }
 
 pub(crate) async fn axum_task_detail<C, B>(

@@ -16,12 +16,15 @@ use crate::{
 
 use super::refresh_cached_annotations;
 
+#[allow(dead_code)]
 const CI_CHECKS_PROBE_INTERVAL: Duration = Duration::from_secs(300);
+#[allow(dead_code)]
 const CI_CHECKS_FAILED_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const CI_CHECKS_PROBED_AT_KEY: &str = "ci_checks_probed_at";
 pub(super) const CI_PROBE_ERROR_KEY: &str = "ci_probe_error";
 const GITHUB_CI_FAILED_PREFIX: &str = "ci failed";
 
+#[allow(dead_code)]
 pub(super) fn refresh_github_check_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -82,6 +85,7 @@ pub(super) fn github_probe_is_retired(task: &Task) -> bool {
         || task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
 }
 
+#[allow(dead_code)]
 fn should_probe_github_checks(task: &Task, now: SystemTime, had_github_ci_failure: bool) -> bool {
     if github_probe_is_retired(task) {
         return false;

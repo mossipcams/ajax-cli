@@ -18,6 +18,7 @@ use crate::{
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 
+pub(crate) mod ci_monitor;
 mod github_checks;
 
 #[cfg(test)]
@@ -99,18 +100,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         .filter(|task| should_probe_live_substrate(task))
         .map(|task| task.id.clone())
         .collect();
-    let github_ci_failure_at_refresh_start = tasks
-        .iter()
-        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
-        .map(|task| {
-            (
-                task.id.clone(),
-                task.live_status
-                    .as_ref()
-                    .is_some_and(github_checks::is_github_ci_failure),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
     let mut registered_runtime_tasks = tasks
         .iter()
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
@@ -524,12 +513,14 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     }
 
     if tier == RefreshTier::Full {
-        github_checks::refresh_github_check_evidence(
+        ci_monitor::refresh_ci_monitor(
             context,
             runner,
-            SystemTime::now(),
-            &registered_runtime_tasks,
-            &github_ci_failure_at_refresh_start,
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            &tasks,
             &mut changed,
         );
     }

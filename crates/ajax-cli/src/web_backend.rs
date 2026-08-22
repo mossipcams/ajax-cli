@@ -249,6 +249,21 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         Ok(reloaded || state_changed)
     }
 
+    fn deliver_agent_notification(
+        &mut self,
+        context: &CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+        task: &ajax_core::models::Task,
+        notification: &ajax_core::agent_notification::AgentNotification,
+    ) -> Result<ajax_core::agent_notification::AgentNotificationDeliveryStatus, String> {
+        crate::ci_agent_delivery::deliver(
+            &context.runtime_paths.cache_dir,
+            runner,
+            task,
+            notification,
+        )
+    }
+
     fn execute_operate(
         &mut self,
         request: OperateRequest,

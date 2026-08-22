@@ -175,6 +175,14 @@ export default function TaskMetaDetails({
         <dd>{detail.agent}</dd>
         <dt>Runtime</dt>
         <dd>{detail.agent_status}</dd>
+        {detail.ci_agent_delivery ? (
+          <>
+            <dt>CI agent notification</dt>
+            <dd>{detail.ci_agent_delivery.detail ?? (
+              detail.ci_agent_delivery.status === "queued" ? "Queued behind current agent turn" : "Sent to agent"
+            )}</dd>
+          </>
+        ) : null}
         <dt>Tmux</dt>
         <dd>{detail.tmux_session}</dd>
         <dt>Created</dt>

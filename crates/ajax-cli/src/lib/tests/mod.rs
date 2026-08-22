@@ -38,9 +38,29 @@ fn sample_context() -> CommandContext<InMemoryRegistry> {
     );
     task.lifecycle_status = LifecycleStatus::Reviewable;
     task.add_side_flag(SideFlag::NeedsInput);
+    associate_task_with_pr(&mut task, 42, "2222222");
     registry.create_task(task).unwrap();
 
     CommandContext::new(config, registry)
+}
+
+fn associate_task_with_pr(task: &mut Task, number: u64, head_sha: &str) {
+    ajax_core::diff_review::remember_pull_requests(
+        task,
+        &[ajax_core::diff_review::PullRequestRef {
+            number,
+            title: "Test PR".into(),
+            url: format!("https://example.test/pull/{number}"),
+            state: ajax_core::diff_review::PullRequestState::Open,
+            head_ref: task.branch.clone(),
+            head_sha: Some(head_sha.into()),
+        }],
+    );
+    task.metadata.insert(
+        "ajax_ci_monitor".into(),
+        serde_json::json!({ "pr_number": number, "head_sha": head_sha, "last_pr_discovery_at": 1 })
+            .to_string(),
+    );
 }
 
 fn git_list_remote_branches_command() -> CommandSpec {
@@ -318,18 +338,97 @@ fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
 }
 
 // from suite_2.rs
+fn expected_ci_discovery_command() -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            "ajax/fix-login",
+            "--json",
+            "number,title,url,state,headRefName,headRefOid",
+        ],
+    )
+    .with_cwd("/tmp/worktrees/web-fix-login")
+    .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
 fn expected_ci_probe_command() -> CommandSpec {
+    CommandSpec::new("gh", ["pr", "checks", "42", "--json", "name,state,link"])
+        .with_cwd("/tmp/worktrees/web-fix-login")
+        .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
+fn extend_expected_ci_monitor_commands(expected: &mut Vec<CommandSpec>) {
+    expected.push(expected_ci_discovery_command());
+    expected.push(expected_ci_probe_command());
+}
+
+// from suite_2.rs
+fn ci_pr_list_output() -> CommandOutput {
+    output(
+        0,
+        r#"[{"number":42,"title":"Test PR","url":"https://example.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"2222222"}]"#,
+    )
+}
+
+// from suite_2.rs
+fn ci_pr_checks_output() -> CommandOutput {
+    output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#)
+}
+
+// from suite_2.rs
+fn expected_ci_discovery_command_for_branch(worktree: &str, branch: &str) -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            branch,
+            "--json",
+            "number,title,url,state,headRefName,headRefOid",
+        ],
+    )
+    .with_cwd(worktree)
+    .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
+fn ci_monitor_live_outputs() -> Vec<CommandOutput> {
+    vec![ci_pr_list_output(), ci_pr_checks_output()]
+}
+
+// from suite_2.rs
+fn ci_pr_list_output_for(number: u64, branch: &str, head_sha: &str) -> CommandOutput {
+    output(
+        0,
+        &format!(
+            r#"[{{"number":{number},"title":"Test PR","url":"https://example.test/pull/{number}","state":"OPEN","headRefName":"{branch}","headRefOid":"{head_sha}"}}]"#
+        ),
+    )
+}
+
+// from suite_2.rs
+fn expected_ci_probe_command_for_pr(worktree: &str, number: u64) -> CommandSpec {
     CommandSpec::new(
         "gh",
         [
             "pr",
             "checks",
-            "ajax/fix-login",
+            &number.to_string(),
             "--json",
             "name,state,link",
         ],
     )
-    .with_cwd("/tmp/worktrees/web-fix-login")
+    .with_cwd(worktree)
     .with_timeout(std::time::Duration::from_secs(30))
 }
 
@@ -548,4 +647,3 @@ include!("suite_10.rs");
 include!("suite_11.rs");
 include!("suite_12.rs");
 include!("suite_13.rs");
-include!("suite_14.rs");

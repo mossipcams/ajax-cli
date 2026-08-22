@@ -1,4 +1,5 @@
 use super::command::{CommandOutput, CommandRunError, CommandSpec};
+use crate::agent_notification::CiFailedCheck;
 use crate::diff_review::{PullRequestRef, PullRequestState};
 use serde::Deserialize;
 use std::time::Duration;
@@ -27,6 +28,23 @@ pub enum CiChecksObservation {
     Unobservable { reason: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CiChecksState {
+    Failed,
+    Healthy,
+    Pending,
+    Unobservable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CiChecksReport {
+    pub state: CiChecksState,
+    pub failed_checks: Vec<CiFailedCheck>,
+    pub check_identities: Vec<String>,
+    pub has_pending: bool,
+    pub error: Option<String>,
+}
+
 impl GithubChecksAdapter {
     pub fn new(program: impl Into<String>) -> Self {
         Self {
@@ -43,12 +61,31 @@ impl GithubChecksAdapter {
         .with_timeout(GH_PR_CHECKS_TIMEOUT)
     }
 
+    pub fn pr_checks_for_pr(&self, worktree_path: &str, number: u64) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "pr",
+                "checks",
+                &number.to_string(),
+                "--json",
+                "name,state,link",
+            ],
+        )
+        .with_cwd(worktree_path)
+        .with_timeout(GH_PR_CHECKS_TIMEOUT)
+    }
+
     pub fn parse_pr_checks(result: &Result<CommandOutput, CommandRunError>) -> CiChecksObservation {
+        observation_from_report(Self::parse_pr_checks_report(result))
+    }
+
+    pub fn parse_pr_checks_report(
+        result: &Result<CommandOutput, CommandRunError>,
+    ) -> CiChecksReport {
         match result {
-            Err(error) => CiChecksObservation::Unobservable {
-                reason: error.to_string(),
-            },
-            Ok(output) => parse_stdout_or_stderr(output),
+            Err(error) => unobservable_report(error.to_string()),
+            Ok(output) => parse_report_stdout_or_stderr(output),
         }
     }
 
@@ -109,6 +146,8 @@ impl GithubChecksAdapter {
 struct CheckRow {
     name: String,
     state: String,
+    #[serde(default)]
+    link: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -140,34 +179,109 @@ fn map_pr_row(row: PrListRow) -> PullRequestRef {
     }
 }
 
-fn parse_stdout_or_stderr(output: &CommandOutput) -> CiChecksObservation {
-    match serde_json::from_str::<Vec<CheckRow>>(&output.stdout) {
-        Ok(rows) => classify_rows(&rows),
-        Err(_) => classify_stderr(&output.stderr),
+fn parse_report_stdout_or_stderr(output: &CommandOutput) -> CiChecksReport {
+    let rows = match serde_json::from_str::<Vec<CheckRow>>(&output.stdout) {
+        Ok(rows) if !rows.is_empty() => rows,
+        Ok(_) => return unobservable_report("no checks reported for pull request".to_string()),
+        Err(_) => {
+            return match classify_stderr(&output.stderr) {
+                CiChecksObservation::Unobservable { reason } => unobservable_report(reason),
+                _ => unreachable!("stderr classification is always unobservable"),
+            };
+        }
+    };
+    classify_report_rows(&rows)
+}
+
+fn unobservable_report(reason: String) -> CiChecksReport {
+    CiChecksReport {
+        state: CiChecksState::Unobservable,
+        failed_checks: Vec::new(),
+        check_identities: Vec::new(),
+        has_pending: false,
+        error: Some(reason),
     }
 }
 
-fn classify_rows(rows: &[CheckRow]) -> CiChecksObservation {
-    if rows.is_empty() {
-        return CiChecksObservation::Unobservable {
-            reason: "no checks reported for branch".to_string(),
-        };
-    }
+fn classify_report_rows(rows: &[CheckRow]) -> CiChecksReport {
+    let mut failed_checks = rows
+        .iter()
+        .filter(|row| is_failure_state(&row.state))
+        .map(|row| CiFailedCheck {
+            name: row.name.clone(),
+            link: row.link.clone().filter(|link| !link.trim().is_empty()),
+            identity: row.link.as_deref().and_then(check_identity),
+        })
+        .collect::<Vec<_>>();
+    failed_checks.sort();
+    let mut check_identities = rows
+        .iter()
+        .filter_map(|row| row.link.as_deref().and_then(check_identity))
+        .collect::<Vec<_>>();
+    check_identities.sort();
+    check_identities.dedup();
+    finish_report(rows, failed_checks, check_identities)
+}
 
-    for row in rows {
-        if is_failure_state(&row.state) {
-            return CiChecksObservation::Failed {
-                summary: row.name.clone(),
-            };
-        }
-    }
-
-    if rows.iter().any(|row| is_pending_state(&row.state))
-        || rows.iter().any(|row| !is_healthy_state(&row.state))
-    {
-        CiChecksObservation::Pending
+fn finish_report(
+    rows: &[CheckRow],
+    failed_checks: Vec<CiFailedCheck>,
+    check_identities: Vec<String>,
+) -> CiChecksReport {
+    let has_pending = rows.iter().any(|row| is_pending_state(&row.state))
+        || rows.iter().any(|row| {
+            !is_failure_state(&row.state)
+                && !is_pending_state(&row.state)
+                && !is_healthy_state(&row.state)
+        });
+    let state = if !failed_checks.is_empty() {
+        CiChecksState::Failed
+    } else if has_pending {
+        CiChecksState::Pending
     } else {
-        CiChecksObservation::Healthy
+        CiChecksState::Healthy
+    };
+    CiChecksReport {
+        state,
+        failed_checks,
+        check_identities,
+        has_pending,
+        error: None,
+    }
+}
+
+fn check_identity(link: &str) -> Option<String> {
+    let (_, suffix) = link.split_once("/runs/")?;
+    let run = suffix.split('/').next()?.trim();
+    if run.is_empty() {
+        return None;
+    }
+    let job = suffix
+        .split_once("/job/")
+        .and_then(|(_, job)| job.split('/').next())
+        .filter(|job| !job.is_empty());
+    Some(match job {
+        Some(job) => format!("run:{run}/job:{job}"),
+        None => format!("run:{run}"),
+    })
+}
+
+fn observation_from_report(report: CiChecksReport) -> CiChecksObservation {
+    match report.state {
+        CiChecksState::Failed => CiChecksObservation::Failed {
+            summary: report
+                .failed_checks
+                .first()
+                .map(|check| check.name.clone())
+                .unwrap_or_else(|| "unknown check".to_string()),
+        },
+        CiChecksState::Healthy => CiChecksObservation::Healthy,
+        CiChecksState::Pending => CiChecksObservation::Pending,
+        CiChecksState::Unobservable => CiChecksObservation::Unobservable {
+            reason: report
+                .error
+                .unwrap_or_else(|| "CI checks unobservable".to_string()),
+        },
     }
 }
 

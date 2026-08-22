@@ -3,6 +3,7 @@ mod agent_event_notify;
 mod agent_hooks;
 mod agent_runtime;
 mod agent_status_cache;
+mod ci_agent_delivery;
 mod cli;
 mod cockpit_actions;
 mod cockpit_backend;

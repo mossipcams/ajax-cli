@@ -154,6 +154,26 @@ pub(super) fn context_with_active_task() -> CommandContext<InMemoryRegistry> {
     let mut task = task_fixture();
     task.lifecycle_status = LifecycleStatus::Active;
     task.git_status = Some(clean_git_status());
+    crate::diff_review::remember_pull_requests(
+        &mut task,
+        &[crate::diff_review::PullRequestRef {
+            number: 42,
+            title: "Fix login".into(),
+            url: "https://example.test/pull/42".into(),
+            state: crate::diff_review::PullRequestState::Open,
+            head_ref: TASK_BRANCH.into(),
+            head_sha: Some("2222222".into()),
+        }],
+    );
+    crate::runtime_refresh::ci_monitor::store_state(
+        &mut task,
+        &crate::runtime_refresh::ci_monitor::CiMonitorState {
+            pr_number: Some(42),
+            head_sha: Some("2222222".into()),
+            last_pr_discovery_at: Some(unix_seconds_for_test(SystemTime::now())),
+            ..Default::default()
+        },
+    );
     registry.create_task(task).unwrap();
 
     CommandContext::new(config, registry)
@@ -365,12 +385,12 @@ pub(super) fn seed_fresh_ci_probe<R: Registry>(context: &mut CommandContext<R>) 
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     for task_id in task_ids {
-        context
-            .registry
-            .get_task_mut(&task_id)
-            .unwrap()
-            .metadata
+        let task = context.registry.get_task_mut(&task_id).unwrap();
+        task.metadata
             .insert("ci_checks_probed_at".to_string(), now.clone());
+        let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
+        state.last_check_probe_at = Some(now.parse().unwrap());
+        crate::runtime_refresh::ci_monitor::store_state(task, &state);
     }
 }
 

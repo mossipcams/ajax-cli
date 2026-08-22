@@ -19,7 +19,7 @@ pub use command::{
 };
 pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
 pub use git::GitAdapter;
-pub use github::{CiChecksObservation, GithubChecksAdapter};
+pub use github::{CiChecksObservation, CiChecksReport, CiChecksState, GithubChecksAdapter};
 pub use process::{clear_ambient_git_env, ProcessCommandRunner, AMBIENT_GIT_ENV_VARS};
 pub use tmux::TmuxAdapter;
 
