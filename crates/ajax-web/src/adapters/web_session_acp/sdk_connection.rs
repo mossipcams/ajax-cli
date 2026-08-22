@@ -106,6 +106,14 @@ struct LiveSession {
     agent: AgentClient,
 }
 
+/// Shared runtime state for live session commands and handshake transcript gating.
+struct SessionRuntime {
+    live: Mutex<Option<LiveSession>>,
+    suppress_handshake_transcript: AtomicBool,
+}
+
+type SessionRuntimeHandle = Arc<SessionRuntime>;
+
 struct PendingPermission {
     responder: Responder<RequestPermissionResponse>,
     options: Vec<PermissionOption>,
@@ -195,10 +203,11 @@ async fn run_async(options: RunOptions) {
     let elicitation_events = events.clone();
     let connection_events = events.clone();
     let notification_events = events.clone();
-    let live_session: Arc<Mutex<Option<LiveSession>>> = Arc::new(Mutex::new(None));
-    let live_for_notifications = Arc::clone(&live_session);
-    let suppress_handshake_transcript = Arc::new(AtomicBool::new(false));
-    let suppress_for_notifications = Arc::clone(&suppress_handshake_transcript);
+    let runtime: SessionRuntimeHandle = Arc::new(SessionRuntime {
+        live: Mutex::new(None),
+        suppress_handshake_transcript: AtomicBool::new(false),
+    });
+    let runtime_for_notifications = Arc::clone(&runtime);
     let transport = traced_transport(stdin, stdout, events.clone());
 
     let connection_result = Client
@@ -212,7 +221,9 @@ async fn run_async(options: RunOptions) {
                 let params = notification.params().clone();
                 let event = match serde_json::from_value::<SessionNotification>(params.clone()) {
                     Ok(notification) => {
-                        if suppress_for_notifications.load(Ordering::Acquire)
+                        if runtime_for_notifications
+                            .suppress_handshake_transcript
+                            .load(Ordering::Acquire)
                             && !is_resume_load_capability_update(&notification.update)
                         {
                             return Ok(());
@@ -220,7 +231,9 @@ async fn run_async(options: RunOptions) {
                         if let SessionUpdate::ConfigOptionUpdate(update) = notification.update {
                             let applied = read_model_applied(Some(&update.config_options))
                                 .unwrap_or_default();
-                            if let Some(live) = live_for_notifications.lock().unwrap().as_mut() {
+                            if let Some(live) =
+                                runtime_for_notifications.live.lock().unwrap().as_mut()
+                            {
                                 replace_config_options(
                                     &mut live.config_options,
                                     update.config_options.clone(),
@@ -253,7 +266,10 @@ async fn run_async(options: RunOptions) {
                         }
                     }
                     Err(_) => {
-                        if suppress_for_notifications.load(Ordering::Acquire) {
+                        if runtime_for_notifications
+                            .suppress_handshake_transcript
+                            .load(Ordering::Acquire)
+                        {
                             return Ok(());
                         }
                         AcpClientEvent::UnknownSessionUpdate(params)
@@ -300,7 +316,7 @@ async fn run_async(options: RunOptions) {
                 &cwd,
                 apply_pin.as_deref(),
                 resume_session_id.as_deref(),
-                Arc::clone(&suppress_handshake_transcript),
+                Arc::clone(&runtime),
             )
             .await;
             let connection_ready = match started {
@@ -316,7 +332,7 @@ async fn run_async(options: RunOptions) {
                 config_options: connection_ready.config_options.clone(),
                 agent,
             };
-            *live_session.lock().unwrap() = Some(live);
+            *runtime.live.lock().unwrap() = Some(live);
             if ready.send(Ok(connection_ready)).is_err() {
                 return Ok(());
             }
@@ -327,8 +343,7 @@ async fn run_async(options: RunOptions) {
                 busy,
                 permissions,
                 elicitations,
-                live_session,
-                suppress_handshake_transcript,
+                runtime,
             )
             .await;
             Ok(())
@@ -377,7 +392,7 @@ async fn initialize_session(
     cwd: &PathBuf,
     apply_pin: Option<&str>,
     resume_session_id: Option<&str>,
-    suppress_handshake_transcript: Arc<AtomicBool>,
+    runtime: SessionRuntimeHandle,
 ) -> Result<ConnectionReady, String> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(client_capabilities())
@@ -411,7 +426,9 @@ async fn initialize_session(
     let mut session_id = None;
     let mut config_options = None;
     if let Some(resume_id) = resume_session_id {
-        suppress_handshake_transcript.store(true, Ordering::Release);
+        runtime
+            .suppress_handshake_transcript
+            .store(true, Ordering::Release);
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
                 resumed = true;
@@ -427,7 +444,9 @@ async fn initialize_session(
         if resumed {
             session_id = Some(resume_id.to_string());
         } else {
-            suppress_handshake_transcript.store(false, Ordering::Release);
+            runtime
+                .suppress_handshake_transcript
+                .store(false, Ordering::Release);
         }
     }
 
@@ -578,20 +597,21 @@ async fn command_loop(
     busy: Arc<AtomicBool>,
     permissions: PendingPermissions,
     elicitations: PendingElicitations,
-    live_session: Arc<Mutex<Option<LiveSession>>>,
-    suppress_handshake_transcript: Arc<AtomicBool>,
+    runtime: SessionRuntimeHandle,
 ) {
     while let Some(command) = commands.recv().await {
         match command {
             ClientCommand::InstallLiveSession => {
-                suppress_handshake_transcript.store(false, Ordering::Release);
+                runtime
+                    .suppress_handshake_transcript
+                    .store(false, Ordering::Release);
             }
             ClientCommand::ApplyModelPin {
                 desired_model,
                 result,
             } => {
                 let Some((agent, session_id, session_result, config_options)) =
-                    live_session.lock().unwrap().as_ref().map(|live| {
+                    runtime.live.lock().unwrap().as_ref().map(|live| {
                         (
                             live.agent,
                             live.session_id.clone(),
@@ -613,7 +633,7 @@ async fn command_loop(
                     model_pins_at_spawn,
                 )
                 .await;
-                if let Ok(mut live_guard) = live_session.lock() {
+                if let Ok(mut live_guard) = runtime.live.lock() {
                     if let Some(live) = live_guard.as_mut() {
                         if outcome.error.is_none() {
                             if let Some(options) = outcome.config_options.clone() {
@@ -639,7 +659,8 @@ async fn command_loop(
                 value,
                 result,
             } => {
-                let Some((session_id, config_options)) = live_session
+                let Some((session_id, config_options)) = runtime
+                    .live
                     .lock()
                     .unwrap()
                     .as_ref()
@@ -656,7 +677,7 @@ async fn command_loop(
                 )
                 .await;
                 if outcome.error.is_none() {
-                    if let Ok(mut live_guard) = live_session.lock() {
+                    if let Ok(mut live_guard) = runtime.live.lock() {
                         if let Some(live) = live_guard.as_mut() {
                             if let Some(options) = outcome.config_options.clone() {
                                 replace_config_options(&mut live.config_options, options.clone());
@@ -677,7 +698,7 @@ async fn command_loop(
                 let _ = result.send(Ok(outcome));
             }
             ClientCommand::Prompt { id, blocks, result } => {
-                let mut live_guard = live_session.lock().unwrap();
+                let mut live_guard = runtime.live.lock().unwrap();
                 let Some(live) = live_guard.as_mut() else {
                     break;
                 };
@@ -708,7 +729,7 @@ async fn command_loop(
                 }
             }
             ClientCommand::Cancel { result } => {
-                let mut live_guard = live_session.lock().unwrap();
+                let mut live_guard = runtime.live.lock().unwrap();
                 let Some(live) = live_guard.as_mut() else {
                     break;
                 };
@@ -741,7 +762,8 @@ async fn command_loop(
                 let _ = result.send(response);
             }
             ClientCommand::CloseSession { result } => {
-                let session_id = live_session
+                let session_id = runtime
+                    .live
                     .lock()
                     .unwrap()
                     .as_ref()
