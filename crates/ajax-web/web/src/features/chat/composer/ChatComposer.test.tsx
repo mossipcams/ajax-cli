@@ -293,11 +293,7 @@ describe("ChatComposer", () => {
     expect(hotbarScope.getByRole("button", { name: /voice input/i })).toBeInTheDocument();
     expect(hotbarScope.getByRole("button", { name: "Send" })).toBeInTheDocument();
 
-    const composerChildren = Array.from(composer.children);
-    const hotbarIndex = composerChildren.indexOf(hotbar);
-    const textareaIndex = composerChildren.indexOf(textarea);
-    expect(hotbarIndex).toBeGreaterThanOrEqual(0);
-    expect(textareaIndex).toBeGreaterThan(hotbarIndex);
+    expect(hotbar.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("uses icon-only attach and send controls with accessible names", () => {

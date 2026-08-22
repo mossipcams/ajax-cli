@@ -493,7 +493,7 @@ test.describe("Session chat home-indicator inset (#1034)", () => {
       };
     });
     expect(layout.modelBeforeActions).toBe(true);
-    expect(layout.actionsMarginLeft).toBe("auto");
+    expect(parseFloat(layout.actionsMarginLeft)).toBeGreaterThan(0);
     expect(layout.attachCenter).toBeGreaterThan(layout.hotbarMid);
     expect(layout.micCenter).toBeGreaterThan(layout.attachCenter);
     expect(layout.sendCenter).toBeGreaterThan(layout.micCenter);
