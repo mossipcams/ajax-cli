@@ -41,16 +41,6 @@
   box-sizing: border-box;
 }
 
-/* Tap-dismiss on iOS regular Safari leaves visualViewport shrunk while
-   initViewport restores --app-height to layout innerHeight. foundation.css
-   keeps html/body/#app on 100dvh, which can sit below innerHeight and strand
-   the composer above a keyboard-sized void — inherit the restored band. */
-html[data-session-viewport="owned"]:not(.keyboard-open),
-html[data-session-viewport="owned"]:not(.keyboard-open) body,
-html[data-session-viewport="owned"]:not(.keyboard-open) #app {
-  height: var(--app-height, 100dvh);
-}
-
 .session-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -78,6 +68,8 @@ html[data-session-viewport="owned"]:not(.keyboard-open) #app {
      composer that far above the keyboard. Session omits .cockpit-chrome, so
      this scroller owns safe-area top as well as landscape notch insets. */
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  /* Beat the mobile route-scroll 72px bottom-nav pad — session has no nav. */
+  padding-bottom: 0;
 }
 
 [data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {

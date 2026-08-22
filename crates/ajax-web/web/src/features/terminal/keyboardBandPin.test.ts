@@ -136,4 +136,28 @@ describe("keyboard band height pin contract", () => {
     expect(body).toMatch(/height:\s*auto/);
     expect(body).not.toMatch(/position:\s*fixed/);
   });
+
+  it("closed-keyboard session lock stretches overflow chain to lvh minus home inset (#1034)", () => {
+    const css = stripCssComments(stylesSource);
+    const sessionBandHeight =
+      /calc\(100lvh\s*-\s*env\(safe-area-inset-bottom,\s*0px\)\)/;
+    const overflowChainRule =
+      css.match(
+        /html\[data-session-viewport="owned"\]:not\(\.keyboard-open\),\s*html\[data-session-viewport="owned"\]:not\(\.keyboard-open\) body,\s*html\[data-session-viewport="owned"\]:not\(\.keyboard-open\) #app\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(overflowChainRule).toMatch(new RegExp(`height:\\s*${sessionBandHeight.source}`));
+
+    const appViewportRule =
+      css.match(
+        /html\[data-session-viewport="owned"\]:not\(\.keyboard-open\) \.app-viewport\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(appViewportRule).toMatch(new RegExp(`--app-band-height:\\s*${sessionBandHeight.source}`));
+    expect(appViewportRule).not.toMatch(/100dvh/);
+
+    const sessionRouteScroll =
+      css.match(
+        /\[data-testid="route-scroll"\]:has\(\[data-outlet="session"\]\)\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(sessionRouteScroll).toMatch(/padding-bottom:\s*0/);
+  });
 });

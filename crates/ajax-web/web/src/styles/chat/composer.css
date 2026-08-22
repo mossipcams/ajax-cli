@@ -6,8 +6,8 @@
   flex: none;
   align-self: stretch;
   width: auto;
-  /* At rest, only the home-indicator inset — no extra pad under the field. */
-  padding: 4px 12px env(safe-area-inset-bottom, 0px);
+  /* Hugs the bottom edge like .bottom-nav — no safe-area pad under the field. */
+  padding: 4px 12px 0;
   background: var(--paper);
   border: none;
   border-top: 1px solid var(--rule);
@@ -25,23 +25,28 @@ html.keyboard-open .session-composer {
   gap: 6px;
   flex: none;
   min-height: 44px;
-  margin: 0 0 2px;
+  margin: 0;
   padding: 0;
   border: none;
   background: transparent;
 }
 
-.session-composer-hotbar .session-composer-send {
+.session-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
 }
 
 .session-composer textarea {
   display: block;
+  flex: none;
   width: 100%;
   min-width: 0;
   min-height: 28px;
   max-height: calc(var(--app-height, 100dvh) * 0.22);
-  padding: 4px 0;
+  padding: 4px 0 0;
+  margin: 0;
   border: none;
   border-radius: 0;
   background: transparent;

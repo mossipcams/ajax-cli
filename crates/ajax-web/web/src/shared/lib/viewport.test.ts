@@ -118,7 +118,28 @@ describe("initViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
-  it("keeps --app-height at layout height after keyboard close when visualViewport stays stale", () => {
+  it("clears --app-height when session owns viewport with iOS closed-keyboard discrepancy", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vvHeight = 766;
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    start();
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+  });
+
+  it("clears short visualViewport pin on session resize while keyboard is closed", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+
+    vvHeight = 766;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+  });
+
+  it("clears stale keyboard band geometry after keyboard close when visualViewport stays stale", () => {
     vi.stubGlobal("innerHeight", 800);
     document.documentElement.setAttribute("data-session-viewport", "owned");
     const composer = document.createElement("textarea");
@@ -134,12 +155,12 @@ describe("initViewport", () => {
     dispatchVV("resize");
     settleClose();
     expect(isKeyboardOpen()).toBe(false);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
 
     vvHeight = 480;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(false);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
 
     composer.remove();
   });
@@ -168,7 +189,7 @@ describe("initViewport", () => {
     document.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
 
     expect(isKeyboardOpen()).toBe(false);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
 
     shell.remove();
     document.documentElement.removeAttribute("data-session-viewport");

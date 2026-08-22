@@ -13,10 +13,16 @@ export const BASELINE = {
    * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020).
    * Re-measured after chat elicitation and output-content owned modules.
    * Re-measured after composer hotbar CSS and session tap-dismiss shell height
-   * (mossipcams/ajax-cli#1032). */
-  sourceStylesCssBytes: 107_793,
-  builtAppCssBytes: 93_101,
-  builtAppCssGzipBytes: 16_385,
+   * (mossipcams/ajax-cli#1032).
+   * Re-measured after stacked composer hotbar above full-width message row.
+   * Re-measured after home-indicator inset moved into textarea row (#1034).
+   * Re-measured after flush-bottom composer and trailing hotbar action cluster.
+   * Re-measured after session closed-keyboard CSS lock on app-viewport (#1032).
+   * Re-measured after closed-keyboard session overflow chain 100lvh stretch.
+   * Re-measured after closed-keyboard session band uses lvh minus home inset. */
+  sourceStylesCssBytes: 108_076,
+  builtAppCssBytes: 93_342,
+  builtAppCssGzipBytes: 16_395,
   classSelectorLines: 600,
   hasSelectors: 18,
 } as const;
