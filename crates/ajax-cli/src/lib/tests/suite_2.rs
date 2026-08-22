@@ -418,7 +418,9 @@ fn cockpit_json_returns_single_startup_snapshot() {
 fn cockpit_json_refreshes_live_status_from_tmux() {
     let mut context = sample_context();
     let cache_dir = prepare_active_task_agent_status(&mut context, "task-1", "ask");
-    let mut runner = QueuedRunner::new(tmux_live_outputs());
+    let mut outputs = tmux_live_outputs();
+    outputs.extend(ci_monitor_live_outputs());
+    let mut runner = QueuedRunner::new(outputs);
     let output =
         run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
             .unwrap();
@@ -433,7 +435,7 @@ fn cockpit_json_refreshes_live_status_from_tmux() {
     );
     assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
     let _ = std::fs::remove_dir_all(cache_dir);
 }

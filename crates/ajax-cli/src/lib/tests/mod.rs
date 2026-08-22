@@ -338,10 +338,98 @@ fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
 }
 
 // from suite_2.rs
+fn expected_ci_discovery_command() -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            "ajax/fix-login",
+            "--json",
+            "number,title,url,state,headRefName,headRefOid",
+        ],
+    )
+    .with_cwd("/tmp/worktrees/web-fix-login")
+    .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
 fn expected_ci_probe_command() -> CommandSpec {
     CommandSpec::new("gh", ["pr", "checks", "42", "--json", "name,state,link"])
         .with_cwd("/tmp/worktrees/web-fix-login")
         .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
+fn extend_expected_ci_monitor_commands(expected: &mut Vec<CommandSpec>) {
+    expected.push(expected_ci_discovery_command());
+    expected.push(expected_ci_probe_command());
+}
+
+// from suite_2.rs
+fn ci_pr_list_output() -> CommandOutput {
+    output(
+        0,
+        r#"[{"number":42,"title":"Test PR","url":"https://example.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"2222222"}]"#,
+    )
+}
+
+// from suite_2.rs
+fn ci_pr_checks_output() -> CommandOutput {
+    output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#)
+}
+
+// from suite_2.rs
+fn expected_ci_discovery_command_for_branch(worktree: &str, branch: &str) -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            branch,
+            "--json",
+            "number,title,url,state,headRefName,headRefOid",
+        ],
+    )
+    .with_cwd(worktree)
+    .with_timeout(std::time::Duration::from_secs(30))
+}
+
+// from suite_2.rs
+fn ci_monitor_live_outputs() -> Vec<CommandOutput> {
+    vec![ci_pr_list_output(), ci_pr_checks_output()]
+}
+
+// from suite_2.rs
+fn ci_pr_list_output_for(number: u64, branch: &str, head_sha: &str) -> CommandOutput {
+    output(
+        0,
+        &format!(
+            r#"[{{"number":{number},"title":"Test PR","url":"https://example.test/pull/{number}","state":"OPEN","headRefName":"{branch}","headRefOid":"{head_sha}"}}]"#
+        ),
+    )
+}
+
+// from suite_2.rs
+fn expected_ci_probe_command_for_pr(worktree: &str, number: u64) -> CommandSpec {
+    CommandSpec::new(
+        "gh",
+        [
+            "pr",
+            "checks",
+            &number.to_string(),
+            "--json",
+            "name,state,link",
+        ],
+    )
+    .with_cwd(worktree)
+    .with_timeout(std::time::Duration::from_secs(30))
 }
 
 // from suite_2.rs

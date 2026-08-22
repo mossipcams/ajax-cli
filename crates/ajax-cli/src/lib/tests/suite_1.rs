@@ -545,17 +545,20 @@ fn watch_refresh_outputs() -> Vec<CommandOutput> {
         0,
         "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
     );
-    let ci = output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#);
+    let ci_discovery = ci_pr_list_output();
+    let ci_checks = ci_pr_checks_output();
     let tmux = tmux_live_outputs();
     vec![
         tmux[0].clone(),
         tmux[1].clone(),
         git_worktree.clone(),
-        ci.clone(),
+        ci_discovery.clone(),
+        ci_checks.clone(),
         tmux[0].clone(),
         tmux[1].clone(),
         git_worktree,
-        ci,
+        ci_discovery,
+        ci_checks,
     ]
 }
 struct AgentStatusMutatingRunner {
@@ -590,6 +593,7 @@ impl CommandRunner for AgentStatusMutatingRunner {
         if command.program == "gh"
             && self.value_index + 1 < self.values.len()
             && command.args.first().is_some_and(|arg| arg == "pr")
+            && command.args.get(1).is_some_and(|arg| arg == "checks")
         {
             self.value_index += 1;
             self.update_agent_status(self.values[self.value_index]);

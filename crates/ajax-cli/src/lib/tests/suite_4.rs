@@ -26,6 +26,7 @@ fn live_refresh_updates_changed_tmux_status_before_window_failure() {
         vec![
             expected_commands[0].clone(),
             expected_commands[1].clone(),
+            expected_ci_discovery_command(),
             expected_ci_probe_command(),
         ]
     );
@@ -127,7 +128,7 @@ fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
 }
 #[test]
@@ -170,7 +171,7 @@ fn live_refresh_updates_changed_task_window_status_before_pane_failure() {
         .as_ref()
         .is_some_and(|status| status.points_at_expected_path));
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
 }
 #[test]
@@ -211,7 +212,7 @@ fn live_refresh_clears_stale_task_window_missing_flag_when_status_matches() {
     assert!(changed);
     assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
     let mut expected = tmux_live_commands();
-    expected.push(expected_ci_probe_command());
+    extend_expected_ci_monitor_commands(&mut expected);
     assert_eq!(runner.commands, expected);
 }
 #[test]

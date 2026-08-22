@@ -385,12 +385,12 @@ pub(super) fn seed_fresh_ci_probe<R: Registry>(context: &mut CommandContext<R>) 
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     for task_id in task_ids {
-        context
-            .registry
-            .get_task_mut(&task_id)
-            .unwrap()
-            .metadata
+        let task = context.registry.get_task_mut(&task_id).unwrap();
+        task.metadata
             .insert("ci_checks_probed_at".to_string(), now.clone());
+        let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
+        state.last_check_probe_at = Some(now.parse().unwrap());
+        crate::runtime_refresh::ci_monitor::store_state(task, &state);
     }
 }
 
