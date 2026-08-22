@@ -105,6 +105,8 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             event.target.value = "";
           }}
         />
+        {modelControl}
+        <div className="session-composer-actions" data-testid="session-composer-actions">
         <button
           type="button"
           className="session-composer-button session-composer-attach"
@@ -125,10 +127,9 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.49" />
+            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.66-2.2A2 2 0 0 0 9.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
           </svg>
         </button>
-        {modelControl}
         <button
           type="button"
           className={`session-composer-button session-composer-mic${micArmed ? " is-armed" : ""}${speechModel.state === "connecting" ? " is-connecting" : ""}`}
@@ -165,6 +166,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             <path d="M5 12l7-7 7 7" />
           </svg>
         </button>
+        </div>
       </div>
       <textarea
         rows={1}

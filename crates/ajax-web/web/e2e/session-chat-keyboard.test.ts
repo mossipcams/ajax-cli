@@ -1,12 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   DETAIL_FIXTURE,
+  emulateCoarsePointer,
+  emulateHomeIndicatorInset,
   mockFetch,
   sessionEventJson,
   sessionSnapshotJson,
 } from "./fixtures";
 
 async function openSessionChat(page: Page) {
+  await emulateCoarsePointer(page);
   await mockFetch(page, {
     __detail__: { ...DETAIL_FIXTURE, session_capable: true, agent: "Cursor" },
   });
@@ -60,6 +63,44 @@ type Geometry = {
   routeScrollCanScroll: boolean;
 };
 
+type TextareaFlushGeometry = {
+  textareaBottom: number;
+  composerBottom: number;
+  layoutBottom: number;
+  textareaComposerGap: number;
+  textareaLayoutGap: number;
+  composerPaddingBottom: number;
+  textareaPaddingBottom: number;
+  keyboardOpen: boolean;
+};
+
+async function readTextareaFlushGeometry(page: Page): Promise<TextareaFlushGeometry> {
+  return page.evaluate(() => {
+    const composer = document.querySelector('[data-testid="session-composer"]') as HTMLElement;
+    const textarea = document.querySelector(
+      '[data-testid="session-composer"] textarea',
+    ) as HTMLTextAreaElement;
+    const appViewport = document.querySelector('[data-testid="app-viewport"]') as HTMLElement;
+    const appRoot = document.querySelector("#app") as HTMLElement;
+    const layoutEl = appViewport ?? appRoot;
+    const composerRect = composer.getBoundingClientRect();
+    const textareaRect = textarea.getBoundingClientRect();
+    const layoutBottom = layoutEl?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const composerStyle = getComputedStyle(composer);
+    const textareaStyle = getComputedStyle(textarea);
+    return {
+      textareaBottom: textareaRect.bottom,
+      composerBottom: composerRect.bottom,
+      layoutBottom,
+      textareaComposerGap: composerRect.bottom - textareaRect.bottom,
+      textareaLayoutGap: layoutBottom - textareaRect.bottom,
+      composerPaddingBottom: parseFloat(composerStyle.paddingBottom) || 0,
+      textareaPaddingBottom: parseFloat(textareaStyle.paddingBottom) || 0,
+      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+    };
+  });
+}
+
 async function readGeometry(page: Page): Promise<Geometry> {
   return page.evaluate(() => {
     const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
@@ -67,9 +108,11 @@ async function readGeometry(page: Page): Promise<Geometry> {
     const surface = document.querySelector('[data-testid="session-chat-surface"]') as HTMLElement;
     const routeScroll = document.querySelector('[data-testid="route-scroll"]') as HTMLElement;
     const appViewport = document.querySelector('[data-testid="app-viewport"]') as HTMLElement;
+    const appRoot = document.querySelector("#app") as HTMLElement;
+    const layoutEl = appViewport ?? appRoot;
     const threadRect = thread.getBoundingClientRect();
     const composerRect = composer.getBoundingClientRect();
-    const layoutBottom = window.innerHeight;
+    const layoutBottom = layoutEl?.getBoundingClientRect().bottom ?? window.innerHeight;
     const surfaceStyle = surface?.style.paddingBottom ?? "";
     return {
       transcriptBottom: threadRect.bottom,
@@ -375,5 +418,84 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight - geo.threadScrollTop);
     expect(blankRegion).toBeLessThan(80);
     expect(geo.surfacePaddingBottom).toBe(0);
+  });
+});
+
+test.describe("Session chat home-indicator inset (#1034)", () => {
+  test.beforeEach(async ({ page }) => {
+    await emulateHomeIndicatorInset(page, 34);
+  });
+
+  test("textarea bottom is flush to composer at rest with emulated safe-area", async ({
+    page,
+  }) => {
+    await openSessionChat(page);
+    const geo = await readTextareaFlushGeometry(page);
+    expect(geo.keyboardOpen).toBe(false);
+    expect(geo.textareaComposerGap).toBeLessThan(4);
+    expect(geo.textareaLayoutGap).toBeLessThan(8);
+    expect(geo.composerPaddingBottom).toBeLessThan(4);
+    expect(geo.textareaPaddingBottom).toBeLessThan(8);
+  });
+
+  test("keyboard open drops safe-area pad under the textarea row", async ({ page }) => {
+    await openSessionChat(page);
+    const composer = page.getByLabel("Message");
+    await composer.click();
+    await simulateKeyboard(page, 280);
+    const geo = await readTextareaFlushGeometry(page);
+    expect(geo.keyboardOpen).toBe(true);
+    expect(geo.textareaPaddingBottom).toBeLessThan(8);
+    expect(geo.textareaComposerGap).toBeLessThan(4);
+  });
+
+  test("tap-dismiss keeps textarea flush after keyboard with emulated safe-area", async ({
+    page,
+  }) => {
+    await openSessionChat(page);
+    const composer = page.getByLabel("Message");
+    await composer.click();
+    await simulateKeyboard(page, 300);
+    await page.getByTestId("session-thread").click({ position: { x: 40, y: 40 } });
+    await page.waitForTimeout(400);
+    const geo = await readTextareaFlushGeometry(page);
+    expect(geo.keyboardOpen).toBe(false);
+    expect(geo.textareaComposerGap).toBeLessThan(4);
+    expect(geo.textareaLayoutGap).toBeLessThan(8);
+    expect(geo.composerPaddingBottom).toBeLessThan(4);
+    expect(geo.textareaPaddingBottom).toBeLessThan(8);
+  });
+
+  test("hotbar action icons sit in a trailing cluster", async ({ page }) => {
+    await openSessionChat(page);
+    const layout = await page.evaluate(() => {
+      const hotbar = document.querySelector(
+        '[data-testid="session-composer-hotbar"]',
+      ) as HTMLElement;
+      const actions = document.querySelector(
+        '[data-testid="session-composer-actions"]',
+      ) as HTMLElement;
+      const model = hotbar.querySelector(".session-composer-model") as HTMLElement | null;
+      const attach = actions.querySelector(".session-composer-attach") as HTMLElement;
+      const mic = actions.querySelector(".session-composer-mic") as HTMLElement;
+      const send = actions.querySelector(".session-composer-send") as HTMLElement;
+      const hotbarRect = hotbar.getBoundingClientRect();
+      const centerX = (el: HTMLElement) => el.getBoundingClientRect().left + el.offsetWidth / 2;
+      return {
+        modelBeforeActions:
+          model === null ||
+          (actions.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_PRECEDING) !== 0,
+        actionsMarginLeft: getComputedStyle(actions).marginLeft,
+        attachCenter: centerX(attach),
+        micCenter: centerX(mic),
+        sendCenter: centerX(send),
+        hotbarMid: hotbarRect.left + hotbarRect.width / 2,
+      };
+    });
+    expect(layout.modelBeforeActions).toBe(true);
+    expect(layout.actionsMarginLeft).toBe("auto");
+    expect(layout.attachCenter).toBeGreaterThan(layout.hotbarMid);
+    expect(layout.micCenter).toBeGreaterThan(layout.attachCenter);
+    expect(layout.sendCenter).toBeGreaterThan(layout.micCenter);
   });
 });

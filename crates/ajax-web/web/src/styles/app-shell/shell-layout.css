@@ -55,6 +55,21 @@ html[data-session-viewport="owned"].keyboard-open .app-viewport {
   max-height: none;
 }
 
+/* Closed keyboard: stretch the overflow chain to large viewport minus home
+   indicator. 100dvh was too short; raw 100lvh sits under the inset. JS clears
+   --app-height; do not use 100lvh for keyboard-open pin math. */
+html[data-session-viewport="owned"]:not(.keyboard-open),
+html[data-session-viewport="owned"]:not(.keyboard-open) body,
+html[data-session-viewport="owned"]:not(.keyboard-open) #app {
+  height: calc(100lvh - env(safe-area-inset-bottom, 0px));
+}
+
+html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
+  --app-band-height: calc(100lvh - env(safe-area-inset-bottom, 0px));
+  height: var(--app-band-height);
+  max-height: var(--app-band-height);
+}
+
 /* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
 .pull-indicator {
   display: flex;

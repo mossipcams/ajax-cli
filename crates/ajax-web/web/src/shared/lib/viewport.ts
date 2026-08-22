@@ -1,7 +1,4 @@
-import {
-  layoutViewportShrinksWithKeyboard,
-  SESSION_VIEWPORT_ATTR,
-} from "@/shared/lib/sessionViewport";
+import { SESSION_VIEWPORT_ATTR } from "@/shared/lib/sessionViewport";
 
 /**
  * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
@@ -111,15 +108,10 @@ export function initViewport(): () => void {
   const resolveViewportHeight = (): number | null => {
     const layoutHeight = window.innerHeight;
     if (isUsableHeight(vv.height)) {
-      // Session chat tap-dismiss often leaves visualViewport shrunk after blur.
-      // Prefer layout height so --app-height does not strand the shell above a void.
-      if (
-        !keyboardOpen &&
-        isSessionViewportOwned() &&
-        !layoutViewportShrinksWithKeyboard(layoutHeight, vv.height) &&
-        layoutHeight - vv.height > KEYBOARD_CLOSE_DELTA_PX
-      ) {
-        return layoutHeight;
+      // Session chat fills layout/dvh when the keyboard is closed; never pin to a
+      // short visualViewport (tap-dismiss stale band or iOS ~24–34px discrepancy).
+      if (!keyboardOpen && isSessionViewportOwned()) {
+        return null;
       }
       return vv.height;
     }
@@ -130,7 +122,13 @@ export function initViewport(): () => void {
   const restoreGeometryAfterKeyboardDismiss = () => {
     const layoutHeight = window.innerHeight;
     const visualHeight = vv.height;
-    if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
+    if (isSessionViewportOwned()) {
+      clearAppGeometry();
+      baselineHeight =
+        layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX
+          ? layoutHeight
+          : visualHeight;
+    } else if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
       setAppHeight(layoutHeight);
       setAppTop(0);
       baselineHeight = layoutHeight;
