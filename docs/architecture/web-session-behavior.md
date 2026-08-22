@@ -194,8 +194,9 @@ existing paths.
   `snapshot` plus only events after that cursor; invalid or compacted-away
   cursors trigger a reset snapshot and bounded full replay.
 - The last-applied cursor lives in the page session only (same JS heap as the
-  reducer). A cold load or full reload omits `?cursor=` and receives full replay;
-  only unacknowledged prompts persist in `sessionStorage`.
+  reducer). A cold load or full reload omits `?cursor=` and receives full replay
+  with `snapshot.reset: true`; only unacknowledged prompts persist in
+  `sessionStorage`.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
@@ -266,7 +267,17 @@ existing paths.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events and typed model-change errors.
 - A live `ready` event on an established socket must not reset browser reducer
-  state; only reconnect-after-drop may clear and replay.
+  state when `reset` is false; only reconnect-after-drop with `reset: true` or a
+  generation-change snapshot may clear and replay.
+- Cold attach (no browser `?cursor=`) must send protocol v2 `snapshot.reset:
+  true` so a reducer that already painted cached JSONL stand-in history is cleared
+  before the authoritative replay from disk ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
+- A later protocol-v2 `snapshot` on an already-ready WebSocket with `reset: true`
+  (for example after host generation change) must dispatch `ready` with
+  `reset: true` so the browser replaces cached rows instead of appending duplicates
+  ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
+- Incremental in-page reconnect with a resume cursor stays `reset: false` and
+  applies only the tail after the last-applied cursor.
 - Each attach delivers one protocol v2 `snapshot` wire frame to the browser
   reducer (as a synthetic `ready` event for turn state), then cursor-bearing
   `event` envelopes for replay/live traffic.
@@ -289,7 +300,12 @@ existing paths.
   `session/resume` when advertised, otherwise `session/load`. If resume fails
   and load is advertised, load is attempted before a new session is created.
 - Cursor may emit `session/update` replay notifications before the load result;
-  the host drains them so JSONL is not duplicated.
+  the host suppresses transcript-shaped replay during `session/resume` and
+  `session/load` until the live session is installed on the slot. Capability
+  updates (`config_option_update`, `available_commands_update`,
+  `session_info_update`) still flow during handshake. Transcript replay must not
+  land in JSONL even when notifications arrive after spawn returns
+  ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
 - If load is unsupported or fails, the JSONL transcript still reloads and exactly
   one agent-visible note states that model context reset; the composer keeps
   working.

@@ -77,6 +77,14 @@ export function connectWebSessionTransport(
         callbacks.onReady(frame.snapshot.model.trim() || "auto");
         for (const prompt of pendingPrompts) sendPromptNow(prompt);
       } else {
+        if (frame.snapshot.reset) {
+          callbacks.onEvent({
+            type: "ready",
+            model: frame.snapshot.model,
+            busy: frame.snapshot.turnState === "busy",
+            reset: true,
+          });
+        }
         callbacks.onReady(frame.snapshot.model.trim() || "auto");
       }
       return;

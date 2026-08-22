@@ -423,6 +423,75 @@ describe("connectWebSessionTransport", () => {
     });
   });
 
+  it("#1031 dispatches ready with reset when a later snapshot requests full replay", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 2 }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: snapshotJson({ reset: true, cursor: 5, model: "gpt-5.6-sol" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenCalledWith({
+      type: "ready",
+      model: "gpt-5.6-sol",
+      busy: false,
+      reset: true,
+    });
+  });
+
+  it("#1031 replaces cached rows when cold attach advertises reset before replay tail", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: true, cursor: 2 }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(0, {
+        type: "message",
+        role: "agent",
+        text: "Authoritative",
+        itemId: "i-auth",
+      }),
+    } as MessageEvent);
+    socket.emit("message", {
+      data: eventJson(1, { type: "turn_end", stopReason: "end_turn" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ready", reset: true }),
+    );
+    expect(cbs.onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message", text: "Authoritative", itemId: "i-auth" }),
+    );
+  });
+
+  it("incremental reconnect keeps reset false on a later snapshot", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    connectWebSessionTransport("web/fix-login", cbs, platformFor(socket), undefined, 2);
+    socket.readyState = OPEN_READY_STATE;
+
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 2 }),
+    } as MessageEvent);
+    vi.mocked(cbs.onEvent).mockClear();
+    socket.emit("message", {
+      data: snapshotJson({ reset: false, cursor: 4, model: "gpt-5.6-sol" }),
+    } as MessageEvent);
+
+    expect(cbs.onEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ready", reset: true }),
+    );
+  });
+
   it("applies pendingPermission from snapshot", () => {
     const socket = fakeSocket();
     const cbs = callbacks();

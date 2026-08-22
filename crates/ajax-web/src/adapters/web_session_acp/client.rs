@@ -315,6 +315,7 @@ impl AcpStdioClient {
         } = ready;
         if resumed {
             while event_rx.try_recv().is_ok() {}
+            let _ = command_tx.send(ClientCommand::InstallLiveSession);
         }
         let client = Self {
             commands: command_tx,
