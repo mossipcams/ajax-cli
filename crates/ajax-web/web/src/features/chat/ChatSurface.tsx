@@ -18,6 +18,15 @@ import {
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { ChatTaskAttention } from "./status/public";
 
+/** Selectable transcript prose — page swipe must not steal iOS text selection. */
+const CHAT_TRANSCRIPT_TEXT_SELECTOR =
+  ".session-said, .session-reply, .session-note-text, .session-thread-empty";
+
+function isChatTranscriptTextTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest(CHAT_TRANSCRIPT_TEXT_SELECTOR));
+}
+
 interface Props {
   handle: string | null;
   detail: BrowserTaskDetail | null;
@@ -178,6 +187,7 @@ export default function ChatSurface({
   const { swiping, style } = useSwipePageTransition(rootRef, {
     onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
+    shouldIgnoreTarget: isChatTranscriptTextTarget,
   });
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const { notice, showNotice, dismissNotice } = useSessionModelNotice();
