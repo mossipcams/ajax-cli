@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { fireEvent, screen, act, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import * as useChatSpeechModule from "@/features/chat/composer/speech/useChatSpeech";
 import { claimSessionViewportOwnership } from "@/shared/lib/sessionViewport";
 import { initViewport, isKeyboardOpen } from "@/shared/lib/viewport";
@@ -11,6 +14,16 @@ import {
   typeComposer,
   transport,
 } from "../ChatSurface.testHarness";
+
+const composerCssPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../styles/chat/composer.css",
+);
+const composerCss = readFileSync(composerCssPath, "utf8");
+
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -253,7 +266,7 @@ describe("ChatComposer", () => {
     expect(input).toHaveValue("/help");
   });
 
-  it("places attach, model, mic, and send on a hotbar above the full-width field", () => {
+  it("places attach, model, mic, and send on the hotbar with message textarea below", () => {
     mountChat();
     act(() => {
       chatH.snapshot?.({
@@ -273,14 +286,14 @@ describe("ChatComposer", () => {
     expect(hotbar).toBeInTheDocument();
     expect(composer).toContainElement(hotbar);
     expect(composer).toContainElement(textarea);
-    expect(hotbar.compareDocumentPosition(textarea)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
     expect(hotbar).not.toContainElement(textarea);
+
     const hotbarScope = within(hotbar);
     expect(hotbarScope.getByRole("button", { name: "Attach" })).toBeInTheDocument();
     expect(hotbarScope.getByRole("button", { name: /voice input/i })).toBeInTheDocument();
     expect(hotbarScope.getByRole("button", { name: "Send" })).toBeInTheDocument();
+
+    expect(hotbar.compareDocumentPosition(textarea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("uses icon-only attach and send controls with accessible names", () => {
@@ -342,11 +355,37 @@ describe("ChatComposer", () => {
     });
 
     expect(isKeyboardOpen()).toBe(false);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
     expect(
       screen.getByTestId("session-chat-surface").style.paddingBottom,
     ).toBe("");
 
     dispose();
+  });
+
+  it("hugs the bottom edge with no safe-area pad on composer or textarea (#1034)", () => {
+    const composerRule =
+      composerCss.match(/\.session-composer\s*\{([^}]*)\}/)?.[1] ?? "";
+    const textareaRule =
+      composerCss.match(/\.session-composer textarea\s*\{([^}]*)\}/)?.[1] ?? "";
+    const keyboardTextareaRule =
+      composerCss.match(/html\.keyboard-open\s+\.session-composer textarea\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const attachRule =
+      composerCss.match(/\.session-composer-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const sendRule =
+      composerCss.match(/\.session-composer-send\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    const composerBody = stripCssComments(composerRule);
+    const textareaBody = stripCssComments(textareaRule);
+    const keyboardTextareaBody = stripCssComments(keyboardTextareaRule);
+    const actionsBody = stripCssComments(attachRule);
+    const sendBody = stripCssComments(sendRule);
+
+    expect(composerBody).not.toMatch(/env\(safe-area-inset-bottom\)/);
+    expect(textareaBody).not.toMatch(/env\(safe-area-inset-bottom\)/);
+    expect(keyboardTextareaBody).not.toMatch(/env\(safe-area-inset-bottom\)/);
+    expect(actionsBody).toMatch(/margin-left:\s*auto/);
+    expect(sendBody).not.toMatch(/margin-left:\s*auto/);
   });
 });

@@ -102,6 +102,7 @@ export function sessionSnapshotJson(
     model: string;
     turnState: "idle" | "busy";
     reset: boolean;
+    promptCapabilities: { image?: boolean; embeddedContext?: boolean };
   }> = {},
 ): string {
   return JSON.stringify({
@@ -506,6 +507,41 @@ export async function terminalResizeFrames(page: Page): Promise<TerminalResizeFr
 }
 
 export type ViewportEventKind = "resize" | "orientationchange" | "visualViewport.resize";
+
+/** Chromium reports env(safe-area-inset-bottom)=0; emulate iPhone home indicator (#1034). */
+export async function emulateHomeIndicatorInset(
+  page: Page,
+  bottomPx = 34,
+): Promise<void> {
+  const browserName = page.context().browser()?.browserType().name();
+  if (browserName !== "chromium") return;
+  const client = await page.context().newCDPSession(page);
+  await client.send("Emulation.setSafeAreaInsetsOverride", {
+    insets: { top: 0, left: 0, right: 0, bottom: bottomPx },
+  });
+}
+
+/** Session keyboard-band tests expect iOS Safari coarse-pointer metrics on desktop too. */
+export async function emulateCoarsePointer(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const realMatchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query: string) => {
+      if (query.includes("pointer: coarse") || query.includes("(pointer:coarse)")) {
+        return {
+          matches: true,
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+          onchange: null,
+        } as MediaQueryList;
+      }
+      return realMatchMedia(query);
+    };
+  });
+}
 
 export async function dispatchViewportEvents(
   page: Page,
