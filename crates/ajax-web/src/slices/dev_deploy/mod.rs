@@ -7,9 +7,10 @@
 use ajax_core::{commands::CommandContext, config::ManagedRepo, models::Task, registry::Registry};
 use serde::{Deserialize, Serialize};
 use std::{
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
-    sync::{Mutex, MutexGuard},
+    process::{Command, Stdio},
+    sync::{Arc, Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -401,16 +402,98 @@ pub fn resolve_restart_script(worktree: &Path) -> Result<PathBuf, DevDeployError
 
 /// Launch the existing restart script for the shared dev slot only.
 pub fn spawn_test_in_dev(script: &Path, worktree: &Path) -> Result<(), DevDeployError> {
-    Command::new(script)
-        .arg("--worktree")
-        .arg(worktree)
-        .arg("--profile")
-        .arg(DEV_PROFILE)
-        .arg("--port")
-        .arg(DEV_PORT.to_string())
+    restart_command(script, worktree)
         .spawn()
         .map_err(|error| DevDeployError::SpawnFailed(error.to_string()))?;
     Ok(())
+}
+
+fn restart_command(script: &Path, worktree: &Path) -> Command {
+    let mut command = Command::new(script);
+    command.args(test_in_dev_command_args(worktree));
+    command
+}
+
+/// Run a Test in Dev restart job and track slot phase transitions from script output.
+pub(crate) fn run_test_in_dev_job(
+    slot: Arc<SharedDevDeploySlot>,
+    script: PathBuf,
+    source: DevDeploySource,
+    worktree: PathBuf,
+) {
+    let mut child = match restart_command(&script, &worktree)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            lock_slot(&slot).set_failed(format!("could not spawn restart script: {error}"));
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let slot_for_stdout = Arc::clone(&slot);
+    let stdout_thread = stdout.map(|stdout| {
+        std::thread::spawn(move || {
+            let mut log = String::new();
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.contains("AJAX_DEV_DEPLOY_PHASE=restarting") {
+                    lock_slot(&slot_for_stdout).set_restarting();
+                }
+                log.push_str(&line);
+                log.push('\n');
+            }
+            log
+        })
+    });
+    let stderr_thread = stderr.map(|stderr| {
+        std::thread::spawn(move || {
+            let mut log = String::new();
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                log.push_str(&line);
+                log.push('\n');
+            }
+            log
+        })
+    });
+
+    let status = child.wait();
+    let stdout_log = stdout_thread
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let stderr_log = stderr_thread
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let combined = format!("{stdout_log}{stderr_log}");
+
+    match status {
+        Ok(status) if status.success() => {
+            lock_slot(&slot).set_ready(&source);
+        }
+        Ok(status) => {
+            let tail = combined
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let message = if tail.is_empty() {
+                format!("dev deploy failed with status {status}")
+            } else {
+                format!("dev deploy failed with status {status}\n{tail}")
+            };
+            lock_slot(&slot).set_failed(message);
+        }
+        Err(error) => {
+            lock_slot(&slot).set_failed(format!("dev deploy wait failed: {error}"));
+        }
+    }
 }
 
 /// Build argv for tests and dry-run inspection. Always targets profile=dev.

@@ -3,6 +3,7 @@ import {
   checkHealth,
   postOperation,
   restartServer,
+  startDevDeploy,
   startTestInStable,
   startTask,
   fetchCockpit,
@@ -557,6 +558,43 @@ describe("POST transport options", () => {
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
+  });
+});
+
+describe("startDevDeploy", () => {
+  // GitHub issue #1035: accepted deploy starts return 202, not 200.
+  it("issue #1035 accepts HTTP 202 and posts the task handle", async () => {
+    mockFetch((input, init) => {
+      const path = String(input);
+      if (path !== "/api/dev-deploy") {
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ task_handle: "ajax-cli/demo" });
+      return Promise.resolve(
+        json(
+          {
+            ok: true,
+            deploy: {
+              phase: "building",
+              phase_label: "Building",
+              shared_slot: true,
+              active: true,
+              error: null,
+              occupant: null,
+            },
+            message: "Test in Dev started for the shared Ajax Dev slot",
+          },
+          202,
+        ),
+      );
+    });
+
+    const response = await startDevDeploy("ajax-cli/demo");
+
+    expect(response.ok).toBe(true);
+    expect(response.deploy.phase).toBe("building");
+    expect(response.deploy.active).toBe(true);
   });
 });
 

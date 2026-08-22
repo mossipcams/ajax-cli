@@ -798,6 +798,22 @@ Flow:
 Test in Dev (`--worktree`) keeps the same slot-binary install under
 `.ajax-dev-web/bin` and must never target profile stable.
 
+Operator flow:
+
+1. Task details POST `/api/dev-deploy` with `{ task_handle }` only. The host
+   resolves the ajax-cli worktree from registry state, rejects non-ajax tasks and
+   unmanaged paths, and spawns `scripts/dev-web-restart.sh --worktree <path>
+   --profile dev --port 8788` (never stable).
+2. JSON `{ ok: true, deploy }` returns `202 Accepted` while the slot moves through
+   `building` → `restarting` → `dev_ready` / `failed`.
+3. The browser panel polls `GET /api/dev-deploy` only while `deploy.active` is
+   true. After a successful start POST, the client cancels any in-flight status
+   read before seeding query cache so a stale ready snapshot cannot hide the run
+   (GitHub issue #1035).
+
+Restart-script resolution order: the selected worktree's
+`scripts/dev-web-restart.sh`, then `AJAX_WEB_RESTART_SCRIPT`.
+
 ### PostHog Cloud telemetry
 
 Web Cockpit may send approved outbound product telemetry to **PostHog Cloud**
