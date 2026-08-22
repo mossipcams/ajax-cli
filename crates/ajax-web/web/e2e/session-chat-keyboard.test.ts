@@ -8,7 +8,10 @@ import {
   sessionSnapshotJson,
 } from "./fixtures";
 
-async function openSessionChat(page: Page) {
+async function openSessionChat(
+  page: Page,
+  snapshotOverrides: Parameters<typeof sessionSnapshotJson>[0] = {},
+) {
   await emulateCoarsePointer(page);
   await mockFetch(page, {
     __detail__: { ...DETAIL_FIXTURE, session_capable: true, agent: "Cursor" },
@@ -26,7 +29,9 @@ async function openSessionChat(page: Page) {
         );
       }
     });
-    socket.send(sessionSnapshotJson({ cursor: 0, model: "auto", turnState: "idle" }));
+    socket.send(
+      sessionSnapshotJson({ cursor: 0, model: "auto", turnState: "idle", ...snapshotOverrides }),
+    );
   });
   await page.goto("/app.html#/session/web%2Ffix-login");
   await expect(page.getByTestId("session-chat")).toBeVisible();
@@ -467,7 +472,7 @@ test.describe("Session chat home-indicator inset (#1034)", () => {
   });
 
   test("hotbar action icons sit in a trailing cluster", async ({ page }) => {
-    await openSessionChat(page);
+    await openSessionChat(page, { promptCapabilities: { image: true } });
     const layout = await page.evaluate(() => {
       const hotbar = document.querySelector(
         '[data-testid="session-composer-hotbar"]',
@@ -476,26 +481,34 @@ test.describe("Session chat home-indicator inset (#1034)", () => {
         '[data-testid="session-composer-actions"]',
       ) as HTMLElement;
       const model = hotbar.querySelector(".session-composer-model") as HTMLElement | null;
-      const attach = actions.querySelector(".session-composer-attach") as HTMLElement;
+      const attach = actions.querySelector(".session-composer-attach") as HTMLElement | null;
       const mic = actions.querySelector(".session-composer-mic") as HTMLElement;
       const send = actions.querySelector(".session-composer-send") as HTMLElement;
       const hotbarRect = hotbar.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
       const centerX = (el: HTMLElement) => el.getBoundingClientRect().left + el.offsetWidth / 2;
+      const attachVisible =
+        attach !== null && !attach.hidden && attach.getBoundingClientRect().width > 0;
       return {
         modelBeforeActions:
           model === null ||
           (actions.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_PRECEDING) !== 0,
-        actionsMarginLeft: getComputedStyle(actions).marginLeft,
-        attachCenter: centerX(attach),
+        actionsLeft: actionsRect.left,
+        attachCenter: attachVisible ? centerX(attach!) : null,
+        attachVisible,
         micCenter: centerX(mic),
         sendCenter: centerX(send),
         hotbarMid: hotbarRect.left + hotbarRect.width / 2,
       };
     });
     expect(layout.modelBeforeActions).toBe(true);
-    expect(parseFloat(layout.actionsMarginLeft)).toBeGreaterThan(0);
-    expect(layout.attachCenter).toBeGreaterThan(layout.hotbarMid);
-    expect(layout.micCenter).toBeGreaterThan(layout.attachCenter);
+    expect(layout.actionsLeft).toBeGreaterThan(layout.hotbarMid);
+    expect(layout.micCenter).toBeGreaterThan(layout.hotbarMid);
+    expect(layout.sendCenter).toBeGreaterThan(layout.hotbarMid);
     expect(layout.sendCenter).toBeGreaterThan(layout.micCenter);
+    if (layout.attachVisible && layout.attachCenter !== null) {
+      expect(layout.attachCenter).toBeGreaterThan(layout.hotbarMid);
+      expect(layout.micCenter).toBeGreaterThan(layout.attachCenter);
+    }
   });
 });

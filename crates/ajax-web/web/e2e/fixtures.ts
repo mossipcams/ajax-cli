@@ -102,6 +102,7 @@ export function sessionSnapshotJson(
     model: string;
     turnState: "idle" | "busy";
     reset: boolean;
+    promptCapabilities: { image?: boolean; embeddedContext?: boolean };
   }> = {},
 ): string {
   return JSON.stringify({
