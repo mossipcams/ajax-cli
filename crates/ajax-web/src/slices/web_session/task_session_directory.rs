@@ -208,7 +208,10 @@ impl TaskSessionDirectory {
             sessions.remove(handle)
         };
         if let Some(entry) = removed {
-            let _ = entry.command_tx.send(TaskSessionCommand::Shutdown { close: true }).await;
+            let _ = entry
+                .command_tx
+                .send(TaskSessionCommand::Shutdown { close: true })
+                .await;
             let _ = entry.join_handle.await;
         }
     }
@@ -221,7 +224,10 @@ impl TaskSessionDirectory {
             sessions.remove(handle)
         };
         if let Some(entry) = removed {
-            let _ = entry.command_tx.send(TaskSessionCommand::Shutdown { close: false }).await;
+            let _ = entry
+                .command_tx
+                .send(TaskSessionCommand::Shutdown { close: false })
+                .await;
             let _ = entry.join_handle.await;
         }
     }

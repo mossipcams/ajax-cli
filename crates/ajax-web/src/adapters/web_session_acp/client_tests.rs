@@ -645,15 +645,15 @@ fn drop_without_close_still_resumes_when_close_advertised() {
             assert!(first_report.close_advertised);
             let session_id = client.session_id().to_string();
             drop(client);
-            assert!(
-                !marker.exists(),
-                "Drop must detach, not session/close"
-            );
+            assert!(!marker.exists(), "Drop must detach, not session/close");
 
             let (client2, second_report) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
                     .expect("resume spawn");
-            assert!(second_report.resumed, "detached sessions must remain loadable");
+            assert!(
+                second_report.resumed,
+                "detached sessions must remain loadable"
+            );
             assert_eq!(client2.session_id(), session_id);
         });
     });
