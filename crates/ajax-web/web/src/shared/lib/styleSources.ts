@@ -13,11 +13,14 @@ export const BASELINE = {
    * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020).
    * Re-measured after chat elicitation and output-content owned modules.
    * Re-measured after composer hotbar CSS and session tap-dismiss shell height
-   * (mossipcams/ajax-cli#1032). */
-  sourceStylesCssBytes: 107_793,
-  builtAppCssBytes: 93_101,
-  builtAppCssGzipBytes: 16_385,
-  classSelectorLines: 600,
+   * (mossipcams/ajax-cli#1032).
+   * Re-measured after the live head stopped reprinting the transcript's tool
+   * row: `.session-tool*` and `.session-head-thought` lost their only
+   * consumer. */
+  sourceStylesCssBytes: 106_412,
+  builtAppCssBytes: 92_309,
+  builtAppCssGzipBytes: 16_267,
+  classSelectorLines: 593,
   hasSelectors: 18,
 } as const;
 

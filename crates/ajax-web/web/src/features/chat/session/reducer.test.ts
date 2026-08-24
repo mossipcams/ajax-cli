@@ -553,3 +553,134 @@ describe("explainOpenFailure", () => {
     expect(explainOpenFailure(null)).toMatch(/worktree/i);
   });
 });
+
+describe("a turn that ends leaves nothing running", () => {
+  const runningCall = {
+    type: "tool_call" as const,
+    callId: "c1",
+    title: "npm run web:test",
+    kind: "execute",
+    status: "in_progress",
+    locations: [],
+    content: [],
+  };
+
+  // #1044: ACP is not obliged to send a terminal update for a call the operator
+  // stopped, so the head went on advertising a command that had stopped
+  // running — while the transcript beside it already said `Ran 1 command`.
+  it("settles an unfinished tool call when the turn is cancelled", () => {
+    const view = run([
+      { prompt: "run the tests" },
+      runningCall,
+      { type: "turn_end", stopReason: "cancelled" },
+    ]);
+
+    expect(activeTool(view)?.status).toBe("cancelled");
+    expect(view.turn.busy).toBe(false);
+  });
+
+  it("settles an unfinished tool call as failed when the turn errors", () => {
+    const view = run([
+      { prompt: "run the tests" },
+      runningCall,
+      { type: "turn_end", stopReason: "error" },
+    ]);
+
+    expect(activeTool(view)?.status).toBe("failed");
+  });
+
+  it("leaves a call ACP already settled alone", () => {
+    const view = run([
+      { prompt: "run the tests" },
+      { ...runningCall, status: "completed" },
+      { type: "turn_end", stopReason: "cancelled" },
+    ]);
+
+    expect(activeTool(view)?.status).toBe("completed");
+  });
+});
+
+describe("a failed turn is reported once", () => {
+  const errorNotes = (view: ChatSessionView) =>
+    view.conversation.filter((item) => item.kind === "note" && item.tone === "error");
+
+  // #1045: the generic note fired on every `turn_end{error}`, so a host error that
+  // already named the failure was followed by a second, vaguer one.
+  it("does not add the generic note when the host already explained", () => {
+    const view = run([
+      { prompt: "run nextest" },
+      { type: "error", message: "cargo nextest exited 101." },
+      { type: "turn_end", stopReason: "error" },
+    ]);
+
+    expect(errorNotes(view)).toHaveLength(1);
+  });
+
+  // "Stopped without a response" is simply untrue when the agent answered.
+  it("does not claim silence when the turn produced an answer", () => {
+    const view = run([
+      { prompt: "run nextest" },
+      { type: "message", role: "agent", text: "Tests failed on lifecycle.rs.", itemId: "a1" },
+      { type: "turn_end", stopReason: "error" },
+    ]);
+
+    expect(errorNotes(view)).toHaveLength(0);
+  });
+
+  it("still explains a turn that failed with nothing to show", () => {
+    const view = run([{ prompt: "run nextest" }, { type: "turn_end", stopReason: "error" }]);
+
+    expect(errorNotes(view)).toHaveLength(1);
+  });
+});
+
+describe("the plan belongs to its turn", () => {
+  // #1047: one plan row for the whole session meant a later turn's plan rewrote the
+  // plan filed under the first turn, and no turn after it ever got one.
+  it("opens a new plan row per turn instead of rewriting the first", () => {
+    const view = run([
+      { prompt: "first" },
+      { type: "plan", entries: [{ content: "Step one", status: "in_progress" }] },
+      { type: "turn_end", stopReason: "end_turn" },
+      { prompt: "second" },
+      { type: "plan", entries: [{ content: "Step two", status: "in_progress" }] },
+      { type: "turn_end", stopReason: "end_turn" },
+    ]);
+
+    const plans = view.conversation.filter((item) => item.kind === "plan");
+    expect(plans).toHaveLength(2);
+    expect(activePlanStep(latestPlan(view.conversation))).toBe("Step two");
+  });
+
+  it("still updates the plan in flight rather than stacking rows", () => {
+    const view = run([
+      { prompt: "go" },
+      { type: "plan", entries: [{ content: "Step one", status: "in_progress" }] },
+      { type: "plan", entries: [{ content: "Step one", status: "completed" }] },
+    ]);
+
+    expect(view.conversation.filter((item) => item.kind === "plan")).toHaveLength(1);
+  });
+});
+
+describe("the permission ask reads as a command, not as markdown", () => {
+  // #1046 (sibling of #970, which fixed case-folding on this string): the
+  // same control still rendered
+  // the harness's markdown delimiters literally, at the moment the operator
+  // was deciding whether to allow a destructive command.
+  it("strips markdown delimiters from the title once, at the boundary", () => {
+    const view = run([
+      { prompt: "clean up" },
+      {
+        type: "permission_request",
+        requestId: "p1",
+        title: "Run `rm -rf target/debug`",
+        detail: "Deletes 2.1 GB.",
+      },
+    ]);
+
+    expect(view.permission.decision?.title).toBe("Run rm -rf target/debug");
+    const marker = view.conversation.find((item) => item.kind === "permission");
+    expect(marker).toMatchObject({ title: "Run rm -rf target/debug" });
+  });
+});

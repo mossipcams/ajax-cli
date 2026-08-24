@@ -461,24 +461,73 @@ existing paths.
   indicator, and turn completion removes it.
 - This is a freshness warning, not a claim that the agent is stalled: stable
   ACP v1 has no portable stalled-state signal. The head must not invent
-  thinking content from that timer — the tool row and any in-progress plan step
-  may appear together; with no tool or plan step the head shows the latest ACP
-  `thought` text, else `Thinking…` before the first of those arrives).
+  thinking content from that timer.
+- The turn's activity row narrates the operation, in the transcript, where the
+  conversation is. The head does not repeat it: printing the running tool and
+  active plan step a screen away from the same words gave the operator two live
+  regions with a void between them. The head shows `Thinking…` only until the
+  turn's first thought, plan or tool arrives — before that the transcript has
+  nothing to show — and otherwise carries state, Stop, freshness and context
+  usage alone.
+
+## ACP run-state as task evidence
+
+A provisioned chat task has no agent pane, so the supervisor's pane classifier
+has nothing true to say about it: without this the dashboard, task page, TUI and
+`ajax status` read a pane-derived `Waiting` through an entire ACP turn, while
+only the chat live head knew a turn was in flight.
+
+- The ACP host is the observer of its own child, so it reports run state on the
+  same contract the supervisor uses: a `LiveObservation` applied to the task.
+  Status derivation (`ui_state::derive_task_status`) is unchanged — this supplies
+  evidence, it does not add a second status vocabulary, and the browser remains a
+  projection.
+- Transitions are read off the outbound wire the browser already receives, so the
+  task page and the chat head cannot disagree: `prompt_accepted` and a resolved
+  ask report `AgentRunning`; `permission_request` / `elicitation_request` report
+  `WaitingForApproval`; `turn_end` reports `Done`, or `Blocked` when the turn
+  errored. Detail inside a turn (messages, tool calls, usage) reports nothing.
+- Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
+  tmux task is the supervisor's to observe, and two producers writing one field
+  is how a status starts oscillating.
+- Reporting is best-effort and off the turn's critical path: a lost race with
+  another writer is dropped, never surfaced to the operator or allowed to
+  interrupt the turn it described.
+- A runtime refresh must not overwrite this evidence with a shell reading; the
+  provisioned task keeps its ACP-reported state.
 
 ## Transcript composition
 
 The transcript is a conversation, not the ACP event stream. It contains only
-user messages, assistant responses, one activity disclosure per turn,
+user messages, assistant responses, one activity disclosure per run of adjacent
+work,
 permission asks the operator still owes an answer to, agent form elicitation
 asks still open, errors, and hairline
 dividers for cancellations, reconnects, harness switches and context resets.
 
-- A turn chapter is the user message, its activity disclosure, and the assistant
-  response. Items are keyed by host `itemId` / `toolCallId`, so replay after a
-  reconnect updates existing rows instead of appending duplicates.
+- A turn chapter is the user message and everything that followed it, **in the
+  order it arrived**: an agent that speaks, works, then speaks again reads that
+  way. Adjacent work items collapse into one disclosure; prose between them ends
+  the run and opens the next. Items are keyed by host `itemId` / `toolCallId`, so
+  replay after a reconnect updates existing rows instead of appending duplicates.
 - Assistant responses are revealed by completed paragraph, never token by token,
   and never split inside a fenced block. The whole response renders once the turn
-  ends.
+  ends. The paragraph gate applies only to the row still being written: once a
+  tool call, an ask or a later message follows a message, that message is
+  finished and renders whole, so a one-paragraph "Let me look at the handler."
+  is not withheld for the rest of the turn.
+- A plan belongs to the turn that produced it; a later turn opens its own plan
+  row rather than rewriting the first one.
+- A turn that ends settles the tool calls it left open (`cancelled`, or `failed`
+  when the turn errored). ACP need not send a terminal update for a call the
+  operator stopped, and an unsettled call otherwise reads as in flight for the
+  rest of the session.
+- A turn reports its failure once: the generic "stopped without a response" note
+  is for a turn that produced neither an answer nor a host error, never a second
+  line under one the host already explained.
+- Permission and elicitation titles are stripped of markdown delimiters at the
+  projection boundary, so every reader — approval control and transcript marker
+  alike — shows the command as it will run.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
   diffs. Collapsed, it shows the current operation while the turn runs (replacing
   it, never appending) and a counted summary once the turn settles
@@ -490,8 +539,9 @@ dividers for cancellations, reconnects, harness switches and context resets.
 - Reasoning is a row on the activity grid inside that disclosure, never an italic
   message in the conversation.
 - The transcript opens positioned at its latest content, follows new content only
-  while the operator is already at the bottom, offers `Jump to latest` otherwise,
-  and never animates a scroll.
+  while the operator is already at the bottom, offers `Jump to latest` whenever
+  the operator is away from the live edge — not only when new content has arrived
+  since — and never animates a scroll.
 - Conversation text and tool labels are proportional; monospace is reserved for
   code, commands, paths and output.
 

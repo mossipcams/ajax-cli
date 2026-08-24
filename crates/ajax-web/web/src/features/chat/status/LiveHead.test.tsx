@@ -92,6 +92,24 @@ describe("LiveHead task attention chrome", () => {
   });
 });
 
+describe("LiveHead connection badge", () => {
+  // #1039: the state label and the offline badge rendered together, so the
+  // head claimed Ready and Reconnecting at the same time.
+  it("shows one badge: a dropped socket replaces the state label", () => {
+    mountHead({ state: "idle", connected: false });
+
+    expect(screen.getByTestId("session-head-offline")).toHaveTextContent("Reconnecting");
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("shows the state label while connected", () => {
+    mountHead({ state: "idle", connected: true });
+
+    expect(screen.getByText("Ready")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-head-offline")).not.toBeInTheDocument();
+  });
+});
+
 describe("LiveHead context usage", () => {
   it("shows reported usage in idle below 70%", () => {
     mountHead({ state: "idle", usage: { used: 25, size: 100 } });
@@ -103,7 +121,7 @@ describe("LiveHead context usage", () => {
       state: "working",
       tone: "running",
       usage: { used: 40, size: 100 },
-      thoughtSnippet: "Checking files",
+      hasActivity: true,
     });
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 40% full");
   });
@@ -120,40 +138,19 @@ describe("LiveHead context usage", () => {
 });
 
 describe("LiveHead working quiet lines", () => {
-  it("shows tool and plan step together without the quiet fallback", () => {
-    mountHead({
-      state: "working",
-      tone: "running",
-      tool: {
-        callId: "c1",
-        kind: "edit",
-        tone: "running",
-        mark: "±",
-        title: "Edit config",
-        path: "…/src/config.ts",
-        statusLabel: "running",
-      },
-      planStep: "Patch the port",
-      thoughtSnippet: "Checking files",
-    });
-    expect(screen.getByTestId("session-head-tool")).toHaveTextContent("Edit config");
-    expect(screen.getByTestId("session-plan-step")).toHaveTextContent("Patch the port");
+  // The head used to reprint the running tool and the active plan step that the
+  // turn's activity row already narrates in the transcript — the same command
+  // twice, a screen apart, with the void between them.
+  it("leaves the operation to the transcript once the turn has activity", () => {
+    mountHead({ state: "working", tone: "running", hasActivity: true });
+    expect(screen.queryByTestId("session-head-tool")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-plan-step")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-head-thought")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-head-idle")).not.toBeInTheDocument();
   });
 
-  it("shows thought in the quiet fallback when there is no tool or plan step", () => {
-    mountHead({
-      state: "working",
-      tone: "running",
-      thoughtSnippet: "Checking files",
-    });
-    expect(screen.getByTestId("session-head-thought")).toHaveTextContent("Checking files");
-    expect(screen.queryByTestId("session-head-idle")).not.toBeInTheDocument();
-  });
-
-  it("falls back to Thinking when nothing else is live yet", () => {
-    mountHead({ state: "working", tone: "running" });
+  it("says Thinking only before the first event, when the transcript is empty", () => {
+    mountHead({ state: "working", tone: "running", hasActivity: false });
     expect(screen.getByTestId("session-head-idle")).toHaveTextContent("Thinking…");
   });
 
@@ -177,14 +174,38 @@ describe("buildHeadView", () => {
         revision: 0,
       },
       taskAttention: { status: "waiting", explanation: "Needs input" },
-      tool: null,
-      planStep: null,
-      thoughtSnippet: null,
+      hasActivity: false,
       activityAgeMs: 0,
       connected: true,
     });
     expect(view.state).toBe("attention");
     expect(view.showHeadLine).toBe(false);
     expect(view.attentionText).toBe("Needs input");
+  });
+
+  // Task attention replaces the head line, and `Reconnecting` lives on it. A
+  // task waiting for review is where most sessions rest, so a dropped socket
+  // used to be invisible in exactly the common case.
+  it("keeps the head line under task attention while the socket is down", () => {
+    const view = buildHeadView({
+      session: {
+        conversation: [],
+        turn: { busy: false, proseOpen: true },
+        permission: { decision: null, resolvedIds: [] },
+        elicitation: { decision: null, resolvedIds: [] },
+        status: { acpState: "idle", detail: null },
+        usage: { context: null, turn: null },
+        model: {},
+        revision: 0,
+      },
+      taskAttention: { status: "waiting", explanation: "Needs input" },
+      hasActivity: false,
+      activityAgeMs: 0,
+      connected: false,
+    });
+    expect(view.showHeadLine).toBe(true);
+
+    mountHead({ ...view, state: view.state, connected: false });
+    expect(screen.getByTestId("session-head-offline")).toBeInTheDocument();
   });
 });

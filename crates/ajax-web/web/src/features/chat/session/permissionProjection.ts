@@ -79,7 +79,11 @@ export function applyPermissionEvent(
 ): ChatSessionReducerState {
   switch (event.type) {
     case "permission_request": {
-      const { requestId, title, detail } = event;
+      const { requestId, detail } = event;
+      // Harnesses send the title as markdown. Nothing downstream renders
+      // markdown on a row, so `rm -rf …` reached the approval control with
+      // literal backticks; strip them once here rather than in each reader.
+      const title = event.title.replace(/`/g, "").trim();
       if (
         state.view.permission.resolvedIds.includes(requestId) ||
         state.view.permission.decision?.requestId === requestId ||
