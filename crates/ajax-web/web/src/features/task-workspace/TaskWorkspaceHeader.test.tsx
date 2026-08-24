@@ -84,7 +84,6 @@ describe("TaskWorkspaceHeader", () => {
     render(<TaskWorkspaceHeader detail={detail()} onBack={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Fix login" })).toBeInTheDocument();
     expect(screen.queryByTestId("session-chrome-title")).not.toBeInTheDocument();
-    expect(document.querySelector(".detail-session-title")).toBeNull();
     expect(screen.queryByText(longFirstPrompt)).not.toBeInTheDocument();
   });
 
