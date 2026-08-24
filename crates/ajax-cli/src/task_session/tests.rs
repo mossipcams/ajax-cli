@@ -498,7 +498,7 @@ fn task_pty_fork_config_uses_operator_size_and_terminal_modes() {
 }
 
 #[test]
-fn task_detach_sequence_closes_attach_pty_before_waiting() {
+fn adapter_contract_detach_closes_pty_before_waiting_for_attach_client() {
     assert_eq!(
         super::task_detach_sequence(),
         &[
@@ -510,7 +510,7 @@ fn task_detach_sequence_closes_attach_pty_before_waiting() {
 }
 
 #[test]
-fn task_entry_plan_runs_setup_then_task_session_without_global_tmux_binding() {
+fn entering_a_task_attaches_to_its_existing_tmux_session() {
     let mut plan = CommandPlan::new("open task: web/fix-login");
     plan.commands.push(CommandSpec::new(
         "tmux",
@@ -544,7 +544,7 @@ fn task_entry_plan_runs_setup_then_task_session_without_global_tmux_binding() {
 }
 
 #[test]
-fn task_entry_plan_surfaces_task_session_failure_after_setup() {
+fn unavailable_tmux_session_surfaces_an_operator_visible_error() {
     let mut plan = CommandPlan::new("open task: web/fix-login");
     plan.commands.push(CommandSpec::new(
         "tmux",

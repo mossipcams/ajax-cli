@@ -58,7 +58,7 @@ impl TerminalChild for MockChild {
 }
 
 #[test]
-fn tmux_attach_command_plan_uses_registered_session_and_task_target() {
+fn adapter_contract_tmux_attach_uses_registered_session_and_task_window() {
     let plan = attach_plan("web/fix-login");
 
     let command_plan = build_tmux_attach_command_plan(&plan);
@@ -92,7 +92,7 @@ fn tmux_attach_target_never_uses_browser_handle() {
 }
 
 #[test]
-fn task_window_probe_targets_ephemeral_session_window() {
+fn adapter_contract_task_window_probe_targets_ephemeral_session() {
     let command = task_window_probe_command("ajax-web-fix-login-m1a2b3c", "task");
 
     assert_eq!(command.program, "tmux");
@@ -109,7 +109,7 @@ fn task_window_probe_targets_ephemeral_session_window() {
 }
 
 #[test]
-fn tmux_attach_command_uses_clear_capable_terminal_type() {
+fn adapter_contract_tmux_attach_provides_clear_capable_terminal() {
     let plan = attach_plan("web/fix-login");
     let command_plan = build_tmux_attach_command_plan(&plan);
 
@@ -122,7 +122,7 @@ fn tmux_attach_command_uses_clear_capable_terminal_type() {
 }
 
 #[test]
-fn isolated_attach_plan_creates_grouped_session_then_attaches() {
+fn browser_attach_preserves_shared_task_session_size() {
     let plan = attach_plan("web/fix-login");
 
     let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
@@ -391,7 +391,7 @@ fn reaper_targets_only_ephemeral_grouped_sessions() {
 }
 
 #[test]
-fn isolated_attach_cleanup_kills_ephemeral_session() {
+fn disconnect_destroys_one_off_viewports_but_preserves_reconnectable_sessions() {
     let plan = attach_plan("web/fix-login");
 
     // Random (no client id): teardown destroys — token cannot be reused.
@@ -418,7 +418,7 @@ fn isolated_attach_cleanup_kills_ephemeral_session() {
 }
 
 #[test]
-fn reaper_detached_skips_attached_ephemeral_sessions() {
+fn cleanup_preserves_attached_browser_terminal_sessions() {
     let rows = vec![
         ("ajax-web-x".to_string(), 1),
         ("ajax-web-x-m0123456789ab".to_string(), 0),
@@ -435,7 +435,7 @@ fn reaper_detached_skips_attached_ephemeral_sessions() {
 }
 
 #[test]
-fn reaper_detached_skips_lingered_reconnect_target() {
+fn cleanup_preserves_the_session_selected_for_reconnect() {
     let rows = vec![
         ("ajax-web-x-m0123456789ab".to_string(), 0),
         ("ajax-web-y-mabcdef012345".to_string(), 0),
@@ -485,7 +485,7 @@ fn ephemeral_client_token_normalizes_stable_ids() {
 }
 
 #[test]
-fn setup_ignores_duplicate_session_on_new_session_only() {
+fn reconnect_tolerates_an_existing_ephemeral_tmux_session_only() {
     let new_session = TmuxCommand::new(["new-session", "-d", "-s", "sess", "-t", "parent"]);
     assert!(should_ignore_setup_failure(
         &new_session,
@@ -503,7 +503,7 @@ fn setup_ignores_duplicate_session_on_new_session_only() {
 }
 
 #[test]
-fn isolated_attach_plan_is_stable_for_same_client_token() {
+fn browser_reconnect_reuses_live_tmux_session_without_destroying_it() {
     let plan = attach_plan("web/fix-login");
 
     let first = build_isolated_attach_plan_for_client(&plan, "viewport-a");

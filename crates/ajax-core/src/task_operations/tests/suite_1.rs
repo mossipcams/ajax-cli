@@ -132,7 +132,7 @@ fn start_operation_plan_returns_task_intent_and_commands_without_mutating_regist
 }
 
 #[test]
-fn start_operation_execution_failure_preserves_intent_and_marks_provisioning_failed() {
+fn start_failure_keeps_task_discoverable_with_recovery_metadata() {
     let mut context = context();
     let request = NewTaskRequest {
         repo: "web".to_string(),
@@ -161,6 +161,11 @@ fn start_operation_execution_failure_preserves_intent_and_marks_provisioning_fai
             ..
         })
     ));
+    assert!(context
+        .registry
+        .list_tasks()
+        .iter()
+        .any(|task| task.id == intent.id));
     let task = context.registry.get_task(&intent.id).unwrap();
     assert_eq!(task.intent(), intent);
     assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
@@ -179,7 +184,52 @@ fn start_operation_execution_failure_preserves_intent_and_marks_provisioning_fai
 }
 
 #[test]
-fn start_operation_records_receipts_for_successful_provisioning_steps() {
+fn interrupted_start_preserves_completed_steps_for_recovery() {
+    let mut context = context();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "codex".to_string(),
+        skip_interactive_agent: false,
+        model: None,
+    };
+    let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
+    let mut runner = RecordingQueuedRunner::new(vec![
+        output(0, "", ""),
+        output(0, "", ""),
+        output(1, "", "tmux failed"),
+    ]);
+
+    execute_start_task_operation(
+        &mut context,
+        &mut runner,
+        &request,
+        &plan,
+        true,
+        OpenMode::Attach,
+    )
+    .unwrap_err();
+
+    let task = context.registry.get_task(&intent.id).unwrap();
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+    assert!(task.has_side_flag(SideFlag::NeedsInput));
+    assert_eq!(
+        task.metadata.get("start_failed_step").map(String::as_str),
+        Some("task_session_created")
+    );
+    assert_eq!(
+        context
+            .registry
+            .step_receipts_for_task(&intent.id)
+            .iter()
+            .map(|receipt| receipt.step_key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["worktree_created"]
+    );
+}
+
+#[test]
+fn successful_start_creates_active_task_with_provisioning_receipts() {
     let mut context = context();
     let request = NewTaskRequest {
         repo: "web".to_string(),
@@ -233,6 +283,11 @@ fn start_operation_records_receipts_for_successful_provisioning_steps() {
             ),
         ]
     );
+    assert!(context
+        .registry
+        .list_tasks()
+        .iter()
+        .any(|task| { task.id == intent.id && task.lifecycle_status == LifecycleStatus::Active }));
 }
 
 #[test]
@@ -259,7 +314,7 @@ fn task_command_operation_plans_use_operator_titles() {
 }
 
 #[test]
-fn resume_operation_executes_plan_and_reports_state_change() {
+fn resume_opens_existing_task_without_changing_reviewability() {
     let mut context = context_with_reviewable_task();
     let resume_plan = plan_task_command_operation(
         &context,
@@ -294,10 +349,18 @@ fn resume_operation_executes_plan_and_reports_state_change() {
     assert_eq!(resume_runner.commands.len(), 2);
     assert_eq!(resume_outputs.len(), 2);
     assert!(resume_state_changed);
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .lifecycle_status,
+        LifecycleStatus::Reviewable
+    );
 }
 
 #[test]
-fn review_operation_returns_diff_output_without_state_change() {
+fn review_returns_operator_visible_diff_without_mutating_task() {
     let mut context = context_with_reviewable_task();
     let review_plan = plan_task_command_operation(
         &context,
@@ -499,7 +562,7 @@ fn ship_task_operation_refreshes_git_evidence_before_merge_commands() {
 }
 
 #[test]
-fn ship_operation_marks_task_merged_on_success() {
+fn ship_moves_reviewable_task_to_merged_on_success() {
     let mut context = context_with_reviewable_task();
     let ship_plan = plan_task_command_operation(
         &context,
@@ -544,7 +607,7 @@ fn ship_operation_marks_task_merged_on_success() {
 }
 
 #[test]
-fn ship_operation_records_conflict_attention_on_merge_failure() {
+fn ship_failure_surfaces_merge_conflict_attention() {
     let mut context = context_with_reviewable_task();
     let ship_plan = plan_task_command_operation(
         &context,

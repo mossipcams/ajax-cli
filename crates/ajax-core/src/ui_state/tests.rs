@@ -141,15 +141,6 @@ fn needs_input_dominates_active_lifecycle() {
 }
 
 #[test]
-fn needs_input_is_distinct_from_blocked() {
-    let mut task = base_task();
-    mark_active(&mut task).unwrap();
-    task.add_side_flag(SideFlag::NeedsInput);
-
-    assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
-}
-
-#[test]
 fn blocker_signals_outrank_review_ready_lifecycle() {
     let mut task = base_task();
     mark_active(&mut task).unwrap();

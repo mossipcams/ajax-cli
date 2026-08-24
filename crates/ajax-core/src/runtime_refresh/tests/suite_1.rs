@@ -54,17 +54,20 @@ fn wrapper_liveness_alone_does_not_set_agent_running() {
 }
 
 #[test]
-fn missing_session_refresh_updates_task_evidence_once() {
+fn dead_tmux_session_is_projected_as_operator_error() {
     let mut context = context_with_task_for_missing_session();
     let mut runner = MissingSessionRunner::default();
 
     let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
 
     assert!(changed);
-    assert_eq!(context.registry.task_window_status_updates(), 1);
-    assert!(!runner.commands.iter().any(
-        |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
-    ));
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert_eq!(
+        task.tmux_status.as_ref().map(|status| status.exists),
+        Some(false)
+    );
+    assert!(task.has_side_flag(SideFlag::TmuxMissing));
+    assert_eq!(derive_operator_status(task).status, TaskStatus::Error);
 }
 
 #[test]
@@ -94,7 +97,7 @@ fn missing_session_refresh_preserves_teardown_incomplete_failure_status() {
 }
 
 #[test]
-fn orphan_recovery_uses_one_registry_snapshot_for_discovered_worktrees() {
+fn performance_contract_orphan_recovery_reuses_registry_snapshot() {
     let base = context_with_unchanged_running_task();
     let mut context =
         CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
@@ -124,7 +127,7 @@ fn orphan_recovery_uses_one_registry_snapshot_for_discovered_worktrees() {
 }
 
 #[test]
-fn steady_state_refresh_recovers_orphan_worktrees() {
+fn restart_recovers_tasks_from_authoritative_worktree_evidence() {
     let base = context_with_unchanged_running_task();
     let mut context =
         CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
@@ -154,7 +157,7 @@ fn steady_state_refresh_recovers_orphan_worktrees() {
 }
 
 #[test]
-fn github_failed_check_records_ci_failure_evidence_and_attention() {
+fn failed_ci_projects_error_and_actionable_attention() {
     let mut context = context_with_active_task();
     let stdout = ci_failed_stdout("lint");
     let mut runner = CiChecksRunner::with_gh(&stdout, "", 1);
@@ -170,6 +173,7 @@ fn github_failed_check_records_ci_failure_evidence_and_attention() {
     let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
     assert!(changed);
     assert_eq!(runner.gh_command_count(), 1);
+    assert_eq!(derive_operator_status(task).status, TaskStatus::Error);
     assert_eq!(
         task.live_status
             .as_ref()
@@ -197,7 +201,7 @@ fn github_failed_check_records_ci_failure_evidence_and_attention() {
 }
 
 #[test]
-fn github_pending_checks_surface_ci_running_over_github_failure() {
+fn pending_ci_projects_running_without_masking_local_failures() {
     // Relevant pending checks override the native/github failure with a
     // Running "ci running" state, but never override a local check failure
     // or a merge conflict (requirement 6).
@@ -238,7 +242,7 @@ fn github_pending_checks_surface_ci_running_over_github_failure() {
 }
 
 #[test]
-fn github_pending_checks_do_not_mask_unacknowledged_attention_gate() {
+fn pending_ci_does_not_mask_operator_approval_gate() {
     // A `Running "CI running"` projection can never notify (attention.rs
     // clears the notify candidate for Running), so letting pending CI
     // overwrite an unacknowledged approval/input gate would make the only
@@ -282,7 +286,7 @@ fn github_pending_checks_do_not_mask_unacknowledged_attention_gate() {
 }
 
 #[test]
-fn github_ci_evidence_is_cleared_when_probing_stops() {
+fn retired_ci_evidence_no_longer_changes_operator_status() {
     // Plan §7: rows 5/6 apply only while evidence is "relevant + not
     // stale". Once the lifecycle retires the probe, CI evidence can never
     // be confirmed again and must not keep projecting.
@@ -315,7 +319,7 @@ fn github_ci_evidence_is_cleared_when_probing_stops() {
 }
 
 #[test]
-fn github_healthy_checks_clear_only_github_ci_live_status() {
+fn passing_ci_clears_only_github_failure_evidence() {
     let now = SystemTime::now();
     let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
     github.add_side_flag(SideFlag::TestsFailed);
@@ -355,7 +359,7 @@ fn github_healthy_checks_clear_only_github_ci_live_status() {
 }
 
 #[test]
-fn github_unobservable_records_metadata_without_runtime_projection_error() {
+fn unavailable_ci_probe_does_not_invent_operator_error() {
     for (stderr, reason) in [
         ("HTTP 401: gh auth failed", "HTTP 401"),
         (
@@ -394,7 +398,7 @@ fn github_unobservable_records_metadata_without_runtime_projection_error() {
 }
 
 #[test]
-fn github_ci_probe_reuses_fresh_timestamp_and_refreshes_stale_timestamp() {
+fn adapter_contract_ci_probe_respects_freshness_interval() {
     let now = unix_seconds_for_test(SystemTime::now());
 
     let mut fresh_context = context_with_active_task();
@@ -438,7 +442,7 @@ fn github_ci_probe_reuses_fresh_timestamp_and_refreshes_stale_timestamp() {
 }
 
 #[test]
-fn github_ci_failure_reprobes_sooner_than_default_interval() {
+fn adapter_contract_failed_ci_uses_shorter_probe_interval() {
     let now = unix_seconds_for_test(SystemTime::now());
     let failed_stdout = ci_failed_stdout("ci");
 
@@ -484,7 +488,7 @@ fn github_ci_failure_reprobes_sooner_than_default_interval() {
 }
 
 #[test]
-fn github_failed_check_does_not_overwrite_merge_conflict() {
+fn failed_ci_does_not_hide_merge_conflict() {
     let mut task = task_with_live(LiveStatusKind::MergeConflict, "merge failed");
 
     apply_github_checks_observation(
@@ -505,7 +509,7 @@ fn github_failed_check_does_not_overwrite_merge_conflict() {
 }
 
 #[test]
-fn live_refresh_skips_github_ci_probes() {
+fn adapter_contract_live_refresh_skips_ci_transport() {
     let mut context = context_with_active_task();
     let stdout = ci_failed_stdout("lint");
     let mut runner = CiChecksRunner::with_gh(&stdout, "", 1);
