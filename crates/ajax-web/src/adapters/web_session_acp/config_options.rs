@@ -469,10 +469,10 @@ fn applied_cursor_intent(options: &[SessionConfigOption]) -> Option<CursorModelI
 }
 
 fn split_axis_model_base(options: &[SessionConfigOption], intent: &CursorModelIntent) -> String {
-    if intent.base.ends_with("-thinking") {
-        if model_option(options).is_some_and(|model| option_value_advertised(model, &intent.base)) {
-            return intent.base.clone();
-        }
+    if intent.base.ends_with("-thinking")
+        && model_option(options).is_some_and(|model| option_value_advertised(model, &intent.base))
+    {
+        return intent.base.clone();
     }
     let canonical = canonical_cursor_model_intent(intent);
     if canonical.thinking == Some(true) {
