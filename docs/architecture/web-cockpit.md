@@ -236,8 +236,9 @@ capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` a
 the live connected-control contract and optional `availableCommands` as the live
 slash-command contract (pass-through on `session/prompt`; not transcript) and optional
 `promptCapabilities` as the live rich-prompt attach contract (from ACP initialize; not
-transcript) and optional `sessionTitle` as live agent-reported session chrome (from ACP
-`session_info_update`; not transcript or Core task truth). New Task still lists models from
+transcript) and optional `sessionTitle` as live agent-reported session state (from ACP
+`session_info_update`; on the v2 snapshot wire but not rendered in workspace header chrome;
+not transcript or Core task truth). New Task still lists models from
 `GET /api/session/models`. `snapshot.model` is the model option's `currentValue`
 only. In-band refusal leaves `session_model` as the prior restart pin and
 `snapshot.model` on harness-reported evidence.
@@ -269,9 +270,12 @@ unchanged). JSONL omits redundant base64 when a durable `uri` is present; otherw
 data stays on the replayed event. Ajax does not advertise or render ACP `terminal/*`
 embeds.
 
-**Session title (ACP).** When `snapshot.sessionTitle` is present, the task workspace
-header shows it under the Core task title (`detail.title` / handle). It does not rename
-the task in Core or replace the Ajax handle.
+**Session title (ACP).** When `snapshot.sessionTitle` is present, the host carries it on
+the live session snapshot for protocol consumers. The task workspace header shows only the
+Core task title (`detail.title` / handle); it does not render `sessionTitle`. Agents often
+mirror the first prompt there, so displaying it duplicated the task identity and blew up
+header chrome ([#1055](https://github.com/mossipcams/ajax-cli/issues/1055)). It does not
+rename the task in Core or replace the Ajax handle.
 
 **Session close (ACP).** When the agent advertises `sessionCapabilities.close`, the
 host sends `session/close` before stdio teardown on harness Switch, slot replacement,
