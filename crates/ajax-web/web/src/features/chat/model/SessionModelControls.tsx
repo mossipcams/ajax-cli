@@ -333,6 +333,7 @@ export function SessionModelOpenButton({
       aria-controls={panelId}
       title={`Choose model — ${label}`}
       disabled={disabled}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onOpen}
     >
       <svg

@@ -165,6 +165,40 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
         (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
       ).toUpperCase();
 
+      const reviewed = sessionStorage.getItem("ajax-e2e-reviewed-task") === "1";
+      if (reviewed && path === "/api/cockpit" && routeMap["__cockpit_after_review__"]) {
+        return new Response(JSON.stringify(routeMap["__cockpit_after_review__"]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (
+        reviewed &&
+        /^\/api\/tasks\/[^/]+$/.test(path) &&
+        routeMap["__detail_after_review__"]
+      ) {
+        return new Response(JSON.stringify(routeMap["__detail_after_review__"]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/api/operations" && method === "POST" && routeMap["__cockpit_after_review__"]) {
+        const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+        if (body.action === "review") {
+          sessionStorage.setItem("ajax-e2e-reviewed-task", "1");
+          return new Response(JSON.stringify({
+            ok: true,
+            state_changed: true,
+            cockpit: routeMap["__cockpit_after_review__"],
+            output: "reviewed",
+            error: null,
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      }
+
       // Persist across location.reload() so e2e can observe the POST after
       // Settings succeeds and reloads the page.
       if (path === "/api/server/test-in-stable" && method === "POST") {

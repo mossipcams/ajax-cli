@@ -10,6 +10,53 @@ use ajax_core::{
 use std::time::Duration;
 
 #[test]
+fn fresh_acp_session_delivers_without_prior_chat_attach() {
+    let dir = scratch_dir("ci-delivery-fresh");
+    let handle = "web/ci-delivery-fresh";
+    let mut task = Task::new(
+        TaskId::new("task-fresh"),
+        "web",
+        "ci-delivery-fresh",
+        "CI",
+        "ajax/ci",
+        "main",
+        &dir,
+        "web-ci",
+        "task",
+        AgentClient::Cursor,
+    );
+    task.set_skip_interactive_agent(true);
+    let notification = AgentNotification::CiFailed {
+        episode_id: "ci-failed:task-fresh:99:abc:1".to_string(),
+        task_id: task.id.clone(),
+        pr_number: 99,
+        head_sha: "abc".to_string(),
+        failed_checks: vec![CiFailedCheck {
+            name: "CI".to_string(),
+            link: Some("https://github.test/actions/runs/1".to_string()),
+            identity: Some("run:1".to_string()),
+        }],
+    };
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        let status = directory
+            .runtime_handle()
+            .block_on(super::deliver(directory.inner(), &task, &notification))
+            .unwrap();
+        assert_eq!(status, AgentNotificationDeliveryStatus::Accepted);
+        pump_until(&directory, handle, Duration::from_secs(5), |events| {
+            events.iter().any(|event| {
+                matches!(event, SessionServerEvent::Message { role, text, .. }
+                    if role == "user" && text.contains("PR #99"))
+            })
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn persisted_acp_resume_queues_once_behind_busy_turn() {
     let dir = scratch_dir("ci-delivery");
     let handle = "web/ci-delivery";

@@ -506,12 +506,6 @@ impl TaskSessionDirectory {
     pub(crate) fn has_live_entry(&self, handle: &str) -> bool {
         self.sessions.lock().unwrap().contains_key(handle)
     }
-
-    pub(crate) fn has_resumable_session(&self, handle: &str) -> bool {
-        web_session_store::load::<SessionServerEvent>(&self.state_dir, handle)
-            .acp_session_id
-            .is_some()
-    }
 }
 
 async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, String> {

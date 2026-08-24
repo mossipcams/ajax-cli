@@ -284,9 +284,6 @@ fn apply_failed(task: &mut Task, state: &mut CiMonitorState, previous: &CiMonito
         std::time::SystemTime::now(),
     );
     state.status = CiAttemptStatus::Failed;
-    if state.has_pending {
-        return;
-    }
     let first_episode = previous.episode_id.is_none();
     let distinct_rerun = previous.saw_pending_after_failure
         && !state.check_identities.is_empty()
@@ -358,7 +355,6 @@ pub fn pending_notification(task: &Task) -> Option<AgentNotification> {
     let state = load_state(task);
     let episode_id = state.episode_id.clone()?;
     if state.status != CiAttemptStatus::Failed
-        || state.has_pending
         || state.last_notified_failure.as_deref() == Some(&episode_id)
     {
         return None;

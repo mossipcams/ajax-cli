@@ -236,7 +236,6 @@ pub(super) struct CountingRegistry {
     inner: InMemoryRegistry,
     list_tasks_calls: Cell<u32>,
     get_task_calls: Cell<u32>,
-    task_window_status_updates: Cell<u32>,
 }
 
 impl CountingRegistry {
@@ -245,7 +244,6 @@ impl CountingRegistry {
             inner,
             list_tasks_calls: Cell::new(0),
             get_task_calls: Cell::new(0),
-            task_window_status_updates: Cell::new(0),
         }
     }
 
@@ -255,10 +253,6 @@ impl CountingRegistry {
 
     fn get_task_calls(&self) -> u32 {
         self.get_task_calls.get()
-    }
-
-    fn task_window_status_updates(&self) -> u32 {
-        self.task_window_status_updates.get()
     }
 }
 
@@ -323,8 +317,6 @@ impl Registry for CountingRegistry {
         task_id: &TaskId,
         status: Option<TaskWindowStatus>,
     ) -> Result<(), RegistryError> {
-        self.task_window_status_updates
-            .set(self.task_window_status_updates.get() + 1);
         self.inner.update_task_window_status(task_id, status)
     }
 

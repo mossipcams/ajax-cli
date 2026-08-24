@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { fireEvent, screen, act } from "@testing-library/react";
-import { mountChat, prepareChatSurface, send } from "../ChatSurface.testHarness";
+import { mountChat, prepareChatSurface, send, transport } from "../ChatSurface.testHarness";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -28,6 +28,48 @@ describe("ChatScroller integration", () => {
     composer.focus();
     fireEvent.pointerDown(screen.getByTestId("session-chat"));
     expect(composer).not.toHaveFocus();
+  });
+
+  it("does not blur the composer when tapping hotbar dead space", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    const hotbar = screen.getByTestId("session-composer-hotbar");
+    const gap = document.createElement("span");
+    gap.className = "hotbar-gap-probe";
+    hotbar.appendChild(gap);
+
+    const event = new TouchEvent("touchstart", { cancelable: true, bubbles: true });
+    Object.defineProperty(event, "target", { value: gap, configurable: true });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    hotbar.dispatchEvent(event);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(composer).toHaveFocus();
+  });
+
+  it("does not blur the composer when tapping a hotbar action", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    const event = new TouchEvent("touchstart", { cancelable: true, bubbles: true });
+    Object.defineProperty(event, "target", { value: sendButton, configurable: true });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    sendButton.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    fireEvent.pointerDown(sendButton);
+    expect(composer).toHaveFocus();
+  });
+
+  it("still submits from Send after hotbar focus retention", () => {
+    mountChat();
+    const composer = screen.getByLabelText("Message");
+    composer.focus();
+    fireEvent.change(composer, { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(transport.sendPrompt).toHaveBeenCalledOnce();
   });
 
   it("follows the live edge on new items while pinned", () => {

@@ -11,9 +11,6 @@ pub(crate) async fn deliver(
     notification: &AgentNotification,
 ) -> Result<AgentNotificationDeliveryStatus, String> {
     let handle = task.qualified_handle();
-    if !directory.has_live_entry(&handle) && !directory.has_resumable_session(&handle) {
-        return Err("no persisted ACP session; CI notification retained".to_string());
-    }
     let model = task.session_model().unwrap_or("auto");
     directory
         .acquire(&handle, &task.worktree_path, model, task.selected_agent)

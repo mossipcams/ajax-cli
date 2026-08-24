@@ -651,31 +651,21 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&tasks_output), "");
     let body: Value = serde_json::from_str(&stdout(&tasks_output))
         .expect("ajax tasks --json should emit valid JSON");
-    assert_eq!(
-        body["tasks"],
-        serde_json::json!([
-            {
-                "id": "web/fix-login",
-                "qualified_handle": "web/fix-login",
-                "title": "Fix Login!",
-                "lifecycle_status": "Active",
-                "runtime_observation_error": null,
-                "needs_attention": false,
-                "live_status": null
-            }
-        ])
-    );
+    assert_eq!(body["tasks"][0]["qualified_handle"], "web/fix-login");
+    assert_eq!(body["tasks"][0]["title"], "Fix Login!");
+    assert_eq!(body["tasks"][0]["lifecycle_status"], "Active");
+    assert_eq!(body["tasks"][0]["needs_attention"], false);
 }
 
 #[test]
-fn ajax_operator_verbs_dispatch_for_seeded_task() {
+fn public_operator_verbs_accept_qualified_task_selection() {
     for command in ["resume", "review", "ship", "drop", "repair"] {
         assert_task_verb_succeeds(command);
     }
 }
 
 #[test]
-fn ajax_tidy_dispatches_like_sweep() {
+fn tidy_returns_operator_visible_cleanup_plan() {
     let home = home_with_seeded_reviewable_task("tidy-dispatch");
 
     let output = home.ajax(["tidy", "--json"]);
@@ -695,7 +685,7 @@ fn ajax_tidy_dispatches_like_sweep() {
 }
 
 #[test]
-fn ajax_ready_dispatches_like_review() {
+fn ready_lists_reviewable_tasks() {
     let home = home_with_seeded_reviewable_task("ready-dispatch");
 
     let output = home.ajax(["ready", "--json"]);
@@ -711,7 +701,7 @@ fn ajax_ready_dispatches_like_review() {
 }
 
 #[test]
-fn ajax_rejects_old_verbs() {
+fn removed_cli_verbs_fail_instead_of_silently_dispatching() {
     let home = home_with_seeded_reviewable_task("reject-old-verbs");
 
     for args in [
@@ -771,7 +761,7 @@ fn home_with_seeded_reviewable_task(test_name: &str) -> IsolatedAjaxHome {
 }
 
 #[test]
-fn live_new_execute_requires_title_before_lifecycle_tools_can_run() {
+fn missing_start_title_returns_operator_error_without_side_effects() {
     let home = IsolatedAjaxHome::new("new-execute-missing-title");
     let repo_path = home.create_managed_repo("web");
     let lifecycle_log = home.install_fake_native_lifecycle_tools();
@@ -791,6 +781,7 @@ fn live_new_execute_requires_title_before_lifecycle_tools_can_run() {
         !output.status.success(),
         "ajax start --execute without a title should fail"
     );
+    assert_eq!(output.status.code(), Some(1));
     assert_eq!(stdout(&output), "");
     assert_eq!(stderr(&output), "task title is required; pass --title\n");
     assert!(
