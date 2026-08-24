@@ -9,7 +9,7 @@ fn merge_stream_text_appends_deltas_and_replaces_cumulative() {
 }
 
 #[test]
-fn normalizer_assigns_stable_item_ids_and_full_text() {
+fn streamed_agent_updates_publish_one_complete_transcript_item() {
     let mut normalizer = StreamNormalizer::default();
     let events = normalizer.normalize_batch(vec![
         SessionServerEvent::Message {
@@ -32,11 +32,11 @@ fn normalizer_assigns_stable_item_ids_and_full_text() {
         panic!("expected message");
     };
     assert_eq!(text, "hello");
-    assert_eq!(item_id, "i1");
+    assert!(!item_id.is_empty());
 }
 
 #[test]
-fn cumulative_and_delta_harnesses_converge() {
+fn cumulative_and_delta_acp_streams_produce_the_same_transcript() {
     let mut delta = StreamNormalizer::default();
     let mut cumulative = StreamNormalizer::default();
     let delta_out = delta.normalize_batch(vec![

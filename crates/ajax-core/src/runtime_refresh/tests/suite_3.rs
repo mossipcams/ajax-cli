@@ -247,7 +247,7 @@ fn rooted_runtime_recovery_ignores_legacy_sibling_worktrees() {
 /// source that could retract the claim is silent, so the refresh itself has to
 /// retract it or the operator surfaces lie indefinitely.
 #[test]
-fn refresh_clears_agent_running_claim_with_no_agent_evidence() {
+fn exited_agent_is_not_projected_as_running_after_refresh() {
     let mut context = context_with_active_task();
     let task = context
         .registry
@@ -299,7 +299,7 @@ fn refresh_clears_agent_running_claim_with_no_agent_evidence() {
 /// process alive: that is real evidence, and clearing on it would flap a
 /// live-but-quiet agent back to idle every refresh.
 #[test]
-fn refresh_keeps_agent_running_claim_while_process_is_alive() {
+fn live_process_evidence_preserves_running_projection() {
     let mut context = context_with_active_task();
     let task = context
         .registry
@@ -332,7 +332,7 @@ fn refresh_keeps_agent_running_claim_while_process_is_alive() {
 /// must defer to the live-status machinery that owns it. Without this the
 /// steady-state running task flaps to idle on every hook-silent refresh.
 #[test]
-fn refresh_keeps_agent_running_claim_backed_by_live_status() {
+fn fresh_agent_status_preserves_running_projection() {
     let mut context = context_with_unchanged_running_task();
     seed_fresh_ci_probe(&mut context);
     let mut runner = GitSkippingRunner::default();
@@ -351,7 +351,7 @@ fn refresh_keeps_agent_running_claim_backed_by_live_status() {
 /// true to say about it. Its run state comes from the ACP host as authoritative
 /// evidence; a refresh must not overwrite that with a shell reading.
 #[test]
-fn refresh_preserves_acp_evidence_on_a_provisioned_task() {
+fn provisioned_task_uses_acp_run_state_instead_of_shell_guess() {
     use crate::live;
     use crate::models::{LiveObservation, LiveStatusKind};
     use crate::ui_state::derive_operator_status;

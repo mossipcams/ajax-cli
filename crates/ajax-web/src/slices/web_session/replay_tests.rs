@@ -15,7 +15,7 @@ fn note(text: &str) -> SessionServerEvent {
 }
 
 #[test]
-fn invalid_cursor_before_compaction_resets_replay() {
+fn reconnect_before_retained_history_receives_reset_snapshot() {
     let mut log = TranscriptLog::default();
     log.append(
         (0..MAX_LOG_EVENTS + 3)
@@ -36,7 +36,7 @@ fn invalid_cursor_before_compaction_resets_replay() {
 }
 
 #[test]
-fn incremental_replay_after_one_new_event() {
+fn reconnect_replays_only_transcript_events_after_cursor() {
     let mut log = TranscriptLog::default();
     log.append(vec![note("one"), note("two")]);
     let plan = plan_replay(Some(1), &log);
@@ -57,7 +57,7 @@ fn incremental_replay_after_one_new_event() {
 }
 
 #[test]
-fn cold_attach_without_client_cursor_resets_replay_issue_1031() {
+fn cold_attach_replays_authoritative_transcript_from_start_issue_1031() {
     let mut log = TranscriptLog::default();
     log.append(vec![note("cached")]);
     let plan = plan_replay(None, &log);
@@ -74,7 +74,7 @@ fn cold_attach_without_client_cursor_resets_replay_issue_1031() {
 }
 
 #[test]
-fn pending_permission_cleared_after_resolved_answer_issue_1018() {
+fn resolved_permission_is_not_pending_after_reconnect_issue_1018() {
     let mut log = TranscriptLog::default();
     log.append(vec![
         SessionServerEvent::PermissionRequest {

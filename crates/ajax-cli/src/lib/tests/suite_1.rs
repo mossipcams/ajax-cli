@@ -1,5 +1,5 @@
 #[test]
-fn snapshot_dispatch_module_routes_read_commands() {
+fn tasks_json_projects_core_task_identity_and_lifecycle() {
     let context = sample_context();
     let matches = build_cli()
         .try_get_matches_from(["ajax", "tasks", "--json"])
@@ -59,7 +59,7 @@ fn ci_web_job_runs_mobile_webkit_smoke() {
     );
 }
 #[test]
-fn execution_dispatch_module_routes_mutating_commands() {
+fn adapter_contract_start_dispatch_executes_core_command_plan() {
     let mut context = sample_context();
     let mut runner = RecordingCommandRunner::default();
     let matches = build_cli()
@@ -131,7 +131,7 @@ fn execution_dispatch_module_routes_mutating_commands() {
     assert_eq!(runner.commands(), expected_commands.as_slice());
 }
 #[test]
-fn cockpit_backend_module_renders_snapshot_frame() {
+fn native_cockpit_projects_core_task_and_attention() {
     let context = sample_context();
     let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
     assert_eq!(snapshot.cards.len(), 1);
@@ -142,7 +142,7 @@ fn cockpit_backend_module_renders_snapshot_frame() {
     assert_eq!(frame.matches("Ajax Cockpit").count(), 1);
 }
 #[test]
-fn cockpit_snapshot_excludes_stale_tasks_but_keeps_missing_substrate_tasks_visible() {
+fn native_cockpit_hides_stale_tasks_and_projects_missing_substrate_as_error() {
     let mut stale_context = sample_context();
     let stale_task = stale_context
         .registry
@@ -163,6 +163,14 @@ fn cockpit_snapshot_excludes_stale_tasks_but_keeps_missing_substrate_tasks_visib
     let broken_snapshot = crate::cockpit_backend::build_cockpit_snapshot(&broken_context);
     assert_eq!(broken_snapshot.cards.len(), 1);
     assert_eq!(broken_snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(
+        broken_snapshot.cards[0].status,
+        ajax_core::ui_state::TaskStatus::Error
+    );
+    assert_eq!(
+        broken_snapshot.cards[0].attention,
+        ajax_core::ui_state::AttentionBand::NeedsYou
+    );
     assert_eq!(broken_snapshot.inbox.items.len(), 1);
     assert_eq!(broken_snapshot.inbox.items[0].task_handle, "web/fix-login");
 }
