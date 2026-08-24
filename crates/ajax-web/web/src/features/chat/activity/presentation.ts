@@ -38,6 +38,7 @@ export const TOOL_STATUS_LABELS: Record<string, string> = {
   in_progress: "running",
   completed: "done",
   failed: "failed",
+  cancelled: "stopped",
 };
 
 export function toolStatusLabel(status: string): string {

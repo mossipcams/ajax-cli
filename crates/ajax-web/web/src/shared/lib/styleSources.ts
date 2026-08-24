@@ -19,11 +19,14 @@ export const BASELINE = {
    * Re-measured after flush-bottom composer and trailing hotbar action cluster.
    * Re-measured after session closed-keyboard CSS lock on app-viewport (#1032).
    * Re-measured after closed-keyboard session overflow chain 100lvh stretch.
-   * Re-measured after closed-keyboard session band uses lvh minus home inset. */
-  sourceStylesCssBytes: 108_076,
-  builtAppCssBytes: 93_342,
-  builtAppCssGzipBytes: 16_395,
-  classSelectorLines: 600,
+   * Re-measured after closed-keyboard session band uses lvh minus home inset.
+   * Re-measured after the live head stopped reprinting the transcript's tool
+   * row: `.session-tool*` and `.session-head-thought` lost their only
+   * consumer. */
+  sourceStylesCssBytes: 106_695,
+  builtAppCssBytes: 92_550,
+  builtAppCssGzipBytes: 16_277,
+  classSelectorLines: 593,
   hasSelectors: 18,
 } as const;
 

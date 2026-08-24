@@ -221,6 +221,14 @@ where
     let persist_session_model: PersistSessionModel = Arc::new(move |model: &str| {
         state_for_persist.persist_task_session_model(&handle_for_persist, model)
     });
+    let state_for_activity = state.clone();
+    let handle_for_activity = plan.qualified_handle.clone();
+    let report_activity: crate::slices::web_session::ReportSessionActivity =
+        std::sync::Arc::new(move |activity| {
+            // Evidence reporting is best-effort: a lost race with another
+            // writer must not disturb the turn it was describing.
+            let _ = state_for_activity.report_task_session_activity(&handle_for_activity, activity);
+        });
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -234,6 +242,7 @@ where
             plan,
             client_cursor,
             Some(persist_session_model),
+            Some(report_activity),
         )
         .await;
     })

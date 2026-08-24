@@ -11,6 +11,7 @@ mod output_content;
 mod prompt_content;
 mod protocol;
 mod replay;
+mod session_activity;
 mod session_cleanup;
 mod task_session;
 mod task_session_directory;
@@ -22,6 +23,9 @@ pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+};
+pub(crate) use session_activity::{
+    record_session_activity, SessionActivity, SessionActivityReporter,
 };
 pub(crate) use session_cleanup::owned_session_handles;
 pub(crate) use task_session_directory::TaskSessionDirectory;
@@ -38,6 +42,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+/// Reports an ACP turn transition as task evidence. Fire-and-forget: a failed
+/// report must never interrupt a live turn.
+pub(crate) type ReportSessionActivity = Arc<dyn Fn(SessionActivity) + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]

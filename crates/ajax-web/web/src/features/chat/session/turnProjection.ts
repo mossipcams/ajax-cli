@@ -296,12 +296,48 @@ export function settleTurn(state: ChatSessionReducerState): ChatSessionReducerSt
   });
 }
 
+/** A turn that ends leaves no command running. ACP is not obliged to send a
+ * terminal update for a call the operator cancelled or the harness abandoned,
+ * and an unsettled call goes on reading as in-flight for the rest of the
+ * session. */
+function settleOpenToolCalls(
+  state: ChatSessionReducerState,
+  status: "cancelled" | "failed",
+): ChatSessionReducerState {
+  const now = Date.now();
+  let changed = false;
+  const conversation = state.view.conversation.map((item) => {
+    if (item.kind !== "tool") return item;
+    if (item.call.status !== "pending" && item.call.status !== "in_progress") return item;
+    changed = true;
+    return { ...item, call: { ...item.call, status, endedAt: item.call.endedAt ?? now } };
+  });
+  if (!changed) return state;
+  return bumpRevision({ ...state, view: { ...state.view, conversation } });
+}
+
+/** Whether this turn already told the operator how it went. Walk back to the
+ * prompt that opened it: a host error explained the failure, and an answer
+ * means the turn was not silent. */
+function turnAlreadyReported(state: ChatSessionReducerState): boolean {
+  const conversation = state.view.conversation;
+  for (let i = conversation.length - 1; i >= 0; i -= 1) {
+    const item = conversation[i];
+    if (item.kind === "prose" && item.role === "user") return false;
+    if (item.kind === "note" && item.tone === "error") return true;
+    if (item.kind === "prose" && item.role === "agent" && item.text.trim()) return true;
+  }
+  return false;
+}
+
 export function applyTurnEnd(
   state: ChatSessionReducerState,
   stopReason?: string,
 ): ChatSessionReducerState {
-  const settled = settleTurn(state);
-  if (stopReason?.toLowerCase() === "error") {
+  const failed = stopReason?.toLowerCase() === "error";
+  const settled = settleOpenToolCalls(settleTurn(state), failed ? "failed" : "cancelled");
+  // Repeating the failure the host already named states a second, false one.
+  if (failed && !turnAlreadyReported(settled)) {
     const seq = settled.seq + 1;
     return bumpRevision({
       ...settled,

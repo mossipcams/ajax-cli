@@ -78,6 +78,19 @@ function mergeToolCall(
   };
 }
 
+/** The plan belongs to the turn that produced it. Searching the whole
+ * conversation made one plan row for the session, so a later turn's plan
+ * rewrote the plan filed under the first turn and no turn after it got one. */
+function currentTurnPlanIndex(state: ChatSessionReducerState): number {
+  const conversation = state.view.conversation;
+  for (let i = conversation.length - 1; i >= 0; i -= 1) {
+    const item = conversation[i];
+    if (item.kind === "prose" && item.role === "user") return -1;
+    if (item.kind === "plan") return i;
+  }
+  return -1;
+}
+
 export function applyActivityEvent(
   state: ChatSessionReducerState,
   event: ChatSessionEvent,
@@ -87,7 +100,7 @@ export function applyActivityEvent(
       return mergeToolCall(state, event.call);
     case "plan_update": {
       if (!event.entries.length) return state;
-      const index = state.view.conversation.findIndex((item) => item.kind === "plan");
+      const index = currentTurnPlanIndex(state);
       if (index < 0) {
         const seq = state.seq + 1;
         return bumpRevision({

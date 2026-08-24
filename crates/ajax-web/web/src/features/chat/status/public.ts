@@ -6,9 +6,7 @@ export {
   headState,
   headTone,
   isTaskLevelAttention,
-  mapHeadToolRow,
   type ChatHeadView,
-  type ChatHeadToolRow,
   type ChatTaskAttention,
   type HeadState,
 } from "./headView";

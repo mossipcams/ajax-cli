@@ -10,27 +10,6 @@ import type { ReactNode } from "react";
 import { ContextUsageMeter } from "./UsageIndicators";
 import { headStateLabel, type ChatHeadView } from "./headView";
 
-function HeadToolRow({ tool }: { tool: NonNullable<ChatHeadView["tool"]> }) {
-  return (
-    <div
-      className={`session-tool tone-${tool.tone}`}
-      data-testid="session-head-tool"
-      data-kind={tool.kind}
-    >
-      <span className="session-tool-mark" aria-hidden="true">
-        {tool.mark}
-      </span>
-      <span className="session-tool-title">{tool.title}</span>
-      {tool.path ? (
-        <span className="session-tool-path" title={tool.path}>
-          {tool.path}
-        </span>
-      ) : null}
-      <span className="session-row-meta">{tool.statusLabel}</span>
-    </div>
-  );
-}
-
 interface Props {
   view: ChatHeadView;
   /** Permission markup from features/chat/permissions — not owned by status. */
@@ -42,9 +21,12 @@ interface Props {
 
 export default function LiveHead({ view, permission, actions, onStop }: Props) {
   const quiet = view.state === "working" && view.activityAgeMs >= 60_000;
-  const hasToolOrPlan = Boolean(view.tool || view.planStep);
-  const showThinking =
-    view.state === "working" && !hasToolOrPlan && !view.thoughtSnippet;
+  // The turn's activity row narrates the operation in the transcript, where the
+  // conversation is. The head printing the same command a screen away gave the
+  // operator two live regions and a void between them. The head keeps the state
+  // and Stop, and speaks only before the first event, when the transcript has
+  // nothing to show yet.
+  const showThinking = view.state === "working" && !view.hasActivity;
 
   return (
     <section
@@ -58,12 +40,19 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
             className={`status-dot${view.state === "working" && !quiet ? " is-live" : ""}`}
             aria-hidden="true"
           />
-          <span className="session-head-label">{headStateLabel(view.state, quiet)}</span>
-          {!view.connected ? (
-            <span className="session-head-offline" data-testid="session-head-offline">
+          {/* #1039: one badge. A dropped socket is the state — `Ready` beside
+              `Reconnecting` claimed both at once, and neither the agent's
+              readiness nor an ask can be acted on until the socket is back. */}
+          {view.connected ? (
+            <span className="session-head-label">{headStateLabel(view.state, quiet)}</span>
+          ) : (
+            <span
+              className="session-head-label session-head-offline"
+              data-testid="session-head-offline"
+            >
               Reconnecting
             </span>
-          ) : null}
+          )}
           <div className="session-head-controls">
             {view.state === "working" ? (
               <button
@@ -83,20 +72,6 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
 
       {view.state === "working" ? (
         <div className="session-working" aria-live="polite">
-          {view.tool ? <HeadToolRow tool={view.tool} /> : null}
-          {view.planStep ? (
-            <p className="session-head-quiet" data-testid="session-plan-step">
-              {view.planStep}
-            </p>
-          ) : null}
-          {view.thoughtSnippet && !hasToolOrPlan ? (
-            <p
-              className="session-head-quiet session-head-thought"
-              data-testid="session-head-thought"
-            >
-              {view.thoughtSnippet}
-            </p>
-          ) : null}
           {showThinking ? (
             <p className="session-head-quiet" data-testid="session-head-idle">
               Thinking…

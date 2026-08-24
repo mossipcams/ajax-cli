@@ -76,6 +76,40 @@ describe("Conversation — assistant response reveal", () => {
     expect(message).not.toHaveTextContent("cargo test");
   });
 
+  // #1043: a one-paragraph "Let me look at the handler." has no paragraph break to
+  // wait for, so gating it on one hid the agent's own words for the whole turn
+  // — including the sentence explaining a permission ask sitting on screen.
+  it("reveals a completed message once the turn moves past it", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix login"),
+      agentProse("a1", "Let me look at the handler."),
+      {
+        kind: "tool",
+        id: "x1",
+        call: {
+          callId: "c1",
+          title: "Read",
+          kind: "read",
+          status: "in_progress",
+          locations: [],
+          content: [],
+        },
+      },
+    ];
+    render(<Conversation items={items} busy />);
+
+    expect(screen.getByTestId("session-message-agent")).toHaveTextContent(
+      "Let me look at the handler.",
+    );
+  });
+
+  it("still holds back the answer still being written", () => {
+    const items = [userProse("u1", "Explain it"), agentProse("a1", "Half a sen")];
+    render(<Conversation items={items} busy />);
+
+    expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
+  });
+
   it("settles earlier turns while the newest one is still live", () => {
     const items = [
       userProse("u1", "First"),

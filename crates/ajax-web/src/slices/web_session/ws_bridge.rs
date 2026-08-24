@@ -1,8 +1,9 @@
 //! Authenticated orchestration-chat WebSocket bridge over the task-session directory.
 
 use super::{
-    apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, SessionAttachPlan,
-    SessionClientMessage, SessionEventEnvelope, SessionSnapshot, TaskSessionDirectory,
+    apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, ReportSessionActivity,
+    SessionActivityReporter, SessionAttachPlan, SessionClientMessage, SessionEventEnvelope,
+    SessionSnapshot, TaskSessionDirectory,
 };
 use axum::extract::ws::{Message, WebSocket};
 use std::{
@@ -30,6 +31,7 @@ pub(crate) async fn bridge_task_session_socket(
     plan: SessionAttachPlan,
     client_cursor: Option<usize>,
     persist_session_model: Option<PersistSessionModel>,
+    report_activity: Option<ReportSessionActivity>,
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
@@ -58,6 +60,10 @@ pub(crate) async fn bridge_task_session_socket(
     }
 
     let mut last_write = Instant::now();
+    let mut activity = ActivityFeed {
+        reporter: SessionActivityReporter::default(),
+        report: report_activity.as_ref(),
+    };
     loop {
         tokio::select! {
             inbound = socket.recv() => {
@@ -89,6 +95,7 @@ pub(crate) async fn bridge_task_session_socket(
                                     &mut cursor,
                                     &mut generation,
                                     &mut last_write,
+                                    &mut activity,
                                 )
                                 .await
                                 {
@@ -115,6 +122,7 @@ pub(crate) async fn bridge_task_session_socket(
                     &mut cursor,
                     &mut generation,
                     &mut last_write,
+                    &mut activity,
                 )
                 .await
                 {
@@ -197,6 +205,24 @@ async fn handle_inbound_text(
     }
 }
 
+/// The socket's view of ACP run-state: what it has already reported, and where
+/// to send the next change. Paired because neither is useful alone.
+struct ActivityFeed<'a> {
+    reporter: SessionActivityReporter,
+    report: Option<&'a ReportSessionActivity>,
+}
+
+impl ActivityFeed<'_> {
+    fn observe(&mut self, envelope: &SessionEventEnvelope) {
+        let Some(activity) = self.reporter.observe(&envelope.payload) else {
+            return;
+        };
+        if let Some(report) = self.report {
+            report(activity);
+        }
+    }
+}
+
 async fn flush_outbound(
     socket: &mut WebSocket,
     directory: &Arc<TaskSessionDirectory>,
@@ -204,6 +230,7 @@ async fn flush_outbound(
     cursor: &mut usize,
     generation: &mut u64,
     last_write: &mut Instant,
+    activity: &mut ActivityFeed<'_>,
 ) -> bool {
     let batch = directory
         .collect_outbound(handle, *cursor, *generation)
@@ -218,6 +245,9 @@ async fn flush_outbound(
         }
     }
     for envelope in batch.events {
+        // Report off the same stream the browser reads, so the task page and
+        // the chat head cannot disagree about whether a turn is in flight.
+        activity.observe(&envelope);
         if !send_envelope(socket, &envelope).await {
             return false;
         }

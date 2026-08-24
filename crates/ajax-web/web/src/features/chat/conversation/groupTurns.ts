@@ -1,14 +1,16 @@
 import type { ConversationItem } from "../session/public";
 
+/** A turn reads in the order it happened: what the agent said, the work it did
+ * between two things it said, an ask it is still waiting on. A run of adjacent
+ * work items collapses into one disclosure; prose in the middle ends the run. */
+export type TurnRow =
+  | { kind: "work"; id: string; items: ConversationItem[] }
+  | { kind: "item"; id: string; item: ConversationItem };
+
 export interface ConversationTurn {
   id: string;
   user: ConversationItem | null;
-  /** Everything behind the turn's one activity disclosure. */
-  work: ConversationItem[];
-  agents: ConversationItem[];
-  /** Rows that stay in the transcript: an ask the operator still owes an answer
-   * to, an error, a system divider. */
-  other: ConversationItem[];
+  rows: TurnRow[];
 }
 
 /** Protocol detail belongs behind the disclosure; only what the operator must
@@ -20,8 +22,14 @@ function isWorkItem(item: ConversationItem): boolean {
   return item.kind === "thought" || item.kind === "tool" || item.kind === "plan";
 }
 
-function emptyTurn(id: string): ConversationTurn {
-  return { id, user: null, work: [], agents: [], other: [] };
+function append(turn: ConversationTurn, item: ConversationItem): void {
+  if (!isWorkItem(item)) {
+    turn.rows.push({ kind: "item", id: item.id, item });
+    return;
+  }
+  const last = turn.rows[turn.rows.length - 1];
+  if (last?.kind === "work") last.items.push(item);
+  else turn.rows.push({ kind: "work", id: `work:${item.id}`, items: [item] });
 }
 
 /** Group ACP items into operator turns: user prompt through the next user prompt. */
@@ -29,43 +37,27 @@ export function groupConversationTurns(items: ConversationItem[]): ConversationT
   const turns: ConversationTurn[] = [];
   let current: ConversationTurn | null = null;
 
-  const flush = () => {
-    if (!current) return;
-    if (current.user || current.work.length || current.agents.length || current.other.length) {
-      turns.push(current);
-    }
-    current = null;
-  };
-
   for (const item of items) {
     if (item.kind === "prose" && item.role === "user") {
-      flush();
-      current = { ...emptyTurn(item.id), user: item };
+      current = { id: item.id, user: item, rows: [] };
+      turns.push(current);
       continue;
     }
 
     if (!current) {
-      const orphan = emptyTurn(item.id);
-      if (item.kind === "prose" && item.role === "agent") orphan.agents.push(item);
-      else if (isWorkItem(item)) orphan.work.push(item);
-      else orphan.other.push(item);
-
+      // Replay can open on agent output with no prompt in front of it. Those
+      // rows share one headless turn rather than one turn each.
       const last = turns[turns.length - 1];
       if (last && !last.user) {
-        last.work.push(...orphan.work);
-        last.agents.push(...orphan.agents);
-        last.other.push(...orphan.other);
+        current = last;
       } else {
-        turns.push(orphan);
+        current = { id: item.id, user: null, rows: [] };
+        turns.push(current);
       }
-      continue;
     }
 
-    if (item.kind === "prose" && item.role === "agent") current.agents.push(item);
-    else if (isWorkItem(item)) current.work.push(item);
-    else current.other.push(item);
+    append(current, item);
   }
 
-  flush();
   return turns;
 }
