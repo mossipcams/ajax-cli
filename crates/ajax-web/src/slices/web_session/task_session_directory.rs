@@ -160,7 +160,7 @@ impl TaskSessionDirectory {
 
             if let Some((tx, join)) = removed {
                 tokio::spawn(async move {
-                    let _ = tx.send(TaskSessionCommand::Shutdown).await;
+                    let _ = tx.send(TaskSessionCommand::Shutdown { close: false }).await;
                     let _ = join.await;
                 });
             }
@@ -208,7 +208,20 @@ impl TaskSessionDirectory {
             sessions.remove(handle)
         };
         if let Some(entry) = removed {
-            let _ = entry.command_tx.send(TaskSessionCommand::Shutdown).await;
+            let _ = entry.command_tx.send(TaskSessionCommand::Shutdown { close: true }).await;
+            let _ = entry.join_handle.await;
+        }
+    }
+
+    /// Tear down the live child without ACP `session/close` so resume/load can succeed.
+    #[cfg(test)]
+    pub async fn detach_session(&self, handle: &str) {
+        let removed = {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.remove(handle)
+        };
+        if let Some(entry) = removed {
+            let _ = entry.command_tx.send(TaskSessionCommand::Shutdown { close: false }).await;
             let _ = entry.join_handle.await;
         }
     }

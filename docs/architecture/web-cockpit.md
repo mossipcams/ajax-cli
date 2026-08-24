@@ -278,10 +278,13 @@ header chrome ([#1055](https://github.com/mossipcams/ajax-cli/issues/1055)). It 
 rename the task in Core or replace the Ajax handle.
 
 **Session close (ACP).** When the agent advertises `sessionCapabilities.close`, the
-host sends `session/close` before stdio teardown on harness Switch, slot replacement,
-idle eviction, and TaskSession shutdown. Close ends the ACP session on the child only;
-Ajax task truth, JSONL transcripts, and tmux terminals are unchanged. Close failure
-or timeout still tears down the child and surfaces a session error event.
+host sends `session/close` only on terminal ends: task Drop and cross-harness Switch.
+Idle eviction, `ajax-web` restart, and same-session respawn detach stdio without
+close so `session/resume` / `session/load` can restore the stored id
+([#1061](https://github.com/mossipcams/ajax-cli/issues/1061)). Close ends the
+ACP session on the child only; Ajax task truth, JSONL transcripts, and tmux
+terminals are unchanged. Close failure or timeout still tears down the child and
+surfaces a session error event.
 
 **Connected model controls (MVP).** When `snapshot.sessionConfigOptions` advertises
 model, effort/thought-level, and/or Fast options, the chat composer hotbar exposes

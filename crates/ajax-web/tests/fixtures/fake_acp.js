@@ -34,6 +34,34 @@ const richOutput = process.argv.includes('--rich-output');
 const sessionClose = process.argv.includes('--session-close');
 const sessionCloseFail = process.argv.includes('--session-close-fail');
 const sessionId = 'fake-sess-1';
+const persistedSessionsPath = path.join(process.cwd(), '.fake-acp-sessions');
+
+function loadPersistedSessions() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(persistedSessionsPath, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePersistedSessions(ids) {
+  fs.writeFileSync(persistedSessionsPath, JSON.stringify(ids));
+}
+
+function persistSession(id) {
+  const ids = loadPersistedSessions();
+  if (!ids.includes(id)) ids.push(id);
+  savePersistedSessions(ids);
+}
+
+function forgetSession(id) {
+  savePersistedSessions(loadPersistedSessions().filter((known) => known !== id));
+}
+
+function sessionKnown(id) {
+  return loadPersistedSessions().includes(id);
+}
 const cliDefaultModel = process.argv.includes('--cli-default-model')
   ? (cursorParameterizedModels ? 'composer-2.5' : 'composer-2.5[fast=true]')
   : null;
@@ -338,6 +366,7 @@ function handleRequest(msg) {
   }
   if (method === 'session/new') {
     assertExclusiveSessionNew();
+    persistSession(sessionId);
     send({
       jsonrpc: '2.0',
       id,
@@ -352,10 +381,12 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/close') {
+    const closedId = params?.sessionId ?? sessionId;
     fs.writeFileSync(
       path.join(process.cwd(), '.fake-acp-session-close-called'),
-      params?.sessionId ?? sessionId,
+      closedId,
     );
+    forgetSession(closedId);
     if (sessionCloseFail) {
       send({
         jsonrpc: '2.0',
@@ -380,6 +411,16 @@ function handleRequest(msg) {
       send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'resume failed' } });
       return;
     }
+    const requestedId = params?.sessionId ?? sessionId;
+    if (!sessionKnown(requestedId)) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: 'session not found' },
+      });
+      return;
+    }
+    persistSession(requestedId);
     replayUpdate('replayed');
     send({
       jsonrpc: '2.0',

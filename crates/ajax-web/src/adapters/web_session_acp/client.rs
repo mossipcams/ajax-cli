@@ -345,19 +345,26 @@ impl AcpStdioClient {
         &self.session_id
     }
 
-    /// End the ACP child: optional `session/close`, then stdio teardown.
-    /// Returns a warning when advertised close fails or times out.
+    /// End the ACP session (`session/close` when advertised) and tear down stdio.
+    /// Use for task Drop, cross-harness Switch, and other terminal ends.
+    /// Accidental `Drop` of this client must call `detach` instead.
     pub fn shutdown(&mut self) -> Option<String> {
-        self.tear_down()
+        self.tear_down(true)
     }
 
-    fn tear_down(&mut self) -> Option<String> {
+    /// Kill stdio without `session/close` so a later spawn can resume/load.
+    /// Use for idle eviction, process restart, and same-session respawn.
+    pub fn detach(&mut self) -> Option<String> {
+        self.tear_down(false)
+    }
+
+    fn tear_down(&mut self, close: bool) -> Option<String> {
         if self.torn_down {
             return None;
         }
         self.torn_down = true;
         let mut close_error = None;
-        if self.close_advertised {
+        if close && self.close_advertised {
             let (result_tx, result_rx) = mpsc::channel();
             if self
                 .commands
@@ -548,7 +555,8 @@ impl AcpStdioClient {
 
 impl Drop for AcpStdioClient {
     fn drop(&mut self) {
-        let _ = self.tear_down();
+        // Accidental drop must not `session/close` a session Ajax still holds.
+        let _ = self.detach();
     }
 }
 

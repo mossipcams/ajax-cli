@@ -42,7 +42,7 @@ pub(super) async fn acquire(
             &state.qualified_handle,
         );
         state.acquire_holder();
-        release_live_client(state)?;
+        release_live_client(state, resume_id.is_none())?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
         install_replaced_client(state, new_client, &report, model)?;
@@ -241,7 +241,7 @@ pub(super) async fn respawn(
         &state.qualified_handle,
     );
     let agent = state.agent;
-    release_live_client(state)?;
+    release_live_client(state, resume_id.is_none())?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
@@ -253,7 +253,7 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, String> {
-    release_live_client(state)?;
+    release_live_client(state, true)?;
 
     web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
 
@@ -286,7 +286,7 @@ pub(super) async fn reset_harness_context(
 }
 
 /// Cancel and drop the live ACP child so the next spawn owns stdio alone.
-fn release_live_client(state: &mut TaskSessionState) -> Result<(), String> {
+fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Result<(), String> {
     let Some(mut client) = state.client.take() else {
         apply_cancel_to_queue(&mut state.queued, false);
         return Ok(());
@@ -309,7 +309,12 @@ fn release_live_client(state: &mut TaskSessionState) -> Result<(), String> {
         }
         state.append_to_log(resolved);
     }
-    if let Some(message) = client.shutdown() {
+    let message = if close_session {
+        client.shutdown()
+    } else {
+        client.detach()
+    };
+    if let Some(message) = message {
         state.append_to_log(vec![SessionServerEvent::Error { message }]);
     }
     Ok(())

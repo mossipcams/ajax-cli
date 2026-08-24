@@ -141,3 +141,91 @@ fn close_failure_still_tears_down_and_records_error() {
     assert!(marker.exists(), "session/close must still be attempted");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+const CONTEXT_RESET_NOTE: &str =
+    "Model context reset after restart. Prior turns are still visible here.";
+
+fn seed_user_turn(directory: &BlockingSessionDirectory, handle: &str) {
+    directory.record(
+        handle,
+        SessionServerEvent::Message {
+            role: "user".to_string(),
+            text: "seed".to_string(),
+            content_blocks: Vec::new(),
+            item_id: "seed-user".to_string(),
+            message_id: None,
+        },
+    );
+}
+
+#[test]
+fn advertised_close_skipped_on_detach_and_session_resumes() {
+    // #1061: idle/restart detach must keep the agent session loadable.
+    let dir = scratch_dir("detach-resumes");
+    let handle = "web/detach-resumes";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let marker = close_marker_path(&dir);
+    let _ = std::fs::remove_file(&marker);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--session-close"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            seed_user_turn(&directory, handle);
+            directory.detach_session(handle);
+
+            assert!(
+                !marker.exists(),
+                "idle/restart detach must not send session/close"
+            );
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire");
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(
+                !has_message(&events, "note", CONTEXT_RESET_NOTE),
+                "resume/load after detach must keep model context: {events:?}"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn advertised_close_on_drop_session_prevents_resume() {
+    // #1061: task Drop remains a terminal close.
+    let dir = scratch_dir("close-prevents-resume");
+    let handle = "web/close-prevents-resume";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let marker = close_marker_path(&dir);
+    let _ = std::fs::remove_file(&marker);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--session-close"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            seed_user_turn(&directory, handle);
+            directory.release(handle);
+            directory.drop_session(handle);
+
+            assert!(marker.exists(), "Drop must send session/close");
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire after close");
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(
+                has_message(&events, "note", CONTEXT_RESET_NOTE),
+                "closed sessions must not resume: {events:?}"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

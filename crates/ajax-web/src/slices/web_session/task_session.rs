@@ -115,7 +115,11 @@ pub(crate) enum TaskSessionCommand {
     EvictionSnapshot {
         reply: oneshot::Sender<EvictionSnapshot>,
     },
-    Shutdown,
+    Shutdown {
+        /// When true, send ACP `session/close` before killing stdio (Drop / Switch).
+        /// When false, detach so a later spawn can resume/load (idle eviction / restart).
+        close: bool,
+    },
 }
 
 pub(crate) struct EvictionSnapshot {
@@ -306,12 +310,17 @@ pub(crate) fn spawn_task_session(
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut close_on_exit = false;
 
         loop {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(TaskSessionCommand::Shutdown) | None => break,
+                        Some(TaskSessionCommand::Shutdown { close }) => {
+                            close_on_exit = close;
+                            break;
+                        }
+                        None => break,
                         Some(cmd) => handle_command(&mut state, cmd).await,
                     }
                 }
@@ -326,7 +335,12 @@ pub(crate) fn spawn_task_session(
             if !client.host_exited() {
                 let _ = client.cancel();
             }
-            if let Some(message) = client.shutdown() {
+            let message = if close_on_exit {
+                client.shutdown()
+            } else {
+                client.detach()
+            };
+            if let Some(message) = message {
                 state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
         }
@@ -455,7 +469,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
                 evictable: state.is_idle() && !state.busy(),
             });
         }
-        TaskSessionCommand::Shutdown => {}
+        TaskSessionCommand::Shutdown { .. } => {}
     }
 }
 
