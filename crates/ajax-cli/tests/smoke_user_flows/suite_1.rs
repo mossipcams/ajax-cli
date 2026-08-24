@@ -473,6 +473,10 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     assert_eq!(tasks["tasks"][0]["qualified_handle"], "web/fix-login");
     assert_eq!(tasks["tasks"][0]["lifecycle_status"], "Error");
     assert_eq!(tasks["tasks"][0]["needs_attention"], true);
+    assert!(
+        sandbox.state_file.exists(),
+        "partial start failure should persist durable task state"
+    );
 
     let inbox = assert_json(&sandbox.ajax(["inbox", "--json"]), "ajax inbox --json");
     assert!(inbox["items"]
@@ -488,6 +492,28 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     assert_eq!(inspect["task"]["lifecycle_status"], "Error");
     assert_eq!(inspect["branch"], "ajax/fix-login");
     assert_eq!(inspect["worktree_path"], worktree.display().to_string());
+
+    let repair = sandbox.ajax(["repair", "web/fix-login", "--execute"]);
+    assert_success(&repair, "ajax repair --execute after interrupted start");
+
+    let repaired = assert_json(
+        &sandbox.ajax(["inspect", "web/fix-login", "--json"]),
+        "ajax inspect --json after repair",
+    );
+    assert_eq!(repaired["task"]["lifecycle_status"], "Error");
+    assert_eq!(repaired["tmux_session"], "ajax-web-fix-login");
+    assert!(!repaired["flags"]
+        .as_array()
+        .expect("inspect flags should be an array")
+        .iter()
+        .any(|flag| flag == "TmuxMissing"));
+
+    assert_success(
+        &sandbox.ajax(["resume", "web/fix-login", "--execute"]),
+        "ajax resume --execute after repair",
+    );
+    let recovered = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
+    assert_eq!(recovered["tasks"][0]["qualified_handle"], "web/fix-login");
 
     let log = sandbox.command_log();
     assert!(log.contains(&format!("git -C {} fetch origin main", repo.display())));
@@ -689,4 +715,3 @@ fn smoke_rooted_orphan_recovery_stays_scoped_to_its_repo() {
         vec!["api/ghost-task".to_string(), "web/fix-login".to_string(),]
     );
 }
-

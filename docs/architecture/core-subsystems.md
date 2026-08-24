@@ -138,9 +138,11 @@ Unobservable probes
 (missing `gh`, auth failure, or no PR) record `ci_probe_error` metadata and
 never project the task to Error. The CI attempt reducer stores all failed check
 names, links, and available run/check identities in deterministic order. It
-emits transport-neutral `AgentNotification::CiFailed` once per failed episode.
-A rerun can emit once more only after a pending transition and a distinct
-available identity; incremental completion within one episode does not re-fire.
+starts a failed episode and exposes transport-neutral `AgentNotification::CiFailed`
+as soon as at least one check is terminally failed, even while sibling checks on
+the same attempt are still pending. It emits once per failed episode. A rerun can
+emit once more only after a pending transition and a distinct available identity;
+incremental completion within one episode does not re-fire.
 
 ### Live Status
 

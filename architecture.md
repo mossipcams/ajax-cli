@@ -181,10 +181,12 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   handles and delegate through `ws_bridge` without interpreting queue, model,
   transcript, or permission state.
 - Automatic CI failures are transport-neutral core notifications. Web routes
-  ACP tasks through the existing persisted `TaskSession` FIFO and routes native
-  tasks only after fresh wrapper/process and exact tmux foreground-agent
-  validation. The browser only projects queued/accepted/error evidence; it is
-  not a CI poller, PR registry, deduper, or delivery authority.
+  orchestration-chat (ACP) tasks through the existing `TaskSession` FIFO,
+  acquiring or creating the associated session when needed (same path as Chat
+  attach), and routes tmux-interactive tasks only after fresh wrapper/process
+  and exact tmux foreground-agent validation. The browser only projects
+  queued/accepted/error evidence; it is not a CI poller, PR registry, deduper,
+  or delivery authority.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
 

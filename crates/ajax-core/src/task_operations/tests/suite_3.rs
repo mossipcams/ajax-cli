@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn confirmed_drop_renames_worktree_to_trash_instead_of_deleting_inline() {
+fn adapter_contract_drop_uses_atomic_trash_rename() {
     let mut context = context_with_cleanable_task();
     let task_id = TaskId::new("web/fix-login");
     {
@@ -51,7 +51,7 @@ fn confirmed_drop_renames_worktree_to_trash_instead_of_deleting_inline() {
 }
 
 #[test]
-fn execute_drop_always_force_deletes_branch_with_d() {
+fn adapter_contract_drop_force_deletes_task_branch() {
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();
     outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
@@ -92,7 +92,7 @@ fn execute_drop_always_force_deletes_branch_with_d() {
 }
 
 #[test]
-fn drop_execute_always_uses_force_worktree_remove_when_cleanable_merged() {
+fn adapter_contract_drop_force_removes_worktree() {
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();
     outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
@@ -118,7 +118,7 @@ fn drop_execute_always_uses_force_worktree_remove_when_cleanable_merged() {
 }
 
 #[test]
-fn fast_drop_mv_failure_marks_teardown_incomplete() {
+fn failed_trash_move_keeps_task_recoverable() {
     let mut context = context_with_cleanable_task();
     let task_id = TaskId::new("web/fix-login");
     {
@@ -156,7 +156,7 @@ fn fast_drop_mv_failure_marks_teardown_incomplete() {
         .is_some_and(|detail| detail.contains("No such file or directory")));
 }
 #[test]
-fn drop_failure_keeps_task_and_tmux_when_worktree_remove_fails_before_session_kill() {
+fn failed_worktree_removal_keeps_task_and_live_session() {
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();
     outputs.push(output(
@@ -207,7 +207,7 @@ fn drop_failure_keeps_task_and_tmux_when_worktree_remove_fails_before_session_ki
 }
 
 #[test]
-fn drop_failure_keeps_task_when_branch_remove_fails_after_worktree_removed() {
+fn failed_branch_removal_keeps_task_for_retry() {
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();
     outputs.extend([
@@ -235,7 +235,7 @@ fn drop_failure_keeps_task_when_branch_remove_fails_after_worktree_removed() {
 }
 
 #[test]
-fn drop_operation_resumes_from_receipts_after_partial_success() {
+fn drop_retry_resumes_from_completed_step_receipts() {
     let mut context = context_with_cleanable_task();
     let task_id = TaskId::new("web/fix-login");
     context
@@ -329,7 +329,7 @@ fn drop_retry_repeats_receipted_step_when_fresh_observation_finds_resource_prese
 }
 
 #[test]
-fn drop_operation_records_remaining_resource_when_empty_plan_still_finishes_incomplete() {
+fn remaining_resource_keeps_drop_incomplete_even_when_plan_is_empty() {
     let mut context = context_with_cleanable_task();
     let mut outputs = absent_drop_observation_outputs();
     outputs.extend(vec![
@@ -363,7 +363,7 @@ fn drop_operation_records_remaining_resource_when_empty_plan_still_finishes_inco
 }
 
 #[test]
-fn drop_completion_hard_deletes_task_when_final_observation_is_absent() {
+fn drop_removes_task_only_after_final_observation_confirms_absence() {
     let mut context = context_with_cleanable_task();
 
     let completion = complete_drop_task_operation(
@@ -386,7 +386,7 @@ fn drop_completion_hard_deletes_task_when_final_observation_is_absent() {
 }
 
 #[test]
-fn drop_completion_marks_teardown_incomplete_when_resources_remain() {
+fn remaining_substrate_keeps_task_in_teardown_incomplete() {
     let mut context = context_with_cleanable_task();
 
     let completion = complete_drop_task_operation(
@@ -533,7 +533,7 @@ fn drop_operation_treats_remote_branch_not_found_as_already_absent() {
 }
 
 #[test]
-fn sweep_cleanup_marks_teardown_incomplete_when_final_observation_still_finds_tmux() {
+fn tidy_keeps_task_recoverable_when_tmux_survives_cleanup() {
     let mut context = context_with_cleanable_task();
     let plan = crate::commands::clean_task_plan(&context, "web/fix-login").unwrap();
     let mut runner_outputs = crate::commands::sweep_trash_commands(&context)
@@ -558,7 +558,7 @@ fn sweep_cleanup_marks_teardown_incomplete_when_final_observation_still_finds_tm
 }
 
 #[test]
-fn tidy_still_projects_each_successful_cleanup_command() {
+fn tidy_preserves_partial_cleanup_evidence_after_failure() {
     let mut context = context_with_cleanable_task();
     let task_id = TaskId::new("web/fix-login");
     {
@@ -597,7 +597,7 @@ fn tidy_still_projects_each_successful_cleanup_command() {
 }
 
 #[test]
-fn sweep_cleanup_removes_stale_trash_entries() {
+fn adapter_contract_tidy_sweeps_stale_trash_entries() {
     let mut context = context_with_cleanable_task();
     let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
 

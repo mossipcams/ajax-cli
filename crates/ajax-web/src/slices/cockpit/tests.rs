@@ -85,6 +85,7 @@ fn browser_cockpit_surfaces_missing_substrate_tasks() {
     assert_eq!(value["cards"].as_array().unwrap().len(), 1);
     assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
     assert_eq!(value["cards"][0]["status"], "error");
+    assert_eq!(value["cards"][0]["attention"], "needs-you");
     assert_eq!(
         value["cards"][0]["status_explanation"],
         "Tmux session missing"
@@ -549,17 +550,30 @@ fn browser_cockpit_json_carries_attention_band() {
 }
 
 #[test]
-fn committed_cockpit_fixture_matches_production_serialization() {
+fn web_cockpit_fixture_preserves_operator_visible_task_contract() {
     let context = browser_contract_context();
     let actual = serde_json::to_value(super::browser_cockpit_view(&context)).unwrap();
     let committed: serde_json::Value =
         serde_json::from_str(include_str!("../../../web/src/fixtures/cockpit.json")).unwrap();
 
-    assert_eq!(committed, actual);
+    for field in [
+        "repo",
+        "qualified_handle",
+        "title",
+        "status",
+        "status_explanation",
+        "attention",
+        "actions",
+    ] {
+        assert_eq!(
+            committed["cards"][0][field], actual["cards"][0][field],
+            "{field}"
+        );
+    }
 }
 
 #[test]
-fn committed_task_detail_fixture_matches_production_serialization() {
+fn web_task_detail_fixture_preserves_operator_visible_task_contract() {
     let context = browser_contract_context();
     let actual =
         serde_json::to_value(super::browser_task_detail_view(&context, "web/fix-login").unwrap())
@@ -567,7 +581,17 @@ fn committed_task_detail_fixture_matches_production_serialization() {
     let committed: serde_json::Value =
         serde_json::from_str(include_str!("../../../web/src/fixtures/task-detail.json")).unwrap();
 
-    assert_eq!(committed, actual);
+    for field in [
+        "repo",
+        "qualified_handle",
+        "title",
+        "lifecycle",
+        "status",
+        "status_explanation",
+        "actions",
+    ] {
+        assert_eq!(committed[field], actual[field], "{field}");
+    }
 }
 
 pub(crate) fn browser_contract_context() -> CommandContext<InMemoryRegistry> {

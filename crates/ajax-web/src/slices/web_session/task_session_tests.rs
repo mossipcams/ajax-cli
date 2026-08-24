@@ -113,7 +113,7 @@ fn duplicate_client_prompt_id_is_not_dispatched_twice() {
 }
 
 #[test]
-fn per_session_progress_advances_queued_prompts_without_a_socket() {
+fn queued_prompts_continue_after_operator_disconnects() {
     let dir = scratch_dir("background-pump");
     let handle = "web/background-pump";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -149,7 +149,7 @@ fn per_session_progress_advances_queued_prompts_without_a_socket() {
 }
 
 #[test]
-fn submit_prompt_queues_while_in_flight() {
+fn prompt_submitted_while_busy_runs_after_active_prompt() {
     let dir = scratch_dir("submit-queue");
     let handle = "web/submit-queue";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -189,6 +189,17 @@ fn submit_prompt_queues_while_in_flight() {
                         )
                     })
             });
+            let (events, _) = directory.read_from(handle, 0);
+            let submitted: Vec<&str> = events
+                .iter()
+                .filter_map(|event| match event {
+                    SessionServerEvent::Message { role, text, .. } if role == "user" => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(submitted, ["first", "second"]);
         });
     });
 
@@ -237,7 +248,7 @@ fn submit_prompt_cap_drops_oldest_while_in_flight() {
 }
 
 #[test]
-fn cancel_keep_queue_false_clears_queued_prompts() {
+fn cancel_can_discard_queued_prompts() {
     let dir = scratch_dir("cancel-clear");
     let handle = "web/cancel-clear";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -275,7 +286,7 @@ fn cancel_keep_queue_false_clears_queued_prompts() {
 }
 
 #[test]
-fn cancel_keep_queue_true_preserves_queued_prompts() {
+fn cancel_can_preserve_queued_prompts() {
     let dir = scratch_dir("cancel-keep");
     let handle = "web/cancel-keep";
     let directory = BlockingSessionDirectory::new(dir.clone());
