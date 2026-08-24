@@ -78,15 +78,34 @@ describe("TaskWorkspaceHeader", () => {
     expect(screen.queryByTestId("task-details")).not.toBeInTheDocument();
   });
 
-  it("shows agent session title without replacing the task heading", () => {
-    render(
-      <TaskWorkspaceHeader
-        detail={detail()}
-        sessionTitle="Fix auth flow"
-        onBack={vi.fn()}
-      />,
-    );
+  it("does not render ACP sessionTitle in header chrome (#1055)", () => {
+    const longFirstPrompt =
+      "Implement a Boolean algebra evaluator with exhaustive truth-table generation and canonical form reduction for every supported operator";
+    render(<TaskWorkspaceHeader detail={detail()} onBack={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Fix login" })).toBeInTheDocument();
-    expect(screen.getByTestId("session-chrome-title")).toHaveTextContent("Fix auth flow");
+    expect(screen.queryByTestId("session-chrome-title")).not.toBeInTheDocument();
+    expect(screen.queryByText(longFirstPrompt)).not.toBeInTheDocument();
+  });
+
+  // Regression for #1055: long task titles must not expand header chrome.
+  it("clamps long task titles so header chrome stays compact (#1055)", () => {
+    const titleBlock = stylesSource.match(/\.detail-title\s*\{([\s\S]*?)\}/);
+    expect(titleBlock).not.toBeNull();
+    const body = titleBlock![1];
+    expect(body).toMatch(/white-space:\s*nowrap/);
+    expect(body).toMatch(/overflow:\s*hidden/);
+    expect(body).toMatch(/text-overflow:\s*ellipsis/);
+    expect(body).not.toMatch(/overflow-wrap:\s*anywhere/);
+  });
+
+  it("keeps full long title text in the DOM while exposing it via title tooltip (#1055)", () => {
+    const longTitle =
+      "Implement a Boolean algebra evaluator with exhaustive truth-table generation and canonical form reduction for every supported operator";
+    render(
+      <TaskWorkspaceHeader detail={detail({ title: longTitle })} onBack={vi.fn()} />,
+    );
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(longTitle);
+    expect(heading).toHaveAttribute("title", longTitle);
   });
 });
