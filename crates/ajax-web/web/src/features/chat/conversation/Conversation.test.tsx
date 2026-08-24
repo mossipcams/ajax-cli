@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,86 @@ describe("Conversation — assistant response reveal", () => {
     const messages = screen.getAllByTestId("session-message-agent");
     expect(messages).toHaveLength(1);
     expect(messages[0]).toHaveTextContent("First answer, whole and unbroken.");
+  });
+
+  // #1043: a one-paragraph agent answer followed by tool/permission activity is
+  // complete prose, not a live stream — trimming would hide the whole message.
+  it("shows completed agent prose before turn_end when later activity follows", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Go"),
+      agentProse("a1", "Starting the work now."),
+      {
+        kind: "tool",
+        id: "x1",
+        call: {
+          callId: "c1",
+          title: "Read",
+          kind: "read",
+          status: "in_progress",
+          locations: [],
+          content: [],
+        },
+      },
+    ];
+    render(<Conversation items={items} busy />);
+
+    const message = screen.getByTestId("session-message-agent");
+    expect(message).not.toHaveAttribute("data-live");
+    expect(message).toHaveTextContent("Starting the work now.");
+  });
+
+  it("shows completed agent prose when an unresolved permission follows", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Go"),
+      agentProse("a1", "I need your approval."),
+      {
+        kind: "permission",
+        id: "q1",
+        requestId: "r1",
+        title: "Run tests",
+        resolved: false,
+      },
+    ];
+    render(<Conversation items={items} busy />);
+
+    const message = screen.getByTestId("session-message-agent");
+    expect(message).not.toHaveAttribute("data-live");
+    expect(message).toHaveTextContent("I need your approval.");
+  });
+});
+
+describe("Conversation — transcript event order", () => {
+  // #1042: interleaved agent prose and activity must render in arrival order.
+  it("renders interleaved agent prose and activity in arrival order", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Go"),
+      agentProse("a1", "Starting."),
+      {
+        kind: "tool",
+        id: "x1",
+        call: {
+          callId: "c1",
+          title: "Read",
+          kind: "read",
+          status: "completed",
+          locations: [],
+          content: [],
+        },
+      },
+      agentProse("a2", "Done with tool."),
+    ];
+    render(<Conversation items={items} busy={false} />);
+
+    const turn = screen.getByTestId("session-turn");
+    const agents = within(turn).getAllByTestId("session-message-agent");
+    const work = within(turn).getByTestId("session-turn-work");
+
+    expect(agents).toHaveLength(2);
+    expect(agents[0].compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(work.compareDocumentPosition(agents[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Starting.")).toBeInTheDocument();
+    expect(screen.getByText("Done with tool.")).toBeInTheDocument();
+    expect(screen.getByTestId("session-turn-work")).toBeInTheDocument();
   });
 });
 

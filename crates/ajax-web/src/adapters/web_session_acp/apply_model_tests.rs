@@ -60,6 +60,17 @@ fn session_config_option_json_shape_for_fake_acp() {
 }
 
 #[test]
+fn operator_pin_satisfied_matches_thinking_bracket_issue_1013() {
+    use super::apply_model::operator_pin_satisfied;
+
+    assert!(operator_pin_satisfied(
+        "claude-opus-5-thinking-medium",
+        "claude-opus-5[thinking=true,effort=medium,fast=false]",
+        true,
+    ));
+}
+
+#[test]
 fn applied_model_prefers_handshake_evidence_over_desired_pin_issue_952() {
     let options = vec![SessionConfigOption::select(
         "model",

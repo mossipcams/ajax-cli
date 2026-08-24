@@ -303,6 +303,79 @@ describe("reduceChatSession", () => {
     expect(activePlanStep(latestPlan(state.conversation))).toBe("Patch");
   });
 
+  it("#1047 the plan belongs to its turn", () => {
+    const state = run([
+      { prompt: "first task" },
+      { type: "plan", entries: [{ content: "Read", status: "pending" }] },
+      { type: "turn_end" },
+      { prompt: "second task" },
+      { type: "plan", entries: [{ content: "Deploy", status: "in_progress" }] },
+    ]);
+    const plans = state.conversation.filter((item) => item.kind === "plan");
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({
+      entries: [{ content: "Read", status: "pending" }],
+    });
+    expect(plans[1]).toMatchObject({
+      entries: [{ content: "Deploy", status: "in_progress" }],
+    });
+  });
+
+  it("#1047 revises only the current turn plan after a later prompt", () => {
+    const state = run([
+      { prompt: "first task" },
+      { type: "plan", entries: [{ content: "Read", status: "pending" }] },
+      { type: "turn_end" },
+      { prompt: "second task" },
+      { type: "plan", entries: [{ content: "Deploy", status: "pending" }] },
+      {
+        type: "plan",
+        entries: [
+          { content: "Deploy", status: "completed" },
+          { content: "Verify", status: "in_progress" },
+        ],
+      },
+    ]);
+    const plans = state.conversation.filter((item) => item.kind === "plan");
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({
+      entries: [{ content: "Read", status: "pending" }],
+    });
+    expect(plans[1]).toMatchObject({
+      entries: [
+        { content: "Deploy", status: "completed" },
+        { content: "Verify", status: "in_progress" },
+      ],
+    });
+  });
+
+  it("#1047 keeps orphan plan updates in place before the first user prompt", () => {
+    const state = run([
+      { type: "plan", entries: [{ content: "Warmup", status: "pending" }] },
+      { type: "plan", entries: [{ content: "Warmup", status: "completed" }] },
+    ]);
+    expect(state.conversation.filter((item) => item.kind === "plan")).toHaveLength(1);
+    expect(latestPlan(state.conversation)).toEqual([
+      { content: "Warmup", status: "completed" },
+    ]);
+  });
+
+  it("#1047 opens a new plan row after an orphan plan once a user prompt arrives", () => {
+    const state = run([
+      { type: "plan", entries: [{ content: "Warmup", status: "pending" }] },
+      { prompt: "go" },
+      { type: "plan", entries: [{ content: "Turn plan", status: "in_progress" }] },
+    ]);
+    const plans = state.conversation.filter((item) => item.kind === "plan");
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({
+      entries: [{ content: "Warmup", status: "pending" }],
+    });
+    expect(plans[1]).toMatchObject({
+      entries: [{ content: "Turn plan", status: "in_progress" }],
+    });
+  });
+
   it("reads the latest reasoning text for the live head", () => {
     const state = run([
       { type: "message", role: "thought", text: "first", itemId: "t1" },
@@ -332,6 +405,30 @@ describe("reduceChatSession", () => {
 
   it("ignores a usage update with no window to be a fraction of", () => {
     expect(run([{ type: "usage", used: 0, size: 0 }]).usage.context).toBeNull();
+  });
+
+  it("strips markdown backticks from permission titles at the projection boundary (#1046)", () => {
+    const state = run([
+      {
+        type: "permission_request",
+        requestId: "7",
+        title: "`cargo test`",
+        detail: "cargo test -p foo",
+      },
+    ]);
+    expect(state.permission.decision).toEqual({
+      requestId: "7",
+      title: "cargo test",
+      detail: "cargo test -p foo",
+    });
+    expect(state.conversation).toEqual([
+      expect.objectContaining({
+        kind: "permission",
+        requestId: "7",
+        title: "cargo test",
+        resolved: false,
+      }),
+    ]);
   });
 
   it("clears the permission head on decided without waiting for permission_resolved (#1018)", () => {
@@ -441,6 +538,87 @@ describe("reduceChatSession", () => {
     });
   });
 
+  it("#1045 does not duplicate the error note when session_error precedes turn_end(error)", () => {
+    const state = run([
+      { prompt: "go" },
+      { type: "error", message: "ACP process exited" },
+      { type: "turn_end", stopReason: "error" },
+    ]);
+    const errorNotes = state.conversation.filter(
+      (item) => item.kind === "note" && item.tone === "error",
+    );
+    expect(errorNotes).toHaveLength(1);
+    expect(errorNotes[0]).toMatchObject({
+      text: "The agent stopped. It will restart when you reconnect.",
+    });
+  });
+
+  it("#1045 does not claim no response when agent prose arrived before turn_end(error)", () => {
+    const state = run([
+      { prompt: "go" },
+      agentMsg("Partial answer before the stop", "i-answer"),
+      { type: "turn_end", stopReason: "error" },
+    ]);
+    expect(state.turn.busy).toBe(false);
+    expect(state.conversation.map((item) => item.kind)).toEqual(["prose", "prose"]);
+    expect(
+      state.conversation.some(
+        (item) =>
+          item.kind === "note" &&
+          item.tone === "error" &&
+          item.text.includes("without a response"),
+      ),
+    ).toBe(false);
+  });
+
+  it("#1044 a turn that ends leaves nothing running", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(2_000);
+      const cancelled = run([
+        toolCall("c1", { status: "in_progress" }),
+        { type: "turn_end", stopReason: "cancelled" },
+      ]);
+      expect(cancelled.turn.busy).toBe(false);
+      expect(cancelled.conversation[0]).toMatchObject({
+        kind: "tool",
+        call: { status: "cancelled", endedAt: 2_000 },
+      });
+      expect(
+        cancelled.conversation.filter(
+          (item) =>
+            item.kind === "tool" &&
+            (item.call.status === "pending" || item.call.status === "in_progress"),
+        ),
+      ).toHaveLength(0);
+
+      const failed = run([
+        toolCall("c2", { status: "pending" }),
+        { type: "turn_end", stopReason: "error" },
+      ]);
+      expect(failed.conversation[0]).toMatchObject({
+        kind: "tool",
+        call: { status: "failed", endedAt: 2_000 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#1044 preserves terminal tool statuses when the turn ends", () => {
+    const state = run([
+      toolCall("c1", { status: "completed" }),
+      toolCall("c2", { status: "failed" }),
+      toolCall("c3", { status: "in_progress" }),
+      { type: "turn_end" },
+    ]);
+    expect(state.conversation.map((item) => (item.kind === "tool" ? item.call.status : null))).toEqual([
+      "completed",
+      "failed",
+      "cancelled",
+    ]);
+  });
+
   it("keeps a settled turn's tool calls instead of collapsing them to a summary", () => {
     const state = run([
       toolCall("c1", { kind: "read", status: "completed" }),
@@ -469,6 +647,23 @@ describe("reduceChatSession", () => {
     expect(state.conversation[1]).toMatchObject({
       kind: "note",
       tone: "error",
+      text: "The agent stopped. It will restart when you reconnect.",
+    });
+  });
+
+  it("#1040 dedupes consecutive identical session errors but keeps a distinct connection-loss note", () => {
+    const authMsg = "ACP session/new failed: Authentication required";
+    const state = run([
+      { type: "error", message: authMsg },
+      { type: "error", message: authMsg },
+      { type: "error", message: "ACP process exited" },
+    ]);
+    const errorNotes = state.conversation.filter(
+      (item) => item.kind === "note" && item.tone === "error",
+    );
+    expect(errorNotes).toHaveLength(2);
+    expect(errorNotes[0]).toMatchObject({ text: authMsg });
+    expect(errorNotes[1]).toMatchObject({
       text: "The agent stopped. It will restart when you reconnect.",
     });
   });
