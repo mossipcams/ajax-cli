@@ -180,6 +180,105 @@ fn model_step_is(steps: &[ConfigApplyStep], value: &str) -> bool {
         .any(|step| step.config_id == "model" && step.value == want)
 }
 
+fn bracket_thinking_options() -> Vec<SessionConfigOption> {
+    vec![SessionConfigOption::select(
+        "model",
+        "Model",
+        "grok-4.6",
+        vec![
+            SessionConfigSelectOption::new("composer-2.5", "Composer"),
+            SessionConfigSelectOption::new("grok-4.6", "Grok 4.6"),
+            SessionConfigSelectOption::new(
+                "claude-opus-5[thinking=true,effort=medium,fast=false]",
+                "Claude Opus 5 Thinking Medium",
+            ),
+            SessionConfigSelectOption::new(
+                "claude-opus-5[thinking=true,effort=high,fast=false]",
+                "Claude Opus 5 Thinking High",
+            ),
+        ],
+    )
+    .category(SessionConfigOptionCategory::Model)]
+}
+
+fn grok_high_only_bracket_options() -> Vec<SessionConfigOption> {
+    vec![
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            "grok-4.6",
+            vec![
+                SessionConfigSelectOption::new("composer-2.5", "Composer"),
+                SessionConfigSelectOption::new("grok-4.6", "Grok 4.6"),
+                SessionConfigSelectOption::new("grok-4.6[effort=high,fast=false]", "Grok 4.6 High"),
+                SessionConfigSelectOption::new(
+                    "grok-4.6[effort=high,fast=true]",
+                    "Grok 4.6 High Fast",
+                ),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        SessionConfigOption::boolean("fast", "Fast", false)
+            .category(SessionConfigOptionCategory::ModelConfig),
+    ]
+}
+
+#[test]
+fn map_thinking_medium_bracket_token_issue_1013() {
+    let options = bracket_thinking_options();
+    let steps =
+        map_pin_to_apply_steps(&options, "claude-opus-5-thinking-medium", true).expect("mapped");
+    assert!(model_step_is(
+        &steps,
+        "claude-opus-5[thinking=true,effort=medium,fast=false]"
+    ));
+    assert_eq!(steps.len(), 1);
+}
+
+#[test]
+fn map_grok_low_skips_unadvertised_effort_when_base_matches_issue_1013() {
+    let options = grok_high_only_bracket_options();
+    let steps = map_pin_to_apply_steps(&options, "cursor-grok-4.6-low", true).expect("mapped");
+    assert!(steps.is_empty());
+    assert!(pin_satisfied(Some(&options), "cursor-grok-4.6-low", true));
+}
+
+#[test]
+fn map_grok_low_fast_applies_fast_when_effort_unadvertised_issue_1013() {
+    let options = grok_high_only_bracket_options();
+    let steps = map_pin_to_apply_steps(&options, "cursor-grok-4.6-low-fast", true).expect("mapped");
+    assert!(steps.iter().any(|step| {
+        step.config_id == "fast" && step.value == SessionConfigOptionValue::boolean(true)
+    }));
+    let mut applied = options.clone();
+    if let SessionConfigKind::Boolean(boolean) = &mut applied[1].kind {
+        boolean.current_value = true;
+    }
+    assert!(pin_satisfied(
+        Some(&applied),
+        "cursor-grok-4.6-low-fast",
+        true
+    ));
+}
+
+#[test]
+fn persist_collapses_bracket_thinking_to_ajax_pipe_form_issue_1013() {
+    let mut options = bracket_thinking_options();
+    if let SessionConfigKind::Select(select) = &mut options[0].kind {
+        select.current_value =
+            SessionConfigValueId::from("claude-opus-5[thinking=true,effort=medium,fast=false]");
+    }
+    assert_eq!(
+        applied_model_id_for_persist(&options).as_deref(),
+        Ok("claude-opus-5-thinking|effort=medium|fast=false")
+    );
+    assert!(pin_satisfied(
+        Some(&options),
+        "claude-opus-5-thinking-medium",
+        true
+    ));
+}
+
 fn thinking_pin() -> &'static str {
     "claude-opus-5-thinking|effort=high|fast=false"
 }

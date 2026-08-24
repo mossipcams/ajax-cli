@@ -19,6 +19,8 @@ pub struct CursorModelIntent {
     pub base: String,
     pub effort: Option<String>,
     pub fast: Option<bool>,
+    /// Live Cursor bracket ids carry `-thinking` in Ajax catalog bases separately.
+    pub thinking: Option<bool>,
 }
 
 /// Parse a Cursor catalog id, pipe-form selection, or ACP bracket id into intent.
@@ -31,10 +33,12 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
         let selection = parse_model_selection(raw)?;
         let mut effort = None;
         let mut fast = None;
+        let mut thinking = None;
         for (key, value) in &selection.options {
             match key.as_str() {
                 "effort" => effort = Some(value.clone()),
                 "fast" => fast = Some(value == "true"),
+                "thinking" => thinking = Some(value == "true"),
                 _ => {}
             }
         }
@@ -42,17 +46,20 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
             base: selection.model,
             effort,
             fast,
+            thinking,
         });
     }
     if let Some((base, bracket)) = raw.split_once('[') {
         let bracket = bracket.strip_suffix(']')?;
         let mut effort = None;
         let mut fast = None;
+        let mut thinking = None;
         for part in bracket.split(',') {
             let (key, value) = part.split_once('=')?;
             match key.trim() {
                 "effort" => effort = Some(value.trim().to_string()),
                 "fast" => fast = Some(value.trim() == "true"),
+                "thinking" => thinking = Some(value.trim() == "true"),
                 _ => {}
             }
         }
@@ -60,6 +67,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
             base: base.to_string(),
             effort,
             fast,
+            thinking,
         });
     }
 
@@ -77,6 +85,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
                     base: format!("grok-{version}"),
                     effort: Some(effort.to_string()),
                     fast: Some(fast),
+                    thinking: None,
                 });
             }
         }
@@ -88,6 +97,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
                 base: prefix.to_string(),
                 effort: Some(effort.to_string()),
                 fast: Some(fast),
+                thinking: Some(true),
             });
         }
     }
@@ -98,6 +108,7 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
                 base: base.to_string(),
                 effort: Some(effort.to_string()),
                 fast: Some(fast),
+                thinking: None,
             });
         }
     }
@@ -106,18 +117,55 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
         base: stem.to_string(),
         effort: None,
         fast: Some(fast),
+        thinking: None,
     })
 }
 
-/// True when `applied` satisfies `desired`, including the Fast bracket flag.
+/// Normalize `-thinking` catalog bases onto `thinking=true` with a stripped base.
+pub fn canonical_cursor_model_intent(intent: &CursorModelIntent) -> CursorModelIntent {
+    if intent.base.ends_with("-thinking") {
+        CursorModelIntent {
+            base: intent
+                .base
+                .strip_suffix("-thinking")
+                .unwrap_or(&intent.base)
+                .to_string(),
+            effort: intent.effort.clone(),
+            fast: intent.fast,
+            thinking: Some(true),
+        }
+    } else {
+        intent.clone()
+    }
+}
+
+/// Bracket ACP id for a Cursor intent (`claude-opus-5[thinking=true,effort=high,fast=false]`).
+pub fn cursor_bracket_token_from_intent(intent: &CursorModelIntent) -> String {
+    let canonical = canonical_cursor_model_intent(intent);
+    let fast = canonical.fast.unwrap_or(false);
+    let mut options = Vec::new();
+    if canonical.thinking == Some(true) {
+        options.push("thinking=true".to_string());
+    }
+    if let Some(effort) = &canonical.effort {
+        options.push(format!("effort={effort}"));
+    }
+    options.push(format!("fast={fast}"));
+    format!("{}[{}]", canonical.base, options.join(","))
+}
+
+/// True when `applied` satisfies `desired`, including thinking and Fast axes.
 pub fn cursor_model_intents_match(
     desired: &CursorModelIntent,
     applied: &CursorModelIntent,
 ) -> bool {
+    let desired = canonical_cursor_model_intent(desired);
+    let applied = canonical_cursor_model_intent(applied);
     if desired.base != applied.base || desired.effort != applied.effort {
         return false;
     }
-    desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
+    desired.thinking.unwrap_or(false) == applied.thinking.unwrap_or(false)
+        && desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
 /// Reconstruct an exploded Cursor catalog id from a parsed intent.
@@ -167,6 +215,7 @@ pub fn cursor_catalog_to_acp_in_band_token(catalog_id: &str) -> String {
         return catalog_id.to_string();
     };
     let uses_acp_brackets = intent.effort.is_some()
+        || intent.thinking == Some(true)
         || catalog_id.starts_with("cursor-grok-")
         || catalog_id.starts_with("composer-")
         || catalog_id.contains("-thinking-")
@@ -174,13 +223,7 @@ pub fn cursor_catalog_to_acp_in_band_token(catalog_id: &str) -> String {
     if !uses_acp_brackets {
         return catalog_id.to_string();
     }
-    let fast = intent.fast.unwrap_or(false);
-    let mut options = Vec::new();
-    if let Some(effort) = &intent.effort {
-        options.push(format!("effort={effort}"));
-    }
-    options.push(format!("fast={fast}"));
-    format!("{}[{}]", intent.base, options.join(","))
+    cursor_bracket_token_from_intent(&intent)
 }
 
 /// Cursor model ids ride a launch command line and an ACP argv, so they must

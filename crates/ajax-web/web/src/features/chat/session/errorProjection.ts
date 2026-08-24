@@ -9,11 +9,24 @@ function bumpRevision(state: ChatSessionReducerState): ChatSessionReducerState {
   };
 }
 
+function lastErrorNoteText(state: ChatSessionReducerState): string | null {
+  for (let index = state.view.conversation.length - 1; index >= 0; index -= 1) {
+    const item = state.view.conversation[index];
+    if (item.kind === "note" && item.tone === "error") {
+      return item.text;
+    }
+  }
+  return null;
+}
+
 function pushNote(
   state: ChatSessionReducerState,
   tone: "info" | "error",
   text: string,
 ): ChatSessionReducerState {
+  if (tone === "error" && lastErrorNoteText(state) === text) {
+    return state;
+  }
   const seq = state.seq + 1;
   return bumpRevision({
     ...state,

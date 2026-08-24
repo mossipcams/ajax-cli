@@ -6,8 +6,9 @@ use agent_client_protocol::schema::v1::{
     SessionConfigSelect, SessionConfigSelectOptions, SetSessionConfigOptionRequest,
 };
 use ajax_core::adapters::{
-    cursor_model_intents_match, cursor_unspecified_spawn_satisfied, parse_cursor_model_intent,
-    parse_model_selection, CursorModelIntent, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
+    canonical_cursor_model_intent, cursor_bracket_token_from_intent, cursor_model_intents_match,
+    cursor_unspecified_spawn_satisfied, parse_cursor_model_intent, parse_model_selection,
+    CursorModelIntent, ModelSelection, CURSOR_DEFAULT_SPAWN_MODEL,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -261,6 +262,14 @@ pub fn applied_model_id_for_persist(options: &[SessionConfigOption]) -> Result<S
     Ok(encoded)
 }
 
+fn ajax_pipe_model_base(intent: &CursorModelIntent) -> String {
+    if intent.thinking == Some(true) && !intent.base.ends_with("-thinking") {
+        format!("{}-thinking", intent.base)
+    } else {
+        intent.base.clone()
+    }
+}
+
 fn model_selection_from_advertised_options(
     options: &[SessionConfigOption],
 ) -> Option<ModelSelection> {
@@ -282,7 +291,7 @@ fn model_selection_from_advertised_options(
             .to_string(),
         ));
         return Some(ModelSelection {
-            model: intent.base.clone(),
+            model: ajax_pipe_model_base(intent),
             options: extras,
         });
     }
@@ -388,9 +397,36 @@ pub fn pin_satisfied(
     }
     if cursor_canonical_pin(desired) {
         if let Some(wanted) = parse_cursor_model_intent(desired) {
-            if !split_axis_contract_satisfies(options, &wanted) {
+            if split_axis_contract_satisfies(options, &wanted) {
+                return map_pin_to_apply_steps(options, desired, model_pins_at_spawn)
+                    .ok()
+                    .is_some_and(|steps| {
+                        steps.iter().all(|step| step_matches_current(options, step))
+                    });
+            }
+            if let Some(applied) = applied_cursor_intent(options) {
+                if read_model_applied(Some(options))
+                    .is_some_and(|applied_id| model_select_value_advertised(options, &applied_id))
+                {
+                    if cursor_model_intents_match(&wanted, &applied) {
+                        return true;
+                    }
+                    if partial_effort_pin_satisfied(options, &wanted, &applied) {
+                        return true;
+                    }
+                }
+            }
+        }
+    } else if let Some(wanted) = parse_cursor_model_intent(desired.trim()) {
+        if let Some(applied_id) = read_model_applied(Some(options)) {
+            if model_select_value_advertised(options, &applied_id) {
                 if let Some(applied) = applied_cursor_intent(options) {
-                    return cursor_model_intents_match(&wanted, &applied);
+                    if cursor_model_intents_match(&wanted, &applied) {
+                        return true;
+                    }
+                    if partial_effort_pin_satisfied(options, &wanted, &applied) {
+                        return true;
+                    }
                 }
             }
         }
@@ -432,6 +468,84 @@ fn applied_cursor_intent(options: &[SessionConfigOption]) -> Option<CursorModelI
     Some(intent)
 }
 
+fn split_axis_model_base(options: &[SessionConfigOption], intent: &CursorModelIntent) -> String {
+    if intent.base.ends_with("-thinking")
+        && model_option(options).is_some_and(|model| option_value_advertised(model, &intent.base))
+    {
+        return intent.base.clone();
+    }
+    let canonical = canonical_cursor_model_intent(intent);
+    if canonical.thinking == Some(true) {
+        canonical.base
+    } else {
+        intent.base.clone()
+    }
+}
+
+fn model_select_value_advertised(options: &[SessionConfigOption], value: &str) -> bool {
+    model_option(options).is_some_and(|model| option_value_advertised(model, value))
+}
+
+fn effort_axis_advertised(options: &[SessionConfigOption], effort: &str) -> bool {
+    thought_level_option(options).is_some_and(|thought| option_value_advertised(thought, effort))
+}
+
+fn effort_tier_advertised(options: &[SessionConfigOption], intent: &CursorModelIntent) -> bool {
+    let Some(effort) = &intent.effort else {
+        return false;
+    };
+    if effort_axis_advertised(options, effort) {
+        return true;
+    }
+    let wanted = canonical_cursor_model_intent(intent);
+    model_option(options).is_some_and(|model| {
+        let SessionConfigKind::Select(select) = &model.kind else {
+            return false;
+        };
+        select_option_ids(select).into_iter().any(|id| {
+            parse_cursor_model_intent(&id).is_some_and(|parsed| {
+                let parsed = canonical_cursor_model_intent(&parsed);
+                parsed.base == wanted.base
+                    && parsed.thinking.unwrap_or(false) == wanted.thinking.unwrap_or(false)
+                    && parsed.effort.as_deref() == Some(effort.as_str())
+            })
+        })
+    })
+}
+
+fn partial_effort_apply_ok(
+    options: &[SessionConfigOption],
+    wanted: &CursorModelIntent,
+    applied: &CursorModelIntent,
+) -> bool {
+    let wanted = canonical_cursor_model_intent(wanted);
+    let applied = canonical_cursor_model_intent(applied);
+    if wanted.base != applied.base {
+        return false;
+    }
+    if wanted.thinking.unwrap_or(false) != applied.thinking.unwrap_or(false) {
+        return false;
+    }
+    match &wanted.effort {
+        Some(_) if effort_tier_advertised(options, &wanted) => false,
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn partial_effort_pin_satisfied(
+    options: &[SessionConfigOption],
+    wanted: &CursorModelIntent,
+    applied: &CursorModelIntent,
+) -> bool {
+    if !partial_effort_apply_ok(options, wanted, applied) {
+        return false;
+    }
+    let wanted = canonical_cursor_model_intent(wanted);
+    let applied = canonical_cursor_model_intent(applied);
+    wanted.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
+}
+
 fn split_axis_contract_satisfies(
     options: &[SessionConfigOption],
     intent: &CursorModelIntent,
@@ -439,13 +553,13 @@ fn split_axis_contract_satisfies(
     let Some(model) = model_option(options) else {
         return false;
     };
-    if !option_value_advertised(model, &intent.base) {
+    let model_base = split_axis_model_base(options, intent);
+    if !option_value_advertised(model, &model_base) {
         return false;
     }
     if let Some(effort) = &intent.effort {
-        match thought_level_option(options) {
-            Some(thought) if option_value_advertised(thought, effort) => {}
-            _ => return false,
+        if !effort_axis_advertised(options, effort) {
+            return false;
         }
     }
     if intent.fast == Some(true) && model_config_boolean_option(options).is_none() {
@@ -482,6 +596,14 @@ pub fn map_pin_to_apply_steps(
     if let Some(intent) = parse_cursor_model_intent(raw) {
         if split_axis_contract_satisfies(options, &intent) {
             return map_intent_to_split_steps(options, &intent);
+        }
+        if let Ok(steps) = map_intent_to_model_select_steps(options, &intent, model_pins_at_spawn) {
+            return Ok(steps);
+        }
+        if let Some(applied) = applied_cursor_intent(options) {
+            if partial_effort_apply_ok(options, &intent, &applied) {
+                return map_partial_effort_steps(options, &intent);
+            }
         }
         return map_intent_to_model_select_steps(options, &intent, model_pins_at_spawn);
     }
@@ -529,6 +651,7 @@ fn map_unspecified_apply_steps(
                         base: CURSOR_DEFAULT_SPAWN_MODEL.to_string(),
                         effort: None,
                         fast: Some(false),
+                        thinking: None,
                     });
                 if let Some(id) = find_advertised_model_value(select, &default_intent, true) {
                     steps.push(ConfigApplyStep {
@@ -548,15 +671,15 @@ fn map_intent_to_split_steps(
 ) -> Result<Vec<ConfigApplyStep>, String> {
     let model = model_option(options)
         .ok_or_else(|| "harness did not advertise a model option".to_string())?;
-    if !option_value_advertised(model, &intent.base) {
+    let model_base = split_axis_model_base(options, intent);
+    if !option_value_advertised(model, &model_base) {
         return Err(format!(
-            "harness did not advertise model value {}",
-            intent.base
+            "harness did not advertise model value {model_base}"
         ));
     }
     let mut steps = vec![ConfigApplyStep {
         config_id: model.id.0.to_string(),
-        value: SessionConfigOptionValue::value_id(intent.base.clone()),
+        value: SessionConfigOptionValue::value_id(model_base),
     }];
     if let Some(effort) = &intent.effort {
         let thought = thought_level_option(options)
@@ -569,6 +692,25 @@ fn map_intent_to_split_steps(
             value: SessionConfigOptionValue::value_id(effort.clone()),
         });
     }
+    if let Some(fast) = model_config_boolean_option(options) {
+        let want = intent.fast.unwrap_or(false);
+        if read_fast_current_value(fast) != Some(want) {
+            steps.push(ConfigApplyStep {
+                config_id: fast.id.0.to_string(),
+                value: fast_apply_value(fast, want),
+            });
+        }
+    } else if intent.fast == Some(true) {
+        return Err("harness did not advertise a Fast config option".to_string());
+    }
+    Ok(steps)
+}
+
+fn map_partial_effort_steps(
+    options: &[SessionConfigOption],
+    intent: &CursorModelIntent,
+) -> Result<Vec<ConfigApplyStep>, String> {
+    let mut steps = Vec::new();
     if let Some(fast) = model_config_boolean_option(options) {
         let want = intent.fast.unwrap_or(false);
         if read_fast_current_value(fast) != Some(want) {
@@ -610,8 +752,13 @@ fn find_advertised_model_value(
     if ids.iter().any(|id| id == &intent.base)
         && intent.effort.is_none()
         && intent.fast != Some(true)
+        && intent.thinking != Some(true)
     {
         return Some(intent.base.clone());
+    }
+    let bracket = cursor_bracket_token_from_intent(intent);
+    if ids.iter().any(|id| id == &bracket) {
+        return Some(bracket);
     }
     ids.into_iter().find(|id| {
         if model_pins_at_spawn {

@@ -8,7 +8,8 @@ pub mod tmux;
 
 pub use agent::{
     acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
-    agent_launch_spec, cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
+    agent_launch_spec, canonical_cursor_model_intent, cursor_bracket_token_from_intent,
+    cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
     cursor_model_intents_match, cursor_unspecified_spawn_satisfied, is_unspecified_acp_model,
     parse_cursor_model_intent, parse_model_selection, valid_cursor_model_id, AcpLaunch,
     AcpModelSelection, AgentLaunch, CursorModelIntent, ModelSelection, CURSOR_DEFAULT_MODEL,
@@ -783,10 +784,39 @@ mod tests {
         let thinking = parse_cursor_model_intent("claude-opus-5-thinking-high").unwrap();
         assert_eq!(thinking.base, "claude-opus-5-thinking");
         assert_eq!(thinking.effort.as_deref(), Some("high"));
+        assert_eq!(thinking.thinking, Some(true));
 
         let plain = parse_cursor_model_intent("claude-opus-5-high").unwrap();
         assert_eq!(plain.base, "claude-opus-5");
         assert_eq!(plain.effort.as_deref(), Some("high"));
+        assert_eq!(plain.thinking, None);
+    }
+
+    // Regression for #1013: thinking catalog ids match bracket tokens with thinking=true.
+    #[test]
+    fn cursor_model_intents_match_thinking_catalog_and_bracket_issue_1013() {
+        use crate::adapters::{
+            cursor_bracket_token_from_intent, cursor_model_intents_match, parse_cursor_model_intent,
+        };
+
+        let catalog = parse_cursor_model_intent("claude-opus-5-thinking-medium").unwrap();
+        let bracket =
+            parse_cursor_model_intent("claude-opus-5[thinking=true,effort=medium,fast=false]")
+                .unwrap();
+        assert_eq!(bracket.base, "claude-opus-5");
+        assert_eq!(bracket.thinking, Some(true));
+        assert_eq!(bracket.effort.as_deref(), Some("medium"));
+        assert!(cursor_model_intents_match(&catalog, &bracket));
+        assert_eq!(
+            cursor_bracket_token_from_intent(&catalog),
+            "claude-opus-5[thinking=true,effort=medium,fast=false]"
+        );
+        assert_eq!(
+            crate::adapters::agent::cursor_catalog_to_acp_in_band_token(
+                "claude-opus-5-thinking-medium"
+            ),
+            "claude-opus-5[thinking=true,effort=medium,fast=false]"
+        );
     }
 
     #[test]
