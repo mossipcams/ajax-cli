@@ -308,6 +308,8 @@ existing paths.
 - On acquire after restart, the host restores the stored ACP session id with
   `session/resume` when advertised, otherwise `session/load`. If resume fails
   and load is advertised, load is attempted before a new session is created.
+  Restart and idle eviction must not send `session/close` for that stored id
+  ([#1061](https://github.com/mossipcams/ajax-cli/issues/1061)).
 - Cursor may emit `session/update` replay notifications before the load result;
   the host suppresses transcript-shaped replay during `session/resume` and
   `session/load` until the live session is installed on the slot. Capability
@@ -450,11 +452,15 @@ existing paths.
 
 - During ACP `initialize`, the host reads `agentCapabilities.sessionCapabilities.close`
   and stores whether `session/close` is advertised on the live stdio client.
-- When tearing down a live ACP child (TaskSession shutdown, harness Switch, slot
-  replacement, idle eviction, or client drop), the host sends ACP `session/close`
-  for the current session id and waits for the response (bounded timeout) before
-  killing stdio when close is advertised. When close is not advertised, teardown
-  keeps today's cancel-then-kill behavior.
+- `session/close` is terminal. The host sends it only when the Ajax session is
+  ending for good: task Drop (`drop_session` / `cleanup_session`) and
+  cross-harness Switch (`reset_harness_context`). Same-model slot replacement
+  that will resume/load the stored id, idle LRU eviction, process restart, and
+  accidental `Drop` of the stdio client detach stdio without `session/close`.
+- When close is advertised on a terminal teardown, the host sends ACP
+  `session/close` for the current session id and waits for the response (bounded
+  timeout) before killing stdio. When close is not advertised, teardown still
+  cancels then kills.
 - ACP `session/close` ends only the agent-side session on the child. It does not
   Drop the Ajax task, delete JSONL, or touch Ajax Terminal/tmux.
 - Close failure or timeout still tears down the child; the host appends a typed
