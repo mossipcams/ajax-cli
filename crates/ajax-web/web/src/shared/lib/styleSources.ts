@@ -22,11 +22,12 @@ export const BASELINE = {
    * Re-measured after closed-keyboard session band uses lvh minus home inset.
    * Re-measured after the live head stopped reprinting the transcript's tool
    * row: `.session-tool*` and `.session-head-thought` lost their only
-   * consumer. */
-  sourceStylesCssBytes: 106_695,
-  builtAppCssBytes: 92_550,
-  builtAppCssGzipBytes: 16_277,
-  classSelectorLines: 593,
+   * consumer.
+   * Re-measured after removing dead `.detail-session-title` (PR #1056). */
+  sourceStylesCssBytes: 106_535,
+  builtAppCssBytes: 92_415,
+  builtAppCssGzipBytes: 16_261,
+  classSelectorLines: 592,
   hasSelectors: 18,
 } as const;
 

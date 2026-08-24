@@ -104,7 +104,8 @@ existing paths.
   as `sessionTitle` (omit when none; `title: null` clears). Updates republish to
   connected browsers without reconnect or model change. This is agent-reported session
   chrome only — it does not replace the Ajax task handle or become Core task truth.
-  Updates are not JSONL transcript rows.
+  The shared task workspace header does not render it (Core `detail.title` / handle is
+  the only header identity). Updates are not JSONL transcript rows.
 - Ajax `initialize` advertises `clientCapabilities.session.configOptions.boolean:
   {}` so harnesses may expose boolean Fast; filesystem and terminal capabilities
   remain false. Cursor `_meta.parameterizedModelPicker` is a vendor extra, not the
