@@ -1,5 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { attachComposerHotbarKeyboardRetention, preventComposerHotbarFocusSteal } from "../scrolling/composerBlur";
+import {
+  attachComposerHotbarKeyboardRetention,
+  preventComposerHotbarFocusSteal,
+} from "./hotbarKeyboard";
 import { useComposerContext } from "./useComposer";
 
 export type ChatComposerProps = {
@@ -118,9 +121,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             event.target.value = "";
           }}
         />
-        {modelControl ? (
-          <span onMouseDown={preventComposerHotbarFocusSteal}>{modelControl}</span>
-        ) : null}
+        {modelControl}
         <div className="session-composer-actions" data-testid="session-composer-actions">
         <button
           type="button"
