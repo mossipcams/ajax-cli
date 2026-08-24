@@ -175,10 +175,3 @@ fn refresh_polls_active_checks_and_records_pass() {
         CiAttemptStatus::Passed
     );
 }
-
-// Temporary two-lane live probe for ajax_ci_monitor: rust-test (panic) + rust-lint (clippy).
-#[test]
-fn ci_monitor_hard_probe_live_two_lane() {
-    let clippy_lane_probe_unused = 1;
-    panic!("ajax_ci_monitor hard probe: intentional rust-test failure");
-}
