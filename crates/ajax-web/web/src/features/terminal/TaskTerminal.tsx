@@ -21,6 +21,7 @@ import {
   pasteTextFromBeforeInput,
   readToolbarPasteText,
 } from "./terminalPaste";
+import { attachToolbarKeyboardRetention } from "../chat/scrolling/composerBlur";
 
 interface Props {
   handle: string;
@@ -29,6 +30,7 @@ interface Props {
 export default function TaskTerminal({ handle }: Props) {
   const hostElRef = useRef<HTMLDivElement | null>(null);
   const interactionElRef = useRef<HTMLDivElement | null>(null);
+  const bottomControlsRef = useRef<HTMLDivElement | null>(null);
   const spacerElRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | undefined>(undefined);
   const connectionRef = useRef<TerminalConnection | undefined>(undefined);
@@ -686,6 +688,12 @@ export default function TaskTerminal({ handle }: Props) {
   }, []);
 
   useEffect(() => {
+    const root = bottomControlsRef.current;
+    if (!root) return;
+    return attachToolbarKeyboardRetention(root);
+  }, []);
+
+  useEffect(() => {
     return mountTaskTerminalSession({
       handle,
       hostElRef,
@@ -898,7 +906,10 @@ export default function TaskTerminal({ handle }: Props) {
           </button>
         </div>
       ) : null}
-      <div data-testid="terminal-bottom-controls">
+      <div
+        ref={bottomControlsRef}
+        data-testid="terminal-bottom-controls"
+        onPointerDown={onToolbarPointerDown}>
         <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
           {CONTROL_KEYS.map((key) => {
             const repeatable = isRepeatableKey(key.data);
