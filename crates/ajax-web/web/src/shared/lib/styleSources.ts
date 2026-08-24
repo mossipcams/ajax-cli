@@ -16,11 +16,12 @@ export const BASELINE = {
    * (mossipcams/ajax-cli#1032).
    * Re-measured after the live head stopped reprinting the transcript's tool
    * row: `.session-tool*` and `.session-head-thought` lost their only
-   * consumer. */
-  sourceStylesCssBytes: 106_412,
-  builtAppCssBytes: 92_309,
-  builtAppCssGzipBytes: 16_267,
-  classSelectorLines: 593,
+   * consumer.
+   * Re-measured after the turn-list renderer landed behind `?turns`. */
+  sourceStylesCssBytes: 108_829,
+  builtAppCssBytes: 93_773,
+  builtAppCssGzipBytes: 16_484,
+  classSelectorLines: 607,
   hasSelectors: 18,
 } as const;
 
@@ -82,6 +83,7 @@ export const LOCKED_MAJOR_SECTIONS = [
   "Scrolling",
   "Jump to live",
   "Conversation",
+  "Turn list",
   "Markdown inside agent prose",
   "Queued follow-up",
   "Activity grid",

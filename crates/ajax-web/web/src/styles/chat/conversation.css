@@ -128,3 +128,112 @@
 .session-turn-work[data-live="true"] .session-turn-work-summary .session-row-target {
   color: var(--ink-muted);
 }
+
+/* Turn list ---------------------------------------------------------------- */
+/* A settled turn is one line: what the operator asked, and what came of it.
+   The hairline between turns is the boundary a stream of messages never had —
+   ten turns of history read as ten rows, not one column of prose. */
+.session-turn-card {
+  align-self: stretch;
+  min-width: 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-turn-card.is-open {
+  background: var(--paper-tint);
+  border-bottom-color: var(--rule-strong);
+}
+
+/* The prompt is the title, so it is also the control that opens the turn:
+   a whole-row target, not a chevron to hit on a phone. */
+.session-turn-ask {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink-soft);
+}
+
+.session-turn-card.is-open .session-turn-ask {
+  color: var(--ink);
+}
+
+.session-turn-mark {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: var(--text-label);
+  color: var(--ok);
+}
+
+.session-turn-mark.is-failed {
+  color: var(--danger);
+}
+
+.session-turn-mark.is-live {
+  color: var(--accent);
+}
+
+/* Weight, not size: the shipped scale is dense by design, so the row that has
+   to win at a glance wins on weight against a fainter outcome line. */
+.session-turn-ask-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.session-turn-card:not(.is-open) .session-turn-ask-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-turn-outcome {
+  margin: 0 0 11px;
+  padding-left: 24px;
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+/* What it changed, without leaving for Diff Review. */
+.session-turn-changed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.session-turn-changed li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  color: var(--ink-muted);
+}
+
+.session-turn-added {
+  color: var(--ok);
+}
+
+.session-turn-removed {
+  color: var(--danger);
+}

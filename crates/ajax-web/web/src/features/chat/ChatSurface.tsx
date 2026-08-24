@@ -3,6 +3,7 @@ import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { toolCount, useChatSession } from "./session/public";
 import ChatLiveHead from "./status/ChatLiveHead";
 import { Conversation } from "./conversation/public";
+import TurnList from "./conversation/TurnList";
 import ChatModelPresentation from "./model/ChatModelPresentation";
 import { useSessionModelNotice, useSessionModelSheet } from "./model/notice";
 import { PermissionPanel } from "./permissions/public";
@@ -133,7 +134,13 @@ function ChatSessionBody({
           <ChatScrollThread>
             <ChatTranscriptTail
               itemCount={view.conversation.length}
-              conversation={<Conversation items={view.conversation} busy={view.turn.busy} />}
+              conversation={
+                new URLSearchParams(location.search).has("turns") ? (
+                  <TurnList items={view.conversation} busy={view.turn.busy} />
+                ) : (
+                  <Conversation items={view.conversation} busy={view.turn.busy} />
+                )
+              }
             />
           </ChatScrollThread>
 
