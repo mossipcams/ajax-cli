@@ -92,6 +92,39 @@ fn reset_monitor<R: Registry>(ctx: &mut crate::commands::CommandContext<R>) {
 }
 
 #[test]
+fn terminal_failure_with_pending_siblings_starts_episode_and_notification() {
+    let mut task = task_fixture();
+    let lint_failed_while_matrix_runs = failed_report(&["lint-run-1"], true);
+    assert!(reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        lint_failed_while_matrix_runs.clone(),
+        100,
+    ));
+    let state = load_state(&task);
+    assert!(state.has_pending);
+    assert!(state.episode_id.is_some());
+    assert!(pending_notification(&task).is_some());
+
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["lint-run-1", "codeql-run-2"], true),
+        101,
+    );
+    assert_eq!(load_state(&task).episode_id, state.episode_id);
+    assert!(pending_notification(&task).is_some());
+    accept(&mut task);
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["lint-run-1", "codeql-run-2"], true),
+        102,
+    );
+    assert!(pending_notification(&task).is_none());
+}
+
+#[test]
 fn failure_episode_rules_cover_dedupe_rerun_and_incremental_completion() {
     let mut task = task_fixture();
     let first = failed_report(&["run-1"], false);
