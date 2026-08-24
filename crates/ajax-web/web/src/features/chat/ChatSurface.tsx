@@ -57,7 +57,6 @@ interface Props {
     model: string;
     busy: boolean;
     sessionConfigOptions?: LiveSessionConfigOption[];
-    sessionTitle?: string;
   }) => void;
 }
 
@@ -216,7 +215,6 @@ export default function ChatSurface({
     activityAgeMs,
     sessionModel,
     sessionConfigOptions,
-    sessionTitle,
     sendPrompt,
     sendCancel,
     markStopped,
@@ -230,9 +228,8 @@ export default function ChatSurface({
       model: sessionModel,
       busy: view.turn.busy,
       sessionConfigOptions,
-      sessionTitle,
     });
-  }, [sessionModel, sessionConfigOptions, sessionTitle, view.turn.busy, onSessionActivity]);
+  }, [sessionModel, sessionConfigOptions, view.turn.busy, onSessionActivity]);
 
   if (!handle) return null;
 

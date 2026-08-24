@@ -8,6 +8,7 @@ import useTaskTerminalSpeechSource from "./useTaskTerminalSpeech.ts?raw";
 import useSpeechInputSource from "@/shared/hooks/useSpeechInput.ts?raw";
 import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw";
 import terminalPasteSource from "./terminalPaste.ts?raw";
+import composerBlurSource from "../chat/scrolling/composerBlur.ts?raw";
 
 /** Shell + peeled mount/speech/paste modules for source-contract asserts. */
 const taskTerminalFeatureSource =
@@ -236,6 +237,22 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /className="terminal-key"[\s\S]*?⌄/,
     );
     expect(taskTerminalFeatureSource).toMatch(/aria-label="Expand terminal"/);
+  });
+
+  it("preserves terminal focus when tapping hotbar chrome", () => {
+    expect(taskTerminalSource).toMatch(
+      /data-testid="terminal-bottom-controls"[\s\S]*?onPointerDown=\{onToolbarPointerDown\}/,
+    );
+    expect(taskTerminalSource).toMatch(/ref=\{bottomControlsRef\}/);
+    expect(taskTerminalSource).toMatch(/attachToolbarKeyboardRetention\(root\)/);
+    expect(composerBlurSource).toMatch(/attachToolbarKeyboardRetention/);
+    expect(composerBlurSource).toMatch(/addEventListener\(["']touchstart["']/);
+    expect(composerBlurSource).toMatch(/HOTBAR_CAPTURE_OPTIONS[\s\S]*?capture:\s*true/);
+    expect(composerBlurSource).toMatch(/passive:\s*false/);
+    expect(composerBlurSource).toMatch(/retainToolbarKeyboardOnCapture/);
+    expect(composerBlurSource).toMatch(
+      /interactive && event\.type === ["']touchstart["']/,
+    );
   });
 
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {

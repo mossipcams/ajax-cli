@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import {
+  attachComposerHotbarKeyboardRetention,
+  preventComposerHotbarFocusSteal,
+} from "./hotbarKeyboard";
 import { useComposerContext } from "./useComposer";
 
 export type ChatComposerProps = {
@@ -35,6 +39,14 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     canAttach,
     attachmentError,
   } = useComposerContext();
+
+  const hotbarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const hotbar = hotbarRef.current;
+    if (!hotbar) return;
+    return attachComposerHotbarKeyboardRetention(hotbar);
+  }, []);
 
   return (
     <form
@@ -90,7 +102,11 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           ))}
         </ul>
       ) : null}
-      <div className="session-composer-hotbar" data-testid="session-composer-hotbar">
+      <div
+        ref={hotbarRef}
+        className="session-composer-hotbar"
+        data-testid="session-composer-hotbar"
+      >
         <input
           ref={attachInputRef}
           type="file"
@@ -113,6 +129,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           aria-label="Attach"
           disabled={!connected || !canAttach}
           hidden={!canAttach}
+          onMouseDown={preventComposerHotbarFocusSteal}
           onClick={() => attachInputRef.current?.click()}
         >
           <svg
@@ -140,6 +157,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             speechModel.state === "connecting" ||
             speechModel.state === "finalizing"
           }
+          onMouseDown={preventComposerHotbarFocusSteal}
           onClick={toggleMic}
         >
           Mic
@@ -149,6 +167,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
           disabled={!connected || (!draft.trim() && queued === null)}
+          onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg
             className="session-composer-icon"

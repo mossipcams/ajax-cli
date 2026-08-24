@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn checkout_mismatch_repair_adopts_without_external_commands() {
+fn repair_adopts_observed_named_branch_without_recreating_task() {
     let mut context = context_with_named_checkout_mismatch();
     let task_before = context
         .registry
@@ -90,7 +90,7 @@ fn checkout_mismatch_repair_adopts_without_external_commands() {
 }
 
 #[test]
-fn checkout_mismatch_repair_rejects_stale_or_declined_adoption() {
+fn repair_rejects_declined_or_stale_branch_adoption() {
     const STALE_REASON: &str = "checkout changed since repair was planned; refresh and retry";
 
     let mut context = context_with_named_checkout_mismatch();
@@ -267,7 +267,7 @@ fn checkout_mismatch_repair_rejects_stale_or_declined_adoption() {
 }
 
 #[test]
-fn repair_operation_promotes_task_to_reviewable_on_check_success() {
+fn successful_repair_check_makes_task_reviewable() {
     let mut context = context_with_reviewable_task();
     let task = context
         .registry
@@ -316,7 +316,7 @@ fn repair_operation_promotes_task_to_reviewable_on_check_success() {
 }
 
 #[test]
-fn repair_operation_records_tests_failed_on_check_failure() {
+fn failed_repair_check_keeps_task_active_and_needing_attention() {
     let mut context = context_with_reviewable_task();
     context
         .registry
