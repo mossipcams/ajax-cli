@@ -195,6 +195,68 @@ where
         response
     }
 
+    /// Report an ACP turn transition as task evidence.
+    ///
+    /// A provisioned task has no agent pane, so this host is the only observer
+    /// of its work; without this the dashboard, task page, TUI and `ajax
+    /// status` show a pane-derived `Waiting` through an entire turn. Failures
+    /// are swallowed by the caller: evidence reporting must never take down a
+    /// live turn.
+    pub(crate) fn report_task_session_activity(
+        &self,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> Result<(), String> {
+        let handle = handle.to_string();
+        let state = self.clone();
+        // Same lane discipline as session-model persistence: called from a
+        // Tokio worker, and control_lane takes a blocking lock (#962).
+        tokio::task::block_in_place(|| {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.report_task_session_activity_on_control_lane(&handle, activity)
+            })) {
+                Ok(result) => result,
+                Err(_) => Err("session activity report panicked".to_string()),
+            }
+        })
+    }
+
+    fn report_task_session_activity_on_control_lane(
+        &self,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> Result<(), String> {
+        let _lane = self.control_lane.blocking_lock();
+        let (mut context, runner, bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        crate::slices::web_session::record_session_activity(
+            &mut context,
+            handle,
+            activity,
+            std::time::SystemTime::now(),
+        )?;
+        let mut guard = self.shared();
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            let mut persisted_bridge = guard.bridge.clone();
+            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+            Ok(())
+        } else {
+            Err("cockpit state changed while reporting session activity".to_string())
+        }
+    }
+
     /// Persist desired session model metadata before the host replaces an ACP child.
     pub(crate) fn persist_task_session_model(
         &self,

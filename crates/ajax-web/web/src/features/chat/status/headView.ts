@@ -1,4 +1,4 @@
-import type { ChatSessionView, Decision, ElicitationDecision, ToolCall } from "../session/public";
+import type { ChatSessionView, Decision, ElicitationDecision } from "../session/public";
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
@@ -8,25 +8,14 @@ export interface ChatTaskAttention {
   explanation?: string | null;
 }
 
-export interface ChatHeadToolRow {
-  callId: string;
-  kind: string;
-  tone: string;
-  mark: string;
-  title: string;
-  path: string | null;
-  statusLabel: string;
-}
-
 export interface ChatHeadView {
   state: HeadState;
   tone: string;
   connected: boolean;
   activityAgeMs: number;
   decision: Decision | null;
-  tool: ChatHeadToolRow | null;
-  planStep: string | null;
-  thoughtSnippet: string | null;
+  /** Whether the turn has produced anything the transcript can narrate yet. */
+  hasActivity: boolean;
   usage: ChatSessionView["usage"]["context"];
   turnUsage: ChatSessionView["usage"]["turn"];
   taskAttention: ChatTaskAttention | null;
@@ -44,67 +33,6 @@ const STATE_LABELS: Record<HeadState, string> = {
 export function headStateLabel(state: HeadState, quiet: boolean): string {
   if (state === "working" && quiet) return "No recent activity";
   return STATE_LABELS[state];
-}
-
-const TOOL_TONES: Record<string, string> = {
-  read: "muted",
-  edit: "running",
-  delete: "error",
-  move: "running",
-  search: "muted",
-  execute: "running",
-  think: "muted",
-  fetch: "muted",
-};
-
-const TOOL_MARKS: Record<string, string> = {
-  read: "◦",
-  edit: "±",
-  delete: "×",
-  move: "→",
-  search: "⌕",
-  execute: "$",
-  think: "∴",
-  fetch: "↓",
-  switch_mode: "⇄",
-};
-
-const TOOL_STATUS_LABELS: Record<string, string> = {
-  pending: "queued",
-  in_progress: "running",
-  completed: "done",
-  failed: "failed",
-};
-
-function toolMark(kind: string): string {
-  return TOOL_MARKS[kind] ?? "•";
-}
-
-function toolStatusLabel(status: string): string {
-  return TOOL_STATUS_LABELS[status] ?? status;
-}
-
-function cleanTitle(title: string): string {
-  return title.replace(/`/g, "").trim();
-}
-
-function shortPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length <= 2) return parts.join("/");
-  return `…/${parts.slice(-2).join("/")}`;
-}
-
-export function mapHeadToolRow(call: ToolCall): ChatHeadToolRow {
-  const location = call.locations[0];
-  return {
-    callId: call.callId,
-    kind: call.kind || "other",
-    tone: TOOL_TONES[call.kind] ?? "muted",
-    mark: toolMark(call.kind),
-    title: cleanTitle(call.title) || call.callId,
-    path: location ? shortPath(location) : null,
-    statusLabel: toolStatusLabel(call.status),
-  };
 }
 
 function agentNeedsYou(status: string | null): boolean {
@@ -156,14 +84,11 @@ function attentionText(taskAttention: ChatTaskAttention): string {
 export function buildHeadView(input: {
   session: ChatSessionView;
   taskAttention: ChatTaskAttention | null;
-  tool: ToolCall | null;
-  planStep: string | null;
-  thoughtSnippet: string | null;
+  hasActivity: boolean;
   activityAgeMs: number;
   connected: boolean;
 }): ChatHeadView {
-  const { session, taskAttention, tool, planStep, thoughtSnippet, activityAgeMs, connected } =
-    input;
+  const { session, taskAttention, hasActivity, activityAgeMs, connected } = input;
   const decision = session.permission.decision;
   const elicitation = session.elicitation.decision;
   const state = headState(
@@ -181,13 +106,14 @@ export function buildHeadView(input: {
     connected,
     activityAgeMs: state === "working" ? activityAgeMs : 0,
     decision,
-    tool: tool ? mapHeadToolRow(tool) : null,
-    planStep,
-    thoughtSnippet,
+    hasActivity,
     usage: session.usage.context,
     turnUsage: session.usage.turn,
     taskAttention: taskLevel ? taskAttention : null,
     attentionText: taskLevel && taskAttention ? attentionText(taskAttention) : null,
-    showHeadLine: !taskLevel,
+    // Task attention replaces the head line, but `Reconnecting` has nowhere
+    // else to live — and a task waiting for review is the state most sessions
+    // rest in, so a dropped socket was invisible in the common case.
+    showHeadLine: !taskLevel || !connected,
   };
 }

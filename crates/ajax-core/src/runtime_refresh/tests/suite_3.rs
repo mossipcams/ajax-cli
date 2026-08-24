@@ -346,3 +346,59 @@ fn refresh_keeps_agent_running_claim_backed_by_live_status() {
     );
     assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
 }
+
+/// A provisioned ACP task has no agent pane, so the pane classifier has nothing
+/// true to say about it. Its run state comes from the ACP host as authoritative
+/// evidence; a refresh must not overwrite that with a shell reading.
+#[test]
+fn refresh_preserves_acp_evidence_on_a_provisioned_task() {
+    use crate::live;
+    use crate::models::{LiveObservation, LiveStatusKind};
+    use crate::ui_state::derive_operator_status;
+
+    struct IdleShellRunner;
+
+    impl CommandRunner for IdleShellRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let args = command.args.join(" ");
+            let stdout = if args.contains("capture-pane") {
+                "matt@host ajax-cli % ".to_string()
+            } else {
+                runtime_stdout(&command.args).to_string()
+            };
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    let config = Config {
+        repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+        ..Config::default()
+    };
+    let mut registry = InMemoryRegistry::default();
+    let mut task = task_with_live(LiveStatusKind::AgentRunning, "Agent working");
+    task.set_skip_interactive_agent(true);
+    let task_id = task.id.clone();
+    // The ACP host's report, applied the way the session slice applies it.
+    live::apply_authoritative_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working"),
+        SystemTime::now(),
+    );
+    registry.create_task(task).unwrap();
+    let mut context = CommandContext::new(config, registry);
+    let mut runner = IdleShellRunner;
+
+    let _ = refresh_runtime_context(&mut context, &mut runner);
+
+    let task = context.registry.get_task(&task_id).unwrap();
+    let status = derive_operator_status(task);
+    assert_eq!(
+        status.status,
+        crate::ui_state::TaskStatus::Running,
+        "provisioned ACP task lost its run state to the pane classifier: {status:?}"
+    );
+}

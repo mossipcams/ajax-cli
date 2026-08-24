@@ -4,7 +4,9 @@ import type { OutputContentBlock, ToolContent } from "@/shared/lib/liveSessionOu
 
 export type { OutputContentBlock, ToolContent };
 
-export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
+/** `cancelled` is client-applied: ACP need not send a terminal update for a
+ * call the operator stopped, and an unsettled call reads as still running. */
+export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 
 export interface ToolCall {
   callId: string;

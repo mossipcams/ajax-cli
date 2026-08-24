@@ -1,5 +1,7 @@
 // Turn-as-chapter conversation: what the operator said, one line for what the
-// agent did, what the agent answered.
+// agent did, what the agent answered — in the order those things happened. An
+// agent that speaks, works, then speaks again reads that way; hoisting the work
+// above everything it said broke the one thing a transcript owes a reader.
 //
 // REVISION (mobile chat): the transcript is a conversation, not the ACP event
 // stream. Thoughts, plans, tool calls, their output and their diffs are the
@@ -24,12 +26,15 @@ export default function Conversation({
   items: ConversationItem[];
   busy: boolean;
 }) {
-  const lastAgentProseId = (() => {
-    for (let i = items.length - 1; i >= 0; i -= 1) {
-      const item = items[i];
-      if (item.kind === "prose" && item.role === "agent") return item.id;
-    }
-    return null;
+  // Only the row still being written is held back to completed paragraphs.
+  // Anything the turn has already moved past — a tool call, an ask, a later
+  // message — is proof the message before it finished, and a one-paragraph
+  // "Let me look at the handler." has no paragraph break to wait for, so
+  // gating it on one hid it for the whole turn.
+  const streamingProseId = (() => {
+    const last = items[items.length - 1];
+    if (!last || last.kind !== "prose" || last.role !== "agent") return null;
+    return last.id;
   })();
 
   const turns = groupConversationTurns(items);
@@ -38,8 +43,8 @@ export default function Conversation({
     <>
       {turns.map((turn, turnIndex) => {
         const isLiveTurn = busy && turnIndex === turns.length - 1;
-        const awaiting = turn.other.some(
-          (item) => item.kind === "permission" && !item.resolved,
+        const awaiting = turn.rows.some(
+          (row) => row.kind === "item" && row.item.kind === "permission" && !row.item.resolved,
         );
 
         return (
@@ -49,19 +54,22 @@ export default function Conversation({
             data-testid={turn.user ? "session-turn" : "session-turn-preamble"}
           >
             {turn.user ? <TranscriptRow item={turn.user} live={false} /> : null}
-            <TurnActivity items={turn.work} live={isLiveTurn} attention={awaiting} />
-            {turn.other.map((item) => (
-              <TranscriptRow key={item.id} item={item} live={false} />
-            ))}
-            {turn.agents.map((item, index) => (
-              <TranscriptRow
-                key={item.id}
-                item={item}
-                live={
-                  isLiveTurn && index === turn.agents.length - 1 && item.id === lastAgentProseId
-                }
-              />
-            ))}
+            {turn.rows.map((row, rowIndex) =>
+              row.kind === "work" ? (
+                <TurnActivity
+                  key={row.id}
+                  items={row.items}
+                  live={isLiveTurn && rowIndex === turn.rows.length - 1}
+                  attention={awaiting}
+                />
+              ) : (
+                <TranscriptRow
+                  key={row.id}
+                  item={row.item}
+                  live={isLiveTurn && row.item.id === streamingProseId}
+                />
+              ),
+            )}
           </div>
         );
       })}

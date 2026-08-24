@@ -78,7 +78,10 @@ export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
     const node = event.currentTarget;
     const atLive = node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
     setPinned(atLive);
-    if (atLive) setBehind(false);
+    // Away from the live edge is the whole condition. Waiting for new content
+    // to arrive first left a settled transcript with no way back down but a
+    // long drag on a phone.
+    setBehind(!atLive);
   }
 
   return {
