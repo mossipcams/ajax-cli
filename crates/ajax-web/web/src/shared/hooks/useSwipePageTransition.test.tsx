@@ -5,7 +5,9 @@ import {
   PageCrossSlideProvider,
   useSwipePageTransition,
   SWIPE_PAGE_COMMIT_MS,
+  CROSS_SLIDE_ARMED_SLACK_MS,
 } from "./useSwipePageTransition";
+import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import {
   setTerminalDoubleTapPending,
@@ -73,6 +75,7 @@ function renderHarness(props: Parameters<typeof Harness>[0] = {}) {
 describe("useSwipePageTransition", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    while (gestureBusyGate.isBusy()) gestureBusyGate.end();
     vi.mocked(setSwipeEnterDirection).mockClear();
     vi.mocked(telemetry.captureSwipe).mockClear();
     vi.mocked(telemetry.markNavigationStart).mockClear();
@@ -240,5 +243,60 @@ describe("useSwipePageTransition", () => {
     expect(onLeft).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     setTerminalDoubleTapPending(false);
+  });
+
+  it("settles and reattaches swipe listeners when animating flip is skipped (#1077)", async () => {
+    // Same-module spyOn cannot intercept beginCommit's internal call; jsdom's
+    // setTimeout(0) flip path would still run. Force the double-rAF branch with a
+    // no-op requestAnimationFrame so the animating flip callback never fires.
+    const originalUserAgent = navigator.userAgent;
+    const originalRaf = window.requestAnimationFrame;
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+      configurable: true,
+    });
+    window.requestAnimationFrame = vi.fn(() => 0) as typeof requestAnimationFrame;
+
+    try {
+      const onLeft = vi.fn();
+      renderHarness({ onLeft });
+      const node = screen.getByTestId("swipe-target");
+      Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+      node.dispatchEvent(touch("touchstart", 200, 40, node));
+      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      await act(async () => {
+        node.dispatchEvent(touch("touchend", 120, 42, node));
+      });
+      expect(onLeft).toHaveBeenCalledOnce();
+      expect(gestureBusyGate.isBusy()).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 40);
+      });
+      // Inner flip fallback never scheduled; beginCommit fallback not yet due.
+      expect(gestureBusyGate.isBusy()).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CROSS_SLIDE_ARMED_SLACK_MS);
+      });
+      expect(gestureBusyGate.isBusy()).toBe(false);
+
+      node.dispatchEvent(touch("touchstart", 200, 40, node));
+      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      await act(async () => {
+        node.dispatchEvent(touch("touchend", 120, 42, node));
+        await vi.advanceTimersByTimeAsync(
+          SWIPE_PAGE_COMMIT_MS + 40 + CROSS_SLIDE_ARMED_SLACK_MS,
+        );
+      });
+      expect(onLeft).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        value: originalUserAgent,
+        configurable: true,
+      });
+      window.requestAnimationFrame = originalRaf;
+    }
   });
 });

@@ -31,6 +31,8 @@ import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
 export const SWIPE_PAGE_COMMIT_MS = 220;
 /** Serial exit animation + destination enter keyframe budget cross-slide replaces. */
 export const SERIAL_SWIPE_COMMIT_BUDGET_MS = SWIPE_PAGE_COMMIT_MS * 2;
+/** ponytail: armed phase may wait for double-rAF before animating styles apply. */
+export const CROSS_SLIDE_ARMED_SLACK_MS = 80;
 const SWIPE_COMMIT_MIN_MS = 80;
 const SWIPE_COMMIT_VELOCITY_FLOOR = 0.45;
 
@@ -141,6 +143,14 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
   const activeRef = useRef<ActiveCrossSlide | null>(null);
   activeRef.current = active;
   const settleHeldRef = useRef(false);
+  const settleFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSettleFallback = () => {
+    if (settleFallbackRef.current !== null) {
+      window.clearTimeout(settleFallbackRef.current);
+      settleFallbackRef.current = null;
+    }
+  };
 
   const releaseSettleGesture = () => {
     if (settleHeldRef.current) {
@@ -157,6 +167,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
   };
 
   const finishCrossSlide = useCallback(() => {
+    clearSettleFallback();
     const slide = activeRef.current;
     if (!slide) return;
     const settle_ms = Math.round(performance.now() - slide.settleStartedAt);
@@ -209,6 +220,18 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
     setActive(nextActive);
     markNavigationStart(params.fromRoute, "swipe");
     params.navigate();
+
+    const scheduleSettleFallback = (delayMs: number) => {
+      clearSettleFallback();
+      settleFallbackRef.current = window.setTimeout(() => {
+        settleFallbackRef.current = null;
+        finishCrossSlide();
+      }, delayMs);
+    };
+
+    // Schedule before armed→animating flip so a deferred/skipped rAF cannot leave active stuck.
+    scheduleSettleFallback(commitMs + 40 + CROSS_SLIDE_ARMED_SLACK_MS);
+
     scheduleCrossSlideAnimatingFlip(() => {
       setActive((current) => {
         if (!current || current.phase !== "armed") return current;
@@ -221,7 +244,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
         activeRef.current = animating;
         return animating;
       });
-      window.setTimeout(finishCrossSlide, commitMs + 40);
+      scheduleSettleFallback(commitMs + 40);
     });
     return true;
   }, [finishCrossSlide]);
@@ -375,9 +398,8 @@ export function useSwipePageTransition(
       navigate: () => void,
     ): boolean => {
       const controller = crossSlideRef.current;
-      if (!controller) return false;
-      if (controller.isBusy()) return true;
-      const begun = controller.beginCommit({
+      if (!controller || controller.isBusy()) return false;
+      return controller.beginCommit({
         direction,
         dragX: swipeRef.current.engaged
           ? navigateSwipeTranslateX(swipeRef.current)
@@ -387,7 +409,6 @@ export function useSwipePageTransition(
         swipeOutcome,
         navigate,
       });
-      return begun;
     };
 
     const animateTo = (
@@ -398,9 +419,12 @@ export function useSwipePageTransition(
       commitDurationMs = SWIPE_PAGE_COMMIT_MS,
     ) => {
       if (settlingRef.current) return;
-      if (direction && then && swipeOutcome && tryCrossSlideCommit(direction, swipeOutcome, then)) {
-        reset();
-        return;
+      if (direction && then && swipeOutcome) {
+        if (tryCrossSlideCommit(direction, swipeOutcome, then)) {
+          reset();
+          return;
+        }
+        if (crossSlideRef.current?.isBusy()) return;
       }
       settlingRef.current = true;
       settleDurationRef.current = commitDurationMs;
