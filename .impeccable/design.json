@@ -1,6 +1,412 @@
 {
-  "updatedAt": "2026-07-17T11:40:00.000Z",
-  "source": "DESIGN.md",
-  "note": "Synced mono stack (SFMono-Regular) for xterm after polish alignment",
-  "frontmatterRaw": "name: Ajax Cockpit\ndescription: Mobile-first operator console for a local AI agent fleet — status, decision, terminal.\ncolors:\n  soft-charcoal: \"#161616\"\n  soft-charcoal-tint: \"#1d1d1d\"\n  soft-charcoal-raised: \"#242424\"\n  soft-charcoal-high: \"#2d2d2d\"\n  ink: \"#e6e6e6\"\n  ink-soft: \"#c6c6c6\"\n  ink-muted: \"#a8a8a8\"\n  ink-faint: \"#808080\"\n  rule: \"#2a2a2a\"\n  rule-strong: \"#454545\"\n  soft-steel-blue: \"#87afd7\"\n  soft-steel-blue-bright: \"#a3c6e8\"\n  soft-steel-blue-deep: \"#24384c\"\n  attention-amber: \"#d7af5f\"\n  attention-amber-bright: \"#e5c88a\"\n  fault-rose: \"#d78787\"\n  fault-rose-bright: \"#e3a5a5\"\n  fault-rose-deep: \"#5f3535\"\n  done-sage: \"#87af87\"\n  done-sage-bright: \"#a5c8a5\"\ntypography:\n  micro:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"10.5px\"\n    fontWeight: 600\n    lineHeight: 1.3\n    letterSpacing: \"0.08em\"\n  label:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"12px\"\n    fontWeight: 600\n    lineHeight: 1.3\n    letterSpacing: \"0.08em\"\n  data:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"12.5px\"\n    fontWeight: 400\n    lineHeight: 1.3\n    letterSpacing: \"normal\"\n  body-sm:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"13px\"\n    fontWeight: 400\n    lineHeight: 1.5\n    letterSpacing: \"normal\"\n  body:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"15px\"\n    fontWeight: 400\n    lineHeight: 1.5\n    letterSpacing: \"normal\"\n  heading:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"16px\"\n    fontWeight: 700\n    lineHeight: 1.3\n    letterSpacing: \"0.01em\"\n  title:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"17px\"\n    fontWeight: 700\n    lineHeight: 1.2\n    letterSpacing: \"0.18em\"\n  display:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"20px\"\n    fontWeight: 700\n    lineHeight: 1.25\n    letterSpacing: \"0.01em\"\n  input:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"16px\"\n    fontWeight: 400\n    lineHeight: 1.4\n    letterSpacing: \"normal\"\n  narrow-body:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"14px\"\n    fontWeight: 400\n    lineHeight: 1.5\n    letterSpacing: \"normal\"\n  icon-glyph:\n    fontFamily: \"ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif\"\n    fontSize: \"18px\"\n    fontWeight: 400\n    lineHeight: 1\n    letterSpacing: \"normal\"\n  mono:\n    fontFamily: \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, monospace\"\n    fontSize: \"12px\"\n    fontWeight: 400\n    lineHeight: 1.45\n    letterSpacing: \"normal\"\nrounded:\n  sm: \"6px\"\n  md: \"10px\"\n  lg: \"14px\"\n  pill: \"999px\"\nspacing:\n  1: \"4px\"\n  2: \"8px\"\n  3: \"12px\"\n  4: \"16px\"\n  5: \"20px\"\n  6: \"24px\"\ncomponents:\n  button-primary:\n    backgroundColor: \"{colors.soft-steel-blue}\"\n    textColor: \"{colors.soft-charcoal}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"10px 16px\"\n    height: \"44px\"\n  button-primary-hover:\n    backgroundColor: \"{colors.soft-steel-blue-bright}\"\n    textColor: \"{colors.soft-charcoal}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"10px 16px\"\n    height: \"44px\"\n  button-secondary:\n    backgroundColor: \"transparent\"\n    textColor: \"{colors.ink}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"10px 16px\"\n    height: \"44px\"\n  button-destructive:\n    backgroundColor: \"transparent\"\n    textColor: \"{colors.fault-rose}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"10px 16px\"\n    height: \"44px\"\n  button-destructive-confirm:\n    backgroundColor: \"{colors.fault-rose}\"\n    textColor: \"{colors.soft-charcoal}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"10px 16px\"\n    height: \"44px\"\n  pill-primary:\n    backgroundColor: \"{colors.soft-steel-blue}\"\n    textColor: \"{colors.soft-charcoal}\"\n    rounded: \"{rounded.pill}\"\n    padding: \"8px 16px\"\n    height: \"34px\"\n  input-field:\n    backgroundColor: \"{colors.soft-charcoal}\"\n    textColor: \"{colors.ink}\"\n    rounded: \"{rounded.sm}\"\n    padding: \"10px 12px\"\n    typography: \"{typography.input}\"\n  nav-new-task:\n    backgroundColor: \"{colors.soft-steel-blue}\"\n    textColor: \"{colors.soft-charcoal}\"\n    rounded: \"{rounded.sm}\"\n    height: \"44px\"\n  status-dot:\n    backgroundColor: \"{colors.soft-steel-blue}\"\n    rounded: \"{rounded.pill}\"\n    size: \"9px\""
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-25T15:30:00.000Z",
+  "title": "Design System: Ajax Cockpit",
+  "extensions": {
+    "colorMeta": {
+      "soft-charcoal": {
+        "role": "neutral",
+        "displayName": "Soft Charcoal",
+        "canonical": "oklch(20.0% 0.0000 89.9)",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.9)",
+          "oklch(26% 0.0000 89.9)",
+          "oklch(37% 0.0000 89.9)",
+          "oklch(48% 0.0000 89.9)",
+          "oklch(59% 0.0000 89.9)",
+          "oklch(70% 0.0000 89.9)",
+          "oklch(81% 0.0000 89.9)",
+          "oklch(92% 0.0000 89.9)"
+        ]
+      },
+      "soft-charcoal-tint": {
+        "role": "neutral",
+        "displayName": "Soft Charcoal Tint",
+        "canonical": "oklch(24.7% 0.0000 89.9)"
+      },
+      "soft-charcoal-raised": {
+        "role": "neutral",
+        "displayName": "Soft Charcoal Raised",
+        "canonical": "oklch(29.4% 0.0000 89.9)"
+      },
+      "soft-charcoal-high": {
+        "role": "neutral",
+        "displayName": "Soft Charcoal High",
+        "canonical": "oklch(34.2% 0.0000 89.9)"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(92.5% 0.0000 89.9)",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.9)",
+          "oklch(26% 0.0000 89.9)",
+          "oklch(37% 0.0000 89.9)",
+          "oklch(48% 0.0000 89.9)",
+          "oklch(59% 0.0000 89.9)",
+          "oklch(70% 0.0000 89.9)",
+          "oklch(81% 0.0000 89.9)",
+          "oklch(92% 0.0000 89.9)"
+        ]
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Ink Soft",
+        "canonical": "oklch(83.2% 0.0000 89.9)"
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "oklch(73.5% 0.0000 89.9)"
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Ink Faint",
+        "canonical": "oklch(60.6% 0.0000 89.9)"
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(28.5% 0.0000 89.9)",
+        "tonalRamp": [
+          "oklch(15% 0.0000 89.9)",
+          "oklch(26% 0.0000 89.9)",
+          "oklch(37% 0.0000 89.9)",
+          "oklch(48% 0.0000 89.9)",
+          "oklch(59% 0.0000 89.9)",
+          "oklch(70% 0.0000 89.9)",
+          "oklch(81% 0.0000 89.9)",
+          "oklch(92% 0.0000 89.9)"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Rule Strong",
+        "canonical": "oklch(43.6% 0.0000 89.9)"
+      },
+      "soft-steel-blue": {
+        "role": "primary",
+        "displayName": "Soft Steel Blue",
+        "canonical": "oklch(73.9% 0.0726 248.8)",
+        "tonalRamp": [
+          "oklch(15% 0.0726 248.8)",
+          "oklch(26% 0.0726 248.8)",
+          "oklch(37% 0.0726 248.8)",
+          "oklch(48% 0.0726 248.8)",
+          "oklch(59% 0.0726 248.8)",
+          "oklch(70% 0.0726 248.8)",
+          "oklch(81% 0.0726 248.8)",
+          "oklch(92% 0.0726 248.8)"
+        ]
+      },
+      "soft-steel-blue-bright": {
+        "role": "primary",
+        "displayName": "Soft Steel Blue Bright",
+        "canonical": "oklch(81.3% 0.0651 244.5)"
+      },
+      "soft-steel-blue-deep": {
+        "role": "primary",
+        "displayName": "Soft Steel Blue Deep",
+        "canonical": "oklch(33.0% 0.0521 250.9)"
+      },
+      "attention-amber": {
+        "role": "secondary",
+        "displayName": "Attention Amber",
+        "canonical": "oklch(77.4% 0.1092 83.2)",
+        "tonalRamp": [
+          "oklch(15% 0.1092 83.2)",
+          "oklch(26% 0.1092 83.2)",
+          "oklch(37% 0.1092 83.2)",
+          "oklch(48% 0.1092 83.2)",
+          "oklch(59% 0.1092 83.2)",
+          "oklch(70% 0.1092 83.2)",
+          "oklch(81% 0.1092 83.2)",
+          "oklch(92% 0.1092 83.2)"
+        ]
+      },
+      "attention-amber-bright": {
+        "role": "secondary",
+        "displayName": "Attention Amber Bright",
+        "canonical": "oklch(85.0% 0.0723 84.9)"
+      },
+      "fault-rose": {
+        "role": "tertiary",
+        "displayName": "Fault Rose",
+        "canonical": "oklch(70.6% 0.0986 19.8)",
+        "tonalRamp": [
+          "oklch(15% 0.0986 19.8)",
+          "oklch(26% 0.0986 19.8)",
+          "oklch(37% 0.0986 19.8)",
+          "oklch(48% 0.0986 19.8)",
+          "oklch(59% 0.0986 19.8)",
+          "oklch(70% 0.0986 19.8)",
+          "oklch(81% 0.0986 19.8)",
+          "oklch(92% 0.0986 19.8)"
+        ]
+      },
+      "fault-rose-bright": {
+        "role": "tertiary",
+        "displayName": "Fault Rose Bright",
+        "canonical": "oklch(78.2% 0.0692 19.5)"
+      },
+      "fault-rose-deep": {
+        "role": "tertiary",
+        "displayName": "Fault Rose Deep",
+        "canonical": "oklch(41.7% 0.0574 21.3)"
+      },
+      "done-sage": {
+        "role": "tertiary",
+        "displayName": "Done Sage",
+        "canonical": "oklch(71.4% 0.0719 144.8)",
+        "tonalRamp": [
+          "oklch(15% 0.0719 144.8)",
+          "oklch(26% 0.0719 144.8)",
+          "oklch(37% 0.0719 144.8)",
+          "oklch(48% 0.0719 144.8)",
+          "oklch(59% 0.0719 144.8)",
+          "oklch(70% 0.0719 144.8)",
+          "oklch(81% 0.0719 144.8)",
+          "oklch(92% 0.0719 144.8)"
+        ]
+      },
+      "done-sage-bright": {
+        "role": "tertiary",
+        "displayName": "Done Sage Bright",
+        "canonical": "oklch(79.2% 0.0537 145.1)"
+      }
+    },
+    "typographyMeta": {
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Row status and time, copy chips, subheads. CSS token --text-micro (0.65625rem)."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, pills, nav, uppercase chrome labels, mono chrome. CSS token --text-label (0.75rem)."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Status line and tabular data. CSS token --text-data (0.78125rem)."
+      },
+      "body-sm": {
+        "displayName": "Body Small",
+        "purpose": "Summaries, notes, toast. CSS token --text-body-sm (0.8125rem)."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base UI copy. CSS token --text-body (0.9375rem)."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Task detail title. CSS token --text-heading (1rem)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Cockpit wordmark, carrying --tracking-display (0.18em). CSS token --text-title (1.0625rem)."
+      },
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page-level heading on Settings. CSS token --text-display (1.25rem). Not a display face — the system has none."
+      },
+      "input": {
+        "displayName": "Input",
+        "purpose": "Form controls and paste fallbacks. Deliberate literal 16px, outside the rem ramp, to stop iOS Safari auto-zoom."
+      },
+      "narrow-body": {
+        "displayName": "Narrow Body",
+        "purpose": "Body copy under the 380px narrow-phone step. Literal 14px, outside the rem ramp."
+      },
+      "icon-glyph": {
+        "displayName": "Icon Glyph",
+        "purpose": "Literal glyph sizes for the chevron, expand, add and refresh marks. Drawings, not type."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Terminal-adjacent output and anything the CLI would speak: code, commands, paths. The xterm pane's own size is pinch-controlled and outside this ramp."
+      }
+    },
+    "shadows": [
+      {
+        "name": "chrome-lift",
+        "value": "0 -6px 20px rgba(0, 0, 0, 0.28)",
+        "purpose": "Bottom nav and result panel — the only surfaces that sit above the scroll canvas."
+      },
+      {
+        "name": "elev-1",
+        "value": "0 1px 2px rgba(0, 0, 0, 0.28)",
+        "purpose": "Rare raised moments. Tuned for the dark charcoal surface, not flat black. Do not stack under every card."
+      },
+      {
+        "name": "elev-2",
+        "value": "0 6px 20px rgba(0, 0, 0, 0.34)",
+        "purpose": "Floating chrome above content. Same restraint as elev-1."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Default easing for state feedback: background, border-color and color changes."
+      },
+      {
+        "name": "ease-spring",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Settle easing for transform moves — sheet drag release and page swipe commit."
+      },
+      {
+        "name": "duration-state",
+        "value": "140ms",
+        "purpose": "Hover, focus and tone changes on actions, pills and nav. The system's default beat."
+      },
+      {
+        "name": "duration-settle",
+        "value": "220ms",
+        "purpose": "Transform settles, including the swipe page commit. The ceiling — motion is state feedback, never page choreography."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "380px",
+        "purpose": "Narrow-phone step: body drops to 14px and the header title to 16px."
+      },
+      {
+        "name": "shell",
+        "value": "560px",
+        "purpose": "CSS token --shell. Caps shell and bottom-nav width; content centres beyond it."
+      },
+      {
+        "name": "phone",
+        "value": "767px",
+        "purpose": "Phone chrome upper bound, paired with a coarse-pointer short-landscape clause so a landscape phone keeps phone treatment."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one decisive action on a screen: Soft Steel Blue fill, full pill, 44px touch floor.",
+      "html": "<button class=\"ds-action ds-action-primary\">Open</button>",
+      "css": ".ds-action { flex: 0 0 auto; background: transparent; border: 1px solid var(--rule-strong, #454545); border-radius: 999px; color: var(--ink, #e6e6e6); font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; padding: 10px 16px; min-height: 44px; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; } .ds-action-primary { background: var(--accent, #87afd7); border-color: var(--accent, #87afd7); color: var(--paper, #161616); } .ds-action-primary:hover, .ds-action-primary:focus-visible { background: var(--accent-bright, #a3c6e8); border-color: var(--accent-bright, #a3c6e8); outline: none; } .ds-action-primary:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Every non-primary operator action. Transparent with a Rule Strong hairline; hover strengthens the border rather than filling.",
+      "html": "<button class=\"ds-action-secondary\">Details</button>",
+      "css": ".ds-action-secondary { flex: 0 0 auto; background: transparent; border: 1px solid var(--rule-strong, #454545); border-radius: 999px; color: var(--ink, #e6e6e6); font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; padding: 10px 16px; min-height: 44px; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; } .ds-action-secondary:hover, .ds-action-secondary:focus-visible { border-color: var(--ink-soft, #c6c6c6); outline: none; }"
+    },
+    {
+      "name": "Destructive Action",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Fault Rose text on a deep rose hairline at rest; fills only on hover or the confirm step, which nudges once.",
+      "html": "<button class=\"ds-action-destructive\">Drop</button>",
+      "css": ".ds-action-destructive { flex: 0 0 auto; background: transparent; border: 1px solid var(--danger-deep, #5f3535); border-radius: 999px; color: var(--danger, #d78787); font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; padding: 10px 16px; min-height: 44px; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; } .ds-action-destructive:hover, .ds-action-destructive:focus-visible { background: var(--danger, #d78787); border-color: var(--danger-bright, #e3a5a5); color: var(--paper, #161616); outline: none; }"
+    },
+    {
+      "name": "Primary Pill",
+      "kind": "chip",
+      "refersTo": "pill-primary",
+      "description": "The compact sibling of the action button — connection, result, sheet and pane chrome. Same pill language at a 34px height.",
+      "html": "<button class=\"ds-pill ds-pill-primary\">Retry</button>",
+      "css": ".ds-pill { background: transparent; border: 1px solid var(--rule-strong, #454545); border-radius: 999px; color: var(--ink, #e6e6e6); font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; padding: 8px 16px; min-height: 34px; transition: background 140ms ease, border-color 140ms ease, color 140ms ease; } .ds-pill-primary { background: var(--accent, #87afd7); border-color: var(--accent, #87afd7); color: var(--paper, #161616); } .ds-pill-primary:hover, .ds-pill-primary:focus-visible { background: var(--accent-bright, #a3c6e8); border-color: var(--accent-bright, #a3c6e8); outline: none; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Soft Charcoal fill on a Rule Strong hairline. The 16px type is deliberate: anything smaller makes iOS Safari zoom the viewport on focus.",
+      "html": "<input class=\"ds-field\" type=\"text\" value=\"web/page-switching\" aria-label=\"Task handle\" />",
+      "css": ".ds-field { width: 100%; padding: 10px 12px; font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 16px; background: var(--paper, #161616); color: var(--ink, #e6e6e6); border: 1px solid var(--rule-strong, #454545); border-radius: var(--radius-sm, 6px); transition: border-color 140ms ease; } .ds-field:focus { outline: none; border-color: var(--accent-bright, #a3c6e8); }"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "refersTo": "nav-new-task",
+      "description": "Two-column fixed bar capped at the shell width. New is the sole new-task CTA and the only filled cell; the current page takes an accent wash and border. Opaque paper, not blur: iOS restores backdrop-filter layers as a black tile after backgrounding.",
+      "html": "<nav class=\"ds-bottom-nav\"><button aria-current=\"page\">Tasks</button><button data-bottom-action=\"new-task\">New</button></nav>",
+      "css": ".ds-bottom-nav { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; width: min(560px, 100%); margin: 0 auto; padding: 8px 16px; border-top: 1px solid var(--rule, #2a2a2a); background: var(--paper, #161616); box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28); } .ds-bottom-nav button { min-height: 44px; border: 1px solid transparent; border-radius: var(--radius-sm, 6px); background: transparent; color: var(--ink-muted, #a8a8a8); font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; transition: background 140ms ease, color 140ms ease; } .ds-bottom-nav button:hover, .ds-bottom-nav button:focus-visible { background: var(--paper-raised, #242424); color: var(--ink, #e6e6e6); outline: none; } .ds-bottom-nav button[aria-current=\"page\"] { border-color: var(--accent, #87afd7); background: color-mix(in srgb, var(--accent-deep, #24384c) 55%, var(--paper-tint, #1d1d1d)); color: var(--ink, #e6e6e6); } .ds-bottom-nav button[data-bottom-action=\"new-task\"] { background: var(--accent, #87afd7); color: var(--paper, #161616); } .ds-bottom-nav button[data-bottom-action=\"new-task\"]:hover, .ds-bottom-nav button[data-bottom-action=\"new-task\"]:focus-visible { background: var(--accent-bright, #a3c6e8); color: var(--paper, #161616); }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "custom",
+      "refersTo": "status-dot",
+      "description": "The whole status vocabulary in 9px. Fills from --tone, which a tone-* class sets; running pulses and collapses under reduced motion. Never paired with a side stripe on the row.",
+      "html": "<span class=\"ds-status-row ds-tone-running\"><span class=\"ds-status-dot\"></span>Running</span>",
+      "css": ".ds-status-row { display: inline-flex; align-items: center; gap: 8px; font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 12.5px; color: var(--ink-muted, #a8a8a8); } .ds-tone-running { --tone: var(--accent, #87afd7); --tone-bg: rgba(135, 175, 215, 0.14); } .ds-status-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--tone, var(--rule-strong, #454545)); animation: ds-pulse 1.6s ease-in-out infinite; } @keyframes ds-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } } @media (prefers-reduced-motion: reduce) { .ds-status-dot { animation: none; } }"
+    },
+    {
+      "name": "Interact Strip",
+      "kind": "custom",
+      "description": "Signature surface. Structured Approve/Deny for the agent, as a flat hairline band above the xterm pane — deliberately not a composer, because the raw terminal owns the work.",
+      "html": "<div class=\"ds-interact\"><span class=\"ds-interact-prompt\">Apply patch to <code>routes.ts</code>?</span><span class=\"ds-interact-actions\"><button class=\"ds-pill\">Deny</button><button class=\"ds-pill ds-pill-primary\">Approve</button></span></div>",
+      "css": ".ds-interact { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--paper-tint, #1d1d1d); border-top: 1px solid var(--rule, #2a2a2a); border-bottom: 1px solid var(--rule, #2a2a2a); } .ds-interact-prompt { font-family: ui-sans-serif, 'Avenir Next', 'Helvetica Neue', system-ui, -apple-system, sans-serif; font-size: 13px; color: var(--ink, #e6e6e6); } .ds-interact-prompt code { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace; font-size: 12px; color: var(--ink-soft, #c6c6c6); } .ds-interact-actions { display: flex; gap: 8px; flex: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Ajax",
+    "overview": "Ajax is the product and the visual brief: a pocket operator console for a local agent fleet. Soft Charcoal surfaces, Soft Steel Blue as the running signal, and a terminal pane that owns the work. Chrome is sparse, pill-decisive, and mobile-first for Safari on iPhone — status, required decision, then the raw tmux/xterm bridge.\n\nDensity stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are CLI-locked to match Native Cockpit. Motion is short state feedback (≈140–220ms), never page choreography. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.",
+    "keyCharacteristics": [
+      "Soft Charcoal stack with hairline rules; depth mostly from paper steps",
+      "Soft Steel Blue as primary action and running tone; semantic amber / rose / sage for wait / fault / done",
+      "Pill actions (44px min) and uppercase tracked chrome labels",
+      "Shell width capped at 560px; iOS safe-area and keyboard geometry are first-class",
+      "Terminal is the signature surface; UI never competes with the pane",
+      "Fixed rem type ramp in CSS (`--text-micro` … `--text-display`); no Inter in the stack"
+    ],
+    "rules": [
+      {
+        "name": "The One Tone Rule",
+        "body": "Status is a single `--tone` / `--tone-bg` pair consumed by dots, badges, rows, and interact pills. Never invent a parallel status color path.",
+        "section": "colors"
+      },
+      {
+        "name": "The Accent Rarity Rule",
+        "body": "Soft Steel Blue and semantic accents appear for running state, primary CTA, or attention — not as decorative fill across idle chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The No-Display Rule",
+        "body": "Never introduce a display or serif face into Cockpit chrome.",
+        "section": "typography"
+      },
+      {
+        "name": "The Label Cadence Rule",
+        "body": "Uppercase + tracked labels are reserved for chrome (header, empty, settings), not for every section heading on a page.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Side-Stripe Rule",
+        "body": "Never use `border-left` / `border-right` > 1px as a status accent — use `--tone` / section grouping.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Task rows and content panels stay tonal. If a shadow appears on a list card, remove it.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do lead every task screen with status + next safe action, then the terminal.",
+      "Do use Soft Steel Blue only for primary CTA and running/selection state.",
+      "Do keep actions pill-shaped with ≥44px height on touch.",
+      "Do convey depth with Soft Charcoal paper steps before reaching for shadow.",
+      "Do keep accents locked to CLI cockpit values (xterm 110 / 179 / 174 / 108).",
+      "Do respect `prefers-reduced-motion` (collapse pulse/nudge/transitions).",
+      "Do use the rem type ramp tokens for UI type; keep listed literal exceptions only."
+    ],
+    "donts": [
+      "Don't ship generic SaaS dashboards: card grids, metric strips, soft purple/indigo chrome.",
+      "Don't build overbuilt IDE shells: too many panels and tabs fighting the terminal.",
+      "Don't use side-stripe borders (`border-left` / `border-right` > 1px) as status accents — use the tone system.",
+      "Don't use gradient text, glass cards as decoration, or hero-metric templates.",
+      "Don't put a browser composer or snapshot viewer where the raw terminal belongs — except on the flag-gated orchestration session route.",
+      "Don't invent a second status color vocabulary outside `--tone`.",
+      "Don't duplicate the New-task CTA (bottom-nav New only)."
+    ]
+  }
 }

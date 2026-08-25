@@ -3,7 +3,7 @@
 // addInitScript before boot, matching e2e/smoke.test.ts.
 
 import { test, expect, type Page } from "@playwright/test";
-import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket } from "./fixtures";
+import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket, sessionSnapshotJson } from "./fixtures";
 
 /** Sane upper bound for a single compact task row (min-height + padding + subline). */
 const MAX_TASK_ROW_HEIGHT_PX = 96;
@@ -114,6 +114,57 @@ async function visibleAppBand(page: Page) {
   });
 }
 
+type OutletFillLayout = {
+  ok: boolean;
+  flexGrow: string;
+  outletHeight: number;
+  routeScrollClientHeight: number;
+  heightDelta: number;
+};
+
+/** Cross-slide wrappers stay in the DOM; outlet flex rules must use descendant selectors. */
+async function probeOutletFillsRouteScroll(
+  page: Page,
+  outletKind: "task" | "session",
+): Promise<OutletFillLayout> {
+  return page.evaluate((kind) => {
+    const routeScroll = document.querySelector('[data-testid="route-scroll"]');
+    const outlet = document.querySelector(`[data-outlet="${kind}"]`);
+    if (!routeScroll || !outlet) {
+      return {
+        ok: false,
+        flexGrow: "",
+        outletHeight: 0,
+        routeScrollClientHeight: 0,
+        heightDelta: Number.POSITIVE_INFINITY,
+      };
+    }
+    const routeStyle = getComputedStyle(routeScroll);
+    const outletStyle = getComputedStyle(outlet);
+    const paddingBlock =
+      Number.parseFloat(routeStyle.paddingTop) + Number.parseFloat(routeStyle.paddingBottom);
+    const routeScrollContentHeight = routeScroll.clientHeight - paddingBlock;
+    const outletHeight = Math.round(outlet.getBoundingClientRect().height);
+    return {
+      ok: true,
+      flexGrow: outletStyle.flexGrow,
+      outletHeight,
+      routeScrollClientHeight: routeScrollContentHeight,
+      heightDelta: Math.abs(outletHeight - routeScrollContentHeight),
+    };
+  }, outletKind);
+}
+
+function expectOutletFillsRouteScroll(layout: OutletFillLayout, outletKind: "task" | "session") {
+  expect(layout.ok, `${outletKind} outlet and route-scroll present`).toBe(true);
+  if (!layout.ok) return;
+  expect(layout.flexGrow, `${outletKind} outlet flex-grow`).toBe("1");
+  expect(
+    layout.heightDelta,
+    `${outletKind} outlet height ${layout.outletHeight} vs route-scroll ${layout.routeScrollClientHeight}`,
+  ).toBeLessThanOrEqual(2);
+}
+
 // ---- tests ---------------------------------------------------------------
 
 test("dashboard has exactly one normal route scroll owner", async ({ page }) => {
@@ -124,6 +175,72 @@ test("dashboard has exactly one normal route scroll owner", async ({ page }) => 
   const { routeScrollCount, rogueOwners } = await probeNormalRouteScrollOwners(page);
   expect(routeScrollCount, "route-scroll elements").toBe(1);
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
+});
+
+test("task workspace cross-slide wrappers are display:contents at rest", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(page.locator('[data-testid="task-terminal-panel"]')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const layout = await page.evaluate(() => {
+    const host = document.querySelector(".page-cross-slide-host");
+    const pane = document.querySelector(".page-cross-slide-pane");
+    const outlet = document.querySelector('[data-outlet="task"]');
+    if (!host || !pane || !outlet) return { ok: false as const };
+
+    return {
+      ok: true as const,
+      hostDisplay: getComputedStyle(host).display,
+      paneDisplay: getComputedStyle(pane).display,
+      hostIdle: host.classList.contains("page-cross-slide-host-idle"),
+      paneIdle: pane.classList.contains("page-cross-slide-pane-idle"),
+    };
+  });
+
+  expect(layout.ok).toBe(true);
+  if (!layout.ok) return;
+  expect(layout.hostIdle).toBe(true);
+  expect(layout.paneIdle).toBe(true);
+  expect(layout.hostDisplay).toBe("contents");
+  expect(layout.paneDisplay).toBe("contents");
+});
+
+test("task outlet fills route-scroll despite cross-slide wrappers", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(page.locator('[data-testid="task-terminal-panel"]')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const layout = await probeOutletFillsRouteScroll(page, "task");
+  expectOutletFillsRouteScroll(layout, "task");
+});
+
+test("session outlet fills route-scroll despite cross-slide wrappers", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, session_capable: true, agent: "Cursor" },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(sessionSnapshotJson({ cursor: 0, model: "auto", turnState: "idle" }));
+  });
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible({ timeout: 10_000 });
+
+  const layout = await probeOutletFillsRouteScroll(page, "session");
+  expectOutletFillsRouteScroll(layout, "session");
 });
 
 test("html, body, and #app never become scroll containers on the dashboard", async ({ page }) => {

@@ -176,7 +176,7 @@ describe("App task view preference", () => {
     expect(routingSource).toMatch(/taskHash\(handle\)/);
 
     const diffBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
-    expect(diffBlock).toMatch(/resolveTaskWorkspaceHash\(route\.handle/);
+    expect(diffBlock).toMatch(/resolveTaskWorkspaceHash\(handle/);
     expect(diffBlock).toMatch(/detailSessionCapable\(/);
   });
 });

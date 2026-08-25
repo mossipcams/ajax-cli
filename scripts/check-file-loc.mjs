@@ -180,7 +180,11 @@ export function parseNumstat(text) {
     });
 }
 
-export function evaluateStagedFiles(entries, lineCountAtIndex) {
+export function evaluateStagedFiles(
+  entries,
+  lineCountAtIndex,
+  { skipPrAggregate = false } = {},
+) {
   const findings = [];
   let changedLines = 0;
 
@@ -200,9 +204,11 @@ export function evaluateStagedFiles(entries, lineCountAtIndex) {
     findings.push(...evaluateFileLoc(path, lineCountAtIndex(path)));
   }
 
-  const prFinding = evaluatePrLoc(changedLines);
-  if (prFinding) {
-    findings.push(prFinding);
+  if (!skipPrAggregate) {
+    const prFinding = evaluatePrLoc(changedLines);
+    if (prFinding) {
+      findings.push(prFinding);
+    }
   }
 
   return findings;
@@ -234,6 +240,7 @@ export async function inspectChangedFileLoc(
 export async function inspectStagedFileLoc({
   runGit,
   readIndex = (path) => runGit(["show", `:${path}`]),
+  skipPrAggregate = false,
 } = {}) {
   const entries = parseNumstat(
     await runGit([
@@ -253,6 +260,7 @@ export async function inspectStagedFileLoc({
   const findings = evaluateStagedFiles(
     entries,
     (path) => lineCounts.get(path) ?? 0,
+    { skipPrAggregate },
   );
 
   return {
@@ -298,16 +306,28 @@ async function runGit(args) {
   return result.stdout;
 }
 
+async function mergeInProgress(runGit) {
+  try {
+    await runGit(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const refs = resolveRefs();
 
   const root = join(fileURLToPath(import.meta.url), "..", "..");
+  const staged = process.argv.includes("--staged");
+  const skipPrAggregate = staged && (await mergeInProgress(runGit));
   const result = refs
     ? await inspectChangedFileLoc(refs.base, refs.head, { root, runGit })
     : process.argv.includes("--staged")
       ? await inspectStagedFileLoc({
           runGit,
           readIndex: (path) => runGit(["show", `:${path}`]),
+          skipPrAggregate,
         })
       : null;
 
@@ -322,7 +342,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(
     refs
       ? `Checked ${scanned.length} changed source file(s) between ${refs.base.slice(0, 7)} and ${refs.head.slice(0, 7)}.`
-      : `Checked ${scanned.length} staged source file(s).`,
+      : skipPrAggregate
+        ? `Checked ${scanned.length} staged source file(s); skipped PR aggregate LOC for merge commit.`
+        : `Checked ${scanned.length} staged source file(s).`,
   );
 
   for (const finding of [...warnings, ...errors]) {

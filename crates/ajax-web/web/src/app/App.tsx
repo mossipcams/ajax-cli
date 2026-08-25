@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { Activity, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   dashboardHash,
   parseRoute,
@@ -48,6 +48,11 @@ import {
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
+import type { Route } from "@/shared/lib/routes";
+import {
+  PageCrossSlideProvider,
+  usePageCrossSlide,
+} from "@/shared/hooks/useSwipePageTransition";
 import type { BrowserCockpitView, WebAction } from "@/shared/lib/types";
 import {
   beginInteraction,
@@ -90,7 +95,50 @@ function routeStillOnDroppedTask(
   );
 }
 
+function workspaceSurfaceVisible(
+  surface: "task" | "session" | "diff",
+  activeRoute: Route,
+  leaving: Route | null,
+): boolean {
+  const routeMatches = (candidate: Route) => {
+    if (surface === "task") return candidate.kind === "task";
+    if (surface === "session") return candidate.kind === "session" && Boolean(candidate.handle);
+    return candidate.kind === "diff";
+  };
+  return routeMatches(activeRoute) || (leaving ? routeMatches(leaving) : false);
+}
+
+function workspaceSurfaceKind(surface: "task" | "session" | "diff"): Route["kind"] {
+  if (surface === "session") return "session";
+  if (surface === "diff") return "diff";
+  return "task";
+}
+
+function crossSlideSurfaceKey(activeRoute: Route): string {
+  if (activeRoute.kind === "task" && activeRoute.handle) {
+    return `surface-task-${activeRoute.handle}`;
+  }
+  if (activeRoute.kind === "session") {
+    return activeRoute.handle ? `surface-session-${activeRoute.handle}` : "surface-session-new";
+  }
+  if (activeRoute.kind === "diff" && activeRoute.handle) {
+    return `surface-diff-${activeRoute.handle}`;
+  }
+  if (activeRoute.kind === "project" && activeRoute.project) {
+    return `surface-project-${activeRoute.project}`;
+  }
+  return `surface-${activeRoute.kind}`;
+}
+
 export default function App() {
+  return (
+    <PageCrossSlideProvider>
+      <AppContent />
+    </PageCrossSlideProvider>
+  );
+}
+
+function AppContent() {
   const route = useHashRoute();
   const orchestrationChat = useOrchestrationChatEnabled();
   const {
@@ -103,10 +151,24 @@ export default function App() {
     markConnected,
   } = useCockpitResource();
   const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
-  const taskOpenHandle =
-    route.kind === "task" || route.kind === "diff" || route.kind === "session"
-      ? (route.handle ?? null)
-      : null;
+  const crossSlide = usePageCrossSlide();
+  const crossSlideActive = crossSlide?.active ?? false;
+  const leavingRoute = crossSlide?.leavingRoute ?? null;
+  const taskOpenHandle = (() => {
+    if (route.kind === "task" || route.kind === "diff" || route.kind === "session") {
+      return route.handle ?? null;
+    }
+    if (
+      crossSlideActive &&
+      leavingRoute &&
+      (leavingRoute.kind === "task" ||
+        leavingRoute.kind === "diff" ||
+        leavingRoute.kind === "session")
+    ) {
+      return leavingRoute.handle ?? null;
+    }
+    return null;
+  })();
   const { detail, reload } = useTaskDetailResource(taskOpenHandle, {
     applyCockpit,
     applyConnectionError,
@@ -495,7 +557,253 @@ export default function App() {
     return () => node.removeEventListener("animationend", onAnimationEnd);
   }, [swipeEnter, route.kind]);
 
-  const swipeOutletClass = swipeEnterClassName(swipeEnter);
+  const swipeOutletClass = crossSlideActive ? "" : swipeEnterClassName(swipeEnter);
+
+  function workspacePaneStyle(surface: "task" | "session" | "diff"): CSSProperties | undefined {
+    if (!crossSlideActive || !crossSlide || !leavingRoute) return undefined;
+    if (workspaceSurfaceKind(surface) === leavingRoute.kind) {
+      return crossSlide.paneStyle("leaving");
+    }
+    if (workspaceSurfaceKind(surface) === route.kind) {
+      return crossSlide.paneStyle("entering");
+    }
+    return undefined;
+  }
+
+  function renderWorkspaceStack(handle: string): ReactNode {
+    const diffSelectedPr =
+      route.kind === "diff" && route.handle === handle
+        ? route.pr
+        : leavingRoute?.kind === "diff" && leavingRoute.handle === handle
+          ? leavingRoute.pr
+          : undefined;
+
+    const surfaceShell = (surface: "task" | "session" | "diff", content: ReactNode) => {
+      const visible = workspaceSurfaceVisible(surface, route, leavingRoute);
+      const leavingSurface = leavingRoute?.kind === workspaceSurfaceKind(surface);
+      const mountContent = visible || (crossSlideActive && leavingSurface);
+      const motionStyle = workspacePaneStyle(surface);
+      const paneAnimating = motionStyle !== undefined;
+      const isLeaving = leavingSurface;
+      const isEntering = crossSlideActive && route.kind === workspaceSurfaceKind(surface);
+      return (
+        <Activity key={`activity-${surface}-${handle}`} mode={visible ? "visible" : "hidden"}>
+          {mountContent ? (
+            <div
+              className={[
+                "page-cross-slide-pane",
+                paneAnimating
+                  ? isLeaving
+                    ? "page-cross-slide-leaving"
+                    : "page-cross-slide-entering"
+                  : "page-cross-slide-pane-idle",
+              ].join(" ")}
+              style={motionStyle}
+              onTransitionEnd={isEntering ? crossSlide?.onEnteringTransitionEnd : undefined}
+              aria-hidden={isLeaving ? true : undefined}
+            >
+              {content}
+            </div>
+          ) : null}
+        </Activity>
+      );
+    };
+
+    return (
+      <div
+        className={`page-cross-slide-host${crossSlideActive ? "" : " page-cross-slide-host-idle"}`}
+      >
+        {surfaceShell(
+          "task",
+          <TaskWorkspaceRoute
+            kind="task"
+            handle={handle}
+            orchestrationChat={orchestrationChat}
+            detail={detail}
+            reload={reload}
+            outletRef={route.kind === "task" ? outletSwipeRef : undefined}
+            outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
+            onGo={go}
+            onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+            onOpenDiff={() => go(taskDiffHash(handle))}
+            onCockpit={applyCockpit}
+            onResult={showResult}
+            onDismiss={() => go(dashboardHash())}
+            pendingConfirmAction={pendingConfirm?.action.action ?? null}
+            onCancelPendingConfirm={cancelPendingConfirm}
+          />,
+        )}
+        {orchestrationChat
+          ? surfaceShell(
+              "session",
+              <TaskWorkspaceRoute
+                kind="session"
+                handle={handle}
+                orchestrationChat={orchestrationChat}
+                detail={detail}
+                reload={reload}
+                outletRef={route.kind === "session" ? outletSwipeRef : undefined}
+                outletClassName={
+                  route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
+                }
+                onGo={go}
+                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                onOpenDiff={() => go(taskDiffHash(handle))}
+                onCockpit={applyCockpit}
+                onResult={showResult}
+                onDismiss={() => go(dashboardHash())}
+                pendingConfirmAction={pendingConfirm?.action.action ?? null}
+                onCancelPendingConfirm={cancelPendingConfirm}
+              />,
+            )
+          : null}
+        {surfaceShell(
+          "diff",
+          <section
+            ref={route.kind === "diff" ? outletSwipeRef : undefined}
+            className={route.kind === "diff" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
+            data-outlet="diff"
+            data-testid="outlet-diff"
+            data-handle={handle}
+            aria-live="polite"
+          >
+            {detail.status === "loading" ? (
+              <Skeleton testid="task-skeleton" rows={6} />
+            ) : detail.data ? (
+              <DiffReview
+                handle={handle}
+                title={detail.data.title}
+                selectedPr={diffSelectedPr}
+                onBack={() => {
+                  go(
+                    resolveTaskWorkspaceHash(handle, {
+                      orchestrationChat,
+                      sessionCapable: detailSessionCapable(
+                        detail.data,
+                        handle,
+                        cockpitRef.current.data,
+                      ),
+                    }),
+                  );
+                }}
+                onSelectPr={(pr) => {
+                  go(taskDiffHash(handle, pr));
+                }}
+              />
+            ) : (
+              <TaskLoadError
+                message={detail.error?.message ?? "Request failed"}
+                onRetry={reload}
+              />
+            )}
+          </section>,
+        )}
+      </div>
+    );
+  }
+
+  function renderRouteOutlet(
+    activeRoute: Route,
+    options: {
+      attachOutletRef?: boolean;
+      outletClassName?: string;
+    } = {},
+  ): ReactNode {
+    const attachOutletRef = options.attachOutletRef ?? false;
+    const outletClassName = options.outletClassName;
+    const surfaceKey = crossSlideSurfaceKey(activeRoute);
+
+    if (activeRoute.kind === "settings") {
+      return (
+        <section
+          key={surfaceKey}
+          data-outlet="settings"
+          data-testid="outlet-settings"
+          aria-live="polite"
+        >
+          <SettingsView
+            detailHandle={null}
+            onResult={showResult}
+            onBack={() => go(dashboardHash())}
+            onRestarted={() => {
+              go(dashboardHash());
+              void loadCockpit();
+            }}
+          />
+        </section>
+      );
+    }
+
+    if (activeRoute.kind === "session" && orchestrationChat && !activeRoute.handle) {
+      return (
+        <section
+          key={surfaceKey}
+          ref={attachOutletRef ? outletSwipeRef : undefined}
+          className={outletClassName || undefined}
+          data-outlet="session"
+          data-testid="outlet-session"
+          aria-live="polite"
+        >
+          <NewTaskSheet
+            repos={cockpit.data?.repos?.repos ?? []}
+            selectedProject={selectedProject}
+            orchestrationChat={orchestrationChat}
+            onClose={() => go(dashboardHash())}
+            onCockpit={applyCockpit}
+            onOpenTask={(handle, latestCockpit) => openTask(handle, latestCockpit)}
+          />
+        </section>
+      );
+    }
+
+    return (
+      <section
+        key={surfaceKey}
+        ref={(node) => {
+          if (attachOutletRef) {
+            pullToRefreshRef(node);
+            outletSwipeRef.current = node;
+          }
+        }}
+        className={outletClassName || undefined}
+        data-outlet={activeRoute.kind === "project" ? "project" : "dashboard"}
+        data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
+        aria-live="polite"
+      >
+        <div
+          className={`pull-indicator${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
+          style={{ height: `${pullDistance}px` }}
+          aria-hidden="true"
+        >
+          <span className="pull-spinner" />
+        </div>
+        {cockpit.data ? (
+          <TaskList
+            cockpit={cockpit.data}
+            selectedProject={selectedProject}
+            onSelectProject={(project: string | null) =>
+              go(project ? projectHash(project) : dashboardHash())
+            }
+            onOpenTask={openTask}
+            onCockpit={applyCockpit}
+            onResult={showResult}
+            onMutated={() => loadCockpit()}
+            pendingConfirmAction={pendingConfirm?.action.action ?? null}
+            onCancelPendingConfirm={cancelPendingConfirm}
+          />
+        ) : (
+          <Skeleton testid="dashboard-skeleton" rows={4} />
+        )}
+      </section>
+    );
+  }
+
+  const routeOutlet = taskOpenHandle
+    ? renderWorkspaceStack(taskOpenHandle)
+    : renderRouteOutlet(route, {
+        attachOutletRef: true,
+        outletClassName: swipeOutletClass || undefined,
+      });
 
   function releaseReloadLatchIfNavigationMissed() {
     reloadLatchRef.current = false;
@@ -607,155 +915,7 @@ export default function App() {
         nav={nav}
         className={isSessionRoute ? "app-shell--session" : undefined}
       >
-        <RouteScroll>
-          {route.kind === "settings" ? (
-            <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
-              <SettingsView
-                detailHandle={null}
-                onResult={showResult}
-                onBack={() => go(dashboardHash())}
-                onRestarted={() => {
-                  go(dashboardHash());
-                  void loadCockpit();
-                }}
-              />
-            </section>
-          ) : route.kind === "diff" && route.handle ? (
-            <section
-              ref={outletSwipeRef}
-              className={swipeOutletClass || undefined}
-              data-outlet="diff"
-              data-testid="outlet-diff"
-              data-handle={route.handle}
-              aria-live="polite"
-            >
-              {detail.status === "loading" ? (
-                <Skeleton testid="task-skeleton" rows={6} />
-              ) : detail.data ? (
-                <DiffReview
-                  handle={route.handle}
-                  title={detail.data.title}
-                  selectedPr={route.pr}
-                  onBack={() => {
-                    if (route.kind === "diff" && route.handle) {
-                      go(
-                        resolveTaskWorkspaceHash(route.handle, {
-                          orchestrationChat,
-                          sessionCapable: detailSessionCapable(
-                            detail.data,
-                            route.handle,
-                            cockpitRef.current.data,
-                          ),
-                        }),
-                      );
-                    }
-                  }}
-                  onSelectPr={(pr) => {
-                    if (route.kind === "diff" && route.handle) {
-                      go(taskDiffHash(route.handle, pr));
-                    }
-                  }}
-                />
-              ) : (
-                <TaskLoadError
-                  message={detail.error?.message ?? "Request failed"}
-                  onRetry={reload}
-                />
-              )}
-            </section>
-          ) : route.kind === "session" && orchestrationChat ? (
-            route.handle ? (
-              <TaskWorkspaceRoute
-                kind="session"
-                handle={route.handle}
-                orchestrationChat={orchestrationChat}
-                detail={detail}
-                reload={reload}
-                outletRef={outletSwipeRef}
-                outletClassName={swipeOutletClass || undefined}
-                onGo={go}
-                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-                onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
-                onCockpit={applyCockpit}
-                onResult={showResult}
-                onDismiss={() => go(dashboardHash())}
-                pendingConfirmAction={pendingConfirm?.action.action ?? null}
-                onCancelPendingConfirm={cancelPendingConfirm}
-              />
-            ) : (
-              <section
-                ref={outletSwipeRef}
-                className={swipeOutletClass || undefined}
-                data-outlet="session"
-                data-testid="outlet-session"
-                aria-live="polite"
-              >
-                <NewTaskSheet
-                  repos={cockpit.data?.repos?.repos ?? []}
-                  selectedProject={selectedProject}
-                  orchestrationChat={orchestrationChat}
-                  onClose={() => go(dashboardHash())}
-                  onCockpit={applyCockpit}
-                  onOpenTask={(handle, latestCockpit) => openTask(handle, latestCockpit)}
-                />
-              </section>
-            )
-          ) : route.kind === "task" && route.handle ? (
-            <TaskWorkspaceRoute
-              kind="task"
-              handle={route.handle}
-              orchestrationChat={orchestrationChat}
-              detail={detail}
-              reload={reload}
-              outletRef={outletSwipeRef}
-              outletClassName={swipeOutletClass || undefined}
-              onGo={go}
-              onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-              onOpenDiff={() => route.handle && go(taskDiffHash(route.handle))}
-              onCockpit={applyCockpit}
-              onResult={showResult}
-              onDismiss={() => go(dashboardHash())}
-              pendingConfirmAction={pendingConfirm?.action.action ?? null}
-              onCancelPendingConfirm={cancelPendingConfirm}
-            />
-          ) : (
-            <section
-              ref={(node) => {
-                pullToRefreshRef(node);
-                outletSwipeRef.current = node;
-              }}
-              className={swipeOutletClass || undefined}
-              data-outlet={route.kind === "project" ? "project" : "dashboard"}
-              data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
-              aria-live="polite"
-            >
-              <div
-                className={`pull-indicator${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
-                style={{ height: `${pullDistance}px` }}
-                aria-hidden="true"
-              >
-                <span className="pull-spinner" />
-              </div>
-              {cockpit.data ? (
-                <TaskList
-                  cockpit={cockpit.data}
-                  selectedProject={selectedProject}
-                  onSelectProject={(project: string | null) =>
-                    go(project ? projectHash(project) : dashboardHash())
-                  }
-                  onOpenTask={openTask}
-                  onCockpit={applyCockpit}
-                  onResult={showResult}
-                  onMutated={() => loadCockpit()}
-                  pendingConfirmAction={pendingConfirm?.action.action ?? null}
-                  onCancelPendingConfirm={cancelPendingConfirm}
-                />
-              ) : (
-                <Skeleton testid="dashboard-skeleton" rows={4} />
-              )}
-            </section>
-          )}
-        </RouteScroll>
+        <RouteScroll>{routeOutlet}</RouteScroll>
       </AppShell>
 
       {pendingConfirm ? (

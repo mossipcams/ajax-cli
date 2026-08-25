@@ -388,9 +388,13 @@ handlers exist.
 From a selected task, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
-`GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe navigation finger-follows, commits by sliding the page off-screen, then
-navigates with a one-shot CSS enter on the destination outlet; swipe-parallel
-button Back navigations use the same exit+enter contract; other chrome
+`GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe
+navigation finger-follows; on commit the shell keeps the outgoing workspace
+surface mounted (React `Activity`) while the destination slides in beside it as
+one continuous transform over roughly `SWIPE_PAGE_COMMIT_MS` (≈220ms),
+shortened on fast flicks when average gesture velocity is high. Button Back
+uses the same cross-slide commit path; list-to-task opens still use the
+one-shot CSS enter class when no swipe gesture is in flight; other chrome
 navigations may stay instant.
 Diff Review must not steal terminal horizontal pans. The browser submits only an
 Ajax task handle; `ajax-web` resolves that handle to the registered

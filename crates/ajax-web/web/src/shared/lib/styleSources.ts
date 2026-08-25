@@ -23,11 +23,14 @@ export const BASELINE = {
    * Re-measured after the live head stopped reprinting the transcript's tool
    * row: `.session-tool*` and `.session-head-thought` lost their only
    * consumer.
-   * Re-measured after removing dead `.detail-session-title` (PR #1056). */
-  sourceStylesCssBytes: 106_535,
-  builtAppCssBytes: 92_415,
-  builtAppCssGzipBytes: 16_261,
-  classSelectorLines: 592,
+   * Re-measured after removing dead `.detail-session-title` (PR #1056).
+   * Re-measured after page cross-slide host CSS and chat swipe compositor hints (#1070).
+   * Re-measured after cross-slide idle wrappers use display:contents (#1074).
+   * Re-measured after outlet flex selectors use descendant combinator (#1074). */
+  sourceStylesCssBytes: 107_336,
+  builtAppCssBytes: 92_978,
+  builtAppCssGzipBytes: 16_343,
+  classSelectorLines: 599,
   hasSelectors: 18,
 } as const;
 

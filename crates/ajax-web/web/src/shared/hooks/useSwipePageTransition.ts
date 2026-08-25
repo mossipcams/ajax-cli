@@ -1,12 +1,20 @@
 import {
+  createContext,
+  createElement,
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type RefObject,
+  type TransitionEvent as ReactTransitionEvent,
 } from "react";
 import {
+  crossSlideEnteringOffset,
+  crossSlideLeavingTarget,
+  crossSlideRemainingPx,
   navigateSwipeCommitOffset,
   navigateSwipeEnd,
   navigateSwipeMove,
@@ -15,10 +23,28 @@ import {
   type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
-import { setSwipeEnterDirection, type SwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import { parseRoute, type Route } from "@/shared/lib/routes";
+import { type SwipeEnterDirection, setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { captureSwipe, markNavigationStart } from "@/shared/lib/telemetry";
 import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
+
 export const SWIPE_PAGE_COMMIT_MS = 220;
+/** Serial exit animation + destination enter keyframe budget cross-slide replaces. */
+export const SERIAL_SWIPE_COMMIT_BUDGET_MS = SWIPE_PAGE_COMMIT_MS * 2;
+const SWIPE_COMMIT_MIN_MS = 80;
+const SWIPE_COMMIT_VELOCITY_FLOOR = 0.45;
+
+export function computeSwipeCommitDurationMs(
+  remainingPx: number,
+  velocityPxPerMs: number,
+  maxMs = SWIPE_PAGE_COMMIT_MS,
+  minMs = SWIPE_COMMIT_MIN_MS,
+): number {
+  if (velocityPxPerMs > SWIPE_COMMIT_VELOCITY_FLOOR && remainingPx > 0) {
+    return Math.round(Math.max(minMs, Math.min(maxMs, remainingPx / velocityPxPerMs)));
+  }
+  return maxMs;
+}
 
 export interface SwipePageTransitionOptions {
   onLeft?: () => void;
@@ -41,21 +67,215 @@ export interface SwipePageTransitionResult {
   commit: (direction: SwipePageCommitDirection) => void;
 }
 
-function readTouch(event: TouchEvent): { x: number; y: number } | null {
-  const touch = event.changedTouches[0] ?? event.touches[0];
-  if (!touch) return null;
-  return { x: touch.clientX, y: touch.clientY };
-}
+type SwipeOutcome = {
+  direction: "left" | "right";
+  duration_ms: number;
+  distance_px: number;
+  completed: boolean;
+  cancelled: boolean;
+  to_route?: string;
+};
+
+type CrossSlideCommitParams = {
+  direction: SwipeEnterDirection;
+  dragX: number;
+  pageWidth: number;
+  fromRoute: string;
+  swipeOutcome: SwipeOutcome;
+  navigate: () => void;
+};
+
+type ActiveCrossSlide = {
+  leavingRoute: Route;
+  direction: SwipeEnterDirection;
+  leavingX: number;
+  enteringX: number;
+  commitMs: number;
+  phase: "armed" | "animating";
+  swipeOutcome: SwipeOutcome;
+  fromRoute: string;
+  pageWidth: number;
+  settleStartedAt: number;
+};
+
+export type PageCrossSlideContextValue = {
+  active: boolean;
+  isBusy: () => boolean;
+  leavingRoute: Route | null;
+  beginCommit: (params: CrossSlideCommitParams) => boolean;
+  paneStyle: (role: "leaving" | "entering") => CSSProperties;
+  onEnteringTransitionEnd: (event: ReactTransitionEvent) => void;
+};
+
+const PageCrossSlideContext = createContext<PageCrossSlideContextValue | null>(null);
 
 function swipeVelocity(distance_px: number, duration_ms: number): number {
   if (duration_ms <= 0) return 0;
   return Math.round((distance_px / duration_ms) * 1000) / 1000;
 }
 
+function readTouch(event: TouchEvent): { x: number; y: number } | null {
+  const touch = event.changedTouches[0] ?? event.touches[0];
+  if (!touch) return null;
+  return { x: touch.clientX, y: touch.clientY };
+}
+
+/** Armed styles must paint before animating styles apply (double rAF); jsdom uses setTimeout. */
+export function scheduleCrossSlideAnimatingFlip(callback: () => void): void {
+  const useTimeoutPath =
+    typeof requestAnimationFrame !== "function" ||
+    (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent));
+
+  if (useTimeoutPath) {
+    window.setTimeout(callback, 0);
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(callback);
+  });
+}
+
+export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
+  const [active, setActive] = useState<ActiveCrossSlide | null>(null);
+  const activeRef = useRef<ActiveCrossSlide | null>(null);
+  activeRef.current = active;
+  const settleHeldRef = useRef(false);
+
+  const releaseSettleGesture = () => {
+    if (settleHeldRef.current) {
+      settleHeldRef.current = false;
+      gestureBusyGate.end();
+    }
+  };
+
+  const holdSettleGesture = () => {
+    if (!settleHeldRef.current) {
+      settleHeldRef.current = true;
+      gestureBusyGate.begin();
+    }
+  };
+
+  const finishCrossSlide = useCallback(() => {
+    const slide = activeRef.current;
+    if (!slide) return;
+    const settle_ms = Math.round(performance.now() - slide.settleStartedAt);
+    captureSwipe({
+      direction: slide.swipeOutcome.direction,
+      duration_ms: slide.swipeOutcome.duration_ms,
+      distance_px: slide.swipeOutcome.distance_px,
+      page_width_px: slide.pageWidth,
+      velocity_px_per_ms: swipeVelocity(
+        slide.swipeOutcome.distance_px,
+        slide.swipeOutcome.duration_ms,
+      ),
+      completed: slide.swipeOutcome.completed,
+      cancelled: slide.swipeOutcome.cancelled,
+      settle_ms,
+      from_route: slide.fromRoute,
+      ...(slide.swipeOutcome.to_route ? { to_route: slide.swipeOutcome.to_route } : {}),
+    });
+    activeRef.current = null;
+    setActive(null);
+    releaseSettleGesture();
+  }, []);
+
+  const beginCommit = useCallback((params: CrossSlideCommitParams) => {
+    if (activeRef.current) return false;
+    const leavingRoute = parseRoute(window.location.hash);
+    const remaining = crossSlideRemainingPx(
+      params.direction,
+      params.dragX,
+      params.pageWidth,
+    );
+    const commitMs = computeSwipeCommitDurationMs(
+      remaining,
+      swipeVelocity(params.swipeOutcome.distance_px, params.swipeOutcome.duration_ms),
+    );
+    holdSettleGesture();
+    const nextActive: ActiveCrossSlide = {
+      leavingRoute,
+      direction: params.direction,
+      leavingX: params.dragX,
+      enteringX: crossSlideEnteringOffset(params.direction, params.dragX, params.pageWidth),
+      commitMs,
+      phase: "armed",
+      swipeOutcome: params.swipeOutcome,
+      fromRoute: params.fromRoute,
+      pageWidth: params.pageWidth,
+      settleStartedAt: performance.now(),
+    };
+    activeRef.current = nextActive;
+    setActive(nextActive);
+    markNavigationStart(params.fromRoute, "swipe");
+    params.navigate();
+    scheduleCrossSlideAnimatingFlip(() => {
+      setActive((current) => {
+        if (!current || current.phase !== "armed") return current;
+        const animating = {
+          ...current,
+          phase: "animating" as const,
+          leavingX: crossSlideLeavingTarget(current.direction, current.pageWidth),
+          enteringX: 0,
+        };
+        activeRef.current = animating;
+        return animating;
+      });
+      window.setTimeout(finishCrossSlide, commitMs + 40);
+    });
+    return true;
+  }, [finishCrossSlide]);
+
+  const paneStyle = useCallback(
+    (role: "leaving" | "entering"): CSSProperties => {
+      if (!active) return {};
+      const x = role === "leaving" ? active.leavingX : active.enteringX;
+      return {
+        transform: `translate3d(${x}px, 0, 0)`,
+        transition:
+          active.phase === "animating"
+            ? `transform ${active.commitMs}ms var(--ease-spring)`
+            : "none",
+      };
+    },
+    [active],
+  );
+
+  const onEnteringTransitionEnd = useCallback(
+    (event: ReactTransitionEvent) => {
+      if (!activeRef.current || event.propertyName !== "transform") return;
+      finishCrossSlide();
+    },
+    [finishCrossSlide],
+  );
+
+  const isBusy = useCallback(() => activeRef.current !== null, []);
+
+  const value: PageCrossSlideContextValue = {
+    active: active !== null,
+    isBusy,
+    leavingRoute: active?.leavingRoute ?? null,
+    beginCommit,
+    paneStyle,
+    onEnteringTransitionEnd,
+  };
+
+  return createElement(PageCrossSlideContext.Provider, { value }, children);
+}
+
+function usePageCrossSlide(): PageCrossSlideContextValue | null {
+  return useContext(PageCrossSlideContext);
+}
+
+export { usePageCrossSlide };
+
 export function useSwipePageTransition(
   ref: RefObject<HTMLElement | null>,
   options: SwipePageTransitionOptions,
 ): SwipePageTransitionResult {
+  const crossSlide = usePageCrossSlide();
+  const crossSlideRef = useRef(crossSlide);
+  crossSlideRef.current = crossSlide;
   const optsRef = useRef(options);
   optsRef.current = options;
   const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
@@ -70,6 +290,8 @@ export function useSwipePageTransition(
   const dragGestureHeldRef = useRef(false);
   const settleGestureHeldRef = useRef(false);
   const commitRef = useRef<(direction: SwipePageCommitDirection) => void>(() => {});
+
+  const settleDurationRef = useRef(SWIPE_PAGE_COMMIT_MS);
 
   const holdDragGesture = () => {
     if (!dragGestureHeldRef.current) {
@@ -105,6 +327,7 @@ export function useSwipePageTransition(
   };
 
   useEffect(() => {
+    if (crossSlide?.active) return;
     const root = ref.current;
     if (!root) return;
 
@@ -146,21 +369,41 @@ export function useSwipePageTransition(
       clearSettle();
     };
 
+    const tryCrossSlideCommit = (
+      direction: SwipeEnterDirection,
+      swipeOutcome: SwipeOutcome,
+      navigate: () => void,
+    ): boolean => {
+      const controller = crossSlideRef.current;
+      if (!controller) return false;
+      if (controller.isBusy()) return true;
+      const begun = controller.beginCommit({
+        direction,
+        dragX: swipeRef.current.engaged
+          ? navigateSwipeTranslateX(swipeRef.current)
+          : 0,
+        pageWidth: pageWidth(),
+        fromRoute: readFromRoute(),
+        swipeOutcome,
+        navigate,
+      });
+      return begun;
+    };
+
     const animateTo = (
       targetX: number,
       direction: SwipeEnterDirection | null,
-      swipeOutcome: {
-        direction: "left" | "right";
-        duration_ms: number;
-        distance_px: number;
-        completed: boolean;
-        cancelled: boolean;
-        to_route?: string;
-      } | null,
+      swipeOutcome: SwipeOutcome | null,
       then?: () => void,
+      commitDurationMs = SWIPE_PAGE_COMMIT_MS,
     ) => {
       if (settlingRef.current) return;
+      if (direction && then && swipeOutcome && tryCrossSlideCommit(direction, swipeOutcome, then)) {
+        reset();
+        return;
+      }
       settlingRef.current = true;
+      settleDurationRef.current = commitDurationMs;
       settleAborted = false;
       releaseDragGesture();
       holdSettleGesture();
@@ -215,14 +458,14 @@ export function useSwipePageTransition(
         finish();
       };
 
-      settleTimer = window.setTimeout(finish, SWIPE_PAGE_COMMIT_MS + 40);
+      settleTimer = window.setTimeout(finish, commitDurationMs + 40);
       settleOnTransitionEnd = onTransitionEnd;
       root.addEventListener("transitionend", onTransitionEnd);
     };
 
     commitRef.current = (direction: SwipePageCommitDirection) => {
       const width = pageWidth();
-      const swipeOutcome = {
+      const swipeOutcome: SwipeOutcome = {
         direction,
         duration_ms: 0,
         distance_px: width,
@@ -257,8 +500,8 @@ export function useSwipePageTransition(
         touchTargetRef.current = null;
         return;
       }
-      // Capture runs before terminal bubble: refuse to arm while selecting, or
-      // while a double-tap is pending on the terminal (second contact).
+      // Capture runs before terminal bubble: refuse to arm while selecting, or while
+      // a double-tap is pending on the terminal (second contact).
       if (shouldSuppressPageSwipe(event.target)) {
         touchTargetRef.current = null;
         return;
@@ -316,6 +559,13 @@ export function useSwipePageTransition(
       const width = pageWidth();
       const duration_ms = Math.round(performance.now() - touchStartedAtRef.current);
       const distance_px = Math.round(maxDistanceRef.current);
+      const dragX = swipeRef.current.engaged
+        ? navigateSwipeTranslateX(swipeRef.current)
+        : 0;
+      const cancelDurationMs = computeSwipeCommitDurationMs(
+        Math.abs(dragX),
+        swipeVelocity(distance_px, duration_ms),
+      );
 
       if (direction === "left" && optsRef.current.onLeft) {
         animateTo(
@@ -353,13 +603,19 @@ export function useSwipePageTransition(
       if (swipeRef.current.engaged) {
         const snapDirection: "left" | "right" =
           navigateSwipeTranslateX(swipeRef.current) < 0 ? "left" : "right";
-        animateTo(0, null, {
-          direction: snapDirection,
-          duration_ms,
-          distance_px,
-          completed: false,
-          cancelled: true,
-        });
+        animateTo(
+          0,
+          null,
+          {
+            direction: snapDirection,
+            duration_ms,
+            distance_px,
+            completed: false,
+            cancelled: true,
+          },
+          undefined,
+          cancelDurationMs,
+        );
         return;
       }
       reset();
@@ -378,11 +634,15 @@ export function useSwipePageTransition(
       root.removeEventListener("touchend", onTouchEnd, capture);
       root.removeEventListener("touchcancel", reset, capture);
     };
-  }, [options.capture, ref]);
+  }, [crossSlide?.active, options.capture, ref]);
 
   const commit = useCallback((direction: SwipePageCommitDirection) => {
     commitRef.current(direction);
   }, []);
+
+  if (crossSlide?.active) {
+    return { dragX: 0, swiping: false, style: {}, commit };
+  }
 
   const swiping = dragging || settling;
   const style: CSSProperties = {
@@ -390,7 +650,7 @@ export function useSwipePageTransition(
     transition: dragging
       ? "none"
       : settling
-        ? `transform ${SWIPE_PAGE_COMMIT_MS}ms var(--ease-spring)`
+        ? `transform ${settleDurationRef.current}ms var(--ease-spring)`
         : undefined,
   };
 
