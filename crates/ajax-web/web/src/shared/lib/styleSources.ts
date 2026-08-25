@@ -29,7 +29,7 @@ export const BASELINE = {
    * Re-measured after outlet flex selectors use descendant combinator (#1074). */
   sourceStylesCssBytes: 107_336,
   builtAppCssBytes: 92_978,
-  builtAppCssGzipBytes: 16_346,
+  builtAppCssGzipBytes: 16_343,
   classSelectorLines: 599,
   hasSelectors: 18,
 } as const;
