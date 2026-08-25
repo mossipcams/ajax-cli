@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import {
+  afterTranscriptLayoutSettles,
   captureTranscriptGeometry,
   claimSessionViewportOwnership,
   releaseSessionViewportOwnership,
@@ -13,49 +14,9 @@ interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinnedRef: RefObject<boolean>;
+  ignoreScrollIntentRef: RefObject<boolean>;
+  layoutTransitionRef: RefObject<boolean>;
   onRestoreLiveEdge?: () => void;
-}
-
-const LAYOUT_STABLE_FRAMES = 2;
-const LAYOUT_POLL_MAX_FRAMES = 20;
-
-function layoutKey(node: HTMLDivElement): string {
-  return `${node.scrollHeight}:${node.clientHeight}`;
-}
-
-/** Poll until scrollHeight/clientHeight stop changing, then run restore once. */
-function afterLayoutSettles(
-  node: HTMLDivElement,
-  restoreTarget: TranscriptGeometry,
-  restore: () => void,
-): () => void {
-  let raf = 0;
-  let stableFrames = 0;
-  let lastKey = layoutKey(node);
-  let frameCount = 0;
-
-  const poll = () => {
-    frameCount++;
-    if (restoreTarget.atBottom) {
-      node.scrollTop = node.scrollHeight;
-    }
-    const key = layoutKey(node);
-    if (key === lastKey) {
-      stableFrames++;
-    } else {
-      stableFrames = 0;
-      lastKey = key;
-    }
-
-    if (stableFrames >= LAYOUT_STABLE_FRAMES || frameCount >= LAYOUT_POLL_MAX_FRAMES) {
-      restore();
-      return;
-    }
-    raf = requestAnimationFrame(poll);
-  };
-
-  raf = requestAnimationFrame(poll);
-  return () => cancelAnimationFrame(raf);
 }
 
 /**
@@ -67,11 +28,13 @@ export function useChatViewport({
   threadRef,
   composerRef,
   pinnedRef,
+  ignoreScrollIntentRef,
+  layoutTransitionRef,
   onRestoreLiveEdge,
 }: Options) {
   const { keyboardOpen, keyboardHeight, innerHeight, visualViewportHeight } = useMobileKeyboard();
   const geometryRef = useRef<TranscriptGeometry | null>(null);
-  const ignoreScrollIntentRef = useRef(false);
+  const preKeyboardGeometryRef = useRef<TranscriptGeometry | null>(null);
   const keyboardTransitionInitRef = useRef(true);
   const prevKeyboardOpenRef = useRef<boolean | null>(null);
   const composerHeightRef = useRef(0);
@@ -107,23 +70,53 @@ export function useChatViewport({
 
     if (prevKeyboardOpenRef.current === keyboardOpen) return;
 
+    const opening = prevKeyboardOpenRef.current === false && keyboardOpen;
     const closing = prevKeyboardOpenRef.current === true && !keyboardOpen;
-    const before = geometryRef.current ?? captureTranscriptGeometry(node);
+
+    if (opening) {
+      preKeyboardGeometryRef.current =
+        geometryRef.current ?? captureTranscriptGeometry(node);
+    }
+
+    const before =
+      closing && preKeyboardGeometryRef.current
+        ? preKeyboardGeometryRef.current
+        : geometryRef.current ?? captureTranscriptGeometry(node);
     const restoreTarget: TranscriptGeometry = {
       ...before,
-      atBottom: before.atBottom || pinnedRef.current,
+      atBottom: before.atBottom,
     };
 
     prevKeyboardOpenRef.current = keyboardOpen;
+    layoutTransitionRef.current = true;
     ignoreScrollIntentRef.current = true;
 
-    return afterLayoutSettles(node, restoreTarget, () => {
-      restoreTranscriptGeometry(node, restoreTarget);
-      if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
-      geometryRef.current = captureTranscriptGeometry(node);
+    const cancelSettle = afterTranscriptLayoutSettles(
+      node,
+      restoreTarget,
+      () => {
+        restoreTranscriptGeometry(node, restoreTarget);
+        if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
+        geometryRef.current = captureTranscriptGeometry(node);
+        ignoreScrollIntentRef.current = false;
+        layoutTransitionRef.current = false;
+        if (closing) preKeyboardGeometryRef.current = null;
+      },
+      { ignoreProgrammaticScroll: ignoreScrollIntentRef },
+    );
+
+    return () => {
+      cancelSettle();
       ignoreScrollIntentRef.current = false;
-    });
-  }, [keyboardOpen, onRestoreLiveEdge, pinnedRef, threadRef]);
+      layoutTransitionRef.current = false;
+    };
+  }, [
+    keyboardOpen,
+    ignoreScrollIntentRef,
+    layoutTransitionRef,
+    onRestoreLiveEdge,
+    threadRef,
+  ]);
 
   useEffect(() => {
     const composer = composerRef.current;

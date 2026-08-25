@@ -48,7 +48,10 @@ function confirmFromShell(
 }
 
 describe("ActionBar", () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

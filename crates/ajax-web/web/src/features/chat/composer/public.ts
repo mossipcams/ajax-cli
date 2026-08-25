@@ -23,3 +23,12 @@ export {
 } from "./submit";
 export { useChatSpeech } from "./speech/useChatSpeech";
 export type { ChatSpeechDeps } from "./speech/useChatSpeech";
+export {
+  clearComposerDraft,
+  clearComposerPresentationState,
+  clearComposerQueue,
+  readComposerDraft,
+  readComposerQueue,
+  writeComposerDraft,
+  writeComposerQueue,
+} from "./draftStorage";
