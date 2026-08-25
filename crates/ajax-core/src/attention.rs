@@ -2,6 +2,7 @@ use crate::models::{
     AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusClass,
     LiveStatusKind, RuntimeHealth, SideFlag, SubstrateGap, Task,
 };
+use crate::runtime_refresh::ci_monitor;
 use crate::ui_state::{derive_operator_status, TaskStatus};
 
 pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
@@ -68,6 +69,10 @@ pub fn take_attention_transition_at(
                 clear_notify_candidate(task);
                 return None;
             }
+            if should_suppress_error_attention(task, &operator_status) {
+                clear_notify_candidate(task);
+                return None;
+            }
             // Still in (or back in) attention: cancel any quiet countdown.
             task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
             let stamp = episode_stamp(&operator_status);
@@ -131,6 +136,60 @@ fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
 /// (`OperatorStatus::actionable`), not by matching the explanation string.
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
     status.actionable
+}
+
+/// Suppress error attention while CI or merge state is still settling.
+///
+/// GitHub CI failed: suppress while [`ci_monitor::checks_in_flight`].
+/// Merge conflict: suppress while git status has not confirmed the conflict,
+/// or while [`ci_monitor::rerun_in_progress`].
+///
+/// Agent-running is not a suppress path; poll-driven CI/merge state is.
+fn should_suppress_error_attention(
+    task: &Task,
+    operator_status: &crate::ui_state::OperatorStatus,
+) -> bool {
+    if operator_status.status != TaskStatus::Error {
+        return false;
+    }
+    if github_ci_failure(task) {
+        return ci_monitor::checks_in_flight(&ci_monitor::load_state(task));
+    }
+    merge_conflict(task) && merge_conflict_notify_suppressed(task)
+}
+
+fn merge_conflict_notify_suppressed(task: &Task) -> bool {
+    if merge_conflict_unconfirmed(task) {
+        return true;
+    }
+    ci_monitor::rerun_in_progress(&ci_monitor::load_state(task))
+}
+
+fn merge_conflict_unconfirmed(task: &Task) -> bool {
+    let live_merge = task
+        .live_status
+        .as_ref()
+        .is_some_and(|live| live.kind == LiveStatusKind::MergeConflict);
+    if !live_merge {
+        return false;
+    }
+    match task.git_status.as_ref() {
+        Some(git) => !git.conflicted,
+        None => true,
+    }
+}
+
+fn github_ci_failure(task: &Task) -> bool {
+    task.live_status.as_ref().is_some_and(|live| {
+        live.kind == LiveStatusKind::CiFailed && live.summary.starts_with("ci failed")
+    })
+}
+
+fn merge_conflict(task: &Task) -> bool {
+    task.live_status
+        .as_ref()
+        .is_some_and(|live| live.kind == LiveStatusKind::MergeConflict)
+        || task.has_side_flag(SideFlag::Conflicted)
 }
 
 fn clear_notify_candidate(task: &mut Task) {
@@ -415,6 +474,9 @@ fn substrate_gap_for_runtime_health(health: RuntimeHealth) -> Option<SubstrateGa
         }
     }
 }
+
+#[cfg(test)]
+mod poll_notify_tests;
 
 #[cfg(test)]
 mod tests;

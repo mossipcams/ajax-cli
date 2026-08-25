@@ -101,7 +101,9 @@ pub(crate) fn drain_acp_events(
                 events.extend(map_request_finished(method, result, Some(id), deduper));
             }
             AcpClientEvent::Error(message) => {
-                events.push(SessionServerEvent::Error { message });
+                events.push(SessionServerEvent::Error {
+                    message: map_operator_visible_acp_error(&message),
+                });
             }
             AcpClientEvent::Exited => {
                 host_exited = true;
@@ -150,6 +152,35 @@ pub(crate) fn map_acp_session_update_with_startup(
     events
 }
 
+pub(crate) const CONNECTION_INTERRUPTED_MESSAGE: &str =
+    "The connection was interrupted. Try sending again.";
+
+/// Cursor/ACP often finish a cancelled in-flight `session/prompt` as a transport
+/// RetriableError instead of a normal result with `stopReason: "cancelled"`.
+/// Match the cancel family only: `canceled`/`cancelled` (including harness
+/// `[canceled]`/`[cancelled]` tags, `context canceled`, gRPC `Canceled`), and
+/// HTTP/2 `error code cancel` / `CANCEL (0x8)`. Untagged stream close/reset and
+/// other RST codes are transport failures, not operator cancellation.
+fn is_cancellation_shaped_prompt_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("canceled") || lower.contains("cancelled") {
+        return true;
+    }
+    lower.contains("error code cancel") || lower.contains("cancel (0x8)")
+}
+
+fn is_retriable_transport_error(message: &str) -> bool {
+    message.starts_with("RetriableError:")
+}
+
+fn map_operator_visible_acp_error(message: &str) -> String {
+    if is_retriable_transport_error(message) && !is_cancellation_shaped_prompt_error(message) {
+        CONNECTION_INTERRUPTED_MESSAGE.to_string()
+    } else {
+        message.to_string()
+    }
+}
+
 /// A finished `session/prompt` is the only signal the browser gets that the
 /// agent stopped working, so it must reach the client even when the turn
 /// succeeded. Other completed requests carry nothing the chat can show.
@@ -176,7 +207,16 @@ pub(crate) fn map_request_finished(
             events
         }
         Ok(_) => Vec::new(),
-        Err(message) => vec![SessionServerEvent::Error { message }],
+        Err(message)
+            if method == "session/prompt" && is_cancellation_shaped_prompt_error(&message) =>
+        {
+            vec![SessionServerEvent::TurnEnd {
+                stop_reason: Some("cancelled".to_string()),
+            }]
+        }
+        Err(message) => vec![SessionServerEvent::Error {
+            message: map_operator_visible_acp_error(&message),
+        }],
     }
 }
 

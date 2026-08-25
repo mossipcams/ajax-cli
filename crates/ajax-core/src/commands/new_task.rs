@@ -389,7 +389,11 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
                 task.selected_agent,
                 task.worktree_path.display().to_string(),
             ));
-            task.add_side_flag(SideFlag::AgentRunning);
+            // Provisioned ACP tasks have no tmux agent yet; the host reports
+            // AgentRunning only after a prompt is accepted (#1069).
+            if !task.skip_interactive_agent() {
+                task.add_side_flag(SideFlag::AgentRunning);
+            }
         }
     }
 

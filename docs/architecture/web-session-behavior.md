@@ -190,6 +190,22 @@ existing paths.
 - Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
+- When `session/prompt` RPC fails with a cancellation-shaped transport abort
+  (for example plain `canceled`/`cancelled` text such as `context canceled`,
+  harness `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
+  `error code cancel` / `CANCEL (0x8)`), the host emits `turn_end` with
+  `stopReason: cancelled` instead of a typed `error` event
+  ([#1066](https://github.com/mossipcams/ajax-cli/issues/1066)). Untagged HTTP/2
+  stream close/reset, `INTERNAL_ERROR (0x2)`, untagged `REFUSED_STREAM (0x7)`,
+  bare `aborted`, and bare `stream reset` remain typed `error` events. Non-cancel
+  `RetriableError` and similar harness transport dumps become one host-owned
+  sentence (`The connection was interrupted. Try sending again.`) so the raw
+  `RetriableError: …` text never reaches the operator or transcript. Older
+  transcripts replay the same mapping in `explainAcpError` for every
+  `RetriableError:` string; live cancel vs interrupt classification stays
+  host-owned. Genuine non-retriable prompt failures still surface as errors with
+  their original message. Non-prompt RPC methods still surface
+  cancellation-shaped messages as errors. The host does not retry the prompt.
 - After a WebSocket drop and reconnect, the browser supplies the last applied
   cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
   `snapshot` plus only events after that cursor; invalid or compacted-away
@@ -198,13 +214,32 @@ existing paths.
   reducer). A cold load or full reload omits `?cursor=` and receives full replay
   with `snapshot.reset: true`; only unacknowledged prompts persist in
   `sessionStorage`.
+- Unsent composer textarea text (before Send) is also kept in `localStorage`
+  per task handle (`ajax.web.session.composer.draft.<handle>`). Leaving the
+  session route, closing the tab, and returning restores that draft in the
+  composer. Drafts are text-only presentation state: attachments are not
+  persisted, and a successful send or composer clear removes the stored draft.
+  This is not task truth, transcript, or a second prompt queue.
+- The browser's one editable queued follow-up is also kept in `localStorage`
+  per task handle (`ajax.web.session.composer.queue.<handle>`). Queue → leave
+  task → return restores the queued text (and JSON-serializable content blocks
+  when present). A stored `stopping` state is restored as `queued`. Removing the
+  queue, dispatching it, or a committed Drop clears the stored queue entry.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
 - A CI failure notification uses the same `submit_prompt_with_id` command and
-  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The host
-  may deliver it while other checks on the same attempt are still pending; it
-  does not wait for the full check matrix to settle. Delivery acquires or resumes
+  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The CI
+  attempt reducer starts a failed episode and may deliver the prompt as soon as
+  at least one check is terminally failed, even while sibling checks on the same
+  attempt are still pending; suppression applies only while attempt status is
+  `Pending` (no terminal failure yet) or a post-failure rerun is still in flight
+  (`rerun_in_progress`) until a Full refresh records settled terminal failure
+  (or cleared). A busy agent does not extend that suppression — the prompt still
+  queues on the FIFO and delivers when due. Task-associated CI probes run only
+  on `RefreshTier::Full` when `checks_due` allows (minimum 10-second gap while
+  pending or failed); the web background tick runs Full refresh and attention
+  delivery every 30 seconds on the same tick. Delivery acquires or resumes
   the task's associated ACP session through the normal `TaskSessionDirectory`
   path (creating the session when none is persisted, same as operator Chat
   attach), submits on the FIFO, and releases; it is not a second CI poller and
@@ -497,11 +532,14 @@ only the chat live head knew a turn was in flight.
   Status derivation (`ui_state::derive_task_status`) is unchanged — this supplies
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
-- Transitions are read off the outbound wire the browser already receives, so the
-  task page and the chat head cannot disagree: `prompt_accepted` and a resolved
-  ask report `AgentRunning`; `permission_request` / `elicitation_request` report
-  `WaitingForApproval`; `turn_end` reports `Done`, or `Blocked` when the turn
-  errored. Detail inside a turn (messages, tool calls, usage) reports nothing.
+- Transitions are derived from the same session events the host appends to the
+  JSONL transcript: `prompt_accepted` and a resolved ask report `AgentRunning`;
+  `permission_request` / `elicitation_request` report `WaitingForApproval`;
+  `turn_end` reports `Done`, or `Blocked` when the turn errored. Detail inside a
+  turn (messages, tool calls, usage) reports nothing. The host applies each
+  transition as task evidence at transcript-append time — not from the browser
+  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
+  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.

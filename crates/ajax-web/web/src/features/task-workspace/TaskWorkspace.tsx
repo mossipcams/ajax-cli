@@ -1,7 +1,12 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource, WebAction } from "@/shared/lib/types";
-import { ChatSurface, clearSessionOutbox, type ChatTaskAttention } from "@/features/chat/public";
-import { ActionBar, TaskLoadError, visibleTaskActions } from "@/features/task/public";
+import {
+  ChatSurface,
+  clearComposerPresentationState,
+  clearSessionOutbox,
+  type ChatTaskAttention,
+} from "@/features/chat/public";
+import { ActionBar, TaskLoadError, registerDropComposerCleanup, visibleTaskActions } from "@/features/task/public";
 import TaskTerminalView from "./TaskTerminalView";
 import Skeleton from "@/shared/ui/Skeleton";
 import { sessionHash, taskHash } from "@/shared/lib/routes";
@@ -68,6 +73,11 @@ export default function TaskWorkspace({
     onGo(taskHash(handle));
   }, [mode, handle, detail.status, detail.data, onGo]);
 
+  useEffect(() => {
+    registerDropComposerCleanup(clearComposerPresentationState);
+    return () => registerDropComposerCleanup(null);
+  }, []);
+
   // Drop confirm uses the shell ResultPanel (z-index 40); close the details
   // sheet (z-index 50) so Confirm is reachable without raising ResultPanel.
   useEffect(() => {
@@ -86,6 +96,11 @@ export default function TaskWorkspace({
         }
       : null;
 
+  function handleDismiss() {
+    clearComposerPresentationState(handle);
+    onDismiss?.();
+  }
+
   let headActions: ReactNode = null;
   if (mode === "chat" && taskDetail && safeActions.length) {
     headActions = (
@@ -96,7 +111,7 @@ export default function TaskWorkspace({
           onCockpit={onCockpit}
           onResult={onResult}
           onMutated={onMutated}
-          onDismiss={onDismiss}
+          onDismiss={handleDismiss}
           pendingConfirmAction={pendingConfirmAction}
           onCancelPendingConfirm={onCancelPendingConfirm}
         />
@@ -135,7 +150,7 @@ export default function TaskWorkspace({
         onCockpit={onCockpit}
         onResult={onResult}
         onMutated={onMutated}
-        onDismiss={onDismiss}
+        onDismiss={handleDismiss}
         pendingConfirmAction={pendingConfirmAction}
         onCancelPendingConfirm={onCancelPendingConfirm}
       />
@@ -197,7 +212,7 @@ export default function TaskWorkspace({
           onCockpit={onCockpit}
           onResult={onResult}
           onMutated={onMutated}
-          onDismiss={onDismiss}
+          onDismiss={handleDismiss}
           onOpenDetails={() => setDetailsOpen(true)}
           detailsOpen={detailsOpen}
           detailsPanelId={detailsPanelId}

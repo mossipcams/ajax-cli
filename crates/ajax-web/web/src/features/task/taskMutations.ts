@@ -23,6 +23,19 @@ export type DropUndoHandles = {
   dropResolvedRef: { current: boolean };
 };
 
+type DropComposerCleanup = (handle: string) => void;
+
+let dropComposerCleanup: DropComposerCleanup | null = null;
+
+/** Registered by task-workspace while mounted; runs on committed Drop before dismiss. */
+export function registerDropComposerCleanup(fn: DropComposerCleanup | null): void {
+  dropComposerCleanup = fn;
+}
+
+function runDropComposerCleanup(handle: string): void {
+  dropComposerCleanup?.(handle);
+}
+
 export function clearDropTimer(handles: DropUndoHandles) {
   if (handles.dropTimerRef.current) clearTimeout(handles.dropTimerRef.current);
   handles.dropTimerRef.current = null;
@@ -51,6 +64,7 @@ export async function runTaskAction(
         endTapToOperationComplete(interactionId, { ok: true, op: action.action });
       }
       if (action.action === "drop") {
+        runDropComposerCleanup(handle);
         if (callbacks.isMounted?.() !== false) callbacks.onDismiss?.();
       } else {
         callbacks.onMutated?.();

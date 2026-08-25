@@ -62,11 +62,19 @@ describe("useChatViewport", () => {
     const threadRef = { current: thread };
     const composerRef = { current: composer };
     const pinnedRef = { current: pinned };
+    const ignoreScrollIntentRef = { current: false };
+    const layoutTransitionRef = { current: false };
 
     const view = renderHook(() =>
-      useChatViewport({ threadRef, composerRef, pinnedRef }),
+      useChatViewport({
+        threadRef,
+        composerRef,
+        pinnedRef,
+        ignoreScrollIntentRef,
+        layoutTransitionRef,
+      }),
     );
-    return { view, thread, composer, pinnedRef };
+    return { view, thread, composer, pinnedRef, ignoreScrollIntentRef, layoutTransitionRef };
   }
 
   it("claims session viewport ownership on mount", () => {
@@ -202,6 +210,26 @@ describe("useChatViewport", () => {
     expect(thread.scrollTop).toBe(200);
   });
 
+  it("restores pre-keyboard scroll when pinnedRef drifts true during keyboard (#930)", () => {
+    const { view, thread, pinnedRef } = mountHook(false);
+    thread.scrollTop = 6685;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 13108 });
+    thread.dispatchEvent(new Event("scroll"));
+
+    keyboardState.keyboardOpen = true;
+    keyboardState.keyboardHeight = 300;
+    view.rerender();
+    pinnedRef.current = true;
+    flushLayoutSettle();
+
+    keyboardState.keyboardOpen = false;
+    keyboardState.keyboardHeight = 0;
+    view.rerender();
+    flushLayoutSettle();
+
+    expect(thread.scrollTop).toBe(6685);
+  });
+
   it("applies surface paddingBottom on iOS Safari keyboard band", () => {
     const { view } = mountHook();
     keyboardState.keyboardOpen = true;
@@ -225,9 +253,18 @@ describe("useChatViewport", () => {
     const threadRef = { current: thread };
     const composerRef = { current: composer };
     const pinnedRef = { current: true };
+    const ignoreScrollIntentRef = { current: false };
+    const layoutTransitionRef = { current: false };
 
     const view = renderHook(() =>
-      useChatViewport({ threadRef, composerRef, pinnedRef, onRestoreLiveEdge }),
+      useChatViewport({
+        threadRef,
+        composerRef,
+        pinnedRef,
+        ignoreScrollIntentRef,
+        layoutTransitionRef,
+        onRestoreLiveEdge,
+      }),
     );
 
     keyboardState.keyboardOpen = true;

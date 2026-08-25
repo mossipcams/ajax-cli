@@ -4,6 +4,12 @@ export const SESSION_KEYBOARD_OPEN_PX = 100;
 export const MIN_USABLE_VIEWPORT_PX = 50;
 export const SESSION_PIN_THRESHOLD_PX = 48;
 export const SESSION_VIEWPORT_ATTR = "data-session-viewport";
+export const LAYOUT_STABLE_FRAMES = 2;
+export const LAYOUT_POLL_MAX_FRAMES = 20;
+
+function layoutKey(node: HTMLDivElement): string {
+  return `${node.scrollHeight}:${node.clientHeight}`;
+}
 
 /** Transcript scroll snapshot captured before a keyboard or layout transition. */
 export interface TranscriptGeometry {
@@ -47,6 +53,49 @@ export function restoreTranscriptGeometry(
   }
   const heightDelta = node.scrollHeight - before.scrollHeight;
   node.scrollTop = before.scrollTop + heightDelta;
+}
+
+/** Poll until scrollHeight/clientHeight stop changing, then run restore once. */
+export function afterTranscriptLayoutSettles(
+  node: HTMLDivElement,
+  restoreTarget: TranscriptGeometry,
+  restore: () => void,
+  options?: { ignoreProgrammaticScroll?: { current: boolean } },
+): () => void {
+  const ignore = options?.ignoreProgrammaticScroll;
+  const scrollProgrammatically = (top: number) => {
+    if (ignore) ignore.current = true;
+    node.scrollTop = top;
+    if (ignore) ignore.current = false;
+  };
+
+  let raf = 0;
+  let stableFrames = 0;
+  let lastKey = layoutKey(node);
+  let frameCount = 0;
+
+  const poll = () => {
+    frameCount++;
+    if (restoreTarget.atBottom) {
+      scrollProgrammatically(node.scrollHeight);
+    }
+    const key = layoutKey(node);
+    if (key === lastKey) {
+      stableFrames++;
+    } else {
+      stableFrames = 0;
+      lastKey = key;
+    }
+
+    if (stableFrames >= LAYOUT_STABLE_FRAMES || frameCount >= LAYOUT_POLL_MAX_FRAMES) {
+      restore();
+      return;
+    }
+    raf = requestAnimationFrame(poll);
+  };
+
+  raf = requestAnimationFrame(poll);
+  return () => cancelAnimationFrame(raf);
 }
 
 /** Tell global keyboard CSS that session chat owns its band geometry. */
