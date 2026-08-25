@@ -1,6 +1,6 @@
 use super::acp_drain::{
     coalesce_session_events, map_acp_session_update_with_startup, map_request_finished,
-    permission_response,
+    permission_response, CONNECTION_INTERRUPTED_MESSAGE,
 };
 use super::map_acp_session_notification;
 use crate::slices::web_session::acp_usage::UsageDeduper;
@@ -86,6 +86,155 @@ fn failed_request_reports_error() {
         events,
         vec![SessionServerEvent::Error {
             message: "boom".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn retriable_non_cancel_prompt_failure_maps_to_host_owned_error() {
+    let raw = "RetriableError: connection reset by peer";
+    let events = map_request_finished(
+        "session/prompt",
+        Err(raw.to_string()),
+        None,
+        &mut UsageDeduper::default(),
+    );
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Error {
+            message: CONNECTION_INTERRUPTED_MESSAGE.to_string(),
+        }]
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionServerEvent::Error { message } if message.contains("RetriableError"))),
+        "raw RetriableError must not reach the operator"
+    );
+}
+
+#[test]
+fn retriable_non_cancel_non_prompt_failure_maps_to_host_owned_error() {
+    let events = map_request_finished(
+        "session/set_mode",
+        Err("RetriableError: deadline exceeded".to_string()),
+        None,
+        &mut UsageDeduper::default(),
+    );
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Error {
+            message: CONNECTION_INTERRUPTED_MESSAGE.to_string(),
+        }]
+    );
+}
+
+#[test]
+fn cancellation_shaped_prompt_failures_report_turn_end_cancelled() {
+    let cases = [
+        "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+        "RetriableError: [cancelled] http/2 stream closed with error code REFUSED_STREAM (0x7)",
+        "[canceled] http/2 stream closed",
+        "context canceled",
+        "rpc error: code = Canceled desc = stream reset by peer",
+        "http/2 stream closed with error code CANCEL (0x8)",
+    ];
+    for message in cases {
+        let events = map_request_finished(
+            "session/prompt",
+            Err(message.to_string()),
+            None,
+            &mut UsageDeduper::default(),
+        );
+        assert_eq!(
+            events,
+            vec![SessionServerEvent::TurnEnd {
+                stop_reason: Some("cancelled".to_string()),
+            }],
+            "expected cancelled turn_end for cancel-shaped abort: {message}"
+        );
+    }
+}
+
+#[test]
+fn non_cancel_transport_prompt_failures_report_host_owned_error() {
+    let cases = [
+        (
+            "http/2 stream closed with error code INTERNAL_ERROR (0x2)",
+            "http/2 stream closed with error code INTERNAL_ERROR (0x2)",
+        ),
+        (
+            "RetriableError: http/2 stream closed with error code REFUSED_STREAM (0x7)",
+            CONNECTION_INTERRUPTED_MESSAGE,
+        ),
+        (
+            "RetriableError: http/2 stream closed with error code INTERNAL_ERROR (0x2)",
+            CONNECTION_INTERRUPTED_MESSAGE,
+        ),
+        (
+            "transport error: request aborted by client",
+            "transport error: request aborted by client",
+        ),
+        (
+            "http/2 stream closed with error code REFUSED_STREAM (0x7)",
+            "http/2 stream closed with error code REFUSED_STREAM (0x7)",
+        ),
+        ("http/2 stream reset by peer", "http/2 stream reset by peer"),
+    ];
+    for (message, expected) in cases {
+        let events = map_request_finished(
+            "session/prompt",
+            Err(message.to_string()),
+            None,
+            &mut UsageDeduper::default(),
+        );
+        assert_eq!(
+            events,
+            vec![SessionServerEvent::Error {
+                message: expected.to_string(),
+            }],
+            "expected typed error for non-cancel transport failure: {message}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. })),
+            "non-cancel transport failure must not emit turn_end: {message}"
+        );
+    }
+}
+
+#[test]
+fn genuine_prompt_failures_still_report_error() {
+    for message in ["boom", "model refused", "invalid prompt payload"] {
+        let events = map_request_finished(
+            "session/prompt",
+            Err(message.to_string()),
+            None,
+            &mut UsageDeduper::default(),
+        );
+        assert_eq!(
+            events,
+            vec![SessionServerEvent::Error {
+                message: message.to_string(),
+            }],
+            "expected error for genuine prompt failure: {message}"
+        );
+    }
+}
+
+#[test]
+fn cancellation_shaped_non_prompt_failure_still_reports_error() {
+    let events = map_request_finished(
+        "session/cancel",
+        Err("[canceled] http/2 stream closed".to_string()),
+        None,
+        &mut UsageDeduper::default(),
+    );
+    assert_eq!(
+        events,
+        vec![SessionServerEvent::Error {
+            message: "[canceled] http/2 stream closed".to_string(),
         }]
     );
 }
