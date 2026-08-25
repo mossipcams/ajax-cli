@@ -185,7 +185,7 @@ describe("App shell", () => {
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*display:\s*flex/,
     );
     expect(mobileBlock).toMatch(
-      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*>\s*\[data-outlet="task"\]\s*\{[^}]*flex:\s*1\s+1\s+0%/,
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\[data-outlet="task"\]\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
     expect(mobileBlock).toMatch(
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+0%/,

@@ -28,7 +28,7 @@
     padding-right: 0;
   }
 
-  [data-testid="route-scroll"]:has([data-outlet="task"]) > [data-outlet="task"] {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) [data-outlet="task"] {
     display: flex;
     flex-direction: column;
     flex: 1 1 0%;
@@ -66,7 +66,7 @@
   }
 
   /* Open meta: release the fill pin so route-scroll can grow and scroll. */
-  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.task-detail[data-task-details-open]) > [data-outlet="task"] {
+  [data-testid="route-scroll"]:has([data-outlet="task"]):has(.task-detail[data-task-details-open]) [data-outlet="task"] {
     flex: 0 0 auto;
     min-height: auto;
   }
