@@ -126,6 +126,39 @@ test("dashboard has exactly one normal route scroll owner", async ({ page }) => 
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
 });
 
+test("task workspace cross-slide wrappers are display:contents at rest", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(page.locator('[data-testid="task-terminal-panel"]')).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const layout = await page.evaluate(() => {
+    const host = document.querySelector(".page-cross-slide-host");
+    const pane = document.querySelector(".page-cross-slide-pane");
+    const outlet = document.querySelector('[data-outlet="task"]');
+    if (!host || !pane || !outlet) return { ok: false as const };
+
+    return {
+      ok: true as const,
+      hostDisplay: getComputedStyle(host).display,
+      paneDisplay: getComputedStyle(pane).display,
+      hostIdle: host.classList.contains("page-cross-slide-host-idle"),
+      paneIdle: pane.classList.contains("page-cross-slide-pane-idle"),
+    };
+  });
+
+  expect(layout.ok).toBe(true);
+  if (!layout.ok) return;
+  expect(layout.hostIdle).toBe(true);
+  expect(layout.paneIdle).toBe(true);
+  expect(layout.hostDisplay).toBe("contents");
+  expect(layout.paneDisplay).toBe("contents");
+});
+
 test("html, body, and #app never become scroll containers on the dashboard", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");

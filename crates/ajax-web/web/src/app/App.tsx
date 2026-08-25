@@ -583,15 +583,21 @@ function AppContent() {
       const leavingSurface = leavingRoute?.kind === workspaceSurfaceKind(surface);
       const mountContent = visible || (crossSlideActive && leavingSurface);
       const motionStyle = workspacePaneStyle(surface);
+      const paneAnimating = motionStyle !== undefined;
       const isLeaving = leavingSurface;
       const isEntering = crossSlideActive && route.kind === workspaceSurfaceKind(surface);
       return (
         <Activity key={`activity-${surface}-${handle}`} mode={visible ? "visible" : "hidden"}>
           {mountContent ? (
             <div
-              className={`page-cross-slide-pane${
-                motionStyle ? (isLeaving ? " page-cross-slide-leaving" : " page-cross-slide-entering") : ""
-              }`}
+              className={[
+                "page-cross-slide-pane",
+                paneAnimating
+                  ? isLeaving
+                    ? "page-cross-slide-leaving"
+                    : "page-cross-slide-entering"
+                  : "page-cross-slide-pane-idle",
+              ].join(" ")}
               style={motionStyle}
               onTransitionEnd={isEntering ? crossSlide?.onEnteringTransitionEnd : undefined}
               aria-hidden={isLeaving ? true : undefined}
@@ -604,7 +610,9 @@ function AppContent() {
     };
 
     return (
-      <div className={crossSlideActive ? "page-cross-slide-host" : undefined}>
+      <div
+        className={`page-cross-slide-host${crossSlideActive ? "" : " page-cross-slide-host-idle"}`}
+      >
         {surfaceShell(
           "task",
           <TaskWorkspaceRoute

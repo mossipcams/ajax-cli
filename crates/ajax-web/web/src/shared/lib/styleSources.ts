@@ -24,11 +24,12 @@ export const BASELINE = {
    * row: `.session-tool*` and `.session-head-thought` lost their only
    * consumer.
    * Re-measured after removing dead `.detail-session-title` (PR #1056).
-   * Re-measured after page cross-slide host CSS and chat swipe compositor hints (#1070). */
-  sourceStylesCssBytes: 107_107,
-  builtAppCssBytes: 92_862,
-  builtAppCssGzipBytes: 16_329,
-  classSelectorLines: 598,
+   * Re-measured after page cross-slide host CSS and chat swipe compositor hints (#1070).
+   * Re-measured after cross-slide idle wrappers use display:contents (#1074). */
+  sourceStylesCssBytes: 107_342,
+  builtAppCssBytes: 92_978,
+  builtAppCssGzipBytes: 16_346,
+  classSelectorLines: 599,
   hasSelectors: 18,
 } as const;
 

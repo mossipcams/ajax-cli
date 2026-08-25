@@ -145,11 +145,17 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   flex-direction: column;
 }
 
-.page-cross-slide-pane {
-  will-change: transform;
+/* Steady state: preserve React wrapper identity without breaking the flex chain. */
+.page-cross-slide-host.page-cross-slide-host-idle {
+  display: contents;
+}
+
+.page-cross-slide-pane.page-cross-slide-pane-idle {
+  display: contents;
 }
 
 .page-cross-slide-leaving {
+  will-change: transform;
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -158,6 +164,7 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
 }
 
 .page-cross-slide-entering {
+  will-change: transform;
   position: relative;
   z-index: 2;
   flex: 1;

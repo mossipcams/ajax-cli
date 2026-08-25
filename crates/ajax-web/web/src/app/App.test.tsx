@@ -368,6 +368,26 @@ describe("App shell", () => {
     );
   });
 
+  it("cross-slide wrappers use display:contents at rest so the mobile flex chain stays intact", () => {
+    const stylesSource = loadStylesSource();
+
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-host\.page-cross-slide-host-idle\s*\{[^}]*display:\s*contents/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-pane\.page-cross-slide-pane-idle\s*\{[^}]*display:\s*contents/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-leaving\s*\{[^}]*will-change:\s*transform/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-entering\s*\{[^}]*will-change:\s*transform/,
+    );
+    expect(stylesSource).not.toMatch(/\.page-cross-slide-pane\s*\{[^}]*will-change:\s*transform/);
+    expect(appSource).toMatch(/page-cross-slide-host-idle/);
+    expect(appSource).toMatch(/page-cross-slide-pane-idle/);
+  });
+
   it("hides the xterm DOM scrollbar the viewport override cannot reach", () => {
     const stylesSource = loadStylesSource();
 
