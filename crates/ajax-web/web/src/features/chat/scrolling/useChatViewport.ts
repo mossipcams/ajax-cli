@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import {
+  afterTranscriptLayoutSettles,
   captureTranscriptGeometry,
   claimSessionViewportOwnership,
   releaseSessionViewportOwnership,
@@ -14,48 +15,6 @@ interface Options {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinnedRef: RefObject<boolean>;
   onRestoreLiveEdge?: () => void;
-}
-
-const LAYOUT_STABLE_FRAMES = 2;
-const LAYOUT_POLL_MAX_FRAMES = 20;
-
-function layoutKey(node: HTMLDivElement): string {
-  return `${node.scrollHeight}:${node.clientHeight}`;
-}
-
-/** Poll until scrollHeight/clientHeight stop changing, then run restore once. */
-function afterLayoutSettles(
-  node: HTMLDivElement,
-  restoreTarget: TranscriptGeometry,
-  restore: () => void,
-): () => void {
-  let raf = 0;
-  let stableFrames = 0;
-  let lastKey = layoutKey(node);
-  let frameCount = 0;
-
-  const poll = () => {
-    frameCount++;
-    if (restoreTarget.atBottom) {
-      node.scrollTop = node.scrollHeight;
-    }
-    const key = layoutKey(node);
-    if (key === lastKey) {
-      stableFrames++;
-    } else {
-      stableFrames = 0;
-      lastKey = key;
-    }
-
-    if (stableFrames >= LAYOUT_STABLE_FRAMES || frameCount >= LAYOUT_POLL_MAX_FRAMES) {
-      restore();
-      return;
-    }
-    raf = requestAnimationFrame(poll);
-  };
-
-  raf = requestAnimationFrame(poll);
-  return () => cancelAnimationFrame(raf);
 }
 
 /**
@@ -117,7 +76,7 @@ export function useChatViewport({
     prevKeyboardOpenRef.current = keyboardOpen;
     ignoreScrollIntentRef.current = true;
 
-    return afterLayoutSettles(node, restoreTarget, () => {
+    return afterTranscriptLayoutSettles(node, restoreTarget, () => {
       restoreTranscriptGeometry(node, restoreTarget);
       if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
       geometryRef.current = captureTranscriptGeometry(node);
