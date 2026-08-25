@@ -125,6 +125,144 @@ fn terminal_failure_with_pending_siblings_starts_episode_and_notification() {
 }
 
 #[test]
+fn pending_status_suppresses_agent_notification() {
+    let mut task = task_fixture();
+    assert!(reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1"], false),
+        100,
+    ));
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        CiChecksReport {
+            state: CiChecksState::Pending,
+            failed_checks: vec![],
+            check_identities: vec!["run-2".into()],
+            has_pending: true,
+            error: None,
+        },
+        101,
+    );
+    assert!(super::checks_in_flight(&load_state(&task)));
+    assert!(pending_notification(&task).is_none());
+}
+
+#[test]
+fn active_check_min_gap_is_ten_seconds() {
+    let state = super::CiMonitorState {
+        status: CiAttemptStatus::Failed,
+        last_check_probe_at: Some(100),
+        ..Default::default()
+    };
+    assert!(super::checks_due(&state, 110));
+    assert!(!super::checks_due(&state, 109));
+}
+
+#[test]
+fn rerun_in_progress_suppresses_agent_notification_until_settled() {
+    let mut task = task_fixture();
+    assert!(reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1"], false),
+        100,
+    ));
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        CiChecksReport {
+            state: CiChecksState::Pending,
+            failed_checks: vec![],
+            check_identities: vec!["run-2".into()],
+            has_pending: true,
+            error: None,
+        },
+        101,
+    );
+    let state = load_state(&task);
+    assert!(state.saw_pending_after_failure);
+    assert!(super::rerun_in_progress(&state));
+
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1"], true),
+        102,
+    );
+    assert!(super::rerun_in_progress(&load_state(&task)));
+    assert!(pending_notification(&task).is_none());
+
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-2"], false),
+        103,
+    );
+    assert!(!super::rerun_in_progress(&load_state(&task)));
+    assert!(pending_notification(&task).is_some());
+}
+
+#[test]
+fn busy_agent_does_not_suppress_pending_notification() {
+    let mut task = task_fixture();
+    task.agent_status = crate::models::AgentRuntimeStatus::Running;
+    task.add_side_flag(crate::models::SideFlag::AgentRunning);
+    assert!(reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1"], false),
+        100,
+    ));
+    assert!(pending_notification(&task).is_some());
+}
+
+#[test]
+fn distinct_rerun_identities_while_pending_still_suppresses_notification() {
+    let mut task = task_fixture();
+    assert!(reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1"], false),
+        100,
+    ));
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        CiChecksReport {
+            state: CiChecksState::Pending,
+            failed_checks: vec![],
+            check_identities: vec!["run-2".into()],
+            has_pending: true,
+            error: None,
+        },
+        101,
+    );
+    let episode_before = load_state(&task).episode_id.clone();
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-1", "run-2"], true),
+        102,
+    );
+    let state = load_state(&task);
+    assert!(state.saw_pending_after_failure);
+    assert!(super::rerun_in_progress(&state));
+    assert_eq!(state.episode_id, episode_before);
+    assert!(pending_notification(&task).is_none());
+
+    reduce_report(
+        &mut task,
+        &open_pr(42, "aaa"),
+        failed_report(&["run-2"], false),
+        103,
+    );
+    assert!(!super::rerun_in_progress(&load_state(&task)));
+    assert!(pending_notification(&task).is_some());
+}
+
+#[test]
 fn failure_episode_rules_cover_dedupe_rerun_and_incremental_completion() {
     let mut task = task_fixture();
     let first = failed_report(&["run-1"], false);
@@ -174,6 +312,10 @@ fn tick(
     refresh_ci_monitor(ctx, runner, now, &snapshots(&ctx.registry), changed);
 }
 
+fn gh_command_count(runner: &MonitorRunner) -> usize {
+    runner.commands.iter().filter(|c| c.program == "gh").count()
+}
+
 #[test]
 fn refresh_polls_active_checks_and_records_pass() {
     let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
@@ -190,19 +332,25 @@ fn refresh_polls_active_checks_and_records_pass() {
         commands: vec![],
     };
     tick(&mut ctx, &mut runner, 1000, &mut changed);
-    tick(&mut ctx, &mut runner, 1029, &mut changed);
+    let after_first = gh_command_count(&runner);
+    tick(&mut ctx, &mut runner, 1009, &mut changed);
     assert_eq!(
-        runner.commands.iter().filter(|c| c.program == "gh").count(),
-        2
+        gh_command_count(&runner),
+        after_first,
+        "9s after probe must not re-probe"
+    );
+    tick(&mut ctx, &mut runner, 1010, &mut changed);
+    assert_eq!(
+        gh_command_count(&runner),
+        after_first + 1,
+        "10s active interval should probe again at 10s"
     );
     assert_eq!(
         load_state(&task0(&ctx.registry)).status,
         CiAttemptStatus::Pending
     );
     runner.checks = success.into();
-    for now in [1000, 1300] {
-        tick(&mut ctx, &mut runner, now, &mut changed);
-    }
+    tick(&mut ctx, &mut runner, 1020, &mut changed);
     assert_eq!(
         load_state(&task0(&ctx.registry)).status,
         CiAttemptStatus::Passed

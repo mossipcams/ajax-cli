@@ -202,9 +202,17 @@ existing paths.
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
 - A CI failure notification uses the same `submit_prompt_with_id` command and
-  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The host
-  may deliver it while other checks on the same attempt are still pending; it
-  does not wait for the full check matrix to settle. Delivery acquires or resumes
+  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The CI
+  attempt reducer starts a failed episode and may deliver the prompt as soon as
+  at least one check is terminally failed, even while sibling checks on the same
+  attempt are still pending; suppression applies only while attempt status is
+  `Pending` (no terminal failure yet) or a post-failure rerun is still in flight
+  (`rerun_in_progress`) until a Full refresh records settled terminal failure
+  (or cleared). A busy agent does not extend that suppression — the prompt still
+  queues on the FIFO and delivers when due. Task-associated CI probes run only
+  on `RefreshTier::Full` when `checks_due` allows (minimum 10-second gap while
+  pending or failed); the web background tick runs Full refresh and attention
+  delivery every 30 seconds on the same tick. Delivery acquires or resumes
   the task's associated ACP session through the normal `TaskSessionDirectory`
   path (creating the session when none is persisted, same as operator Chat
   attach), submits on the FIFO, and releases; it is not a second CI poller and

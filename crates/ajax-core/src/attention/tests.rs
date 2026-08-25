@@ -309,6 +309,63 @@ fn confirm_at(task: &mut Task, t: u64) {
 }
 
 #[test]
+fn ci_failed_agent_turn_does_not_suppress_settled_failure_attention() {
+    use crate::runtime_refresh::ci_monitor::pending_notification;
+
+    let mut task = active_task("ci-busy");
+    crate::live::apply_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::CiFailed, "ci failed: lint"),
+        at(1_000),
+    );
+    reduce_report_for_ci(&mut task, false);
+    task.agent_status = AgentRuntimeStatus::Running;
+    task.add_side_flag(SideFlag::AgentRunning);
+    task.metadata.insert(
+        super::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
+        "985".to_string(),
+    );
+    assert!(
+        super::take_attention_transition_at(&mut task, at(1_015))
+            .is_some(),
+        "settled CI failure must phone-ping even while the agent is running"
+    );
+    assert!(pending_notification(&task).is_some());
+}
+
+fn reduce_report_for_ci(task: &mut Task, pending: bool) {
+    use crate::runtime_refresh::ci_monitor::reduce_report;
+    use crate::{
+        adapters::{CiChecksReport, CiChecksState},
+        diff_review::{PullRequestRef, PullRequestState},
+    };
+    let pr = PullRequestRef {
+        number: 42,
+        title: "Fix".to_string(),
+        url: "https://github.test/pull/42".to_string(),
+        state: PullRequestState::Open,
+        head_ref: "ajax/fix".to_string(),
+        head_sha: Some("aaa".to_string()),
+    };
+    reduce_report(
+        task,
+        &pr,
+        CiChecksReport {
+            state: CiChecksState::Failed,
+            failed_checks: vec![crate::agent_notification::CiFailedCheck {
+                name: "lint".to_string(),
+                link: Some("https://github.test/runs/1".to_string()),
+                identity: Some("run:1".to_string()),
+            }],
+            check_identities: vec!["run:1".to_string()],
+            has_pending: pending,
+            error: None,
+        },
+        100,
+    );
+}
+
+#[test]
 fn idle_to_waiting_fires_once() {
     let mut task = waiting_task("notify");
 
