@@ -491,7 +491,9 @@ where
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
         return gate_rejection_response(rejection, Some(&request_id), &task_key, "task start");
     }
+    let state_for_finish = state.clone();
     let error_request_id = request_id.clone();
+    let task_key_for_finish = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
@@ -523,10 +525,16 @@ where
     })
     .await
     .unwrap_or_else(|error| {
-        response_from_web_error(
+        let response = response_from_web_error(
             WebError::CommandFailed(format!("task start worker failed: {error}")),
             Some(&error_request_id),
-        )
+        );
+        state_for_finish.operations().finish(
+            Some(&error_request_id),
+            &task_key_for_finish,
+            &response,
+        );
+        response
     });
     response.into_axum_response()
 }
@@ -614,7 +622,9 @@ where
     let log_request_id = request_id.clone();
     let log_task_key = task_key.clone();
     let log_action = action.clone();
+    let state_for_finish = state.clone();
     let error_request_id = request_id.clone();
+    let task_key_for_finish = task_key.clone();
     let cleanup_after_drop = action == "drop";
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
@@ -639,10 +649,16 @@ where
     })
     .await
     .unwrap_or_else(|error| {
-        response_from_web_error(
+        let response = response_from_web_error(
             WebError::CommandFailed(format!("operation worker failed: {error}")),
             error_request_id.as_deref(),
-        )
+        );
+        state_for_finish.operations().finish(
+            error_request_id.as_deref(),
+            &task_key_for_finish,
+            &response,
+        );
+        response
     });
 
     if response.status_code >= 400 {
