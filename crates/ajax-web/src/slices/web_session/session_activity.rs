@@ -80,12 +80,10 @@ pub fn record_session_activity<R: Registry>(
     Ok(())
 }
 
-/// Which transitions on the outbound wire are evidence about the agent.
+/// Which transitions on session events are evidence about the agent.
 ///
-/// Read off the same stream the browser sees, so the task page and the chat
-/// head cannot disagree about whether a turn is in flight. Everything else —
-/// messages, tool calls, usage — is detail within a turn already reported as
-/// running.
+/// The host derives these from the same events it appends to JSONL, so task
+/// truth and the chat transcript stay aligned even without a browser socket.
 fn activity_for_event(
     event: &super::SessionServerEvent,
     turn_in_flight: bool,
@@ -132,7 +130,10 @@ pub(crate) struct SessionActivityReporter {
 }
 
 impl SessionActivityReporter {
-    pub(crate) fn observe(&mut self, event: &super::SessionServerEvent) -> Option<SessionActivity> {
+    pub(crate) fn activity_for_event(
+        &self,
+        event: &super::SessionServerEvent,
+    ) -> Option<SessionActivity> {
         let in_flight = matches!(
             self.last,
             Some(SessionActivity::TurnStarted) | Some(SessionActivity::AwaitingOperator)
@@ -141,7 +142,17 @@ impl SessionActivityReporter {
         if self.last == Some(activity) {
             return None;
         }
+        Some(activity)
+    }
+
+    pub(crate) fn commit(&mut self, activity: SessionActivity) {
         self.last = Some(activity);
+    }
+
+    #[cfg(test)]
+    fn observe(&mut self, event: &super::SessionServerEvent) -> Option<SessionActivity> {
+        let activity = self.activity_for_event(event)?;
+        self.commit(activity);
         Some(activity)
     }
 }
@@ -338,6 +349,9 @@ mod tests {
             Some(SessionActivity::TurnFailed)
         );
     }
+
+    // #1069 regression lives in `session_activity_directory_tests`: append_to_log
+    // through TaskSessionDirectory, not a hand-rolled observe+record loop.
 
     #[test]
     fn detail_inside_a_turn_reports_nothing() {

@@ -345,9 +345,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             && !crate::ui_state::agent_process_is_alive(&task_snapshot)
         {
             // Zero agent evidence from every source. A leftover running claim
-            // can only be stale here: provisioning sets `AgentRunning` up front,
-            // but the sources that retract it are all silent, so skipping would
-            // leave the operator surfaces reporting "Agent working" forever.
+            // can only be stale here: interactive provisioning sets
+            // `AgentRunning` on send-keys, but the sources that retract it are
+            // all silent, so skipping would leave the operator surfaces
+            // reporting "Agent working" forever.
             clear_stale_agent_running(context, &task_id, &task_snapshot, &mut changed);
             continue;
         }

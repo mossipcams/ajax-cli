@@ -402,3 +402,58 @@ fn provisioned_task_uses_acp_run_state_instead_of_shell_guess() {
         "provisioned ACP task lost its run state to the pane classifier: {status:?}"
     );
 }
+
+/// #1069: once the ACP host reports `turn_end`, runtime refresh must not restore
+/// `Agent working` from an idle shell or stale side flag.
+#[test]
+fn issue_1069_refresh_preserves_acp_done_after_turn_end() {
+    use crate::live;
+    use crate::models::{LiveObservation, LiveStatusKind};
+    use crate::ui_state::{derive_operator_status, TaskStatus};
+
+    struct IdleShellRunner;
+
+    impl CommandRunner for IdleShellRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let args = command.args.join(" ");
+            let stdout = if args.contains("capture-pane") {
+                "matt@host ajax-cli % ".to_string()
+            } else {
+                runtime_stdout(&command.args).to_string()
+            };
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    let config = Config {
+        repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+        ..Config::default()
+    };
+    let mut registry = InMemoryRegistry::default();
+    let mut task = task_with_live(LiveStatusKind::AgentRunning, "Agent working");
+    task.set_skip_interactive_agent(true);
+    let task_id = task.id.clone();
+    live::apply_authoritative_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::Done, "Response ready"),
+        SystemTime::now(),
+    );
+    registry.create_task(task).unwrap();
+    let mut context = CommandContext::new(config, registry);
+    let mut runner = IdleShellRunner;
+
+    let _ = refresh_runtime_context(&mut context, &mut runner);
+
+    let task = context.registry.get_task(&task_id).unwrap();
+    let status = derive_operator_status(task);
+    assert_ne!(
+        status.status,
+        TaskStatus::Running,
+        "refresh must not resurrect Agent working after ACP turn_end: {status:?}"
+    );
+    assert_eq!(status.explanation.as_deref(), Some("Response ready"));
+}

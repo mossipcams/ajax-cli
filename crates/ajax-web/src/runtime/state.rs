@@ -257,6 +257,20 @@ where
         }
     }
 
+    fn wire_session_activity_reporter(&self)
+    where
+        C: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        let state = self.clone();
+        self.task_session_directory
+            .set_report_session_activity(Arc::new(move |handle, activity| {
+                // Best-effort: a lost race with another writer must not disturb
+                // the turn this evidence described (#1069).
+                state.report_task_session_activity(handle, activity).is_ok()
+            }));
+    }
+
     /// Persist desired session model metadata before the host replaces an ACP child.
     pub(crate) fn persist_task_session_model(
         &self,
@@ -329,7 +343,11 @@ impl<C, B> WebAppState<C, B> {
         runner: C,
         bridge: B,
         state_dir: PathBuf,
-    ) -> Self {
+    ) -> Self
+    where
+        C: Clone + CommandRunner + Send + Sync + 'static,
+        B: Clone + RuntimeBridge<C> + Send + Sync + 'static,
+    {
         let stt_provider = moonshine_provider_from_config(&context.config);
         let stt_finalization_timeout_ms = context.config.stt.finalization_timeout_ms;
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
@@ -339,7 +357,7 @@ impl<C, B> WebAppState<C, B> {
         let hub_dir = state_dir.as_ref().clone();
         let task_session_directory = TaskSessionDirectory::new(hub_dir);
         task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
-        Self {
+        let state = Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
                 runner,
@@ -361,7 +379,9 @@ impl<C, B> WebAppState<C, B> {
             stt_pause_grace_period_ms,
             stt_language,
             task_session_directory,
-        }
+        };
+        state.wire_session_activity_reporter();
+        state
     }
 
     pub fn mark_browser_cockpit_seen(&self) {
@@ -391,7 +411,11 @@ impl<C, B> WebAppState<C, B> {
         runner: C,
         bridge: B,
         state_dir: PathBuf,
-    ) -> Result<Self, WebError> {
+    ) -> Result<Self, WebError>
+    where
+        C: Clone + CommandRunner + Send + Sync + 'static,
+        B: Clone + RuntimeBridge<C> + Send + Sync + 'static,
+    {
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
         let push = PushHub::load_or_create(&state_dir).map_err(WebError::CommandFailed)?;
         let cloudflare_access = CloudflareAccessConfig::from_env()?;
@@ -404,7 +428,7 @@ impl<C, B> WebAppState<C, B> {
         let state_dir = Arc::new(state_dir);
         let task_session_directory = TaskSessionDirectory::new(hub_dir);
         task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
-        Ok(Self {
+        let state = Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
                 runner,
@@ -426,7 +450,9 @@ impl<C, B> WebAppState<C, B> {
             stt_pause_grace_period_ms,
             stt_language,
             task_session_directory,
-        })
+        };
+        state.wire_session_activity_reporter();
+        Ok(state)
     }
 
     #[cfg(test)]
