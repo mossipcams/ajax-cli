@@ -14,6 +14,8 @@ interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinnedRef: RefObject<boolean>;
+  ignoreScrollIntentRef: RefObject<boolean>;
+  layoutTransitionRef: RefObject<boolean>;
   onRestoreLiveEdge?: () => void;
 }
 
@@ -26,11 +28,13 @@ export function useChatViewport({
   threadRef,
   composerRef,
   pinnedRef,
+  ignoreScrollIntentRef,
+  layoutTransitionRef,
   onRestoreLiveEdge,
 }: Options) {
   const { keyboardOpen, keyboardHeight, innerHeight, visualViewportHeight } = useMobileKeyboard();
   const geometryRef = useRef<TranscriptGeometry | null>(null);
-  const ignoreScrollIntentRef = useRef(false);
+  const preKeyboardGeometryRef = useRef<TranscriptGeometry | null>(null);
   const keyboardTransitionInitRef = useRef(true);
   const prevKeyboardOpenRef = useRef<boolean | null>(null);
   const composerHeightRef = useRef(0);
@@ -66,23 +70,53 @@ export function useChatViewport({
 
     if (prevKeyboardOpenRef.current === keyboardOpen) return;
 
+    const opening = prevKeyboardOpenRef.current === false && keyboardOpen;
     const closing = prevKeyboardOpenRef.current === true && !keyboardOpen;
-    const before = geometryRef.current ?? captureTranscriptGeometry(node);
+
+    if (opening) {
+      preKeyboardGeometryRef.current =
+        geometryRef.current ?? captureTranscriptGeometry(node);
+    }
+
+    const before =
+      closing && preKeyboardGeometryRef.current
+        ? preKeyboardGeometryRef.current
+        : geometryRef.current ?? captureTranscriptGeometry(node);
     const restoreTarget: TranscriptGeometry = {
       ...before,
-      atBottom: before.atBottom || pinnedRef.current,
+      atBottom: before.atBottom,
     };
 
     prevKeyboardOpenRef.current = keyboardOpen;
+    layoutTransitionRef.current = true;
     ignoreScrollIntentRef.current = true;
 
-    return afterTranscriptLayoutSettles(node, restoreTarget, () => {
-      restoreTranscriptGeometry(node, restoreTarget);
-      if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
-      geometryRef.current = captureTranscriptGeometry(node);
+    const cancelSettle = afterTranscriptLayoutSettles(
+      node,
+      restoreTarget,
+      () => {
+        restoreTranscriptGeometry(node, restoreTarget);
+        if (closing && restoreTarget.atBottom) onRestoreLiveEdge?.();
+        geometryRef.current = captureTranscriptGeometry(node);
+        ignoreScrollIntentRef.current = false;
+        layoutTransitionRef.current = false;
+        if (closing) preKeyboardGeometryRef.current = null;
+      },
+      { ignoreProgrammaticScroll: ignoreScrollIntentRef },
+    );
+
+    return () => {
+      cancelSettle();
       ignoreScrollIntentRef.current = false;
-    });
-  }, [keyboardOpen, onRestoreLiveEdge, pinnedRef, threadRef]);
+      layoutTransitionRef.current = false;
+    };
+  }, [
+    keyboardOpen,
+    ignoreScrollIntentRef,
+    layoutTransitionRef,
+    onRestoreLiveEdge,
+    threadRef,
+  ]);
 
   useEffect(() => {
     const composer = composerRef.current;

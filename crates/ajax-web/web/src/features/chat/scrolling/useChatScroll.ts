@@ -22,13 +22,15 @@ interface Options {
   revision: number;
   /** Re-subscribe layout observers when the mounted session identity changes. */
   sessionKey: string;
+  /** While true, keyboard/viewport layout settle owns scroll — do not re-pin. */
+  layoutTransitionRef?: RefObject<boolean>;
 }
 
 function liveEdgeTarget(node: HTMLDivElement) {
   return { ...captureTranscriptGeometry(node), atBottom: true };
 }
 
-export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
+export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitionRef }: Options) {
   const seenRevisionRef = useRef(0);
   const prevSessionKeyRef = useRef(sessionKey);
   const revisionRef = useRef(revision);
@@ -109,7 +111,7 @@ export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
     const node = threadRef.current;
     if (!node || typeof MutationObserver === "undefined") return;
     const observer = new MutationObserver(() => {
-      if (!pinnedRef.current) return;
+      if (layoutTransitionRef?.current || !pinnedRef.current) return;
       scrollToLiveEdge(node);
     });
     observer.observe(node, { childList: true, subtree: true, characterData: true });
@@ -120,7 +122,7 @@ export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
     const node = threadRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (!pinnedRef.current) return;
+      if (layoutTransitionRef?.current || !pinnedRef.current) return;
       scrollToLiveEdge(node);
     });
     observer.observe(node);
@@ -128,7 +130,7 @@ export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
   }, [sessionKey, scrollToLiveEdge, threadRef]);
 
   function onThreadScroll(event: UIEvent<HTMLDivElement>) {
-    if (ignoreScrollIntentRef.current) return;
+    if (ignoreScrollIntentRef.current || layoutTransitionRef?.current) return;
     const node = event.currentTarget;
     const atLive = node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
     pinnedRef.current = atLive;
@@ -141,6 +143,7 @@ export function useChatScroll({ threadRef, revision, sessionKey }: Options) {
 
   return {
     pinnedRef,
+    ignoreScrollIntentRef,
     behind,
     scrollToLatest,
     restoreLiveEdge,
