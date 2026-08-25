@@ -214,6 +214,17 @@ existing paths.
   reducer). A cold load or full reload omits `?cursor=` and receives full replay
   with `snapshot.reset: true`; only unacknowledged prompts persist in
   `sessionStorage`.
+- Unsent composer textarea text (before Send) is also kept in `localStorage`
+  per task handle (`ajax.web.session.composer.draft.<handle>`). Leaving the
+  session route, closing the tab, and returning restores that draft in the
+  composer. Drafts are text-only presentation state: attachments are not
+  persisted, and a successful send or composer clear removes the stored draft.
+  This is not task truth, transcript, or a second prompt queue.
+- The browser's one editable queued follow-up is also kept in `localStorage`
+  per task handle (`ajax.web.session.composer.queue.<handle>`). Queue → leave
+  task → return restores the queued text (and JSON-serializable content blocks
+  when present). A stored `stopping` state is restored as `queued`. Removing the
+  queue, dispatching it, or a committed Drop clears the stored queue entry.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.

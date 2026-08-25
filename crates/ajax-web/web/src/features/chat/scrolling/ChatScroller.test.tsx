@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { fireEvent, screen, act } from "@testing-library/react";
-import { mountChat, prepareChatSurface, send, transport } from "../ChatSurface.testHarness";
+import { mountChat, prepareChatSurface, send, transport, flushRaf, ChatWithSheet, chatH } from "../ChatSurface.testHarness";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -194,6 +194,57 @@ describe("Jump to latest", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "Only message", itemId: "a1" });
 
+    expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
+  });
+});
+
+describe("task open positioning (#1065)", () => {
+  beforeEach(() => {
+    prepareChatSurface();
+  });
+
+  it("lands on the live edge after cached transcript hydrates (#1065)", () => {
+    chatH.autoReady = false;
+    mountChat();
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+
+    for (let i = 0; i < 6; i += 1) {
+      send({ type: "message", role: "user", text: `Question ${i}`, itemId: `u${i}` });
+      send({
+        type: "message",
+        role: "agent",
+        text: `Answer ${i}. ${"Padding ".repeat(40)}`,
+        itemId: `a${i}`,
+      });
+      Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 3200 });
+    }
+
+    send({ type: "turn_end", stopReason: "end_turn" });
+    act(() => chatH.ready?.("auto"));
+    flushRaf();
+
+    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
+  });
+
+  it("re-pins to the live edge when session identity changes on task open", () => {
+    const { rerender } = mountChat({ detailStatus: "loading" });
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 2400 });
+
+    for (let i = 0; i < 4; i += 1) {
+      send({ type: "message", role: "agent", text: `Earlier ${i}`, itemId: `a${i}` });
+    }
+    thread.scrollTop = 80;
+    fireEvent.scroll(thread);
+    expect(screen.getByTestId("session-jump")).toBeInTheDocument();
+
+    rerender(<ChatWithSheet detailStatus="ready" />);
+    flushRaf();
+
+    expect(thread.scrollTop).toBe(thread.scrollHeight);
     expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
   });
 });

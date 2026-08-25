@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -25,6 +26,13 @@ import {
   promptFrameFits,
 } from "@/shared/lib/promptContent";
 import { autoGrow } from "./autoGrow";
+import {
+  clearComposerDraft,
+  readComposerDraft,
+  readComposerQueue,
+  writeComposerDraft,
+  writeComposerQueue,
+} from "./draftStorage";
 import {
   beginStopAndSend,
   clearQueue,
@@ -94,6 +102,8 @@ type ComposerContextValue = {
   attachAccept: string;
   canAttach: boolean;
   attachmentError: string | null;
+  /** Bumps when draft text is restored from storage (not typed). */
+  draftRestoreGeneration: number;
 };
 
 const ComposerContext = createContext<ComposerContextValue | null>(null);
@@ -118,15 +128,24 @@ export function ComposerProvider({
   markStopped,
   children,
 }: ComposerProviderProps) {
-  const draftRef = useRef("");
-  const composerStateRef = useRef<ComposerState>({ status: "idle" });
-  const [draft, setDraft] = useState("");
-  const [composerState, setComposerState] = useState<ComposerState>({ status: "idle" });
+  const initialDraft = readComposerDraft(handle);
+  const initialQueue = readComposerQueue(handle);
+  const draftRef = useRef(initialDraft);
+  const composerStateRef = useRef<ComposerState>(initialQueue);
+  const [draft, setDraft] = useState(initialDraft);
+  const [draftRestoreGeneration, setDraftRestoreGeneration] = useState(() =>
+    initialDraft ? 1 : 0,
+  );
+  const [composerState, setComposerState] = useState<ComposerState>(initialQueue);
   const [slashSelection, setSlashSelection] = useState(0);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const holdRestoredQueueRef = useRef(initialQueue.status !== "idle");
+  const [restoreIdleCheck, setRestoreIdleCheck] = useState(0);
   composerStateRef.current = composerState;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   const slashPrefix = useMemo(() => parseSlashPrefix(draft), [draft]);
   const slashMatches = useMemo(
@@ -139,6 +158,35 @@ export function ComposerProvider({
     setSlashSelection(0);
   }, [draft, availableCommands]);
 
+  useLayoutEffect(() => {
+    const stored = readComposerDraft(handle);
+    draftRef.current = stored;
+    setDraft(stored);
+    if (stored) setDraftRestoreGeneration((generation) => generation + 1);
+    setComposerState(readComposerQueue(handle));
+    holdRestoredQueueRef.current = readComposerQueue(handle).status !== "idle";
+  }, [handle]);
+
+  useEffect(() => {
+    writeComposerQueue(handle, composerState);
+  }, [composerState, handle]);
+
+  const persistDraft = useCallback(
+    (value: string) => {
+      writeComposerDraft(handle, value);
+    },
+    [handle],
+  );
+
+  const setDraftWithPersist = useCallback(
+    (value: string) => {
+      draftRef.current = value;
+      persistDraft(value);
+      setDraft(value);
+    },
+    [persistDraft],
+  );
+
   const {
     speechModel,
     micAriaLabel,
@@ -147,7 +195,7 @@ export function ComposerProvider({
   } = useChatSpeech({
     handle,
     draftRef,
-    setDraft,
+    setDraft: setDraftWithPersist,
   });
 
   const queued = composerQueuedText(composerState);
@@ -155,9 +203,10 @@ export function ComposerProvider({
 
   const clearDraftText = useCallback(() => {
     draftRef.current = "";
+    clearComposerDraft(handle);
     setDraft("");
     if (composerRef.current) composerRef.current.style.height = "";
-  }, [composerRef]);
+  }, [composerRef, handle]);
 
   const clearDraftAttachments = useCallback(() => {
     setAttachments([]);
@@ -260,6 +309,27 @@ export function ComposerProvider({
     });
     if (intents.length === 0) return;
 
+    if (holdRestoredQueueRef.current) {
+      if (!connected || !everOpened) return;
+      if (busy) {
+        holdRestoredQueueRef.current = false;
+        return;
+      }
+      if (restoreIdleCheck === 0) {
+        requestAnimationFrame(() => {
+          if (!holdRestoredQueueRef.current) return;
+          if (busyRef.current) {
+            holdRestoredQueueRef.current = false;
+            return;
+          }
+          holdRestoredQueueRef.current = false;
+          setRestoreIdleCheck((tick) => tick + 1);
+        });
+        return;
+      }
+      holdRestoredQueueRef.current = false;
+    }
+
     let sendSucceeded = false;
     for (const intent of intents) {
       if (intent.type === "mark_stopped") markStopped();
@@ -286,13 +356,15 @@ export function ComposerProvider({
     if (sendSucceeded) {
       setComposerState((current) => composerStateAfterFlush(current, true));
     }
-  }, [busy, connected, markStopped, sendPrompt]);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
 
   const editQueued = useCallback(() => {
     const restored = restoreQueuedDraft(composerState);
     if (!restored) return;
     draftRef.current = restored.draft;
+    persistDraft(restored.draft);
     setDraft(restored.draft);
+    if (restored.draft) setDraftRestoreGeneration((generation) => generation + 1);
     setComposerState(restored.state);
     setAttachments(
       restored.contentBlocks?.length
@@ -300,7 +372,7 @@ export function ComposerProvider({
         : [],
     );
     composerRef.current?.focus();
-  }, [composerRef, composerState]);
+  }, [composerRef, composerState, persistDraft]);
 
   const removeQueued = useCallback(() => {
     setComposerState(clearQueue(composerState));
@@ -317,10 +389,11 @@ export function ComposerProvider({
   const applyDraft = useCallback(
     (value: string, shrank: boolean) => {
       draftRef.current = value;
+      persistDraft(value);
       if (composerRef.current) autoGrow(composerRef.current, shrank);
       setDraft(value);
     },
-    [composerRef],
+    [composerRef, persistDraft],
   );
 
   const onDraftChange = useCallback(
@@ -434,6 +507,7 @@ export function ComposerProvider({
     attachAccept,
     canAttach,
     attachmentError,
+    draftRestoreGeneration,
   };
 
   return <ComposerContext.Provider value={value}>{children}</ComposerContext.Provider>;

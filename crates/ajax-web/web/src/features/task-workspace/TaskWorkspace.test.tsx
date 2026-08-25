@@ -5,7 +5,16 @@ import taskDetail from "@/fixtures/task-detail.json";
 import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import { sessionHash, taskHash } from "@/shared/lib/routes";
 import type { RemoteResource } from "@/shared/lib/types";
-import type { BrowserTaskDetail } from "@/shared/lib/types";
+import type { BrowserTaskDetail, WebAction } from "@/shared/lib/types";
+import * as api from "@/shared/lib/api";
+import {
+  readComposerDraft,
+  readComposerQueue,
+  writeComposerDraft,
+  writeComposerQueue,
+} from "@/features/chat/composer/public";
+import { commitConfirmedAction } from "@/features/task/taskMutations";
+import { DROP_UNDO_MS } from "@/shared/lib/polling";
 
 class StubWebSocket {
   readyState = 1;
@@ -17,6 +26,23 @@ globalThis.WebSocket = StubWebSocket as unknown as typeof WebSocket;
 
 function readyDetail(data: BrowserTaskDetail): RemoteResource<BrowserTaskDetail> {
   return { status: "ready", data, error: null };
+}
+
+function confirmFromShell(
+  onResult: ReturnType<typeof vi.fn>,
+  callbacks: Parameters<typeof commitConfirmedAction>[3],
+  dropHandles: Parameters<typeof commitConfirmedAction>[4],
+) {
+  const options = onResult.mock.calls.at(-1)?.[3] as {
+    pendingConfirm: { action: WebAction; handle: string; interactionId: string };
+  };
+  commitConfirmedAction(
+    options.pendingConfirm.action,
+    options.pendingConfirm.handle,
+    options.pendingConfirm.interactionId,
+    callbacks,
+    dropHandles,
+  );
 }
 
 describe("TaskWorkspace", () => {
@@ -184,5 +210,82 @@ describe("TaskWorkspace", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-meta-details-trigger"));
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+  });
+
+  describe("Drop dismiss composer cleanup", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("clears stored composer draft and queued follow-up when Drop dismisses", async () => {
+      vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+      const onResult = vi.fn();
+      const onDismiss = vi.fn();
+      const dropHandles = {
+        dropTimerRef: { current: null as ReturnType<typeof setTimeout> | null },
+        dropResolvedRef: { current: false },
+      };
+      writeComposerDraft("web/fix-login", "leftover draft");
+      writeComposerQueue("web/fix-login", { status: "queued", text: "leftover queue" });
+      render(
+        <TaskWorkspace
+          handle="web/fix-login"
+          mode="terminal"
+          detail={readyDetail(taskDetail)}
+          orchestrationChat
+          onGo={vi.fn()}
+          onBack={vi.fn()}
+          onOpenDiff={vi.fn()}
+          onResult={onResult}
+          onDismiss={onDismiss}
+        />,
+      );
+      fireEvent.click(screen.getByText("Drop"));
+      confirmFromShell(onResult, { onResult, onDismiss }, dropHandles);
+      vi.advanceTimersByTime(DROP_UNDO_MS);
+      await vi.runAllTimersAsync();
+      expect(onDismiss).toHaveBeenCalledOnce();
+      expect(readComposerDraft("web/fix-login")).toBe("");
+      expect(readComposerQueue("web/fix-login")).toEqual({ status: "idle" });
+    });
+
+    it("does not clear composer presentation state when Drop is undone", async () => {
+      vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+      const onResult = vi.fn();
+      const dropHandles = {
+        dropTimerRef: { current: null as ReturnType<typeof setTimeout> | null },
+        dropResolvedRef: { current: false },
+      };
+      writeComposerDraft("web/fix-login", "keep on undo");
+      writeComposerQueue("web/fix-login", { status: "queued", text: "keep queue" });
+      render(
+        <TaskWorkspace
+          handle="web/fix-login"
+          mode="terminal"
+          detail={readyDetail(taskDetail)}
+          orchestrationChat
+          onGo={vi.fn()}
+          onBack={vi.fn()}
+          onOpenDiff={vi.fn()}
+          onResult={onResult}
+        />,
+      );
+      fireEvent.click(screen.getByText("Drop"));
+      confirmFromShell(onResult, { onResult }, dropHandles);
+      const undoCall = onResult.mock.calls.find(
+        (call) => call[0] === "Dropping web/fix-login…",
+      )?.[3] as { onUndo: () => void };
+      undoCall.onUndo();
+      expect(readComposerDraft("web/fix-login")).toBe("keep on undo");
+      expect(readComposerQueue("web/fix-login")).toEqual({
+        status: "queued",
+        text: "keep queue",
+      });
+    });
   });
 });
