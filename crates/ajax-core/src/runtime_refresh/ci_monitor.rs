@@ -14,7 +14,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-const ACTIVE_CHECK_INTERVAL_SECS: u64 = 30;
+// Minimum gap for `checks_due` while an attempt is pending or failed — not a
+// standalone poll scheduler. Live probes run only on `RefreshTier::Full`; web
+// `/api/cockpit` is Live. The web background tick already runs Full refresh
+// (including CI probes) and attention delivery every 30 seconds on the same
+// tick before `deliver_attention_pushes`.
+const ACTIVE_CHECK_INTERVAL_SECS: u64 = 10;
 const DISCOVERY_INTERVAL_SECS: u64 = 300;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -184,7 +189,7 @@ fn refresh_open_pr(
     let _ = reduce_report(task, pr, report, now);
 }
 
-fn checks_due(state: &CiMonitorState, now: u64) -> bool {
+pub(crate) fn checks_due(state: &CiMonitorState, now: u64) -> bool {
     if state.status == CiAttemptStatus::Unobserved && state.last_check_probe_at.is_none() {
         return true;
     }
@@ -271,6 +276,21 @@ fn apply_report(
     }
 }
 
+/// True when a prior failure episode saw checks go pending again and a rerun is
+/// still in flight. Distinct from first-attempt failure with sibling pending
+/// checks, which never sets `saw_pending_after_failure`.
+pub(crate) fn rerun_in_progress(state: &CiMonitorState) -> bool {
+    state.saw_pending_after_failure
+        && (state.status == CiAttemptStatus::Pending || state.has_pending)
+}
+
+/// GitHub checks are still pending or rerunning; notify only after a poll
+/// records settled failure (or cleared). First-attempt failure with sibling
+/// pending checks does not set `saw_pending_after_failure` and is not in flight.
+pub(crate) fn checks_in_flight(state: &CiMonitorState) -> bool {
+    state.status == CiAttemptStatus::Pending || rerun_in_progress(state)
+}
+
 fn apply_failed(task: &mut Task, state: &mut CiMonitorState, previous: &CiMonitorState) {
     let summary = state
         .failed_checks
@@ -278,17 +298,21 @@ fn apply_failed(task: &mut Task, state: &mut CiMonitorState, previous: &CiMonito
         .map(|check| check.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    super::github_checks::apply_github_checks_observation(
-        task,
-        CiChecksObservation::Failed { summary },
-        std::time::SystemTime::now(),
-    );
+    // A restarted run can report the old failure alongside in-progress checks.
+    // Keep projecting "CI running" until the rerun settles.
+    if !rerun_in_progress(state) {
+        super::github_checks::apply_github_checks_observation(
+            task,
+            CiChecksObservation::Failed { summary },
+            std::time::SystemTime::now(),
+        );
+    }
     state.status = CiAttemptStatus::Failed;
     let first_episode = previous.episode_id.is_none();
     let distinct_rerun = previous.saw_pending_after_failure
         && !state.check_identities.is_empty()
         && state.check_identities != previous.last_failure_identities;
-    if first_episode || distinct_rerun {
+    if first_episode || (distinct_rerun && !state.has_pending) {
         start_episode(task, state);
     }
 }
@@ -356,6 +380,7 @@ pub fn pending_notification(task: &Task) -> Option<AgentNotification> {
     let episode_id = state.episode_id.clone()?;
     if state.status != CiAttemptStatus::Failed
         || state.last_notified_failure.as_deref() == Some(&episode_id)
+        || checks_in_flight(&state)
     {
         return None;
     }
