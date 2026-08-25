@@ -1,8 +1,9 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import {
   attachComposerHotbarKeyboardRetention,
   preventComposerHotbarFocusSteal,
 } from "./hotbarKeyboard";
+import { autoGrow } from "./autoGrow";
 import { useComposerContext } from "./useComposer";
 
 export type ChatComposerProps = {
@@ -38,9 +39,17 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     attachAccept,
     canAttach,
     attachmentError,
+    draftRestoreGeneration,
   } = useComposerContext();
 
   const hotbarRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (draftRestoreGeneration === 0) return;
+    const node = composerRef.current;
+    if (!node) return;
+    autoGrow(node, true);
+  }, [composerRef, draftRestoreGeneration]);
 
   useEffect(() => {
     const hotbar = hotbarRef.current;
