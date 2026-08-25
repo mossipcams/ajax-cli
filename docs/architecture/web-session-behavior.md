@@ -190,6 +190,22 @@ existing paths.
 - Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
+- When `session/prompt` RPC fails with a cancellation-shaped transport abort
+  (for example plain `canceled`/`cancelled` text such as `context canceled`,
+  harness `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
+  `error code cancel` / `CANCEL (0x8)`), the host emits `turn_end` with
+  `stopReason: cancelled` instead of a typed `error` event
+  ([#1066](https://github.com/mossipcams/ajax-cli/issues/1066)). Untagged HTTP/2
+  stream close/reset, `INTERNAL_ERROR (0x2)`, untagged `REFUSED_STREAM (0x7)`,
+  bare `aborted`, and bare `stream reset` remain typed `error` events. Non-cancel
+  `RetriableError` and similar harness transport dumps become one host-owned
+  sentence (`The connection was interrupted. Try sending again.`) so the raw
+  `RetriableError: …` text never reaches the operator or transcript. Older
+  transcripts replay the same mapping in `explainAcpError` for every
+  `RetriableError:` string; live cancel vs interrupt classification stays
+  host-owned. Genuine non-retriable prompt failures still surface as errors with
+  their original message. Non-prompt RPC methods still surface
+  cancellation-shaped messages as errors. The host does not retry the prompt.
 - After a WebSocket drop and reconnect, the browser supplies the last applied
   cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
   `snapshot` plus only events after that cursor; invalid or compacted-away
