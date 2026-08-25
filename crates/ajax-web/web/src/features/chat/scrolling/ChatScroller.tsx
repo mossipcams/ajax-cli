@@ -46,16 +46,21 @@ export default function ChatScroller({
   children,
 }: Props) {
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const layoutTransitionRef = useRef(false);
   const seenActivityCountRef = useRef(0);
-  const { pinnedRef, behind, scrollToLatest, restoreLiveEdge, onThreadScroll } = useChatScroll({
-    threadRef,
-    revision,
-    sessionKey,
-  });
+  const { pinnedRef, ignoreScrollIntentRef, behind, scrollToLatest, restoreLiveEdge, onThreadScroll } =
+    useChatScroll({
+      threadRef,
+      revision,
+      sessionKey,
+      layoutTransitionRef,
+    });
   const { surfaceStyle } = useChatViewport({
     threadRef,
     composerRef,
     pinnedRef,
+    ignoreScrollIntentRef,
+    layoutTransitionRef,
     onRestoreLiveEdge: restoreLiveEdge,
   });
 
