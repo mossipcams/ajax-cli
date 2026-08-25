@@ -658,6 +658,34 @@ fn start_provisioning_named_steps_update_state_without_numeric_command_indexes()
     assert_eq!(task.agent_attempts[0].status, AgentRuntimeStatus::Running);
 }
 
+#[test]
+fn provisioned_acp_agent_command_sent_does_not_claim_agent_working() {
+    let mut context = context();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "cursor".to_string(),
+        skip_interactive_agent: true,
+        model: None,
+    };
+    let task = record_new_task(&mut context, &request).unwrap();
+    let task_id = task.id.clone();
+
+    mark_new_task_provisioning_step_completed(
+        &mut context,
+        &task_id,
+        StartProvisioningStep::AgentCommandSent,
+    )
+    .unwrap();
+
+    let task = context.registry.get_task(&task_id).unwrap();
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    assert!(
+        !task.has_side_flag(SideFlag::AgentRunning),
+        "provisioned ACP tasks must not read Agent working before the first turn (#1069)"
+    );
+}
+
 fn start_collision_task(
     repo: &str,
     handle: &str,
