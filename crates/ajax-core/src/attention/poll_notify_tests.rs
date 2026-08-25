@@ -122,7 +122,10 @@ fn seed_ci_monitor_first_attempt_pending(task: &mut Task) {
         100,
     );
     let state = load_state(task);
-    assert_eq!(state.status, crate::runtime_refresh::ci_monitor::CiAttemptStatus::Pending);
+    assert_eq!(
+        state.status,
+        crate::runtime_refresh::ci_monitor::CiAttemptStatus::Pending
+    );
     assert!(!state.saw_pending_after_failure);
     assert!(crate::runtime_refresh::ci_monitor::checks_in_flight(&state));
 }
@@ -196,15 +199,16 @@ fn ci_settled_failure_notifies_after_poll_records_terminal_state() {
         },
         103,
     );
-    assert!(!crate::runtime_refresh::ci_monitor::checks_in_flight(&load_state(&task)));
+    assert!(!crate::runtime_refresh::ci_monitor::checks_in_flight(
+        &load_state(&task)
+    ));
     assert!(pending_notification(&task).is_some());
     task.metadata.insert(
         super::NOTIFY_CANDIDATE_SINCE_KEY.to_string(),
         "1030".to_string(),
     );
     assert!(
-        super::take_attention_transition_at(&mut task, at(1_045))
-            .is_some(),
+        super::take_attention_transition_at(&mut task, at(1_045)).is_some(),
         "notify after poll records settled failure"
     );
 }

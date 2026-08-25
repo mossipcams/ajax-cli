@@ -326,8 +326,7 @@ fn ci_failed_agent_turn_does_not_suppress_settled_failure_attention() {
         "985".to_string(),
     );
     assert!(
-        super::take_attention_transition_at(&mut task, at(1_015))
-            .is_some(),
+        super::take_attention_transition_at(&mut task, at(1_015)).is_some(),
         "settled CI failure must phone-ping even while the agent is running"
     );
     assert!(pending_notification(&task).is_some());
