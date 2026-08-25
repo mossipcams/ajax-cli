@@ -42,9 +42,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
-/// Reports an ACP turn transition as task evidence. Fire-and-forget: a failed
-/// report must never interrupt a live turn.
-pub(crate) type ReportSessionActivity = Arc<dyn Fn(SessionActivity) + Send + Sync>;
+/// Reports an ACP turn transition as task evidence. Returns `true` when the
+/// observation was applied; failures must never interrupt a live turn.
+pub(crate) type ReportSessionActivity = Arc<dyn Fn(&str, SessionActivity) -> bool + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -424,6 +424,9 @@ pub fn prepare_task_session<R: Registry>(
         agent: task.selected_agent,
     })
 }
+
+#[cfg(test)]
+mod session_activity_directory_tests;
 
 #[cfg(test)]
 mod normalize_tests;
