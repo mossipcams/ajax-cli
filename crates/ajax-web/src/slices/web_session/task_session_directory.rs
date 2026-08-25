@@ -9,7 +9,7 @@ use super::{
     },
     task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
-    PersistSessionModel, SessionClientMessage, SessionServerEvent,
+    PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::wire_value_to_session_value;
 use crate::adapters::web_session_store;
@@ -30,6 +30,7 @@ struct SessionEntry {
 pub(crate) struct TaskSessionDirectory {
     sessions: Mutex<HashMap<String, SessionEntry>>,
     state_dir: PathBuf,
+    report_activity: Mutex<Option<ReportSessionActivity>>,
 }
 
 impl TaskSessionDirectory {
@@ -37,7 +38,16 @@ impl TaskSessionDirectory {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             state_dir,
+            report_activity: Mutex::new(None),
         })
+    }
+
+    pub(crate) fn set_report_session_activity(&self, report: ReportSessionActivity) {
+        *self.report_activity.lock().unwrap() = Some(report);
+    }
+
+    fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {
+        self.report_activity.lock().unwrap().clone()
     }
 
     #[cfg(test)]
@@ -53,7 +63,11 @@ impl TaskSessionDirectory {
         if let Some(entry) = sessions.get(handle) {
             return Ok(entry.command_tx.clone());
         }
-        let (tx, join) = spawn_task_session(handle.to_string(), self.state_dir.clone());
+        let (tx, join) = spawn_task_session(
+            handle.to_string(),
+            self.state_dir.clone(),
+            self.report_activity_for_spawn(),
+        );
         sessions.insert(
             handle.to_string(),
             SessionEntry {
@@ -82,7 +96,11 @@ impl TaskSessionDirectory {
             entry.last_released = None;
             return Ok(entry.command_tx.clone());
         }
-        let (tx, join) = spawn_task_session(handle.to_string(), self.state_dir.clone());
+        let (tx, join) = spawn_task_session(
+            handle.to_string(),
+            self.state_dir.clone(),
+            self.report_activity_for_spawn(),
+        );
         sessions.insert(
             handle.to_string(),
             SessionEntry {

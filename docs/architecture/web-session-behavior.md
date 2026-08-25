@@ -508,11 +508,14 @@ only the chat live head knew a turn was in flight.
   Status derivation (`ui_state::derive_task_status`) is unchanged — this supplies
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
-- Transitions are read off the outbound wire the browser already receives, so the
-  task page and the chat head cannot disagree: `prompt_accepted` and a resolved
-  ask report `AgentRunning`; `permission_request` / `elicitation_request` report
-  `WaitingForApproval`; `turn_end` reports `Done`, or `Blocked` when the turn
-  errored. Detail inside a turn (messages, tool calls, usage) reports nothing.
+- Transitions are derived from the same session events the host appends to the
+  JSONL transcript: `prompt_accepted` and a resolved ask report `AgentRunning`;
+  `permission_request` / `elicitation_request` report `WaitingForApproval`;
+  `turn_end` reports `Done`, or `Blocked` when the turn errored. Detail inside a
+  turn (messages, tool calls, usage) reports nothing. The host applies each
+  transition as task evidence at transcript-append time — not from the browser
+  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
+  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.

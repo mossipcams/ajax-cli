@@ -11,7 +11,8 @@ use super::{
         drain_acp_events, normalize_session_events, parse_json_rpc_id, permission_response,
     },
     acp_usage::UsageDeduper,
-    apply_cancel_to_queue, prompt_content, QueuedPrompt, SessionServerEvent, MAX_QUEUED_PROMPTS,
+    apply_cancel_to_queue, prompt_content, QueuedPrompt, ReportSessionActivity, SessionActivity,
+    SessionActivityReporter, SessionServerEvent, MAX_QUEUED_PROMPTS,
 };
 use crate::adapters::web_session_acp::{AcpStdioClient, PromptCapabilityDescriptor};
 use crate::adapters::web_session_store;
@@ -180,6 +181,11 @@ pub(crate) struct TaskSessionState {
     /// Agent-reported session title from ACP `session_info_update`.
     pub(super) session_title: Option<String>,
     pub(super) pending_title_snapshot: bool,
+    /// Dedupes ACP run-state transitions for task evidence for this slot.
+    /// Activity that failed to persist on a prior append; retried before new events.
+    pending_activity_report: Option<SessionActivity>,
+    activity_reporter: SessionActivityReporter,
+    report_activity: Option<ReportSessionActivity>,
 }
 
 impl TaskSessionState {
@@ -195,8 +201,47 @@ impl TaskSessionState {
         if events.is_empty() {
             return;
         }
+        self.flush_pending_activity_report();
+        for event in &events {
+            let Some(activity) = self.activity_reporter.activity_for_event(event) else {
+                continue;
+            };
+            if self.try_report_activity(activity) {
+                self.activity_reporter.commit(activity);
+            } else {
+                self.pending_activity_report = Some(activity);
+            }
+        }
         self.log.append(events.clone());
         web_session_store::append_events(&self.state_dir, &self.qualified_handle, &events);
+    }
+
+    fn flush_pending_activity_report(&mut self) {
+        let Some(pending) = self.pending_activity_report else {
+            return;
+        };
+        if self.try_report_activity(pending) {
+            self.activity_reporter.commit(pending);
+            self.pending_activity_report = None;
+        }
+    }
+
+    fn try_report_activity(&self, activity: SessionActivity) -> bool {
+        match &self.report_activity {
+            Some(report) => {
+                const MAX_ATTEMPTS: usize = 3;
+                for attempt in 0..MAX_ATTEMPTS {
+                    if report(&self.qualified_handle, activity) {
+                        return true;
+                    }
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
+                false
+            }
+            None => true,
+        }
     }
 
     fn is_idle(&self) -> bool {
@@ -275,6 +320,7 @@ impl TaskSessionState {
 pub(crate) fn spawn_task_session(
     qualified_handle: String,
     state_dir: PathBuf,
+    report_activity: Option<ReportSessionActivity>,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
     tokio::task::JoinHandle<()>,
@@ -307,6 +353,9 @@ pub(crate) fn spawn_task_session(
             pending_capabilities_snapshot: None,
             session_title: None,
             pending_title_snapshot: false,
+            pending_activity_report: None,
+            activity_reporter: SessionActivityReporter::default(),
+            report_activity,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
