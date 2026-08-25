@@ -362,7 +362,12 @@ store's retained floor. Cross-language JSON fixtures live under
 Prompt frames carry a browser-generated `clientMessageId`. The host records a
 `prompt_accepted` event and ignores duplicate IDs, while the browser keeps
 unacknowledged prompts in a session-scoped outbox and retries them after a
-socket drop. Each live `TaskSession` continues draining its ACP child and host
+socket drop. Unsent composer textarea text and the one editable queued
+follow-up are stored separately in `localStorage` per task handle for restore
+after navigation or tab close; drafts are text-only presentation state, queue
+entries require text and may include JSON-serializable content blocks, and both
+are cleared on send, queue removal/dispatch, or committed Drop. Each live
+`TaskSession` continues draining its ACP child and host
 queue after the last browser subscriber detaches until the turn finishes, the
 queue empties, or idle retention evicts the slot.
 

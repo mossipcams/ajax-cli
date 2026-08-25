@@ -3,11 +3,13 @@ import { fireEvent, screen, act, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import * as autoGrowModule from "@/features/chat/composer/autoGrow";
 import * as useChatSpeechModule from "@/features/chat/composer/speech/useChatSpeech";
 import { claimSessionViewportOwnership } from "@/shared/lib/sessionViewport";
 import { initViewport, isKeyboardOpen } from "@/shared/lib/viewport";
 import {
   chatH,
+  flushRaf,
   mountChat,
   prepareChatSurface,
   send,
@@ -387,5 +389,89 @@ describe("ChatComposer", () => {
     expect(keyboardTextareaBody).not.toMatch(/env\(safe-area-inset-bottom\)/);
     expect(actionsBody).toMatch(/margin-left:\s*auto/);
     expect(sendBody).not.toMatch(/margin-left:\s*auto/);
+  });
+
+  it("restores unsent composer text after leaving and returning to the task", () => {
+    const { unmount } = mountChat({ handle: "web/fix-login" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "draft before navigate" },
+    });
+    unmount();
+    mountChat({ handle: "web/fix-login" });
+    expect(screen.getByLabelText("Message")).toHaveValue("draft before navigate");
+  });
+
+  it("auto-grows the textarea when restoring a stored multiline draft", () => {
+    const autoGrowSpy = vi.spyOn(autoGrowModule, "autoGrow");
+    const multiline = "line one\nline two\nline three";
+
+    const { unmount } = mountChat({ handle: "web/fix-login" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: multiline },
+    });
+    unmount();
+
+    autoGrowSpy.mockClear();
+    mountChat({ handle: "web/fix-login" });
+
+    expect(screen.getByLabelText("Message")).toHaveValue(multiline);
+    expect(autoGrowSpy).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement), true);
+  });
+
+  it("isolates composer drafts per task handle", () => {
+    let view = mountChat({ handle: "web/task-a" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "alpha draft" },
+    });
+    view.unmount();
+    view = mountChat({ handle: "web/task-b" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "beta draft" },
+    });
+    view.unmount();
+    view = mountChat({ handle: "web/task-a" });
+    expect(screen.getByLabelText("Message")).toHaveValue("alpha draft");
+    view.unmount();
+    mountChat({ handle: "web/task-b" });
+    expect(screen.getByLabelText("Message")).toHaveValue("beta draft");
+  });
+
+  it("clears stored draft after a successful send", () => {
+    const { unmount } = mountChat({ handle: "web/fix-login" });
+    typeComposer("sent and cleared");
+    unmount();
+    mountChat({ handle: "web/fix-login" });
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+  });
+
+  it("persists unsent drafts in localStorage so they survive tab close", () => {
+    const { unmount } = mountChat({ handle: "web/fix-login" });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "survives tab close" },
+    });
+    unmount();
+    expect(localStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBe(
+      "survives tab close",
+    );
+    expect(sessionStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBeNull();
+    mountChat({ handle: "web/fix-login" });
+    expect(screen.getByLabelText("Message")).toHaveValue("survives tab close");
+  });
+
+  it("restores a queued follow-up after leaving and returning to the task", () => {
+    const { unmount } = mountChat({ handle: "web/fix-login" });
+    typeComposer("First");
+    typeComposer("Next");
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Next");
+    unmount();
+    mountChat({ handle: "web/fix-login" });
+    act(() => {
+      chatH.emit?.({ type: "ready", model: "auto", busy: true, reset: false });
+    });
+    flushRaf();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Next");
+    expect(localStorage.getItem("ajax.web.session.composer.queue.web%2Ffix-login")).toContain(
+      "Next",
+    );
   });
 });
