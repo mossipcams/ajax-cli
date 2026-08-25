@@ -258,9 +258,8 @@ describe("TaskTerminalView", () => {
   });
 
   it("renders the task outlet hook the scroll lock targets", () => {
-    expect(appSource).toMatch(
-      /route\.kind === "task" && route\.handle[\s\S]*?<TaskWorkspaceRoute/,
-    );
+    expect(appSource).toMatch(/renderWorkspaceStack\(/);
+    expect(appSource).toMatch(/kind="task"/);
     // `.task-detail` is the element the scroll lock targets; the terminal
     // region is a different node and would not prove this contract.
     render(<TaskTerminalView detail={detail()} />);

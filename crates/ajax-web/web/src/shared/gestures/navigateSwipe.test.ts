@@ -5,6 +5,8 @@ import {
   navigateSwipeEnd,
   navigateSwipeTranslateX,
   navigateSwipeCommitOffset,
+  crossSlideRemainingPx,
+  crossSlideEnteringOffset,
   NAVIGATE_SWIPE_TRIGGER,
   isDiffPanGestureTarget,
 } from "./navigateSwipe";
@@ -26,10 +28,17 @@ describe("navigate swipe", () => {
   });
 
   it("fires left past the trigger and exposes translate", () => {
-    const state = navigateSwipeMove(navigateSwipeStart(), -(NAVIGATE_SWIPE_TRIGGER + 1), 0, PAGE_WIDTH);
+    let state = navigateSwipeMove(
+      navigateSwipeStart(),
+      -(NAVIGATE_SWIPE_TRIGGER + 1),
+      0,
+      PAGE_WIDTH,
+    );
     expect(state.engaged).toBe(true);
     expect(navigateSwipeEnd(state)).toBe("left");
-    expect(navigateSwipeTranslateX(state)).toBeLessThan(0);
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+    state = navigateSwipeMove(state, -(NAVIGATE_SWIPE_TRIGGER + 10), 0, PAGE_WIDTH);
+    expect(navigateSwipeTranslateX(state)).toBe(-9);
   });
 
   it("fires right past the trigger", () => {
@@ -43,9 +52,27 @@ describe("navigate swipe", () => {
     expect(navigateSwipeEnd(state)).toBe("none");
   });
 
-  it("follows finger up to page width", () => {
-    const state = navigateSwipeMove(navigateSwipeStart(), -200, 0, PAGE_WIDTH);
-    expect(navigateSwipeTranslateX(state)).toBe(-200);
+  it("starts translate at zero when engagement crosses the dead-zone", () => {
+    const atThreshold = navigateSwipeMove(navigateSwipeStart(), 48, 0, PAGE_WIDTH);
+    expect(atThreshold.engaged).toBe(true);
+    expect(navigateSwipeTranslateX(atThreshold)).toBe(0);
+
+    const pastThreshold = navigateSwipeMove(atThreshold, 49, 0, PAGE_WIDTH);
+    expect(navigateSwipeTranslateX(pastThreshold)).toBe(1);
+  });
+
+  it("tracks finger 1:1 after engagement", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -48, 0, PAGE_WIDTH);
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+    state = navigateSwipeMove(state, -200, 0, PAGE_WIDTH);
+    expect(navigateSwipeTranslateX(state)).toBe(-152);
+  });
+
+  it("exposes cross-slide offsets from the current drag position", () => {
+    expect(crossSlideEnteringOffset("left", -100, PAGE_WIDTH)).toBe(290);
+    expect(crossSlideRemainingPx("left", -100, PAGE_WIDTH)).toBe(290);
+    expect(crossSlideEnteringOffset("right", 100, PAGE_WIDTH)).toBe(-290);
+    expect(crossSlideRemainingPx("right", 100, PAGE_WIDTH)).toBe(290);
   });
 
   it("exposes commit offsets at full width", () => {

@@ -99,6 +99,12 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   touch-action: pan-y;
 }
 
+.session-page.is-diff-swiping,
+.session-chat.is-diff-swiping {
+  will-change: transform;
+  touch-action: pan-y;
+}
+
 .diff-review.is-diff-swiping {
   will-change: transform;
   touch-action: pan-y;
@@ -128,4 +134,34 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
 
 [data-outlet].ajax-swipe-enter-right {
   animation: swipe-enter-from-left 220ms var(--ease-spring);
+}
+
+.page-cross-slide-host {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-cross-slide-pane {
+  will-change: transform;
+}
+
+.page-cross-slide-leaving {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.page-cross-slide-entering {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
