@@ -399,8 +399,7 @@ fn live_cursor_spawn_product_scope_pins_issue_1079() {
             Ok((client, report)) => {
                 eprintln!(
                     "  session/new ok applied={} apply_err={:?}",
-                    report.applied_model,
-                    report.model_apply_error
+                    report.applied_model, report.model_apply_error
                 );
                 assert!(
                     !client.session_id().is_empty(),
