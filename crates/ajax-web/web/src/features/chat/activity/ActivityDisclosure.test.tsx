@@ -48,7 +48,7 @@ const tool = (id: string, overrides: Partial<ToolCall> = {}): ConversationItem =
 });
 
 describe("ActivityDisclosure", () => {
-  it("keeps thoughts, tools and plans out of the transcript behind one row", () => {
+  it("keeps thoughts and plans behind the disclosure while tool rows stay visible", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       { kind: "thought", id: "t1", text: "Checking the router" },
@@ -59,13 +59,13 @@ describe("ActivityDisclosure", () => {
     render(<Conversation items={items} busy={false} />);
 
     expect(screen.getAllByTestId("session-turn-work-summary")).toHaveLength(1);
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-plan")).not.toBeInTheDocument();
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Fixed.");
   });
 
-  it("shows only the current operation while the turn runs", () => {
+  it("shows the counted summary and tool rows while the turn runs", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       tool("e1", { kind: "read", status: "completed", locations: ["/repo/src/config.ts"] }),
@@ -79,9 +79,10 @@ describe("ActivityDisclosure", () => {
     render(<Conversation items={items} busy />);
 
     const summary = screen.getByTestId("session-turn-work-summary");
-    expect(summary).toHaveTextContent("Running cargo test…");
-    expect(summary).not.toHaveTextContent("config.ts");
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(summary).toHaveTextContent("Read 1 file · ran 1 command");
+    expect(summary).not.toHaveTextContent("Running cargo test");
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+    expect(screen.queryByTestId("session-tool-output")).not.toBeInTheDocument();
   });
 
   it("falls back to the live plan step, then reasoning, with no call in flight", () => {
@@ -129,9 +130,10 @@ describe("ActivityDisclosure", () => {
     ];
     const view = render(<Conversation items={items} busy={false} />);
 
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
-    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.getByTestId("session-thinking")).toBeInTheDocument();
 
     view.rerender(<Conversation items={[...items, tool("e2")]} busy={false} />);
@@ -178,7 +180,7 @@ describe("ActivityDisclosure", () => {
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
   });
 
-  it("reveals a diff and command output once the timeline is open", () => {
+  it("keeps tool bodies collapsed until the row is opened", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Change the port"),
       {
@@ -198,8 +200,8 @@ describe("ActivityDisclosure", () => {
     ];
     render(<Conversation items={items} busy={false} />);
 
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.queryByTestId("session-tool-diff")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     fireEvent.click(screen.getByRole("button", { name: /Edited config\.ts/i }));
 
     const diff = screen.getByTestId("session-tool-diff");
@@ -288,5 +290,73 @@ describe("ActivityDisclosure", () => {
     expect(stylesSource.match(/\.session-toolcard-body\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
       /padding:[^;]*24px/,
     );
+  });
+});
+
+describe("ActivityDisclosure — #1082 session preference", () => {
+  it("#1082: manual expand on one turn sticks for later ordinary turns", () => {
+    const turn1: ConversationItem[] = [
+      userProse("u1", "First"),
+      tool("t1"),
+      agentProse("a1", "Done."),
+    ];
+    const bothTurns: ConversationItem[] = [
+      ...turn1,
+      userProse("u2", "Second"),
+      tool("t2"),
+    ];
+
+    const view = render(<Conversation items={turn1} busy={false} />);
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+
+    view.rerender(<Conversation items={bothTurns} busy={false} />);
+    const works = screen.getAllByTestId("session-turn-work");
+    expect(works).toHaveLength(2);
+    expect(works[1]).toHaveAttribute("data-expanded", "true");
+  });
+
+  it("#1082: manual collapse on one turn sticks for later ordinary turns", () => {
+    const turn1: ConversationItem[] = [
+      userProse("u1", "First"),
+      tool("t1", { status: "failed" }),
+      agentProse("a1", "Failed."),
+    ];
+    const bothTurns: ConversationItem[] = [
+      ...turn1,
+      userProse("u2", "Second"),
+      tool("t2"),
+    ];
+
+    const view = render(<Conversation items={turn1} busy={false} />);
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
+
+    view.rerender(<Conversation items={bothTurns} busy={false} />);
+    const works = screen.getAllByTestId("session-turn-work");
+    expect(works).toHaveLength(2);
+    expect(works[1]).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("#1082: failed turn auto-expands after a manual collapse preference", () => {
+    const turn1: ConversationItem[] = [
+      userProse("u1", "First"),
+      tool("t1"),
+      agentProse("a1", "Done."),
+    ];
+    const turn2Failed: ConversationItem[] = [
+      ...turn1,
+      userProse("u2", "Second"),
+      tool("t2", { status: "failed" }),
+    ];
+
+    const view = render(<Conversation items={turn1} busy={false} />);
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
+
+    view.rerender(<Conversation items={turn2Failed} busy={false} />);
+    const works = screen.getAllByTestId("session-turn-work");
+    expect(works[1]).toHaveAttribute("data-expanded", "true");
   });
 });

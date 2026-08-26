@@ -10,13 +10,12 @@ import {
   restoreQueuedDraft,
 } from "./composerState";
 
-export type SubmitComposerArgs = {
+export type ApplySubmitStateArgs = {
   connected: boolean;
   busy: boolean;
   draft: string;
   composerState: ComposerState;
-  sendPrompt: (text: string) => boolean;
-  sendCancel: () => void;
+  contentBlocks?: PromptContentBlockWire[];
 };
 
 export type SubmitComposerResult =
@@ -35,7 +34,7 @@ export function submitComposerDraft({
   busy,
   draft,
   composerState,
-}: Omit<SubmitComposerArgs, "sendPrompt" | "sendCancel">): SubmitComposerResult {
+}: Omit<ApplySubmitStateArgs, "contentBlocks">): SubmitComposerResult {
   if (!connected) return { action: "none" };
 
   const text = draft.trim();
@@ -53,24 +52,36 @@ export function submitComposerDraft({
   return { action: "send", text, clearDraft: true };
 }
 
+/** Pure composer-state transition for submit results already classified by
+ * submitComposerDraft. Side effects (sendPrompt, sendCancel) belong in the
+ * caller — see flushQueuedFollowUp for the same split. */
 export function applySubmitResult(
   result: SubmitComposerResult,
   composerState: ComposerState,
-  args: SubmitComposerArgs,
+  args: ApplySubmitStateArgs,
 ): ComposerState {
   switch (result.action) {
     case "none":
       return composerState;
     case "send":
-      if (args.sendPrompt(result.text)) return clearQueue(composerState);
       return composerState;
     case "queue":
-      return queueFollowUp(composerState, result.text);
-    case "update_queue":
-      return queueFollowUp(composerState, result.text);
+      return queueFollowUp(
+        composerState,
+        result.text,
+        args.contentBlocks?.length ? args.contentBlocks : undefined,
+      );
+    case "update_queue": {
+      const preserved = composerQueuedContentBlocks(composerState);
+      const blocks = args.contentBlocks?.length ? args.contentBlocks : preserved;
+      return queueFollowUp(
+        composerState,
+        result.text,
+        blocks?.length ? blocks : undefined,
+      );
+    }
     case "stop_and_send":
       if (args.busy && !composerIsStopping(composerState)) {
-        args.sendCancel();
         return beginStopAndSend(composerState);
       }
       return composerState;

@@ -1,6 +1,7 @@
 import type { ConversationItem } from "../session/public";
 import Markdown from "./Markdown";
 import OutputContentBlockView from "./OutputContentBlockView";
+import ProseCopyButton from "./ProseCopyButton";
 import { settledText } from "./reveal";
 
 export default function AssistantTurn({
@@ -13,7 +14,8 @@ export default function AssistantTurn({
   if (item.kind !== "prose" || item.role !== "agent") return null;
   const shown = live ? settledText(item.text) : item.text;
   const blocks = item.contentBlocks ?? [];
-  if (!shown && blocks.length === 0) return null;
+  const pending = live && item.text.length > shown.length;
+  if (!shown && blocks.length === 0 && !pending) return null;
   return (
     <article
       className="session-reply"
@@ -24,6 +26,14 @@ export default function AssistantTurn({
       {blocks.map((block, index) => (
         <OutputContentBlockView key={index} block={block} />
       ))}
+      {pending ? (
+        <span
+          className="session-reply-pending"
+          data-testid="session-reply-pending"
+          aria-hidden="true"
+        />
+      ) : null}
+      {!live && item.text ? <ProseCopyButton text={item.text} /> : null}
     </article>
   );
 }

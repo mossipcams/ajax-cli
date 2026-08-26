@@ -14,7 +14,10 @@
 // Reveal is by paragraph, never by token: a live answer shows the paragraphs it
 // has finished and nothing else, so the column never reflows under a reader.
 
-import { TurnActivity } from "../activity/public";
+import {
+  ActivityDisclosurePreferenceProvider,
+  TurnActivity,
+} from "../activity/public";
 import type { ConversationItem } from "../session/public";
 import { groupConversationTurns } from "./groupTurns";
 import TranscriptRow from "./Turn";
@@ -40,7 +43,7 @@ export default function Conversation({
   const turns = groupConversationTurns(items);
 
   return (
-    <>
+    <ActivityDisclosurePreferenceProvider>
       {turns.map((turn, turnIndex) => {
         const isLiveTurn = busy && turnIndex === turns.length - 1;
         const awaiting = turn.rows.some(
@@ -73,6 +76,6 @@ export default function Conversation({
           </div>
         );
       })}
-    </>
+    </ActivityDisclosurePreferenceProvider>
   );
 }
