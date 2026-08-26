@@ -285,6 +285,70 @@ async fn persist_task_session_model_from_async_worker_issue_962() {
     assert_eq!(task.session_model(), Some("composer-2.5"));
 }
 
+// Regression for issue #1083: activity reporting from the session loop must not
+// blocking_lock the web control lane while cockpit refresh holds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn report_task_session_activity_fails_fast_when_control_lane_busy_issue_1083() {
+    use crate::slices::web_session::SessionActivity;
+
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, _cookie, _app) = app_with(context, TestBridge::default(), "report-activity-1083");
+
+    let lane_held = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let state_for_lane = state.clone();
+    let lane_held_signal = Arc::clone(&lane_held);
+    let release_for_lane = Arc::clone(&release);
+
+    let lane_task = tokio::task::spawn_blocking(move || {
+        let _lane = state_for_lane.control_lane.blocking_lock();
+        lane_held_signal.notify_one();
+        let (lock, cvar) = &*release_for_lane;
+        let mut released = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !*released {
+            released = cvar
+                .wait(released)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), lane_held.notified())
+        .await
+        .expect("control lane holder never started");
+
+    let state_for_report = state.clone();
+    let report_task = tokio::spawn(async move {
+        state_for_report.report_task_session_activity("web/fix-login", SessionActivity::TurnStarted)
+    });
+
+    let report_outcome = tokio::time::timeout(Duration::from_millis(150), report_task).await;
+    assert!(
+        report_outcome.is_ok(),
+        "session activity report must not block waiting for control lane (#1083)"
+    );
+    let report_result = report_outcome
+        .unwrap()
+        .expect("report task join should succeed");
+    let error = report_result.expect_err("expected deferred activity report while lane busy");
+    assert!(
+        error.contains("control lane busy"),
+        "unexpected error: {error}"
+    );
+
+    release_gate(&release);
+    lane_task.await.expect("lane holder should finish");
+
+    let retry = state.report_task_session_activity("web/fix-login", SessionActivity::TurnStarted);
+    assert!(
+        retry.is_ok(),
+        "activity report should succeed after lane release: {retry:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn persist_task_session_model_failure_from_async_worker_issue_962() {
     let context = crate::test_support::context_with_fix_login_task();
