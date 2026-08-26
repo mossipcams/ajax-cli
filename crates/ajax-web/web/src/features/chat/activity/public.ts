@@ -1,3 +1,7 @@
+export {
+  ActivityDisclosurePreferenceProvider,
+  useActivityDisclosurePreference,
+} from "./activityDisclosurePreference";
 export { default as ToolCard, ActivityRow } from "./ToolCard";
 export { default as PlanChecklist } from "./PlanChecklist";
 export { default as Thought } from "./Thought";
