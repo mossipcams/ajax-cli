@@ -105,16 +105,19 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-Always use the `model-router` skill for implementation writes. Do not spawn
-native harness subagents (Cursor Task, best-of-n, Claude/Codex task children,
-or pstack explorers) as a substitute. The orchestrator writes plans when
-required, emits one `EXECUTION` decision, and reviews delegate work. It does
-not explore the tree, implement, commit, push, or open pull requests.
+All subagent and delegate work goes through the Ajax Model Router: call the
+`model-router` skill, then dispatch via acpx (`scripts/run-delegate`). Never
+spawn native harness subagents (Cursor Task, best-of-n, Claude/Codex/Pi task
+children, or pstack explorers) for any reason, including missing `acpx`. Never
+use Composer 2.5 Fast (`composer-2.5-fast` or any Fast Composer variant) as a
+native Task or subagent model. Missing `acpx` is stop, not a license to Task
+or parent-local writes.
 
-Call `model-router` for every implementation write. Dispatch through acpx
-(`scripts/run-delegate`). A Cursor delegate must implement in-process.
-Missing `acpx` is stop, not a license to Task or parent-local writes. Do not
-duplicate model rankings or exact model IDs in this file.
+Always use `model-router` for implementation writes. The orchestrator writes
+plans when required, emits one `EXECUTION` decision, and reviews delegate work.
+It does not explore the tree, implement, commit, push, or open pull requests.
+A Cursor delegate must implement in-process. Do not duplicate model rankings
+or exact model IDs in this file.
 
 If the user explicitly approved bypassing delegation for this request, the
 active agent may implement, commit, push, and open pull requests in-process.
