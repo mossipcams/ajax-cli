@@ -398,8 +398,7 @@ fn live_cursor_spawn_product_scope_pins_issue_1079() {
         match result {
             Ok((client, report)) => {
                 eprintln!(
-                    "  session={} applied={} apply_err={:?}",
-                    client.session_id(),
+                    "  session/new ok applied={} apply_err={:?}",
                     report.applied_model,
                     report.model_apply_error
                 );
