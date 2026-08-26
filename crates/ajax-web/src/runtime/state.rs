@@ -226,7 +226,12 @@ where
         handle: &str,
         activity: crate::slices::web_session::SessionActivity,
     ) -> Result<(), String> {
-        let _lane = self.control_lane.blocking_lock();
+        // Best-effort: never block the per-task session loop waiting for a
+        // cockpit refresh that may itself be waiting on that loop (#1083).
+        let _lane = self
+            .control_lane
+            .try_lock()
+            .map_err(|_| "control lane busy; session activity report deferred".to_string())?;
         let (mut context, runner, bridge, base_revision) = {
             let guard = self.shared();
             (

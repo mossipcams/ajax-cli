@@ -58,7 +58,12 @@ where
     }
 
     tokio::task::spawn_blocking(move || match state.control_lane.try_lock() {
-        Ok(_lane) => refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false),
+        Ok(_lane) => {
+            let response = refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false, true);
+            drop(_lane);
+            apply_agent_notifications_outside_control_lane(&state);
+            response
+        }
         Err(_) => {
             let guard = state.shared();
             match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
@@ -91,8 +96,12 @@ where
 {
     let state = state.clone();
     tokio::task::spawn_blocking(move || {
-        let _lane = state.control_lane.blocking_lock();
-        refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications)
+        let response = {
+            let _lane = state.control_lane.blocking_lock();
+            refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications, true)
+        };
+        apply_agent_notifications_outside_control_lane(&state);
+        response
     })
     .await
     .unwrap_or_else(|error| {
@@ -106,6 +115,7 @@ pub(crate) fn refresh_cockpit_and_cache_locked<C, B>(
     state: &WebAppState<C, B>,
     tier: RefreshTier,
     deliver_notifications: bool,
+    skip_agent_notification_delivery: bool,
 ) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -127,7 +137,9 @@ where
     let mut result = bridge
         .refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications)
         .map(|_| ());
-    if result.is_ok() && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
+    if result.is_ok()
+        && !skip_agent_notification_delivery
+        && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
     {
         if let Err(error) = bridge.persist_registry_snapshot(&mut context) {
             result = Err(error);
@@ -164,6 +176,36 @@ where
     match result {
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
+    }
+}
+
+fn apply_agent_notifications_outside_control_lane<C, B>(state: &WebAppState<C, B>)
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let (mut context, mut runner, mut bridge, base_revision) = {
+        let guard = state.shared();
+        (
+            guard.context.clone(),
+            guard.runner.clone(),
+            guard.bridge.clone(),
+            guard.revision,
+        )
+    };
+    if !deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge) {
+        return;
+    }
+    if bridge.persist_registry_snapshot(&mut context).is_err() {
+        return;
+    }
+    let _lane = state.control_lane.blocking_lock();
+    let mut guard = state.shared();
+    if guard.revision == base_revision {
+        guard.context = context;
+        guard.bridge = bridge;
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
     }
 }
 
