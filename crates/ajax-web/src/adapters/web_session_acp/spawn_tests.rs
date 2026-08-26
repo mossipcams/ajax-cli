@@ -308,3 +308,112 @@ fn cursor_spawn_pipe_form_reconstructs_catalog_id_on_argv_issue_991() {
         "grok-4.6[effort=high,fast=false]"
     );
 }
+
+// Regression for #1079: spawn argv never receives pipe-form or bracket tokens.
+#[test]
+fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
+    use ajax_core::adapters::{
+        acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
+        cursor_catalog_to_acp_spawn_token, CURSOR_DEFAULT_SPAWN_MODEL,
+    };
+
+    let pass_through = [
+        "claude-opus-5",
+        "claude-opus-5-medium",
+        "claude-opus-5-thinking-high",
+        "composer-2.5",
+        CURSOR_DEFAULT_SPAWN_MODEL,
+    ];
+    for catalog_id in pass_through {
+        let spawn = cursor_catalog_to_acp_spawn_token(catalog_id);
+        assert_eq!(
+            spawn, catalog_id,
+            "{catalog_id} must pass through unchanged"
+        );
+        assert!(
+            !spawn.contains('|') && !spawn.contains('['),
+            "spawn argv must not contain pipe or bracket for {catalog_id}"
+        );
+    }
+
+    let bracket = "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]";
+    let reconstructed = "claude-opus-5-thinking-high";
+    assert_eq!(
+        cursor_catalog_to_acp_spawn_token(bracket),
+        reconstructed,
+        "bracket handshake id must reconstruct to exploded catalog id"
+    );
+
+    let pipe_thinking = "claude-opus-5|thinking=true|effort=high|fast=false";
+    assert_eq!(
+        cursor_catalog_to_acp_spawn_token(pipe_thinking),
+        reconstructed,
+        "pipe-form with thinking must reconstruct to exploded catalog id"
+    );
+
+    let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
+    for raw in ["claude-opus-5", bracket, pipe_thinking] {
+        let spawn = acp_spawn_model_for_argv(launch, Some(raw)).expect("spawn model");
+        assert!(
+            !spawn.contains('|') && !spawn.contains('['),
+            "acp_spawn_model_for_argv must not pass pipe/bracket for {raw:?}: {spawn}"
+        );
+    }
+    assert_eq!(
+        acp_spawn_model_for_argv(launch, Some("claude-opus-5")),
+        Some("claude-opus-5".to_string())
+    );
+    assert_eq!(
+        acp_args_for_candidate(launch, &["acp"], Some(bracket)),
+        vec![
+            "--model".to_string(),
+            reconstructed.to_string(),
+            "acp".to_string(),
+        ]
+    );
+}
+
+// Live Cursor: Product-scope stored pins and handshake currentValue must session/new.
+#[test]
+fn live_cursor_spawn_product_scope_pins_issue_1079() {
+    if std::env::var("AJAX_ACP_SMOKE").ok().as_deref() != Some("1") {
+        eprintln!("skip: AJAX_ACP_SMOKE not set");
+        return;
+    }
+    if !cursor_agent_present() {
+        eprintln!("skip: agent not on PATH");
+        return;
+    }
+
+    let pins = [
+        "claude-opus-5",
+        "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+        "claude-opus-5|thinking=true|effort=high|fast=false",
+        "claude-opus-5-thinking-high",
+    ];
+    for pin in pins {
+        let dir = scratch_dir("live-1079");
+        eprintln!("live issue_1079 spawn_with_operator_pin pin={pin}");
+        let result = AcpStdioClient::spawn_with_operator_pin(AgentClient::Cursor, &dir, pin, None);
+        match result {
+            Ok((client, report)) => {
+                eprintln!(
+                    "  session={} applied={} apply_err={:?}",
+                    client.session_id(),
+                    report.applied_model,
+                    report.model_apply_error
+                );
+                assert!(
+                    !client.session_id().is_empty(),
+                    "session/new must complete for pin {pin}"
+                );
+                drop(client);
+            }
+            Err(error) => {
+                let _ = fs::remove_dir_all(&dir);
+                panic!("live session/new failed for pin {pin}: {error}");
+            }
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+}
