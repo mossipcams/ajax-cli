@@ -12,7 +12,7 @@ use crate::{
 use ajax_core::{
     adapters::CommandRunner,
     agent_notification::{
-        pending_for_task, record_delivery, AgentNotificationDelivery,
+        delivery_for_task, pending_for_task, record_delivery, AgentNotificationDelivery,
         AgentNotificationDeliveryStatus,
     },
     registry::Registry,
@@ -59,7 +59,7 @@ where
 
     tokio::task::spawn_blocking(move || match state.control_lane.try_lock() {
         Ok(_lane) => {
-            let response = refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false, true);
+            let response = refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false);
             drop(_lane);
             apply_agent_notifications_outside_control_lane(&state);
             response
@@ -98,7 +98,7 @@ where
     tokio::task::spawn_blocking(move || {
         let response = {
             let _lane = state.control_lane.blocking_lock();
-            refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications, true)
+            refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications)
         };
         apply_agent_notifications_outside_control_lane(&state);
         response
@@ -115,7 +115,6 @@ pub(crate) fn refresh_cockpit_and_cache_locked<C, B>(
     state: &WebAppState<C, B>,
     tier: RefreshTier,
     deliver_notifications: bool,
-    skip_agent_notification_delivery: bool,
 ) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -134,17 +133,9 @@ where
             guard.revision,
         )
     };
-    let mut result = bridge
+    let result = bridge
         .refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications)
         .map(|_| ());
-    if result.is_ok()
-        && !skip_agent_notification_delivery
-        && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
-    {
-        if let Err(error) = bridge.persist_registry_snapshot(&mut context) {
-            result = Err(error);
-        }
-    }
     if deliver_notifications
         && result.is_ok()
         && crate::slices::push::deliver_attention_pushes(&mut context, &state.push)
@@ -196,9 +187,6 @@ where
     if !deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge) {
         return;
     }
-    if bridge.persist_registry_snapshot(&mut context).is_err() {
-        return;
-    }
     let _lane = state.control_lane.blocking_lock();
     let mut guard = state.shared();
     if guard.revision == base_revision {
@@ -206,6 +194,23 @@ where
         guard.bridge = bridge;
         guard.revision = guard.revision.saturating_add(1);
         guard.cockpit_cache = None;
+        let mut persisted_bridge = guard.bridge.clone();
+        let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+    } else {
+        let mut changed = false;
+        for task in context.registry.list_tasks() {
+            let Some(delivery) = delivery_for_task(&task) else {
+                continue;
+            };
+            if let Some(live_task) = guard.context.registry.get_task_mut(&task.id) {
+                changed |= record_delivery(live_task, delivery);
+            }
+        }
+        if changed {
+            let mut persisted_bridge = guard.bridge.clone();
+            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+            guard.cockpit_cache = None;
+        }
     }
 }
 
