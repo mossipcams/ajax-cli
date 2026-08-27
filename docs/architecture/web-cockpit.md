@@ -304,13 +304,18 @@ context, and keeps the transcript. Same-harness model changes use the connected
 composer controls or legacy `set_model`, not Switch.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
-(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. The
+(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. Prompt
+ownership and idempotency persist separately in an atomic sidecar ledger
+(`web-session/<encoded-handle>.prompt-ledger.json`). The
 `web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
 one `TaskSession` Tokio command loop per handle): FIFO prompt queueing,
-one-in-flight turns, cancellation, model switching, permission answers,
+request-ID-correlated one-in-flight turns, durable terminal-before-next
+advancement, cancellation, model switching, permission answers,
 elicitation answers,
-idempotency, subscriber fan-out, idle LRU retention, and transcript cursors.
-JSONL persistence lives in `adapters::web_session_store`. ACP stdio and typed
+  idempotency, subscriber fan-out, idle LRU retention, ACP child-exit reconciliation,
+  transactional replacement, and transcript cursors.
+JSONL persistence lives in `adapters::web_session_store` (transcript append +
+prompt ledger sidecar). ACP stdio and typed
 request/notification I/O remain in `web_session_acp`; the slice maps
 `AcpClientEvent` values into persisted session events and normalizes streamed
 agent/thought text to full-content updates with stable host `itemId` values
@@ -336,7 +341,7 @@ excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
 | `model_change` | harness-switch reset via directory |
 | `task_session*` / `acp_drain` | command loop, spawn, ACP poll (may call adapters) |
 | `adapters::web_session_acp` | ACP stdio only |
-| `adapters::web_session_store` | JSONL only |
+| `adapters::web_session_store` | JSONL transcript + prompt ledger sidecar |
 | `runtime` production | cookie/origin, attach plan, delegate to `ws_bridge` |
 
 Each row's production code must not import sibling internals listed in the

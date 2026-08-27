@@ -12,7 +12,9 @@ pub const MAX_LOG_EVENTS: usize = 2000;
 // the whole transcript for every streamed ACP chunk.
 const MAX_LOG_BYTES: u64 = 64 * 1024;
 
-const WEB_SESSION_DIR: &str = "web-session";
+pub(crate) const WEB_SESSION_DIR: &str = "web-session";
+
+pub mod prompt_ledger;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSession<T> {
@@ -172,7 +174,7 @@ fn parse_line<T: DeserializeOwned>(line: &str) -> ParsedLine<T> {
     }
 }
 
-fn encode_handle(handle: &str) -> String {
+pub(crate) fn encode_handle(handle: &str) -> String {
     handle.replace('%', "%25").replace('/', "%2F")
 }
 
@@ -201,14 +203,16 @@ pub fn list_persisted_handles(state_dir: &Path) -> Vec<String> {
 /// Remove the persisted transcript for `handle`. Returns true when a file was deleted.
 pub fn delete_session(state_dir: &Path, handle: &str) -> bool {
     let path = session_path(state_dir, handle);
-    match fs::remove_file(&path) {
+    let deleted_transcript = match fs::remove_file(&path) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => {
             tracing::warn!(%error, handle, "failed to delete web session transcript");
             false
         }
-    }
+    };
+    let deleted_ledger = prompt_ledger::delete_ledger(state_dir, handle);
+    deleted_transcript || deleted_ledger
 }
 
 pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {

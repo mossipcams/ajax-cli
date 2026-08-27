@@ -1,9 +1,13 @@
 //! ACP child spawn, replace, and first attach for per-task session slots.
 
 use super::task_session::TaskSessionState;
-use super::transcript::{
-    already_noted, context_reset_needed, context_reset_note, harness_switch_note, slot_must_replace,
+use super::task_session_exit::{
+    interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
 };
+use super::task_session_replacement::{
+    discard_staged_client, finish_first_acquire, install_replaced_client,
+};
+use super::transcript::{harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
@@ -41,11 +45,11 @@ pub(super) async fn acquire(
             &state.state_dir,
             &state.qualified_handle,
         );
-        state.acquire_holder();
         release_live_client(state, resume_id.is_none())?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
         install_replaced_client(state, new_client, &report, model)?;
+        state.acquire_holder();
         return Ok(());
     }
 
@@ -54,45 +58,24 @@ pub(super) async fn acquire(
     let resume_id = stored.acp_session_id.clone();
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
 
-    let mut log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-    let note = context_reset_note();
-    if context_reset_needed(report.resumed, &log) && !already_noted(&log, &note) {
-        log.append(vec![note.clone()]);
-        web_session_store::append_events(
-            &state.state_dir,
-            &state.qualified_handle,
-            std::slice::from_ref(&note),
-        );
-    }
-    web_session_store::save_meta(
-        &state.state_dir,
-        &state.qualified_handle,
-        Some(client.session_id()),
-        &report.applied_model,
-    );
     state.client = Some(client);
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
-    if let Some(error) = &report.model_apply_error {
-        log.append(vec![SessionServerEvent::Error {
-            message: error.clone(),
-        }]);
-        web_session_store::append_events(
-            &state.state_dir,
-            &state.qualified_handle,
-            &[SessionServerEvent::Error {
-                message: error.clone(),
-            }],
-        );
-    }
+    state.log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
     state.generation = 0;
-    state.reset_holders_to_one();
-    state.log = log;
-    state.queued.clear();
     state.last_released = None;
-    state.acp_alive = true;
-    Ok(())
+    state.acp_alive = false;
+    match recover_prompt_ledger(state) {
+        Ok(()) => finish_first_acquire(state, &report, model),
+        Err(error) => {
+            if let Some(client) = state.client.take() {
+                discard_staged_client(client);
+            }
+            state.acp_alive = false;
+            Err(error)
+        }
+    }
 }
 
 pub(super) async fn apply_model(
@@ -254,6 +237,13 @@ pub(super) async fn reset_harness_context(
     agent: AgentClient,
 ) -> Result<u64, String> {
     release_live_client(state, true)?;
+    apply_cancel_to_queue(&mut state.queued, false);
+    state.prompt_ledger.remove_queued();
+    let _ = web_session_store::prompt_ledger::persist(
+        &state.state_dir,
+        &state.qualified_handle,
+        &state.prompt_ledger,
+    );
 
     web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
 
@@ -287,67 +277,49 @@ pub(super) async fn reset_harness_context(
 
 /// Cancel and drop the live ACP child so the next spawn owns stdio alone.
 fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Result<(), String> {
-    let Some(mut client) = state.client.take() else {
-        apply_cancel_to_queue(&mut state.queued, false);
-        return Ok(());
-    };
-    apply_cancel_to_queue(&mut state.queued, false);
-    if !client.host_exited() {
-        let cancelled = client.cancel()?;
-        let mut resolved = Vec::new();
-        for request_id in cancelled.permissions {
-            resolved.push(SessionServerEvent::PermissionResolved {
-                request_id,
-                approved: false,
-            });
+    retry_pending_exit_interruption(state);
+    if state.pending_exit_interruption.is_some() {
+        return Err("prompt ownership recovery pending".to_string());
+    }
+    state.suppress_exit_evidence = true;
+    let result = (|| {
+        interrupt_active_prompt(state)?;
+        let Some(mut client) = state.client.take() else {
+            return Ok(());
+        };
+        if !client.host_exited() {
+            let cancelled = client.cancel()?;
+            let mut resolved = Vec::new();
+            for request_id in cancelled.permissions {
+                resolved.push(SessionServerEvent::PermissionResolved {
+                    request_id,
+                    approved: false,
+                });
+            }
+            for request_id in cancelled.elicitations {
+                resolved.push(SessionServerEvent::ElicitationResolved {
+                    request_id,
+                    action: "cancel".to_string(),
+                });
+            }
+            state.append_to_log(resolved);
         }
-        for request_id in cancelled.elicitations {
-            resolved.push(SessionServerEvent::ElicitationResolved {
-                request_id,
-                action: "cancel".to_string(),
-            });
+        let message = if close_session {
+            client.shutdown()
+        } else {
+            client.detach()
+        };
+        if let Some(message) = message {
+            state.append_to_log(vec![SessionServerEvent::Error { message }]);
         }
-        state.append_to_log(resolved);
+        Ok(())
+    })();
+    state.suppress_exit_evidence = false;
+    if result.is_ok() {
+        state.child_exit_reconciled = true;
+        state.acp_alive = false;
     }
-    let message = if close_session {
-        client.shutdown()
-    } else {
-        client.detach()
-    };
-    if let Some(message) = message {
-        state.append_to_log(vec![SessionServerEvent::Error { message }]);
-    }
-    Ok(())
-}
-
-fn install_replaced_client(
-    state: &mut TaskSessionState,
-    new_client: AcpStdioClient,
-    report: &SpawnReport,
-    model: &str,
-) -> Result<(), String> {
-    let note = context_reset_note();
-    if context_reset_needed(report.resumed, &state.log) && !already_noted(&state.log, &note) {
-        state.append_to_log(vec![note]);
-    }
-    web_session_store::save_meta(
-        &state.state_dir,
-        &state.qualified_handle,
-        Some(new_client.session_id()),
-        &report.applied_model,
-    );
-    state.client = Some(new_client);
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
-    apply_spawn_capabilities(state, report);
-    if let Some(error) = &report.model_apply_error {
-        state.append_to_log(vec![SessionServerEvent::Error {
-            message: error.clone(),
-        }]);
-    }
-    state.generation = state.generation.saturating_add(1);
-    state.acp_alive = true;
-    Ok(())
+    result
 }
 
 fn replace_resume_id(

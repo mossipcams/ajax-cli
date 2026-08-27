@@ -587,7 +587,10 @@ fn cancel_message_keep_queue_true() {
 
 fn queued_prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
+        client_message_id: String::new(),
         transcript_text: text.to_string(),
+        prompt_text: text.to_string(),
+        wire_blocks: Vec::new(),
         blocks: vec![ContentBlock::Text(TextContent::new(text))],
     }
 }
@@ -596,7 +599,7 @@ fn queued_prompt(text: &str) -> QueuedPrompt {
 fn dispatch_prompt_starts_when_idle() {
     let mut queued = VecDeque::new();
     assert_eq!(
-        dispatch_prompt(false, &mut queued, queued_prompt("hello")),
+        dispatch_prompt(false, &mut queued, queued_prompt("hello")).expect("start"),
         PromptDispatch::StartNow
     );
     assert!(queued.is_empty());
@@ -606,7 +609,7 @@ fn dispatch_prompt_starts_when_idle() {
 fn dispatch_prompt_queues_when_in_flight() {
     let mut queued = VecDeque::new();
     assert_eq!(
-        dispatch_prompt(true, &mut queued, queued_prompt("next")),
+        dispatch_prompt(true, &mut queued, queued_prompt("next")).expect("queue"),
         PromptDispatch::Queued
     );
     assert_eq!(queued.len(), 1);
@@ -614,22 +617,18 @@ fn dispatch_prompt_queues_when_in_flight() {
 }
 
 #[test]
-fn dispatch_prompt_cap_drops_oldest() {
+fn dispatch_prompt_rejects_when_queue_full() {
     let mut queued: VecDeque<QueuedPrompt> = (0..MAX_QUEUED_PROMPTS)
         .map(|i| queued_prompt(&format!("old-{i}")))
         .collect();
     assert_eq!(
         dispatch_prompt(true, &mut queued, queued_prompt("new")),
-        PromptDispatch::Queued
+        Err(PromptQueueFull)
     );
     assert_eq!(queued.len(), MAX_QUEUED_PROMPTS);
     assert_eq!(
         queued.front().map(|item| item.transcript_text.as_str()),
-        Some("old-1")
-    );
-    assert_eq!(
-        queued.back().map(|item| item.transcript_text.as_str()),
-        Some("new")
+        Some("old-0")
     );
 }
 

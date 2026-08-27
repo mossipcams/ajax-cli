@@ -4,13 +4,25 @@ use super::{
     normalize_session_model,
     protocol::SessionChrome,
     task_session::{
-        send_command, spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch,
-        TaskSessionCommand, TaskSessionSender,
+        spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch, TaskSessionCommand,
+        TaskSessionSender,
     },
     task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
     PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionServerEvent,
 };
+
+async fn send_command<T>(
+    tx: &TaskSessionSender,
+    build: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> TaskSessionCommand,
+) -> Result<T, String> {
+    let (reply, rx) = tokio::sync::oneshot::channel();
+    tx.send(build(reply))
+        .await
+        .map_err(|_| "session task stopped".to_string())?;
+    rx.await
+        .map_err(|_| "session task dropped reply".to_string())
+}
 use crate::adapters::web_session_acp::wire_value_to_session_value;
 use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
@@ -453,7 +465,7 @@ impl TaskSessionDirectory {
                 return result;
             }
         }
-        super::task_session::disk_read_from(&self.state_dir, handle, cursor)
+        super::task_session_outbound::disk_read_from(&self.state_dir, handle, cursor)
     }
 
     #[cfg(test)]

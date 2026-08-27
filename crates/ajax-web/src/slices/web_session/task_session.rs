@@ -1,27 +1,33 @@
 //! Per-task orchestration session command loop and owned state.
 
-use super::task_session_spawn;
-
 use super::normalize::StreamNormalizer;
-use super::protocol::{SessionChrome, SessionEventEnvelope, SessionSnapshot};
-use super::replay::{build_attach, pending_elicitation, pending_permission};
+use super::protocol::{SessionEventEnvelope, SessionSnapshot};
+use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{
-        drain_acp_events, normalize_session_events, parse_json_rpc_id, permission_response,
+        drain_acp_events, normalize_session_events, PromptTerminal, PromptTerminalOutcome,
     },
     acp_usage::UsageDeduper,
     apply_cancel_to_queue, prompt_content, QueuedPrompt, ReportSessionActivity, SessionActivity,
     SessionActivityReporter, SessionServerEvent, MAX_QUEUED_PROMPTS,
 };
 use crate::adapters::web_session_acp::{AcpStdioClient, PromptCapabilityDescriptor};
-use crate::adapters::web_session_store;
+use crate::adapters::web_session_store::{
+    self,
+    prompt_ledger::{PromptLedger, PromptPhase},
+};
 use ajax_core::models::AgentClient;
 use std::{collections::VecDeque, path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
-const COMMAND_CAPACITY: usize = 32;
+use super::task_session_exit::{
+    self, is_acp_exit_error, persist_ledger_update, reconcile_unexpected_child_exit,
+    retry_pending_exit_interruption, try_dispatch_next_if_idle, try_finalize_active_prompt,
+    PendingExitInterruption,
+};
 
+const COMMAND_CAPACITY: usize = 32;
 pub(crate) struct AttachSnapshot {
     pub generation: u64,
     pub snapshot: SessionSnapshot,
@@ -125,6 +131,44 @@ pub(crate) enum TaskSessionCommand {
 
 pub(crate) struct EvictionSnapshot {
     pub evictable: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub holders: usize,
+}
+
+pub(super) struct ActivePrompt {
+    request_id: u64,
+    pub(super) client_message_id: Option<String>,
+    pub(super) terminal: Option<PromptTerminal>,
+    pub(super) persist_error_reported: bool,
+}
+
+impl ActivePrompt {
+    pub(super) fn new(request_id: u64, client_message_id: Option<String>) -> Self {
+        Self {
+            request_id,
+            client_message_id,
+            terminal: None,
+            persist_error_reported: false,
+        }
+    }
+
+    pub(super) fn capture_terminal(&mut self, terminal: PromptTerminal) -> bool {
+        if terminal.request_id != self.request_id || self.terminal.is_some() {
+            return false;
+        }
+        self.terminal = Some(terminal);
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_pending_terminal(&self) -> bool {
+        self.terminal.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn request_id(&self) -> u64 {
+        self.request_id
+    }
 }
 
 pub(super) struct HolderCount(usize);
@@ -186,6 +230,20 @@ pub(crate) struct TaskSessionState {
     pending_activity_report: Option<SessionActivity>,
     activity_reporter: SessionActivityReporter,
     report_activity: Option<ReportSessionActivity>,
+    /// Sidecar prompt ownership; dedupe authority separate from transcript JSONL.
+    pub(super) prompt_ledger: PromptLedger,
+    /// ACP request identity and durable browser identity for the active prompt.
+    pub(super) active_prompt: Option<ActivePrompt>,
+    /// Suppresses repeated operator errors while a queued transition retries.
+    pub(super) queue_persist_error_reported: bool,
+    /// Set when the sidecar ledger cannot be loaded safely; rejects new submits.
+    pub(super) ledger_unusable: Option<String>,
+    /// Exit-interruption persist still pending after unexpected child death.
+    pub(super) pending_exit_interruption: Option<PendingExitInterruption>,
+    /// Suppress duplicate ACP exit evidence during expected cancel/detach/shutdown.
+    pub(super) suppress_exit_evidence: bool,
+    /// Prevents duplicate unexpected-exit reconciliation for one child death.
+    pub(super) child_exit_reconciled: bool,
 }
 
 impl TaskSessionState {
@@ -248,15 +306,17 @@ impl TaskSessionState {
         self.holders.0 == 0
     }
 
-    fn busy(&self) -> bool {
-        !self.queued.is_empty()
+    pub(super) fn busy(&self) -> bool {
+        self.active_prompt.is_some()
+            || !self.queued.is_empty()
             || self
                 .client
                 .as_ref()
                 .is_some_and(|client| client.prompt_in_flight())
     }
 
-    fn pump(&mut self) {
+    pub(super) fn pump(&mut self) {
+        retry_pending_exit_interruption(self);
         let outcome = match self.client.as_mut() {
             Some(client) => drain_acp_events(client, &mut self.usage_deduper),
             None => return,
@@ -277,37 +337,31 @@ impl TaskSessionState {
             self.session_title = title;
             self.pending_title_snapshot = true;
         }
-        if outcome.prompt_finished {
-            if let Some(next) = self.queued.pop_front() {
-                let begin_error = self
-                    .client
-                    .as_mut()
-                    .and_then(|client| client.begin_prompt(&next.blocks).err());
-                if let Some(error) = begin_error {
-                    self.append_to_log(vec![SessionServerEvent::Error {
-                        message: format!("queued prompt failed: {error}"),
-                    }]);
-                }
+        for terminal in outcome.prompt_terminals {
+            if let Some(active) = self.active_prompt.as_mut() {
+                active.capture_terminal(terminal);
             }
         }
-        let host_gone = outcome.host_exited
+        let host_exit_from_drain = outcome.host_exited;
+        let host_gone = host_exit_from_drain
             || self
                 .client
                 .as_mut()
                 .is_some_and(|client| client.host_exited());
-        let host_exit_from_drain = outcome.host_exited;
-        if !outcome.events.is_empty() {
-            let normalized = normalize_session_events(&mut self.stream_normalizer, outcome.events);
+        let mut events = outcome.events;
+        if self.suppress_exit_evidence || self.child_exit_reconciled {
+            events.retain(|event| !is_acp_exit_error(event));
+        }
+        if !events.is_empty() {
+            let normalized = normalize_session_events(&mut self.stream_normalizer, events);
             self.append_to_log(normalized);
         }
-        if host_gone {
-            let record_host_exit = self.acp_alive && !host_exit_from_drain;
+        try_finalize_active_prompt(self);
+        try_dispatch_next_if_idle(self);
+        if host_gone && !self.child_exit_reconciled {
+            reconcile_unexpected_child_exit(self, host_exit_from_drain);
+        } else if host_gone {
             self.acp_alive = false;
-            if record_host_exit {
-                self.append_to_log(vec![SessionServerEvent::Error {
-                    message: "ACP process exited".to_string(),
-                }]);
-            }
         }
     }
 
@@ -327,6 +381,11 @@ pub(crate) fn spawn_task_session(
 ) {
     let (tx, mut rx) = mpsc::channel(COMMAND_CAPACITY);
     let handle = qualified_handle.clone();
+    let (prompt_ledger, ledger_unusable) =
+        match web_session_store::prompt_ledger::load(&state_dir, &handle) {
+            Ok(ledger) => (ledger, None),
+            Err(error) => (PromptLedger::default(), Some(error.to_string())),
+        };
     let join = tokio::spawn(async move {
         let mut state = TaskSessionState {
             qualified_handle: handle,
@@ -356,6 +415,13 @@ pub(crate) fn spawn_task_session(
             pending_activity_report: None,
             activity_reporter: SessionActivityReporter::default(),
             report_activity,
+            prompt_ledger,
+            active_prompt: None,
+            queue_persist_error_reported: false,
+            ledger_unusable,
+            pending_exit_interruption: None,
+            suppress_exit_evidence: false,
+            child_exit_reconciled: false,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -374,13 +440,20 @@ pub(crate) fn spawn_task_session(
                     }
                 }
                 _ = poll.tick() => {
+                    retry_pending_exit_interruption(&mut state);
                     if state.client.is_some() {
                         state.pump();
                     }
                 }
             }
         }
+        if close_on_exit {
+            state.queued.clear();
+            state.prompt_ledger.remove_queued();
+            let _ = task_session_exit::persist_prompt_ledger(&state);
+        }
         if let Some(mut client) = state.client.take() {
+            state.suppress_exit_evidence = true;
             if !client.host_exited() {
                 let _ = client.cancel();
             }
@@ -389,9 +462,12 @@ pub(crate) fn spawn_task_session(
             } else {
                 client.detach()
             };
+            state.suppress_exit_evidence = false;
             if let Some(message) = message {
                 state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
+            state.child_exit_reconciled = true;
+            state.acp_alive = false;
         }
     });
     (tx, join)
@@ -433,7 +509,12 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             reason,
             reply,
         } => {
-            let result = answer_permission(state, &request_id, approved, reason.as_deref());
+            let result = super::task_session_answers::answer_permission(
+                state,
+                &request_id,
+                approved,
+                reason.as_deref(),
+            );
             let _ = reply.send(result);
         }
         TaskSessionCommand::AnswerElicitation {
@@ -442,7 +523,12 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             content,
             reply,
         } => {
-            let result = answer_elicitation(state, &request_id, &action, content.as_ref());
+            let result = super::task_session_answers::answer_elicitation(
+                state,
+                &request_id,
+                &action,
+                content.as_ref(),
+            );
             let _ = reply.send(result);
         }
         TaskSessionCommand::ApplyModel {
@@ -477,7 +563,8 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             client_cursor,
             reply,
         } => {
-            let snapshot = attach_snapshot(state, model, client_cursor);
+            drop(model);
+            let snapshot = super::task_session_outbound::attach_snapshot(state, client_cursor);
             let _ = reply.send(snapshot);
         }
         #[cfg(test)]
@@ -491,7 +578,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             generation,
             reply,
         } => {
-            let batch = collect_outbound(state, cursor, generation);
+            let batch = super::task_session_outbound::collect_outbound(state, cursor, generation);
             let _ = reply.send(batch);
         }
         #[cfg(test)]
@@ -516,6 +603,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::EvictionSnapshot { reply } => {
             let _ = reply.send(EvictionSnapshot {
                 evictable: state.is_idle() && !state.busy(),
+                holders: state.holders.0,
             });
         }
         TaskSessionCommand::Shutdown { .. } => {}
@@ -528,27 +616,36 @@ fn submit_prompt(
     text: String,
     content_blocks: Vec<prompt_content::PromptContentBlockWire>,
 ) -> Result<(), String> {
+    if let Some(reason) = &state.ledger_unusable {
+        return Err(format!("prompt ownership unavailable: {reason}"));
+    }
     let caps = state
         .session_prompt_capabilities
         .clone()
         .unwrap_or_else(prompt_content::default_prompt_capabilities);
     let payload = prompt_content::build_prompt_payload(&text, &content_blocks, &caps)?;
-    let Some(client) = state.client.as_mut() else {
+    let Some(client) = state.client.as_ref() else {
         return Err("session slot missing".to_string());
     };
-    if !client_message_id.is_empty()
-        && state.log.events.iter().any(|event| {
-            matches!(
-                event,
-                SessionServerEvent::PromptAccepted { client_message_id: accepted }
-                    if *accepted == client_message_id
-            )
-        })
-    {
-        state.append_to_log(vec![SessionServerEvent::PromptAccepted {
-            client_message_id,
-        }]);
-        return Ok(());
+    if !state.acp_alive {
+        return Err("ACP process exited — reconnect to send prompts".to_string());
+    }
+    if !client_message_id.is_empty() {
+        if let Some(entry) = state.prompt_ledger.entry(&client_message_id) {
+            match entry.phase {
+                PromptPhase::Interrupted => {
+                    return Err(format!(
+                        "prompt {client_message_id} was interrupted and was not executed"
+                    ));
+                }
+                PromptPhase::Completed | PromptPhase::Queued | PromptPhase::Dispatching => {
+                    state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+                        client_message_id,
+                    }]);
+                    return Ok(());
+                }
+            }
+        }
     }
     let user_event = SessionServerEvent::Message {
         role: "user".to_string(),
@@ -557,23 +654,64 @@ fn submit_prompt(
         item_id: state.stream_normalizer.fresh_item_id(),
         message_id: None,
     };
-    let in_flight = client.prompt_in_flight();
+    let in_flight = state.active_prompt.is_some() || client.prompt_in_flight();
     if in_flight {
         if state.queued.len() >= MAX_QUEUED_PROMPTS {
-            state.queued.pop_front();
+            return Err("prompt queue is full".to_string());
+        }
+        if !client_message_id.is_empty() {
+            persist_ledger_update(state, |ledger| {
+                ledger.upsert_queued(
+                    client_message_id.clone(),
+                    payload.transcript_text.clone(),
+                    text.trim().to_string(),
+                    wire_blocks_to_json(&content_blocks),
+                );
+            })?;
         }
         state.queued.push_back(QueuedPrompt {
+            client_message_id: client_message_id.clone(),
             transcript_text: payload.transcript_text,
+            prompt_text: text.trim().to_string(),
+            wire_blocks: content_blocks,
             blocks: payload.blocks,
         });
-        let mut events = vec![user_event];
         if !client_message_id.is_empty() {
-            events.push(SessionServerEvent::PromptAccepted { client_message_id });
+            state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+                client_message_id,
+            }]);
         }
-        state.append_to_log(events);
         return Ok(());
     }
-    client.begin_prompt(&payload.blocks).map(|_| ())?;
+    if !client_message_id.is_empty() {
+        persist_ledger_update(state, |ledger| {
+            ledger.upsert_queued(
+                client_message_id.clone(),
+                payload.transcript_text.clone(),
+                text.trim().to_string(),
+                wire_blocks_to_json(&content_blocks),
+            );
+            ledger.mark_dispatching(&client_message_id);
+        })?;
+    }
+    let Some(client) = state.client.as_mut() else {
+        return Err("session slot missing".to_string());
+    };
+    let request_id = match client.begin_prompt(&payload.blocks) {
+        Ok(request_id) => request_id,
+        Err(error) => {
+            retain_begin_failure(
+                state,
+                (!client_message_id.is_empty()).then_some(client_message_id),
+                error.clone(),
+            );
+            return Err(error);
+        }
+    };
+    state.active_prompt = Some(ActivePrompt::new(
+        request_id,
+        (!client_message_id.is_empty()).then_some(client_message_id.clone()),
+    ));
     let mut events = vec![user_event];
     if !client_message_id.is_empty() {
         events.push(SessionServerEvent::PromptAccepted { client_message_id });
@@ -582,11 +720,77 @@ fn submit_prompt(
     Ok(())
 }
 
-fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> {
+pub(super) fn dispatch_queued_prompt(
+    state: &mut TaskSessionState,
+    next: &QueuedPrompt,
+) -> Result<(), String> {
+    if !next.client_message_id.is_empty() {
+        persist_ledger_update(state, |ledger| {
+            ledger.mark_dispatching(&next.client_message_id);
+        })?;
+    }
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };
+    match client.begin_prompt(&next.blocks) {
+        Ok(request_id) => {
+            state.active_prompt = Some(ActivePrompt::new(
+                request_id,
+                (!next.client_message_id.is_empty()).then_some(next.client_message_id.clone()),
+            ));
+            let item_id = state.stream_normalizer.fresh_item_id();
+            state.append_to_log(vec![SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: next.transcript_text.clone(),
+                content_blocks: Vec::new(),
+                item_id,
+                message_id: None,
+            }]);
+            Ok(())
+        }
+        Err(error) => {
+            retain_begin_failure(
+                state,
+                (!next.client_message_id.is_empty()).then_some(next.client_message_id.clone()),
+                format!("queued prompt failed: {error}"),
+            );
+            Ok(())
+        }
+    }
+}
+
+fn retain_begin_failure(
+    state: &mut TaskSessionState,
+    client_message_id: Option<String>,
+    message: String,
+) {
+    let mut active = ActivePrompt::new(0, client_message_id);
+    active.capture_terminal(PromptTerminal {
+        request_id: 0,
+        outcome: PromptTerminalOutcome::Failed,
+        events: vec![SessionServerEvent::Error { message }],
+    });
+    state.active_prompt = Some(active);
+    try_finalize_active_prompt(state);
+}
+
+fn wire_blocks_to_json(
+    blocks: &[prompt_content::PromptContentBlockWire],
+) -> Vec<serde_json::Value> {
+    blocks
+        .iter()
+        .filter_map(|block| serde_json::to_value(block).ok())
+        .collect()
+}
+
+fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> {
+    if !keep_queue {
+        persist_ledger_update(state, PromptLedger::remove_queued)?;
+    }
     apply_cancel_to_queue(&mut state.queued, keep_queue);
+    let Some(client) = state.client.as_mut() else {
+        return Err("session slot missing".to_string());
+    };
     let cancelled = client.cancel()?;
     let mut resolved = Vec::new();
     for request_id in cancelled.permissions {
@@ -605,210 +809,4 @@ fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> 
     Ok(())
 }
 
-fn answer_elicitation(
-    state: &mut TaskSessionState,
-    request_id: &str,
-    action: &str,
-    content: Option<&serde_json::Value>,
-) -> Result<(), String> {
-    use crate::adapters::web_session_acp::sdk_elicitation::{
-        accept_action, wire_content_from_json,
-    };
-    use agent_client_protocol::schema::v1::ElicitationAction;
-
-    let Some(client) = state.client.as_mut() else {
-        return Err("session slot missing".to_string());
-    };
-    let acp_action = match action {
-        "accept" => {
-            let payload = content.ok_or_else(|| {
-                "elicitation accept requires content matching the requested schema".to_string()
-            })?;
-            accept_action(wire_content_from_json(payload)?)
-        }
-        "decline" => ElicitationAction::Decline,
-        "cancel" => ElicitationAction::Cancel,
-        other => return Err(format!("unsupported elicitation action: {other}")),
-    };
-    let respond_result = client.respond_elicitation(request_id, acp_action);
-    if respond_result.is_ok()
-        || respond_result
-            .as_ref()
-            .err()
-            .is_some_and(|message| message == "ACP elicitation request is no longer pending")
-    {
-        state.append_to_log(vec![SessionServerEvent::ElicitationResolved {
-            request_id: request_id.to_string(),
-            action: action.to_string(),
-        }]);
-    }
-    match respond_result {
-        Ok(()) => Ok(()),
-        Err(message) if message == "ACP elicitation request is no longer pending" => Ok(()),
-        Err(message) => Err(message),
-    }
-}
-
-fn answer_permission(
-    state: &mut TaskSessionState,
-    request_id: &str,
-    approved: bool,
-    reason: Option<&str>,
-) -> Result<(), String> {
-    let Some(client) = state.client.as_mut() else {
-        return Err("session slot missing".to_string());
-    };
-    let id = parse_json_rpc_id(request_id);
-    let respond_result = client.respond_client_request(&id, permission_response(approved, reason));
-    if respond_result.is_ok()
-        || respond_result
-            .as_ref()
-            .err()
-            .is_some_and(|message| message == "ACP permission request is no longer pending")
-    {
-        state.append_to_log(vec![SessionServerEvent::PermissionResolved {
-            request_id: request_id.to_string(),
-            approved,
-        }]);
-    }
-    match respond_result {
-        Ok(()) => Ok(()),
-        Err(message) if message == "ACP permission request is no longer pending" => Ok(()),
-        Err(message) => Err(message),
-    }
-}
-
-fn attach_snapshot(
-    state: &mut TaskSessionState,
-    _model: String,
-    client_cursor: Option<usize>,
-) -> AttachSnapshot {
-    state.pump();
-    let snapshot_model = snapshot_applied_model(state);
-    let (snapshot, replayed) = build_attach(
-        &state.log,
-        snapshot_model,
-        state.busy(),
-        client_cursor,
-        SessionChrome {
-            session_config_options: state.session_config_options.clone(),
-            available_commands: state.session_available_commands.clone(),
-            prompt_capabilities: state.session_prompt_capabilities.clone(),
-            session_title: state.session_title.clone(),
-        },
-    );
-    AttachSnapshot {
-        generation: state.generation,
-        snapshot,
-        replayed,
-    }
-}
-
-fn snapshot_applied_model(state: &TaskSessionState) -> String {
-    state.applied_model.clone()
-}
-
-fn collect_outbound(state: &mut TaskSessionState, cursor: usize, generation: u64) -> OutboundBatch {
-    let current_generation = state.generation;
-    let generation_changed = current_generation != generation;
-    let read_from = if generation_changed {
-        state.log.dropped
-    } else {
-        cursor
-    };
-    let snapshot = if generation_changed {
-        Some(SessionSnapshot::new(
-            state.log.absolute_next_cursor(),
-            snapshot_applied_model(state),
-            state.busy(),
-            true,
-            pending_permission(&state.log),
-            pending_elicitation(&state.log),
-            SessionChrome {
-                session_config_options: state.session_config_options.clone(),
-                available_commands: state.session_available_commands.clone(),
-                prompt_capabilities: state.session_prompt_capabilities.clone(),
-                session_title: state.session_title.clone(),
-            },
-        ))
-    } else if let Some(model) = state.pending_model_snapshot.take() {
-        let config = state.pending_config_snapshot.take();
-        let _ = state.pending_commands_snapshot.take();
-        let _ = state.pending_capabilities_snapshot.take();
-        state.pending_title_snapshot = false;
-        Some(SessionSnapshot::new(
-            state.log.absolute_next_cursor(),
-            model,
-            state.busy(),
-            false,
-            pending_permission(&state.log),
-            pending_elicitation(&state.log),
-            SessionChrome {
-                session_config_options: config.or_else(|| state.session_config_options.clone()),
-                available_commands: state.session_available_commands.clone(),
-                prompt_capabilities: state.session_prompt_capabilities.clone(),
-                session_title: state.session_title.clone(),
-            },
-        ))
-    } else if state.pending_title_snapshot
-        || state.pending_commands_snapshot.is_some()
-        || state.pending_capabilities_snapshot.is_some()
-    {
-        let _ = state.pending_commands_snapshot.take();
-        let _ = state.pending_capabilities_snapshot.take();
-        state.pending_title_snapshot = false;
-        Some(SessionSnapshot::new(
-            state.log.absolute_next_cursor(),
-            snapshot_applied_model(state),
-            state.busy(),
-            false,
-            pending_permission(&state.log),
-            pending_elicitation(&state.log),
-            SessionChrome {
-                session_config_options: state.session_config_options.clone(),
-                available_commands: state.session_available_commands.clone(),
-                prompt_capabilities: state.session_prompt_capabilities.clone(),
-                session_title: state.session_title.clone(),
-            },
-        ))
-    } else {
-        None
-    };
-    state.pump();
-    let (events, next) = state.log.read_from_enveloped(read_from);
-    OutboundBatch {
-        generation: current_generation,
-        cursor: next,
-        snapshot,
-        events,
-    }
-}
-
 pub(crate) type TaskSessionSender = mpsc::Sender<TaskSessionCommand>;
-
-pub(crate) async fn send_command<T>(
-    tx: &TaskSessionSender,
-    build: impl FnOnce(oneshot::Sender<T>) -> TaskSessionCommand,
-) -> Result<T, String> {
-    let (reply, rx) = oneshot::channel();
-    tx.send(build(reply))
-        .await
-        .map_err(|_| "session task stopped".to_string())?;
-    rx.await
-        .map_err(|_| "session task dropped reply".to_string())
-}
-
-#[cfg(test)]
-pub(crate) fn disk_read_from(
-    state_dir: &std::path::Path,
-    handle: &str,
-    cursor: usize,
-) -> (Vec<SessionServerEvent>, usize) {
-    let stored: crate::adapters::web_session_store::StoredSession<SessionServerEvent> =
-        web_session_store::load(state_dir, handle);
-    if stored.events.is_empty() {
-        (Vec::new(), cursor)
-    } else {
-        TranscriptLog::from_events(stored.events, stored.dropped).read_from(cursor)
-    }
-}
