@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { fireEvent, screen, act } from "@testing-library/react";
 import { mountChat, prepareChatSurface, send, transport, flushRaf, ChatWithSheet, chatH } from "../ChatSurface.testHarness";
+import { stylesSource } from "../ChatSurface.testHarness";
+import {
+  expectThreadAtLiveEdge,
+  expectThreadAwayFromLiveEdge,
+  installTranscriptScrollIntoViewMock,
+  liveEdgeScrollTop,
+  scrollThreadToHistory,
+  stubScrollMetrics,
+} from "./transcriptLayout.testHelpers";
+import { transcriptAtLiveEdge } from "@/shared/lib/sessionViewport";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -10,8 +20,15 @@ afterEach(() => {
 });
 
 describe("ChatScroller integration", () => {
+  let restoreScrollIntoView: (() => void) | undefined;
+
   beforeEach(() => {
     prepareChatSurface();
+    restoreScrollIntoView = installTranscriptScrollIntoViewMock();
+  });
+
+  afterEach(() => {
+    restoreScrollIntoView?.();
   });
 
   it("blurs the composer when tapping the transcript scroller", () => {
@@ -76,27 +93,25 @@ describe("ChatScroller integration", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    thread.scrollTop = 800;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1400 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+    stubScrollMetrics(thread, 1400, 400, 800);
 
     send({ type: "message", role: "agent", text: "Streaming chunk", itemId: "a2" });
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
   });
 
   it("does not yank history readers when transcript grows", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 2000 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
-    thread.scrollTop = 120;
-    fireEvent.scroll(thread);
+    stubScrollMetrics(thread, 2000, 400, 120);
+    act(() => {
+      fireEvent.scroll(thread);
+    });
 
     const before = thread.scrollTop;
     send({ type: "message", role: "agent", text: "Second", itemId: "a2" });
     expect(thread.scrollTop).toBe(before);
-    expect(thread.scrollTop).not.toBe(thread.scrollHeight);
+    expectThreadAwayFromLiveEdge(thread);
   });
 
   it("follows the live edge on thread resize while pinned", () => {
@@ -114,9 +129,7 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    thread.scrollTop = 800;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1400 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+    stubScrollMetrics(thread, 1400, 400, 800);
 
     act(() => {
       for (const callback of resizeCallbacks) {
@@ -124,7 +137,7 @@ describe("ChatScroller integration", () => {
       }
     });
 
-    expect(thread.scrollTop).toBe(1400);
+    expectThreadAtLiveEdge(thread);
   });
 
   it("follows the live edge on transcript DOM mutations while pinned", () => {
@@ -142,28 +155,44 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    thread.scrollTop = 800;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1500 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+    stubScrollMetrics(thread, 1500, 400, 800);
 
     act(() => {
       mutationCallbacks.at(-1)?.([], {} as MutationObserver);
     });
 
-    expect(thread.scrollTop).toBe(1500);
+    expectThreadAtLiveEdge(thread);
+  });
+
+  it("uses a chronological transcript column, not column-reverse", () => {
+    mountChat();
+    const thread = screen.getByTestId("session-thread");
+    const inner = screen.getByTestId("session-thread-inner");
+    expect(thread).toContainElement(inner);
+    const rule = stylesSource.match(/\.session-thread\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).not.toMatch(/flex-direction:\s*column-reverse/);
+    expect(rule).toMatch(/flex-direction:\s*column/);
+    const innerRule =
+      stylesSource.match(/\.session-thread-inner\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(innerRule).not.toMatch(/column-reverse/);
   });
 });
 
 describe("Jump to latest", () => {
+  let restoreScrollIntoView: (() => void) | undefined;
+
   beforeEach(() => {
     prepareChatSurface();
+    restoreScrollIntoView = installTranscriptScrollIntoViewMock();
+  });
+
+  afterEach(() => {
+    restoreScrollIntoView?.();
   });
 
   function scrollAway() {
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 2000 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
-    thread.scrollTop = 120;
+    stubScrollMetrics(thread, 2000, 400, 120);
     fireEvent.scroll(thread);
     return thread;
   }
@@ -186,7 +215,7 @@ describe("Jump to latest", () => {
 
     fireEvent.click(screen.getByTestId("session-jump"));
 
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
     expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
   });
 
@@ -199,8 +228,15 @@ describe("Jump to latest", () => {
 });
 
 describe("task open positioning (#1065)", () => {
+  let restoreScrollIntoView: (() => void) | undefined;
+
   beforeEach(() => {
     prepareChatSurface();
+    restoreScrollIntoView = installTranscriptScrollIntoViewMock();
+  });
+
+  afterEach(() => {
+    restoreScrollIntoView?.();
   });
 
   it("lands on the live edge after cached transcript hydrates (#1065)", () => {
@@ -217,34 +253,52 @@ describe("task open positioning (#1065)", () => {
         text: `Answer ${i}. ${"Padding ".repeat(40)}`,
         itemId: `a${i}`,
       });
-      Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 3200 });
+      stubScrollMetrics(thread, 3200, 400, thread.scrollTop);
     }
 
     send({ type: "turn_end", stopReason: "end_turn" });
     act(() => chatH.ready?.("auto"));
     flushRaf();
 
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
     expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
   });
 
   it("re-pins to the live edge when session identity changes on task open", () => {
     const { rerender } = mountChat({ detailStatus: "loading" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 2400 });
+    stubScrollMetrics(thread, 2400, 400, 80);
+    fireEvent.scroll(thread);
 
     for (let i = 0; i < 4; i += 1) {
       send({ type: "message", role: "agent", text: `Earlier ${i}`, itemId: `a${i}` });
     }
-    thread.scrollTop = 80;
+    scrollThreadToHistory(thread, 80);
     fireEvent.scroll(thread);
     expect(screen.getByTestId("session-jump")).toBeInTheDocument();
 
     rerender(<ChatWithSheet detailStatus="ready" />);
     flushRaf();
 
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
     expect(screen.queryByTestId("session-jump")).not.toBeInTheDocument();
+  });
+
+  it("first paint pins to the live edge via stick-to-bottom scrollTop (#1042)", () => {
+    chatH.autoReady = false;
+    mountChat();
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    stubScrollMetrics(thread, 3200, 400, 0);
+
+    for (let i = 0; i < 8; i += 1) {
+      send({ type: "message", role: "agent", text: `Line ${i}. ${"x".repeat(80)}`, itemId: `a${i}` });
+      stubScrollMetrics(thread, 3200, 400, thread.scrollTop);
+    }
+
+    act(() => chatH.ready?.("auto"));
+    flushRaf();
+
+    expect(transcriptAtLiveEdge(thread)).toBe(true);
+    expect(thread.scrollTop).toBe(liveEdgeScrollTop(thread.scrollHeight, thread.clientHeight));
   });
 });

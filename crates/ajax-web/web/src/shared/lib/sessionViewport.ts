@@ -2,55 +2,93 @@
 
 export const SESSION_KEYBOARD_OPEN_PX = 100;
 export const MIN_USABLE_VIEWPORT_PX = 50;
-export const SESSION_PIN_THRESHOLD_PX = 48;
+/** AoE StructuredView slop — within this many px of the bottom counts as pinned. */
+export const SESSION_PIN_THRESHOLD_PX = 16;
 export const SESSION_VIEWPORT_ATTR = "data-session-viewport";
 export const LAYOUT_STABLE_FRAMES = 2;
 export const LAYOUT_POLL_MAX_FRAMES = 20;
+
+const THREAD_INNER_SELECTOR = ":scope > .session-thread-inner";
 
 function layoutKey(node: HTMLDivElement): string {
   return `${node.scrollHeight}:${node.clientHeight}`;
 }
 
-/** Transcript scroll snapshot captured before a keyboard or layout transition. */
-export interface TranscriptGeometry {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-  atBottom: boolean;
+/** Inner chronological column inside the scroller, when present. */
+export function getThreadInner(thread: HTMLDivElement): HTMLElement {
+  return thread.querySelector<HTMLElement>(THREAD_INNER_SELECTOR) ?? thread;
 }
 
+/** Last transcript row — live-edge anchor for empty-state heuristics. */
+export function findLiveEdgeAnchor(thread: HTMLDivElement): HTMLElement | null {
+  const inner = getThreadInner(thread);
+  for (let i = inner.children.length - 1; i >= 0; i -= 1) {
+    const child = inner.children[i];
+    if (child instanceof HTMLElement) return child;
+  }
+  return null;
+}
+
+export function transcriptScrollBottom(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+): number {
+  return scrollHeight - scrollTop - clientHeight;
+}
+
+/** Live edge = scrollTop within threshold of the visual bottom (chronological scroller). */
 export function transcriptAtBottom(
   scrollTop: number,
   scrollHeight: number,
   clientHeight: number,
   threshold = SESSION_PIN_THRESHOLD_PX,
 ): boolean {
-  return scrollHeight - scrollTop - clientHeight < threshold;
+  return transcriptScrollBottom(scrollTop, scrollHeight, clientHeight) <= threshold;
+}
+
+export function transcriptAtLiveEdge(
+  thread: HTMLDivElement,
+  threshold = SESSION_PIN_THRESHOLD_PX,
+): boolean {
+  return transcriptAtBottom(thread.scrollTop, thread.scrollHeight, thread.clientHeight, threshold);
+}
+
+/** Pin/follow the live edge with instant scrollTop — chronological stick-to-bottom. */
+export function pinTranscriptToLiveEdge(thread: HTMLDivElement): void {
+  thread.scrollTop = Math.max(0, thread.scrollHeight - thread.clientHeight);
+}
+
+/** Transcript scroll snapshot captured before a keyboard or layout transition. */
+export interface TranscriptGeometry {
+  atBottom: boolean;
+  scrollTop?: number;
+  scrollHeight?: number;
 }
 
 export function captureTranscriptGeometry(node: HTMLDivElement): TranscriptGeometry {
-  const { scrollTop, scrollHeight, clientHeight } = node;
+  const atBottom = transcriptAtLiveEdge(node);
+  if (atBottom) return { atBottom: true };
   return {
-    scrollTop,
-    scrollHeight,
-    clientHeight,
-    atBottom: transcriptAtBottom(scrollTop, scrollHeight, clientHeight),
+    atBottom: false,
+    scrollTop: node.scrollTop,
+    scrollHeight: node.scrollHeight,
   };
 }
 
 /**
  * Restore equivalent transcript position after layout settles. No animation.
- * At-bottom → new live edge; history → same visible content plus any
- * scrollHeight growth above the viewport.
+ * At-bottom → stick-to-bottom; history → same scrollTop plus scrollHeight delta above.
  */
 export function restoreTranscriptGeometry(
   node: HTMLDivElement,
   before: TranscriptGeometry,
 ): void {
   if (before.atBottom) {
-    node.scrollTop = node.scrollHeight;
+    pinTranscriptToLiveEdge(node);
     return;
   }
+  if (before.scrollTop === undefined || before.scrollHeight === undefined) return;
   const heightDelta = node.scrollHeight - before.scrollHeight;
   node.scrollTop = before.scrollTop + heightDelta;
 }
@@ -60,12 +98,18 @@ export function afterTranscriptLayoutSettles(
   node: HTMLDivElement,
   restoreTarget: TranscriptGeometry,
   restore: () => void,
-  options?: { ignoreProgrammaticScroll?: { current: boolean } },
+  options?: {
+    ignoreProgrammaticScroll?: { current: boolean };
+    /** When set, live-edge poll frames stop pinning if the operator scrolled away. */
+    pinnedRef?: { current: boolean };
+  },
 ): () => void {
   const ignore = options?.ignoreProgrammaticScroll;
-  const scrollProgrammatically = (top: number) => {
+  const pinnedRef = options?.pinnedRef;
+
+  const scrollProgrammatically = (fn: () => void) => {
     if (ignore) ignore.current = true;
-    node.scrollTop = top;
+    fn();
     if (ignore) ignore.current = false;
   };
 
@@ -76,8 +120,8 @@ export function afterTranscriptLayoutSettles(
 
   const poll = () => {
     frameCount++;
-    if (restoreTarget.atBottom) {
-      scrollProgrammatically(node.scrollHeight);
+    if (restoreTarget.atBottom && (!pinnedRef || pinnedRef.current)) {
+      scrollProgrammatically(() => pinTranscriptToLiveEdge(node));
     }
     const key = layoutKey(node);
     if (key === lastKey) {

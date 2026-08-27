@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useChatViewport } from "./useChatViewport";
+import {
+  expectThreadAtLiveEdge,
+  installTranscriptScrollIntoViewMock,
+  mockScrollByToAdjustScrollTop,
+  stubScrollMetrics,
+  syncTranscriptLayoutRects,
+} from "./transcriptLayout.testHelpers";
 
 const keyboardState = vi.hoisted(() => ({
   keyboardOpen: false,
@@ -21,6 +28,8 @@ vi.mock("@/shared/hooks/useMobileKeyboard", () => ({
 
 describe("useChatViewport", () => {
   const rafQueue: FrameRequestCallback[] = [];
+  let restoreScrollIntoView: (() => void) | undefined;
+  let restoreScrollBy: (() => void) | undefined;
 
   beforeEach(() => {
     keyboardState.keyboardOpen = false;
@@ -34,10 +43,14 @@ describe("useChatViewport", () => {
       return rafQueue.length;
     });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    restoreScrollIntoView = installTranscriptScrollIntoViewMock();
+    restoreScrollBy = mockScrollByToAdjustScrollTop();
   });
 
   afterEach(() => {
     document.documentElement.removeAttribute("data-session-viewport");
+    restoreScrollIntoView?.();
+    restoreScrollBy?.();
     vi.unstubAllGlobals();
   });
 
@@ -52,9 +65,13 @@ describe("useChatViewport", () => {
 
   function mountHook(pinned = true) {
     const thread = document.createElement("div");
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
-    Object.defineProperty(thread, "scrollTop", { configurable: true, writable: true, value: 800 });
+    thread.className = "session-thread";
+    const inner = document.createElement("div");
+    inner.className = "session-thread-inner";
+    const row = document.createElement("article");
+    inner.appendChild(row);
+    thread.appendChild(inner);
+    stubScrollMetrics(thread, 1200, 400, pinned ? 800 : 120);
 
     const composer = document.createElement("textarea");
     Object.defineProperty(composer, "offsetHeight", { configurable: true, value: 44 });
@@ -74,7 +91,7 @@ describe("useChatViewport", () => {
         layoutTransitionRef,
       }),
     );
-    return { view, thread, composer, pinnedRef, ignoreScrollIntentRef, layoutTransitionRef };
+    return { view, thread, inner, row, composer, pinnedRef, ignoreScrollIntentRef, layoutTransitionRef };
   }
 
   it("claims session viewport ownership on mount", () => {
@@ -92,7 +109,7 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    Object.defineProperty(thread, "scrollTop", { configurable: true, writable: true, value: 400 });
+    stubScrollMetrics(thread, 1200, 400, 400);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = false;
@@ -101,7 +118,7 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
   });
 
   it("pins live edge each settle frame while keyboard band closes", () => {
@@ -114,6 +131,7 @@ describe("useChatViewport", () => {
     Object.defineProperty(thread, "clientHeight", { configurable: true, value: 250 });
     Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1200 });
     thread.scrollTop = 800;
+    syncTranscriptLayoutRects(thread);
 
     keyboardState.keyboardOpen = false;
     keyboardState.keyboardHeight = 0;
@@ -125,23 +143,24 @@ describe("useChatViewport", () => {
       Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1200 });
       const cb = rafQueue.shift();
       cb?.(0);
-      expect(thread.scrollTop).toBe(1200);
+      expectThreadAtLiveEdge(thread);
     });
 
     act(() => {
       Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
+      syncTranscriptLayoutRects(thread);
       const cb = rafQueue.shift();
       cb?.(0);
-      expect(thread.scrollTop).toBe(1200);
+      expectThreadAtLiveEdge(thread);
     });
 
     flushLayoutSettle(4);
-    expect(thread.scrollTop).toBe(thread.scrollHeight);
+    expectThreadAtLiveEdge(thread);
   });
 
   it("does not adjust scrollTop during settle when reading history", () => {
     const { view, thread } = mountHook(false);
-    thread.scrollTop = 120;
+    stubScrollMetrics(thread, 1200, 400, 120);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -155,6 +174,7 @@ describe("useChatViewport", () => {
 
     Object.defineProperty(thread, "clientHeight", { configurable: true, value: 500 });
     thread.scrollTop = 60;
+    syncTranscriptLayoutRects(thread);
 
     act(() => {
       const cb = rafQueue.shift();
@@ -168,7 +188,7 @@ describe("useChatViewport", () => {
 
   it("preserves scrollTop when reading history across keyboard close", () => {
     const { view, thread } = mountHook(false);
-    thread.scrollTop = 120;
+    stubScrollMetrics(thread, 1200, 400, 120);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -176,6 +196,7 @@ describe("useChatViewport", () => {
     view.rerender();
 
     thread.scrollTop = 60;
+    syncTranscriptLayoutRects(thread);
     thread.dispatchEvent(new Event("scroll"));
 
     flushLayoutSettle();
@@ -190,7 +211,7 @@ describe("useChatViewport", () => {
 
   it("ignores Safari resize-generated scroll during keyboard transition", () => {
     const { view, thread } = mountHook(false);
-    thread.scrollTop = 200;
+    stubScrollMetrics(thread, 1200, 400, 200);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -198,6 +219,7 @@ describe("useChatViewport", () => {
     view.rerender();
 
     thread.scrollTop = 999;
+    syncTranscriptLayoutRects(thread);
     thread.dispatchEvent(new Event("scroll"));
 
     flushLayoutSettle();
@@ -212,8 +234,7 @@ describe("useChatViewport", () => {
 
   it("restores pre-keyboard scroll when pinnedRef drifts true during keyboard (#930)", () => {
     const { view, thread, pinnedRef } = mountHook(false);
-    thread.scrollTop = 6685;
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 13108 });
+    stubScrollMetrics(thread, 13108, 400, 6685);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -243,9 +264,12 @@ describe("useChatViewport", () => {
   it("calls onRestoreLiveEdge after keyboard close restores live bottom", () => {
     const onRestoreLiveEdge = vi.fn();
     const thread = document.createElement("div");
-    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 400 });
-    Object.defineProperty(thread, "scrollTop", { configurable: true, writable: true, value: 800 });
+    thread.className = "session-thread";
+    const inner = document.createElement("div");
+    inner.className = "session-thread-inner";
+    inner.appendChild(document.createElement("article"));
+    thread.appendChild(inner);
+    stubScrollMetrics(thread, 1200, 400, 800);
 
     const composer = document.createElement("textarea");
     Object.defineProperty(composer, "offsetHeight", { configurable: true, value: 44 });
