@@ -10,10 +10,35 @@ use crate::adapters::web_session_acp::{
 };
 use serde_json::{json, Value};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptTerminalOutcome {
+    Success,
+    Cancelled,
+    Failed,
+}
+
+pub(crate) fn classify_prompt_terminal(result: &Result<Value, String>) -> PromptTerminalOutcome {
+    match result {
+        Ok(_) => PromptTerminalOutcome::Success,
+        Err(message) if is_cancellation_shaped_prompt_error(message) => {
+            PromptTerminalOutcome::Cancelled
+        }
+        Err(_) => PromptTerminalOutcome::Failed,
+    }
+}
+
+/// Request-correlated terminal result for one `session/prompt` RPC.
+#[derive(Debug, Clone)]
+pub(crate) struct PromptTerminal {
+    pub request_id: u64,
+    pub outcome: PromptTerminalOutcome,
+    pub events: Vec<SessionServerEvent>,
+}
+
 pub(crate) struct AcpDrainOutcome {
     pub events: Vec<SessionServerEvent>,
     pub host_exited: bool,
-    pub prompt_finished: bool,
+    pub prompt_terminals: Vec<PromptTerminal>,
     pub applied_model: Option<String>,
     pub session_config_options:
         Option<Vec<crate::adapters::web_session_acp::ConfigOptionDescriptor>>,
@@ -28,7 +53,7 @@ pub(crate) fn drain_acp_events(
 ) -> AcpDrainOutcome {
     let mut events = Vec::new();
     let mut host_exited = false;
-    let mut prompt_finished = false;
+    let mut prompt_terminals = Vec::new();
     let mut applied_model = None;
     let mut session_config_options = None;
     let mut session_available_commands = None;
@@ -95,10 +120,16 @@ pub(crate) fn drain_acp_events(
             AcpClientEvent::RequestFinished {
                 result, method, id, ..
             } => {
+                let mapped = map_request_finished(method, result.clone(), Some(id), deduper);
                 if method == "session/prompt" {
-                    prompt_finished = true;
+                    prompt_terminals.push(PromptTerminal {
+                        request_id: id,
+                        outcome: classify_prompt_terminal(&result),
+                        events: mapped,
+                    });
+                } else {
+                    events.extend(mapped);
                 }
-                events.extend(map_request_finished(method, result, Some(id), deduper));
             }
             AcpClientEvent::Error(message) => {
                 events.push(SessionServerEvent::Error {
@@ -116,7 +147,7 @@ pub(crate) fn drain_acp_events(
     AcpDrainOutcome {
         events,
         host_exited,
-        prompt_finished,
+        prompt_terminals,
         applied_model,
         session_config_options,
         session_available_commands,
@@ -226,6 +257,9 @@ pub(crate) fn permission_response(approved: bool, reason: Option<&str>) -> Value
         "reason": reason,
     })
 }
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) fn parse_json_rpc_id(raw: &str) -> Value {
     if let Ok(n) = raw.parse::<u64>() {

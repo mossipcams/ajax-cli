@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
@@ -33,8 +34,20 @@ const promptCapabilities = process.argv.includes('--prompt-capabilities');
 const richOutput = process.argv.includes('--rich-output');
 const sessionClose = process.argv.includes('--session-close');
 const sessionCloseFail = process.argv.includes('--session-close-fail');
+const thoughtOnly = process.argv.includes('--thought-only');
+const toolOnly = process.argv.includes('--tool-only');
+const noAgentText = process.argv.includes('--no-agent-text');
+const promptFail = process.argv.includes('--prompt-fail');
 const sessionId = 'fake-sess-1';
-const persistedSessionsPath = path.join(process.cwd(), '.fake-acp-sessions');
+// ponytail: isolate fixture sidecar files under FAKE_ACP_STATE_DIR or a per-pid tmp dir
+// so verification does not litter the crate root when cwd is not the worktree.
+const configuredStateRoot = process.env.FAKE_ACP_STATE_DIR;
+const stateRoot = configuredStateRoot || path.join(os.tmpdir(), `fake-acp-${process.pid}`);
+fs.mkdirSync(stateRoot, { recursive: true });
+if (!configuredStateRoot) {
+  process.on('exit', () => fs.rmSync(stateRoot, { recursive: true, force: true }));
+}
+const persistedSessionsPath = path.join(stateRoot, '.fake-acp-sessions');
 
 function loadPersistedSessions() {
   try {
@@ -60,14 +73,14 @@ function forgetSession(id) {
 }
 
 function sessionKnown(id) {
-  return loadPersistedSessions().includes(id);
+  return (!configuredStateRoot && id === sessionId) || loadPersistedSessions().includes(id);
 }
 const cliDefaultModel = process.argv.includes('--cli-default-model')
   ? (cursorParameterizedModels ? 'composer-2.5' : 'composer-2.5[fast=true]')
   : null;
 
 function spawnGeneration() {
-  const counterPath = path.join(process.cwd(), '.fake-acp-spawn-gen');
+  const counterPath = path.join(stateRoot, '.fake-acp-spawn-gen');
   let gen = 0;
   try {
     gen = parseInt(fs.readFileSync(counterPath, 'utf8'), 10) || 0;
@@ -79,7 +92,7 @@ function spawnGeneration() {
 
 const spawnGen = spawnGeneration();
 const firstSpawnAttempt = spawnGen === 1;
-const exclusiveLockPath = path.join(process.cwd(), '.fake-acp-exclusive-lock');
+const exclusiveLockPath = path.join(stateRoot, '.fake-acp-exclusive-lock');
 
 function pidAlive(pid) {
   try {
@@ -383,7 +396,7 @@ function handleRequest(msg) {
   if (method === 'session/close') {
     const closedId = params?.sessionId ?? sessionId;
     fs.writeFileSync(
-      path.join(process.cwd(), '.fake-acp-session-close-called'),
+      path.join(stateRoot, '.fake-acp-session-close-called'),
       closedId,
     );
     forgetSession(closedId);
@@ -570,6 +583,51 @@ function handleRequest(msg) {
     if (holdRemaining > 0) {
       holdRemaining -= 1;
       heldPromptId = id;
+      return;
+    }
+    if (promptFail) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: 'prompt failed' },
+      });
+      return;
+    }
+    if (thoughtOnly) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_thought_chunk',
+            content: { type: 'text', text: 'thinking-only' },
+          },
+        },
+      });
+      send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+      return;
+    }
+    if (toolOnly) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-only',
+            title: 'List files',
+            kind: 'other',
+            status: 'completed',
+          },
+        },
+      });
+      send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+      return;
+    }
+    if (noAgentText) {
+      send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
       return;
     }
     const kinds = Array.isArray(params?.prompt)
