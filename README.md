@@ -208,10 +208,13 @@ Each managed repo should have a matching test command so `ajax-cli repair` and
 `ajax-cli doctor` can verify the workflow end to end.
 
 Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
-inside each task worktree before the agent starts. Ajax folds husky setup and
-optional bootstrap into the task-session launch line (after `git worktree add`
-and detached tmux create), so start returns without waiting on bootstrap while
-the pane still runs setup before the agent.
+inside each task worktree before the agent starts. When bootstrap is
+`task-bootstrap.sh`, start also seeds ajax-model-router dispatch symlinks
+(including `scripts/analyze-task`) immediately after `git worktree add` (before
+tmux/agent, including provisioned ACP starts). Ajax folds husky setup and
+optional bootstrap into the task-session launch line (after worktree add and
+detached tmux create), so start returns without waiting on npm/husky while the
+pane still runs setup before the agent.
 
 Enable Declarative Web Push from Web Cockpit Settings after adding the site to
 the Home Screen on a Declarative Web Push–capable browser (for example iOS

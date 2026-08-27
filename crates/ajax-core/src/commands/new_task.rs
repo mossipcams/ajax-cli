@@ -160,6 +160,10 @@ pub fn new_task_plan_with_observation<R: Registry>(
         &branch,
         &format!("origin/{}", repo.default_branch),
     ));
+    if is_task_bootstrap_script(repo.bootstrap.as_deref()) {
+        plan.commands
+            .push(router_symlinks_seed_command(&worktree_path_string));
+    }
     plan.commands.push(tmux.new_detached_task_session(
         &tmux_session,
         DEFAULT_TASK_WINDOW_NAME,
@@ -414,6 +418,29 @@ pub fn is_task_window_new_session_command(command: &CommandSpec) -> bool {
 
 pub fn is_agent_send_keys_command(command: &CommandSpec) -> bool {
     command.program == "tmux" && command.args.first().is_some_and(|arg| arg == "send-keys")
+}
+
+pub fn is_router_symlinks_seed_command(command: &CommandSpec) -> bool {
+    command.program == "sh"
+        && command.args.first().is_some_and(|arg| arg == "-c")
+        && command
+            .args
+            .get(1)
+            .is_some_and(|script| script.contains("install-symlinks"))
+}
+
+pub(crate) fn is_task_bootstrap_script(bootstrap: Option<&str>) -> bool {
+    bootstrap.is_some_and(|bootstrap| {
+        Path::new(bootstrap)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("task-bootstrap.sh")
+    })
+}
+
+pub(crate) fn router_symlinks_seed_command(worktree_path: &str) -> CommandSpec {
+    const SCRIPT: &str = r#"router="${AJAX_MODEL_ROUTER:-$HOME/Desktop/Projects/ajax-model-router}"; installer="$router/scripts/install-symlinks"; if [ -x "$installer" ]; then "$installer" --target "$PWD" --force; fi"#;
+    CommandSpec::new("sh", ["-c", SCRIPT]).with_cwd(worktree_path)
 }
 
 pub fn start_provisioning_step_for_command(command: &CommandSpec) -> Option<StartProvisioningStep> {

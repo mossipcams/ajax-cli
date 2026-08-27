@@ -27,6 +27,11 @@ The task operation boundary now owns the main mutable task actions:
   evidence to skip redundant remote fetches when it is recent enough, and the
   task-session launch shell folds husky/bootstrap setup into the agent launch
   line rather than serializing them as standalone critical-path commands.
+  When the managed-repo bootstrap is `task-bootstrap.sh`, start also runs a
+  fast host-side ajax-model-router symlink seed immediately after worktree add
+  (including `analyze-task` and other dispatch helpers, and including
+  provisioned ACP starts that skip send-keys); npm/husky remain in-pane and
+  non-blocking.
 - Start operation execution records the task, applies named provisioning steps,
   records step receipts for successful provisioning side effects, marks
   provisioning failure in core with failed-step metadata, and opens the task
