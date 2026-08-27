@@ -171,8 +171,22 @@ describe("shouldRedirectSessionToTerminal", () => {
     );
   });
 
-  it("returns true when detail explicitly disables session capability", () => {
-    expect(shouldRedirectSessionToTerminal(HANDLE, detail({ session_capable: false }))).toBe(true);
+  it("returns true when detail explicitly disables session capability for non-acp agents", () => {
+    expect(
+      shouldRedirectSessionToTerminal(
+        HANDLE,
+        detail({ session_capable: false, agent: "Other" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not redirect acp-capable tasks solely because session_capable is false (#1092)", () => {
+    expect(
+      shouldRedirectSessionToTerminal(
+        HANDLE,
+        detail({ session_capable: false, agent: "Codex" }),
+      ),
+    ).toBe(false);
   });
 
   it("returns true when Terminal is preferred", () => {

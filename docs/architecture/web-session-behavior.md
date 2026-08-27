@@ -16,9 +16,14 @@ preference, or Diff routing.
 - When orchestration chat is enabled, provisioned tasks whose projection reports
   `session_capable` default to Ajax Chat (`#/session/<handle>`) unless the
   operator has set the per-task Terminal preference.
-- Interactive tasks (tmux send-keys launch) and tasks that are not
-  `session_capable` fall back to Ajax Terminal; a session URL for such a task
-  redirects to `#/t/<handle>` rather than opening a refused ACP socket.
+- Interactive tasks whose tmux pane is still running the harness agent open Ajax
+  Terminal; a session URL for such a task redirects to `#/t/<handle>` rather than
+  opening a refused ACP socket beside a live agent.
+- ACP-capable tasks whose agent has exited (pane back to a shell) may open Ajax
+  Chat from task details or `#/session/<handle>`; the host promotes them on first
+  attach by persisting `skip_interactive_agent`.
+- Tasks whose agent has no ACP entry point and are not `session_capable` fall back
+  to Ajax Terminal.
 - **Ajax terminal** in task details navigates to `#/t/<handle>` and stores the
   per-task preference; **Ajax chat** in task details clears that preference and
   returns to `#/session/<handle>`.
@@ -44,13 +49,15 @@ existing paths.
 - Provisioned starts skip tmux send-keys but still create the task tmux session.
   Every harness with an ACP entry point (Cursor native, Codex/Claude/Pi via their
   bridges) may use that launch mode; a harness without one cannot.
-- The browser routes a task to chat only when its projection reports
-  `session_capable`; anything else opens the terminal, including a session URL
-  typed or bookmarked for an interactive task.
+- The browser routes a task to chat when its projection reports
+  `session_capable`, or when orchestration chat is on and the task's agent has an
+  ACP entry point (Ajax chat stays reachable before promotion). Anything else
+  opens the terminal, including a session URL typed for a live interactive agent.
 - Session attach is only for tasks whose registry metadata records
   `skip_interactive_agent` (provisioned launch) **and** whose agent has an ACP
-  entry point. Interactive tasks (tmux send-keys launch) receive HTTP 409
-  `NotOrchestrationChat`.
+  entry point, or for ACP-capable tasks whose tmux task pane is **not** running
+  that harness (promote-on-attach). Interactive tasks with a live harness in tmux
+  receive HTTP 409 `NotOrchestrationChat`.
 - The model chosen when the task was created is stored on the task (`session_model`
   metadata) and used for its session. Reconnect must not send a browser
   `localStorage` preference on the WebSocket URL to override that metadata

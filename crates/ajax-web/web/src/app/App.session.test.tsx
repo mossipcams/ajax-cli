@@ -132,7 +132,7 @@ describe("App session routing", () => {
   // Found in dev: with chat on, every task opened as a session, but a task whose
   // agent still runs in tmux is refused by the host — the operator landed on a
   // dead socket instead of the terminal.
-  it("sends a task that cannot hold a session back to the terminal", async () => {
+  it("sends a non-acp task that cannot hold a session back to the terminal", async () => {
     writeOrchestrationChatEnabled(true);
     vi.stubGlobal(
       "fetch",
@@ -144,7 +144,9 @@ describe("App session routing", () => {
           return Promise.resolve(jsonResponse({ models: [], default: "" }));
         }
         if (path.startsWith("/api/tasks/")) {
-          return Promise.resolve(jsonResponse({ ...taskDetail, session_capable: false }));
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, session_capable: false, agent: "Other" }),
+          );
         }
         return Promise.reject(new Error(`unexpected fetch: ${path}`));
       }),
@@ -155,6 +157,34 @@ describe("App session routing", () => {
     setHash("#/session/web/fix-login");
 
     await waitFor(() => expect(window.location.hash).toBe(taskHash("web/fix-login")));
+  });
+
+  it("keeps acp-capable session URLs on chat when not yet provisioned (#1092)", async () => {
+    writeOrchestrationChatEnabled(true);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [{ id: "auto", label: "Auto" }] }));
+        }
+        if (path.startsWith("/api/tasks/")) {
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, session_capable: false, agent: "Codex" }),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    render(<App />);
+    await screen.findByText("Fix login");
+
+    setHash("#/session/web/fix-login");
+
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/session/web/fix-login");
   });
 
   it("renders ChatSurface on #/session/<handle> when orchestration chat is enabled", async () => {

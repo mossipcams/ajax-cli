@@ -72,13 +72,46 @@ describe("TaskWorkspace", () => {
     localStorage.clear();
   });
 
-  it("redirects non-session-capable chat tasks to terminal", async () => {
+  it("keeps acp-capable chat tasks on chat when not yet provisioned (#1092)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ models: [{ id: "auto", label: "Auto" }] })),
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
     const onGo = vi.fn();
     render(
       <TaskWorkspace
         handle="web/fix-login"
         mode="chat"
-        detail={readyDetail({ ...taskDetail, session_capable: false })}
+        detail={readyDetail({ ...taskDetail, session_capable: false, agent: "Codex" })}
+        orchestrationChat
+        onGo={onGo}
+        onBack={vi.fn()}
+        onOpenDiff={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    expect(onGo).not.toHaveBeenCalled();
+  });
+
+  it("redirects non-acp chat tasks to terminal when session_capable is false", async () => {
+    const onGo = vi.fn();
+    render(
+      <TaskWorkspace
+        handle="web/fix-login"
+        mode="chat"
+        detail={readyDetail({ ...taskDetail, session_capable: false, agent: "Other" })}
         orchestrationChat
         onGo={onGo}
         onBack={vi.fn()}

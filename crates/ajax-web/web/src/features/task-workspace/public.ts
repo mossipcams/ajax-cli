@@ -11,6 +11,8 @@ export {
   openTaskWorkspaceHash,
   resolveTaskWorkspaceHash,
   shouldRedirectSessionToTerminal,
+  isAcpCapableAgent,
+  taskOffersOrchestrationChat,
 } from "./taskWorkspaceRouting";
 export { default as TaskWorkspace } from "./TaskWorkspace";
 export { default as TaskWorkspaceHeader } from "./TaskWorkspaceHeader";

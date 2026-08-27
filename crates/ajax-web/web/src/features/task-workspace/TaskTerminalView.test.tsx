@@ -239,7 +239,7 @@ describe("TaskTerminalView", () => {
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
-  it("hides Ajax chat when orchestration chat is off or the task is not session-capable", () => {
+  it("hides Ajax chat when orchestration chat is off", () => {
     renderWithSheet({
       detail: detail({ session_capable: true }),
       orchestrationChat: false,
@@ -247,14 +247,30 @@ describe("TaskTerminalView", () => {
     });
     fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
+  });
 
+  it("shows Ajax chat for acp-capable tasks before provision (#1092)", () => {
+    const onOpenChat = vi.fn();
     renderWithSheet({
-      detail: detail({ session_capable: false }),
+      detail: detail({ session_capable: false, agent: "Codex" }),
+      orchestrationChat: true,
+      onOpenChat,
+    });
+    fireEvent.click(screen.getByTestId("task-details"));
+    fireEvent.click(
+      within(screen.getByTestId("task-details-sheet")).getByRole("button", { name: "Ajax chat" }),
+    );
+    expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("hides Ajax chat when the task agent has no ACP entry point", () => {
+    renderWithSheet({
+      detail: detail({ session_capable: false, agent: "Other" }),
       orchestrationChat: true,
       onOpenChat: vi.fn(),
     });
-    fireEvent.click(screen.getAllByTestId("task-details").at(-1)!);
-    expect(screen.queryAllByRole("button", { name: "Ajax chat" })).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("task-details"));
+    expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
   });
 
   it("renders the task outlet hook the scroll lock targets", () => {
