@@ -8,11 +8,13 @@ mod ci_agent_delivery;
 pub(crate) mod model_change;
 mod normalize;
 mod output_content;
+mod prepare_session;
 mod prompt_content;
 mod protocol;
 mod replay;
 mod session_activity;
 mod session_cleanup;
+mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
 mod task_session_directory;
@@ -22,6 +24,8 @@ mod task_session_replacement;
 mod task_session_spawn;
 mod transcript;
 mod ws_bridge;
+
+pub use prepare_session::prepare_task_session;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
@@ -36,10 +40,7 @@ pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
 
-use ajax_core::{
-    adapters::acp_launch_for_agent, commands::CommandContext, models::AgentClient,
-    registry::Registry,
-};
+use ajax_core::{adapters::acp_launch_for_agent, models::AgentClient};
 
 use crate::adapters::web_session_acp::is_unspecified_model;
 use serde::{Deserialize, Serialize};
@@ -388,51 +389,6 @@ pub enum SessionRouteError {
     TaskNotFound,
     WorktreeMissing,
     NotOrchestrationChat,
-}
-
-pub fn prepare_task_session<R: Registry>(
-    context: &CommandContext<R>,
-    qualified_handle: &str,
-    model: &str,
-) -> Result<SessionAttachPlan, SessionRouteError> {
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .ok_or(SessionRouteError::TaskNotFound)?;
-
-    // Any harness Ajax can start over ACP qualifies; the durable provisioned bit
-    // still decides, so an interactive tmux task never gets a second agent.
-    if acp_launch_for_agent(task.selected_agent).is_none() || !task.skip_interactive_agent() {
-        return Err(SessionRouteError::NotOrchestrationChat);
-    }
-    if !task.worktree_path.exists() {
-        return Err(SessionRouteError::WorktreeMissing);
-    }
-
-    // Task metadata wins over a socket ?model= pin (#910). The URL fallback is
-    // only for tasks with no stored model, then the harness default. Legacy
-    // stored `auto` is unspecified ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
-    let url_model = normalize_session_model(model).ok();
-    let model = task
-        .session_model()
-        .filter(|stored| !is_unspecified_model(Some(stored)))
-        .map(str::to_string)
-        .or_else(|| {
-            url_model
-                .filter(|model| *model != default_session_model())
-                .map(|model| model.to_string())
-        })
-        .or_else(|| harness_default_model(task.selected_agent).map(str::to_string))
-        .unwrap_or_default();
-
-    Ok(SessionAttachPlan {
-        qualified_handle: qualified_handle.to_string(),
-        worktree_path: task.worktree_path.clone(),
-        model,
-        agent: task.selected_agent,
-    })
 }
 
 #[cfg(test)]

@@ -53,6 +53,24 @@ fn cards_mark_only_provisioned_acp_tasks_as_session_capable() {
     );
 }
 
+// Child exit must not clear the provisioned bit (#1092).
+#[test]
+fn provisioned_task_stays_session_capable_issue_1092() {
+    use ajax_core::models::AgentClient;
+
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Codex;
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let detail = super::browser_task_detail_view(&context, "web/fix-login").expect("detail");
+    assert!(detail.session_capable);
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .expect("task")
+        .skip_interactive_agent());
+}
+
 #[test]
 fn cockpit_slice_serializes_empty_projection() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());

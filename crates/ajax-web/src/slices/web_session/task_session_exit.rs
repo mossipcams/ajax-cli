@@ -105,23 +105,35 @@ pub(super) fn reconcile_unexpected_child_exit(
         }]);
     }
 
+    let client_message_id = state
+        .active_prompt
+        .as_ref()
+        .and_then(|active| active.client_message_id.clone());
+    let terminal_outcome = state
+        .active_prompt
+        .as_ref()
+        .and_then(|active| active.terminal.as_ref().map(|terminal| terminal.outcome));
+
+    if matches!(
+        terminal_outcome,
+        Some(PromptTerminalOutcome::Success | PromptTerminalOutcome::Cancelled)
+    ) {
+        try_finalize_active_prompt(state);
+        return;
+    }
+
+    let Some(client_message_id) = client_message_id else {
+        state.active_prompt = None;
+        return;
+    };
+
     if state
         .active_prompt
         .as_ref()
         .is_some_and(|active| active.terminal.is_some())
     {
         try_finalize_active_prompt(state);
-        return;
     }
-
-    let Some(client_message_id) = state
-        .active_prompt
-        .as_ref()
-        .and_then(|active| active.client_message_id.clone())
-    else {
-        state.active_prompt = None;
-        return;
-    };
 
     match persist_ledger_update(state, |ledger| {
         ledger.mark_interrupted(&client_message_id);

@@ -189,29 +189,35 @@ where
         .query()
         .and_then(|query| crate::slices::web_session::parse_client_cursor(Some(query)));
 
-    let plan = {
-        let guard = state.shared();
-        match crate::slices::web_session::prepare_task_session(&guard.context, &handle, &model_raw)
-        {
-            Ok(plan) => plan,
-            Err(crate::slices::web_session::SessionRouteError::TaskNotFound) => {
-                return json_value_response(
-                    404,
-                    serde_json::json!({ "ok": false, "error": "task not found" }),
-                );
-            }
-            Err(crate::slices::web_session::SessionRouteError::WorktreeMissing) => {
-                return json_value_response(
-                    409,
-                    serde_json::json!({ "ok": false, "error": "worktree missing" }),
-                );
-            }
-            Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat) => {
-                return json_value_response(
-                    409,
-                    serde_json::json!({ "ok": false, "error": "session chat requires a provisioned ACP task" }),
-                );
-            }
+    let state_for_prepare = state.clone();
+    let handle_for_prepare = handle.clone();
+    let prepare_result = tokio::task::spawn_blocking(move || {
+        state_for_prepare.prepare_task_session_attach(&handle_for_prepare, &model_raw)
+    })
+    .await
+    .unwrap_or(Err(
+        crate::slices::web_session::SessionRouteError::NotOrchestrationChat,
+    ));
+
+    let plan = match prepare_result {
+        Ok(plan) => plan,
+        Err(crate::slices::web_session::SessionRouteError::TaskNotFound) => {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "task not found" }),
+            );
+        }
+        Err(crate::slices::web_session::SessionRouteError::WorktreeMissing) => {
+            return json_value_response(
+                409,
+                serde_json::json!({ "ok": false, "error": "worktree missing" }),
+            );
+        }
+        Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat) => {
+            return json_value_response(
+                409,
+                serde_json::json!({ "ok": false, "error": "session chat requires a provisioned ACP task" }),
+            );
         }
     };
 

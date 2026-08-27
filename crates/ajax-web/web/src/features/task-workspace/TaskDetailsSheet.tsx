@@ -8,6 +8,7 @@ import {
   TaskMetaDetails,
   visibleTaskActions,
 } from "@/features/task/public";
+import { taskOffersOrchestrationChat } from "./taskWorkspaceRouting";
 
 export interface TaskDetailsSheetProps {
   open: boolean;
@@ -64,7 +65,7 @@ export default function TaskDetailsSheet({
   const showAjaxChat =
     mode === "terminal" &&
     orchestrationChat &&
-    detail.session_capable !== false &&
+    taskOffersOrchestrationChat(detail) &&
     Boolean(onOpenChat);
   const showAjaxTerminal = mode === "chat" && Boolean(onOpenTerminal);
 
