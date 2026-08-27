@@ -2,11 +2,27 @@
 # Per-task worktree setup for ajax-cli (intended as managed-repo `bootstrap`).
 #
 # Ensures Node 22 (CI pin), installs JS deps + husky via `npm ci`, and — when
-# present — restores local ajax-model-router dispatch symlinks into scripts/.
+# present — restores local ajax-model-router dispatch symlinks into scripts/
+# (run-delegate, analyze-task, router-log, …).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+install_router_links() {
+  router="${AJAX_MODEL_ROUTER:-$HOME/Desktop/Projects/ajax-model-router}"
+  installer="$router/scripts/install-symlinks"
+  if [[ -x "$installer" ]]; then
+    "$installer" --target "$ROOT" --force
+  fi
+}
+
+if [[ "${1:-}" == "--links-only" ]]; then
+  install_router_links
+  exit 0
+fi
+
+install_router_links
 
 if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
   # shellcheck disable=SC1091
@@ -25,9 +41,3 @@ if [[ "$node_major" != "22" ]]; then
 fi
 
 npm ci
-
-router="${AJAX_MODEL_ROUTER:-$HOME/Desktop/Projects/ajax-model-router}"
-installer="$router/scripts/install-symlinks"
-if [[ -x "$installer" ]]; then
-  "$installer" --target "$ROOT" --force
-fi
