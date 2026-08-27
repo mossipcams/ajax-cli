@@ -17,7 +17,9 @@ export function currentOperation(items: ConversationItem[]): string {
     .filter((call) => call.status === "pending" || call.status === "in_progress")
     .pop();
   if (running) {
-    return `${OPERATION_VERBS[running.kind] ?? "Working on"} ${toolTarget(running)}…`;
+    const target = toolTarget(running);
+    const verb = OPERATION_VERBS[running.kind] ?? "Working on";
+    return target ? `${verb} ${target}…` : `${verb}…`;
   }
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i];

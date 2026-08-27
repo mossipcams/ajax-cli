@@ -57,13 +57,47 @@ export function cleanTitle(title: string): string {
   return title.replace(/`/g, "").trim();
 }
 
+const GENERIC_TOOL_TITLES = new Set([
+  "read file",
+  "edit file",
+  "delete file",
+  "find",
+  "grep",
+  "search files",
+]);
+
+/** Generic ACP titles name the tool, not what it touched. */
+export function isGenericToolTitle(title: string): boolean {
+  return GENERIC_TOOL_TITLES.has(cleanTitle(title).toLowerCase());
+}
+
+/** Execute titles can be whole scripts. The row names the first line or clause. */
+export function shortCommand(command: string): string {
+  const firstLine = command.trim().split("\n")[0]?.trim() ?? command.trim();
+  const firstClause = firstLine.split(/\s&&\s|\s;\s|\s\|\s/)[0]?.trim() ?? firstLine;
+  const max = 96;
+  if (firstClause.length <= max) return firstClause;
+  return `${firstClause.slice(0, max - 1)}…`;
+}
+
 /** The one field worth reading on the row: where the call acted. A path beats
  * the tool's name — "Read File" is the same on every read — and a command is
  * already its own target. */
-export function toolTarget(call: { title: string; locations: string[]; callId: string }): string {
+export function toolTarget(call: {
+  kind?: string;
+  title: string;
+  locations: string[];
+  callId: string;
+}): string {
   const location = call.locations[0];
-  if (location) return shortPath(location);
-  return cleanTitle(call.title) || call.callId;
+  if (location) {
+    if (call.kind === "execute") return shortCommand(location);
+    return shortPath(location);
+  }
+  const title = cleanTitle(call.title);
+  if (isGenericToolTitle(title)) return "";
+  if (call.kind === "execute") return shortCommand(title);
+  return title || call.callId;
 }
 
 /** Present tense for the live "currently doing" line. Past tense for settled
@@ -90,8 +124,8 @@ export const OPERATION_VERBS_PAST: Record<string, string> = {
   fetch: "Fetched",
 };
 
-/** Filename when the call touched a path; the command itself when it ran one;
- * "files" for a search with no location. */
+/** Filename when the call touched a path; the query or command when one was
+ * derived; nothing when only a generic tool title is known yet. */
 export function toolRowTarget(call: {
   kind: string;
   title: string;
@@ -100,11 +134,16 @@ export function toolRowTarget(call: {
 }): string {
   const location = call.locations[0];
   if (location) {
+    if (call.kind === "execute") return shortCommand(location);
+    if (call.kind === "search") return location;
     const parts = location.split("/").filter(Boolean);
     return parts[parts.length - 1] ?? shortPath(location);
   }
-  if (call.kind === "search") return "files";
-  return cleanTitle(call.title) || call.callId;
+  const title = cleanTitle(call.title);
+  if (isGenericToolTitle(title)) return "";
+  if (call.kind === "execute") return shortCommand(title);
+  if (title) return title;
+  return "";
 }
 
 /** Verb-first row label: "Read serve.rs", "Ran cargo nextest …". */
@@ -115,7 +154,8 @@ export function toolRowLabel(call: {
   callId: string;
 }): string {
   const verb = OPERATION_VERBS_PAST[call.kind] ?? "Used";
-  return `${verb} ${toolRowTarget(call)}`;
+  const target = toolRowTarget(call);
+  return target ? `${verb} ${target}` : verb;
 }
 
 const TOKEN_BOUNDARY = /[\s/\\:;,.|]/;
