@@ -175,6 +175,60 @@ fn map_tool_call_to_structured_event_not_raw_json() {
     );
 }
 
+/// Regression for #1090: Cursor sends the path on rawInput while locations stay empty.
+#[test]
+fn map_tool_call_derives_location_from_raw_input_path_for_1090() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call_read",
+            "title": "Read File",
+            "kind": "read",
+            "status": "in_progress",
+            "rawInput": { "path": "/repo/crates/gateway/src/serve.rs" }
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::ToolCall { locations, .. } = &events[0] else {
+        panic!("expected tool call, got {events:?}");
+    };
+    assert_eq!(
+        locations,
+        &vec!["/repo/crates/gateway/src/serve.rs".to_string()]
+    );
+}
+
+/// Regression for #1090: an empty update still derives the target from rawInput.
+#[test]
+fn map_tool_call_update_derives_location_from_raw_input_for_1090() {
+    let update = serde_json::json!({
+        "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call_read",
+            "title": "",
+            "kind": "",
+            "status": "completed",
+            "rawInput": { "path": "/repo/crates/gateway/src/serve.rs" }
+        }
+    });
+    let events = map_acp_session_update(&update);
+    let SessionServerEvent::ToolCall {
+        locations,
+        title,
+        kind,
+        ..
+    } = &events[0]
+    else {
+        panic!("expected tool call, got {events:?}");
+    };
+    assert_eq!(title, "");
+    assert_eq!(kind, "");
+    assert_eq!(
+        locations,
+        &vec!["/repo/crates/gateway/src/serve.rs".to_string()]
+    );
+}
+
 #[test]
 fn map_tool_call_update_keeps_call_id_when_title_absent() {
     let update = serde_json::json!({

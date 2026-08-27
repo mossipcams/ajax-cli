@@ -125,21 +125,26 @@ fn typed_usage_event(update: &UsageUpdate) -> Vec<SessionServerEvent> {
 }
 
 fn typed_tool_call_event(call: &ToolCall) -> Vec<SessionServerEvent> {
+    let content = map_tool_content(&call.content);
     vec![SessionServerEvent::ToolCall {
         call_id: call.tool_call_id.to_string(),
         title: call.title.clone(),
         kind: tool_kind(call.kind).to_string(),
         status: tool_status(call.status).to_string(),
-        locations: call
-            .locations
-            .iter()
-            .map(|location| location.path.display().to_string())
-            .collect(),
-        content: map_tool_content(&call.content),
+        locations: derive_tool_locations(
+            call.locations
+                .iter()
+                .map(|location| location.path.display().to_string())
+                .collect(),
+            call.raw_input.as_ref(),
+            &content,
+        ),
+        content,
     }]
 }
 
 fn typed_tool_call_update_event(call: &ToolCallUpdate) -> Vec<SessionServerEvent> {
+    let content = map_tool_content(call.fields.content.as_deref().unwrap_or_default());
     vec![SessionServerEvent::ToolCall {
         call_id: call.tool_call_id.to_string(),
         title: call.fields.title.clone().unwrap_or_default(),
@@ -155,15 +160,18 @@ fn typed_tool_call_update_event(call: &ToolCallUpdate) -> Vec<SessionServerEvent
             .map(tool_status)
             .unwrap_or_default()
             .to_string(),
-        locations: call
-            .fields
-            .locations
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|location| location.path.display().to_string())
-            .collect(),
-        content: map_tool_content(call.fields.content.as_deref().unwrap_or_default()),
+        locations: derive_tool_locations(
+            call.fields
+                .locations
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|location| location.path.display().to_string())
+                .collect(),
+            call.fields.raw_input.as_ref(),
+            &content,
+        ),
+        content,
     }]
 }
 
@@ -247,6 +255,7 @@ fn tool_call_event(update_body: &Value) -> Vec<SessionServerEvent> {
     if call_id.is_empty() {
         return Vec::new();
     }
+    let content = extract_tool_content(update_body);
     vec![SessionServerEvent::ToolCall {
         call_id,
         title: update_body
@@ -264,9 +273,71 @@ fn tool_call_event(update_body: &Value) -> Vec<SessionServerEvent> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        locations: extract_tool_locations(update_body),
-        content: extract_tool_content(update_body),
+        locations: derive_tool_locations(
+            extract_tool_locations(update_body),
+            raw_input_from_body(update_body),
+            &content,
+        ),
+        content,
     }]
+}
+
+fn raw_input_from_body(update_body: &Value) -> Option<&Value> {
+    update_body
+        .get("rawInput")
+        .or_else(|| update_body.get("raw_input"))
+}
+
+/// Cursor often sends the path on `rawInput` while leaving `locations` empty.
+/// Derive one follow-along target so the browser row can name the file.
+fn derive_tool_locations(
+    explicit: Vec<String>,
+    raw_input: Option<&Value>,
+    content: &[ToolContent],
+) -> Vec<String> {
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    if let Some(target) = target_from_raw_input(raw_input) {
+        return vec![target];
+    }
+    if let Some(path) = target_from_diff_content(content) {
+        return vec![path];
+    }
+    Vec::new()
+}
+
+fn target_from_raw_input(raw_input: Option<&Value>) -> Option<String> {
+    let Value::Object(map) = raw_input? else {
+        return None;
+    };
+    for key in ["path"] {
+        if let Some(value) = map.get(key).and_then(non_empty_str) {
+            return Some(value.to_string());
+        }
+    }
+    for key in ["query", "pattern", "glob"] {
+        if let Some(value) = map.get(key).and_then(non_empty_str) {
+            return Some(value.to_string());
+        }
+    }
+    map.get("command")
+        .and_then(non_empty_str)
+        .map(str::to_string)
+}
+
+fn target_from_diff_content(content: &[ToolContent]) -> Option<String> {
+    content.iter().find_map(|item| match item {
+        ToolContent::Diff { path, .. } if !path.is_empty() => Some(path.clone()),
+        _ => None,
+    })
+}
+
+fn non_empty_str(value: &Value) -> Option<&str> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
 }
 
 fn extract_tool_locations(update_body: &Value) -> Vec<String> {

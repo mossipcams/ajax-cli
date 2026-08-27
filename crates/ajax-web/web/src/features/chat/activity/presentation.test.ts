@@ -113,7 +113,7 @@ describe("toolRowLabel", () => {
     ).toBe("Read serve.rs");
   });
 
-  it("names a search with no location as files", () => {
+  it("names a search with no location as the verb alone", () => {
     expect(
       toolRowLabel({
         kind: "search",
@@ -121,7 +121,54 @@ describe("toolRowLabel", () => {
         locations: [],
         callId: "c1",
       }),
-    ).toBe("Searched files");
+    ).toBe("Searched");
+  });
+
+  describe("#1090 tool row targets", () => {
+    it("does not duplicate generic Read File into Read Read File", () => {
+      expect(
+        toolRowLabel({
+          kind: "read",
+          title: "Read File",
+          locations: [],
+          callId: "c1",
+        }),
+      ).toBe("Read");
+    });
+
+    it("reads path as Read serve.rs when location is present", () => {
+      expect(
+        toolRowLabel({
+          kind: "read",
+          title: "Read File",
+          locations: ["/repo/crates/gateway/src/serve.rs"],
+          callId: "c1",
+        }),
+      ).toBe("Read serve.rs");
+    });
+
+    it("does not duplicate generic Edit File into Edited Edit File", () => {
+      expect(
+        toolRowLabel({
+          kind: "edit",
+          title: "Edit File",
+          locations: [],
+          callId: "c1",
+        }),
+      ).toBe("Edited");
+    });
+
+    it("shortens execute titles to the first line or clause", () => {
+      const dump = `python -c "print('x')" && cargo test\nmore output`;
+      expect(
+        toolRowLabel({
+          kind: "execute",
+          title: dump,
+          locations: [],
+          callId: "c1",
+        }),
+      ).toBe('Ran python -c "print(\'x\')"');
+    });
   });
 
   it("never gives the same label to read and edit of one path", () => {

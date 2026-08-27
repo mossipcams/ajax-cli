@@ -597,7 +597,11 @@ dividers for cancellations, reconnects, harness switches and context resets.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
   diffs. Tool call rows are always visible — one line each on the activity grid,
   with bodies collapsed by default for completed calls and open only when a call
-  is running or failed with content. Thoughts, plans and permission markers stay
+  is running or failed with content. The row target is the first explicit
+  location when present; otherwise the host derives one from `rawInput` path,
+  then query/pattern/glob, then command, then a diff path in tool content; the
+  label strips generic tool titles (`Read File`, `Edit File`, `grep`, …) until
+  a real target arrives. Thoughts, plans and permission markers stay
   behind the disclosure until expanded. Collapsed, the summary row shows a
   counted line while the turn runs once at least one tool row is present
   (`Read 6 files · edited 2 files · ran 4 commands · 38s`); if the agent is only
