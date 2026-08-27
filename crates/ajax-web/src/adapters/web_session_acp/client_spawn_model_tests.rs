@@ -547,6 +547,56 @@ fn cursor_grok_high_recovers_on_live_handshake_after_composer_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// Regression for #1079: spawn argv never receives pipe-form or bracket tokens.
+#[test]
+fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
+    let dir = scratch_dir("model-cursor-spawn-no-pipe-bracket-1079");
+    let script = fake_acp_fixture();
+    let handshake_base = "claude-opus-5";
+    let bracket = "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]";
+    let catalog_id = "claude-opus-5-thinking-high";
+    let launch = cursor_launch();
+
+    assert_eq!(
+        cursor_catalog_to_acp_spawn_token(handshake_base),
+        handshake_base,
+        "bare handshake base passes through on spawn argv"
+    );
+    assert_eq!(cursor_catalog_to_acp_spawn_token(bracket), catalog_id);
+    for raw in [handshake_base, bracket] {
+        let spawn = cursor_catalog_to_acp_spawn_token(raw);
+        assert!(
+            !spawn.contains('|') && !spawn.contains('['),
+            "spawn token must not contain pipe or bracket for {raw:?}: {spawn}"
+        );
+    }
+    assert_eq!(
+        acp_args_for_program(launch, &["acp"], Some(handshake_base)),
+        vec!["--model", handshake_base, "acp"]
+    );
+    assert_eq!(
+        acp_args_for_program(launch, &["acp"], Some(bracket)),
+        vec!["--model", catalog_id, "acp"]
+    );
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &["--cursor-parameterized-models", "--cli-default-model"],
+            || {
+                AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    handshake_base,
+                    None,
+                )
+                .expect("spawn must succeed when bare handshake base passes through on argv");
+            },
+        );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // Regression for #954: ConfigOption-only harnesses still refuse unadvertised pins.
 #[test]
 fn bridge_errors_when_pin_not_advertised_issue_954() {

@@ -124,9 +124,13 @@ existing paths.
   Pin satisfaction
   is per-option `currentValue` match, not string equality on a synthetic id.
 - Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
-  catalog ids unchanged for explicit pins). Legacy WebSocket `set_model` persists
-  desired `session_model` first, then applies in-band; keep process, `sessionId`,
-  and JSONL. Respawn (`session/new`, no resume) only when the child is dead or no
+  catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
+  handshake ids reconstruct to exploded catalog ids before argv, never passing
+  `|` or `[` on the spawn command line
+  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Legacy WebSocket
+  `set_model` persists desired `session_model` first, then applies in-band; keep
+  process, `sessionId`, and JSONL. JSONL meta stores pipe-form, not bare handshake
+  `currentValue`. Respawn (`session/new`, no resume) only when the child is dead or no
   model control is advertised. In-band refusal is a typed error; the child keeps
   running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
