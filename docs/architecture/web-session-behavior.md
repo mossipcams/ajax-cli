@@ -612,6 +612,24 @@ dividers for cancellations, reconnects, harness switches and context resets.
   while the operator is already at the bottom, offers `Jump to latest` whenever
   the operator is away from the live edge — not only when new content has arrived
   since — and never animates a scroll.
+- First paint of a long in-memory transcript renders only a recent window
+  (`DEFAULT_HISTORY_WINDOW` = 150 conversation rows). Older rows remain in the
+  session reducer; the browser does not become a second transcript authority.
+  Wire replay and JSONL attach still deliver the full transcript into reducer
+  state; the window only limits what Conversation paints.
+- The window start snaps forward to a user-turn boundary within the length cap
+  when one exists; otherwise the cap cut applies so a huge agent-only tail never
+  paints the full transcript. After first paint the window grows by exactly
+  the rows that arrive (live tail append or revealing already-held rows above)
+  so on-screen rows do not fold behind `Load earlier`.
+- Scrolling near the top auto-reveals earlier already-held rows (overflow gate,
+  200px preload band, 500ms cooldown, arm/disarm). Optional `Load earlier`
+  appears while hidden rows remain. Prepend growth preserves read position via
+  `scrollTop + scrollHeight` delta even when the pre-reveal window fit the
+  viewport (pinned); stale no-op reveals drop the anchor so a later live append
+  while scrolled up cannot jump. Layout observers skip stick-to-bottom while a
+  prepend restore is pending; after restore, pin intent is resampled from
+  scrollTop.
 - Conversation text and tool labels are proportional; monospace is reserved for
   code, commands, paths and output.
 
@@ -661,9 +679,10 @@ dividers for cancellations, reconnects, harness switches and context resets.
 - Orchestration session chat owns its mobile layout boundary: a bounded flex
   column (`session-chat-surface`) with LiveHead (`flex: none`), transcript
   scroller (`.session-thread`: `flex: 1 1 0%`, `min-height: 0`,
-  `overflow-y: auto`), and composer (`flex: none`) as siblings. Every ancestor
-  from `.app-viewport` through the surface has `min-height: 0`; route-scroll
-  does not compete as a vertical scroll owner on `#/session/<handle>`.
+  `overflow-y: auto`, chronological oldest-at-top column inside
+  `.session-thread-inner`), and composer (`flex: none`) as siblings. Every
+  ancestor from `.app-viewport` through the surface has `min-height: 0`;
+  route-scroll does not compete as a vertical scroll owner on `#/session/<handle>`.
 - While session chat is mounted, `html[data-session-viewport="owned"]` tells
   global CSS to **not** apply the `position: fixed` visual-viewport pin on
   `.app-viewport`. Task and terminal surfaces still use `html.keyboard-open` /
@@ -675,23 +694,25 @@ dividers for cancellations, reconnects, harness switches and context resets.
   applied twice.
 - No nested `position: fixed` pin on `.session-page.session-chat` inside the
   global band — double-applying `--app-top` strands the composer ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
-- Keyboard or composer resize is a layout change, not user scroll-up. Before
-  the transition, capture the transcript geometry (`scrollTop`, `scrollHeight`,
-  `clientHeight`, live-edge intent). Poll until flex layout settles (stable
+- Keyboard or composer resize is a layout change, not user scroll-up. Pin intent
+  is sampled on every user scroll into `pinnedRef` (16px slop from scrollTop).
+  Before a keyboard transition, capture transcript geometry (pinned vs history
+  scrollTop / scrollHeight). Poll until flex layout settles (stable
   `scrollHeight` / `clientHeight`, no animation). While settling after keyboard
-  close, if the operator was at the live bottom (`pinnedRef` or recent live-edge
-  intent), keep `scrollTop = scrollHeight` each frame so growing `clientHeight`
-  does not paint a keyboard-sized gap; history mode leaves `scrollTop` untouched
-  until settle completes. Then restore once: live bottom → new live edge;
-  reading history → same visible content plus any `scrollHeight` delta from
-  content inserted above the viewport. Ignore Safari resize-generated scroll
-  events as user scrolling during the transition.
-- While the operator stays pinned (`pinned` / `pinnedRef`), transcript growth
-  from streaming or layout (items effect, thread `MutationObserver` for
-  scrollHeight growth, thread `ResizeObserver` for box resizes) keeps
-  `scrollTop = scrollHeight`. Keyboard restore to the live bottom re-asserts
-  `pinned`. Scroll-up clears `pinned`; unpinned readers are not yanked back
-  to the live edge.
+  close, if the operator was pinned, keep assigning
+  `scrollTop = scrollHeight - clientHeight` each frame so growing `clientHeight`
+  does not paint a keyboard-sized gap; history mode leaves scroll untouched
+  until settle completes. Then restore once: pinned → stick-to-bottom;
+  reading history → same visible position plus any growth above the viewport
+  (`scrollTop + scrollHeight` delta). Ignore Safari resize-generated scroll
+  events as user scrolling during the transition. Live-edge intent comes from
+  scrollTop metrics, not layout rects or column-reverse polarity.
+- Composer height changes re-pin with stick-to-bottom only when the pre-resize
+  scroll sample was pinned (`pinnedRef`). Thread `ResizeObserver` and
+  `MutationObserver` do the same while pinned. Jump to latest always re-pins.
+  Scroll-up clears `pinned`; unpinned readers are not yanked when transcript
+  grows at the bottom. Prepend-style growth above the viewport (when added)
+  restores read position via `scrollTop + scrollHeight` delta.
   `useMobileKeyboard` clears keyboard geometry immediately on composer blur
   (focusout with no form control focused) and ignores stale visualViewport
   shrinks until a field is focused again, catching up when the viewport grows.

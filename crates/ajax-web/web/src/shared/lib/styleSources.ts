@@ -30,11 +30,12 @@ export const BASELINE = {
    * Re-measured after settled assistant prose copy control (in-flow `.pill`).
    * Re-measured after live assistant row pending indicator (paragraph gate).
    * Re-measured after the turn-disclosure comment caught up with always-visible
-   * tool rows (comment text only; built CSS is unchanged). */
-  sourceStylesCssBytes: 108_197,
-  builtAppCssBytes: 93_603,
-  builtAppCssGzipBytes: 16_439,
-  classSelectorLines: 603,
+   * tool rows (comment text only; built CSS is unchanged).
+   * Re-measured after chronological chat scroll and Load earlier CSS (#1088). */
+  sourceStylesCssBytes: 108_587,
+  builtAppCssBytes: 94_038,
+  builtAppCssGzipBytes: 16_496,
+  classSelectorLines: 606,
   hasSelectors: 18,
 } as const;
 

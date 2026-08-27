@@ -1,8 +1,9 @@
-import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type PointerEvent, type ReactNode } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
-import { toolCount, useChatSession } from "./session/public";
-import ChatLiveHead from "./status/ChatLiveHead";
+import { toolCount, useChatSession, type ConversationItem } from "./session/public";
+import { useHistoryWindow } from "./conversation/useHistoryWindow";
 import { Conversation } from "./conversation/public";
+import ChatLiveHead from "./status/ChatLiveHead";
 import ChatModelPresentation from "./model/ChatModelPresentation";
 import { useSessionModelNotice, useSessionModelSheet } from "./model/notice";
 import { PermissionPanel } from "./permissions/public";
@@ -81,6 +82,7 @@ function ChatSessionBody({
   dismissNotice,
   modelSheetOpen,
   setModelSheetOpen,
+  visibleItems,
 }: {
   handle: string;
   detail: BrowserTaskDetail | null;
@@ -102,6 +104,7 @@ function ChatSessionBody({
   dismissNotice: () => void;
   modelSheetOpen: boolean;
   setModelSheetOpen: (open: boolean) => void;
+  visibleItems: ConversationItem[];
 }) {
   const { surfaceStyle, scrollToLatest } = useChatScroller();
   const { confirmedModel, configOptions, availableCommands, promptCapabilities } = view.model;
@@ -159,7 +162,7 @@ function ChatSessionBody({
           <ChatScrollThread>
             <ChatTranscriptTail
               itemCount={view.conversation.length}
-              conversation={<Conversation items={view.conversation} busy={view.turn.busy} />}
+              conversation={<Conversation items={visibleItems} busy={view.turn.busy} />}
             />
           </ChatScrollThread>
 
@@ -181,6 +184,37 @@ function ChatSessionBody({
         </ComposerProvider>
       </div>
     </>
+  );
+}
+
+function ChatSessionScroll({
+  handle,
+  detailStatus,
+  view,
+  composerRef,
+  ...bodyProps
+}: Omit<ComponentProps<typeof ChatSessionBody>, "visibleItems"> & {
+  handle: string;
+  detailStatus: Props["detailStatus"];
+  view: ReturnType<typeof useChatSession>["view"];
+  composerRef: React.RefObject<HTMLTextAreaElement | null>;
+}) {
+  const historyWindow = useHistoryWindow(view.conversation, `${handle}:${detailStatus}`);
+
+  return (
+    <ChatScroller
+      revision={view.revision}
+      sessionKey={`${handle}:${detailStatus}`}
+      composerRef={composerRef}
+      activityCount={toolCount(view.conversation)}
+      historyScroll={{
+        hasEarlier: historyWindow.hasEarlier,
+        revealEarlier: historyWindow.revealEarlier,
+        windowGeneration: historyWindow.windowGeneration,
+      }}
+    >
+      <ChatSessionBody {...bodyProps} handle={handle} view={view} composerRef={composerRef} visibleItems={historyWindow.visibleItems} />
+    </ChatScroller>
   );
 }
 
@@ -246,35 +280,29 @@ export default function ChatSurface({
         blurComposerOnPointerDown(event, composerRef)
       }
     >
-      <ChatScroller
-        revision={view.revision}
-        sessionKey={`${handle}:${detailStatus}`}
+      <ChatSessionScroll
+        handle={handle}
+        detailStatus={detailStatus}
+        view={view}
+        detail={detail}
+        workspaceHeader={workspaceHeader}
+        headActions={headActions}
+        taskAttention={taskAttention}
+        connected={connected}
+        everOpened={everOpened}
+        activityAgeMs={activityAgeMs}
+        sendPrompt={sendPrompt}
+        sendCancel={sendCancel}
+        markStopped={markStopped}
+        applyConfigOption={applyConfigOption}
+        respondPermission={respondPermission}
+        respondElicitation={respondElicitation}
         composerRef={composerRef}
-        activityCount={toolCount(view.conversation)}
-      >
-        <ChatSessionBody
-          handle={handle}
-          detail={detail}
-          workspaceHeader={workspaceHeader}
-          headActions={headActions}
-          taskAttention={taskAttention}
-          view={view}
-          connected={connected}
-          everOpened={everOpened}
-          activityAgeMs={activityAgeMs}
-          sendPrompt={sendPrompt}
-          sendCancel={sendCancel}
-          markStopped={markStopped}
-          applyConfigOption={applyConfigOption}
-          respondPermission={respondPermission}
-          respondElicitation={respondElicitation}
-          composerRef={composerRef}
-          notice={notice}
-          dismissNotice={dismissNotice}
-          modelSheetOpen={modelSheetOpen}
-          setModelSheetOpen={setModelSheetOpen}
-        />
-      </ChatScroller>
+        notice={notice}
+        dismissNotice={dismissNotice}
+        modelSheetOpen={modelSheetOpen}
+        setModelSheetOpen={setModelSheetOpen}
+      />
     </section>
   );
 }
