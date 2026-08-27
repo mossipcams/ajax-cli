@@ -1,7 +1,9 @@
 use super::{
-    is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
-    new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
-    StartPlanObservation, StartProvisioningStep, DEFAULT_TASK_WINDOW_NAME,
+    is_git_worktree_add_command, is_router_symlinks_seed_command,
+    mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
+    record_new_task, router_symlinks_seed_command, start_provisioning_step_for_command,
+    task_from_new_request, NewTaskRequest, StartPlanObservation, StartProvisioningStep,
+    DEFAULT_TASK_WINDOW_NAME,
 };
 use crate::{
     adapters::GitAdapter,
@@ -20,6 +22,32 @@ fn context() -> CommandContext<InMemoryRegistry> {
         },
         InMemoryRegistry::default(),
     )
+}
+
+fn context_with_task_bootstrap() -> CommandContext<InMemoryRegistry> {
+    let mut repo = ManagedRepo::new("web", "/repo/web", "main");
+    repo.bootstrap = Some("./scripts/task-bootstrap.sh".to_string());
+    CommandContext::new(
+        Config {
+            repos: vec![repo],
+            ..Config::default()
+        },
+        InMemoryRegistry::default(),
+    )
+}
+
+fn router_seed_command(plan: &crate::commands::CommandPlan) -> &crate::adapters::CommandSpec {
+    plan.commands
+        .iter()
+        .find(|command| is_router_symlinks_seed_command(command))
+        .expect("expected router symlink seed command")
+}
+
+fn worktree_add_index(plan: &crate::commands::CommandPlan) -> usize {
+    plan.commands
+        .iter()
+        .position(is_git_worktree_add_command)
+        .expect("worktree add command")
 }
 
 fn agent_send_keys_line(plan: &crate::commands::CommandPlan) -> &str {
@@ -418,6 +446,95 @@ fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
         "expected no standalone bootstrap command: {:?}",
         plan.commands
     );
+}
+
+#[test]
+fn new_task_plan_seeds_router_links_after_worktree_for_task_bootstrap() {
+    let context = context_with_task_bootstrap();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "codex".to_string(),
+        skip_interactive_agent: false,
+        model: None,
+    };
+    let plan = new_task_plan(&context, request).unwrap();
+    let worktree_index = worktree_add_index(&plan);
+    let seed_index = plan
+        .commands
+        .iter()
+        .position(is_router_symlinks_seed_command)
+        .expect("router seed command");
+    let seed = &plan.commands[seed_index];
+
+    assert_eq!(worktree_index + 1, seed_index);
+    assert_eq!(
+        seed,
+        &router_symlinks_seed_command("/repo/web__worktrees/ajax-fix-login")
+    );
+    assert_eq!(
+        seed.cwd.as_ref().unwrap().display().to_string(),
+        "/repo/web__worktrees/ajax-fix-login"
+    );
+    assert_eq!(plan.commands.len(), 5);
+}
+
+#[test]
+fn new_task_plan_seeds_router_links_when_skip_interactive_agent() {
+    let context = context_with_task_bootstrap();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "cursor".to_string(),
+        skip_interactive_agent: true,
+        model: None,
+    };
+    let plan = new_task_plan(&context, request).unwrap();
+
+    let seed = router_seed_command(&plan);
+    assert_eq!(
+        seed.cwd.as_ref().unwrap().display().to_string(),
+        "/repo/web__worktrees/ajax-fix-login"
+    );
+    assert!(
+        plan.commands.iter().all(|command| {
+            !(command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string()))
+        }),
+        "ACP start should still skip send-keys"
+    );
+    assert_eq!(plan.commands.len(), 4);
+}
+
+#[test]
+fn new_task_plan_router_seed_is_not_provisioning_step() {
+    let seed = router_symlinks_seed_command("/repo/web__worktrees/ajax-fix-login");
+    assert_eq!(start_provisioning_step_for_command(&seed), None);
+}
+
+#[test]
+fn new_task_plan_task_bootstrap_basename_match_accepts_any_path() {
+    let mut repo = ManagedRepo::new("web", "/repo/web", "main");
+    repo.bootstrap = Some("/opt/ajax/scripts/task-bootstrap.sh".to_string());
+    let context = CommandContext::new(
+        Config {
+            repos: vec![repo],
+            ..Config::default()
+        },
+        InMemoryRegistry::default(),
+    );
+    let plan = new_task_plan(
+        &context,
+        NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+            skip_interactive_agent: false,
+            model: None,
+        },
+    )
+    .unwrap();
+
+    assert!(plan.commands.iter().any(is_router_symlinks_seed_command));
 }
 
 #[test]

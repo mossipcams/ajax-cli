@@ -24,11 +24,12 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    is_agent_send_keys_command, is_git_worktree_add_command, is_task_window_new_session_command,
-    mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
-    mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
-    start_provisioning_step_for_command, start_task_identity, task_from_new_request,
-    NewTaskRequest, StartPlanObservation, StartProvisioningStep,
+    is_agent_send_keys_command, is_git_worktree_add_command, is_router_symlinks_seed_command,
+    is_task_window_new_session_command, mark_new_task_provisioning_failed,
+    mark_new_task_provisioning_step_completed, mark_new_task_step_completed, new_task_plan,
+    new_task_plan_with_observation, record_new_task, start_provisioning_step_for_command,
+    start_task_identity, task_from_new_request, NewTaskRequest, StartPlanObservation,
+    StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use orphan_gc::{
