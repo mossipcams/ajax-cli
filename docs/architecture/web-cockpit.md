@@ -56,10 +56,13 @@ terminal header Details wiring in `features/task-workspace`; terminal footer
 under `styles/chat/`; task-details sheet CSS lives under
 `styles/task-workspace/`. Both ship through the single `styles.css` manifest.
 
-Interactive tasks (tmux send-keys launch) and tasks whose projection is not
-`session_capable` open Terminal (`#/t/<handle>`) instead of Chat. A per-task
-browser preference (`ajax.web.taskView.terminal` in localStorage) selects
-Terminal for session-capable tasks until cleared from task details. Diff Review
+Interactive tasks whose tmux pane is still running the harness agent, and tasks
+whose projection is not `session_capable` with no ACP entry point, open
+Terminal (`#/t/<handle>`) instead of Chat. ACP-capable tasks whose agent has
+exited may still reach Ajax Chat from task details or `#/session/<handle>`; the
+host promotes them on attach. A per-task browser preference
+(`ajax.web.taskView.terminal` in localStorage) selects Terminal for
+session-capable tasks until cleared from task details. Diff Review
 Back returns to the mode the workspace selected.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
@@ -169,9 +172,11 @@ offered for every mapped harness, and session attach admits any task whose agent
 has an ACP launch **and** whose registry metadata carries the provisioned bit.
 
 Cards and task detail carry that same answer as `session_capable`, so the browser
-opens chat only for a task the host will actually attach. An interactive task
-keeps its agent in tmux and opens its terminal instead; a session URL for such a
-task falls back to the terminal route rather than sitting on a refused socket.
+opens chat for provisioned tasks the host will attach. An interactive task with
+a live harness in tmux opens its terminal instead; a session URL for that case
+falls back to the terminal route. `session_capable` stays the provisioned bit and
+is not cleared when an ACP child exits; Ajax chat also stays visible in task
+details for ACP-capable agents before promotion.
 
 The **New task** sheet is two steps: repository/title/harness, then a model page
 listing the full `GET /api/session/models?agent=` catalog for that harness.

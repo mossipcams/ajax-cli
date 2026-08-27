@@ -18,6 +18,7 @@ use crate::{
 };
 use ajax_core::{
     adapters::CommandRunner, commands::CommandContext, config::Config, registry::InMemoryRegistry,
+    registry::Registry,
 };
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -326,6 +327,58 @@ where
             Ok(())
         } else {
             Err("cockpit state changed while updating session model".to_string())
+        }
+    }
+
+    /// Resolve attach plan for a session WebSocket, promoting interactive tasks
+    /// when the tmux pane is not running the harness agent (#1092).
+    pub(crate) fn prepare_task_session_attach(
+        &self,
+        handle: &str,
+        model: &str,
+    ) -> Result<
+        crate::slices::web_session::SessionAttachPlan,
+        crate::slices::web_session::SessionRouteError,
+    > {
+        let _lane = self.control_lane.blocking_lock();
+        let (mut context, mut runner, bridge, base_revision) = {
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        let skip_before = context
+            .registry
+            .get_task(&ajax_core::models::TaskId::new(handle))
+            .is_some_and(|task| task.skip_interactive_agent());
+        let plan = crate::slices::web_session::prepare_task_session(
+            &mut context,
+            &mut runner,
+            handle,
+            model,
+        )?;
+        let promoted = !skip_before
+            && context
+                .registry
+                .get_task(&ajax_core::models::TaskId::new(handle))
+                .is_some_and(|task| task.skip_interactive_agent());
+        let mut guard = self.shared();
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            if promoted {
+                let mut persisted_bridge = guard.bridge.clone();
+                let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
+            }
+            Ok(plan)
+        } else {
+            Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat)
         }
     }
 }

@@ -356,13 +356,15 @@ impl TaskSessionState {
             let normalized = normalize_session_events(&mut self.stream_normalizer, events);
             self.append_to_log(normalized);
         }
-        try_finalize_active_prompt(self);
-        try_dispatch_next_if_idle(self);
         if host_gone && !self.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);
-        } else if host_gone {
-            self.acp_alive = false;
+        } else {
+            try_finalize_active_prompt(self);
+            if host_gone {
+                self.acp_alive = false;
+            }
         }
+        try_dispatch_next_if_idle(self);
     }
 
     #[cfg(test)]

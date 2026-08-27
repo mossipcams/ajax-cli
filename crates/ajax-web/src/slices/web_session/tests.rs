@@ -1,7 +1,29 @@
 use super::*;
 use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
+use ajax_core::adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec};
 use ajax_core::models::AgentClient;
+use ajax_core::registry::Registry as _;
 use std::collections::VecDeque;
+
+struct OkRunner;
+
+impl CommandRunner for OkRunner {
+    fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout: "zsh\n".to_string(),
+            stderr: String::new(),
+        })
+    }
+}
+
+fn prepare(
+    context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    handle: &str,
+    model: &str,
+) -> Result<SessionAttachPlan, SessionRouteError> {
+    prepare_task_session(context, &mut OkRunner, handle, model)
+}
 
 #[test]
 fn prepare_task_session_returns_worktree_for_cursor_task() {
@@ -12,8 +34,8 @@ fn prepare_task_session_returns_worktree_for_cursor_task() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.qualified_handle, "web/fix-login");
     // A Cursor session runs the same model an interactive Cursor task launches
     // with, not the bare `auto` sentinel.
@@ -31,9 +53,15 @@ fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-    let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
-    assert_eq!(error, SessionRouteError::NotOrchestrationChat);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    // Dead shell pane promotes; live agent pane is covered in prepare_session_1092_tests.
+    let plan = prepare(&mut context, "web/fix-login", "auto").expect("promoted attach");
+    assert_eq!(plan.agent, AgentClient::Cursor);
+    assert!(context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new("web/fix-login"))
+        .expect("task")
+        .skip_interactive_agent());
 }
 
 // A bridge harness has no Ajax-side default: it picks for itself unless the
@@ -47,9 +75,9 @@ fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
 
-    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.model, "");
 }
 
@@ -64,9 +92,9 @@ fn prepare_task_session_prefers_stored_model_over_url_pin() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
 
-    let plan = prepare_task_session(&context, "web/fix-login", "composer-2.5").expect("plan");
+    let plan = prepare(&mut context, "web/fix-login", "composer-2.5").expect("plan");
     assert_eq!(plan.model, "gpt-5.6-sol[high]");
 }
 
@@ -80,9 +108,9 @@ fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
 
-    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.model, "gpt-5.6-sol[high]");
 }
 
@@ -97,9 +125,9 @@ fn prepare_task_session_treats_stored_auto_like_unspecified() {
     let _ = std::fs::remove_dir_all(&worktree);
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
 
-    let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+    let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.model, ajax_core::adapters::CURSOR_DEFAULT_MODEL);
 }
 
@@ -117,8 +145,8 @@ fn prepare_task_session_admits_every_provisioned_acp_harness() {
         let _ = std::fs::remove_dir_all(&worktree);
         std::fs::create_dir_all(&worktree).expect("worktree dir");
         task.worktree_path = worktree;
-        let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-        let plan = prepare_task_session(&context, "web/fix-login", "auto").expect("plan");
+        let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+        let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
         assert_eq!(plan.agent, agent, "{label} should attach to its own ACP");
     }
 }
@@ -128,8 +156,8 @@ fn prepare_task_session_rejects_agent_without_acp() {
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Other;
     task.set_skip_interactive_agent(true);
-    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-    let error = prepare_task_session(&context, "web/fix-login", "auto").unwrap_err();
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let error = prepare(&mut context, "web/fix-login", "auto").unwrap_err();
     assert_eq!(error, SessionRouteError::NotOrchestrationChat);
 }
 

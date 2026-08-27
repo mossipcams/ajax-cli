@@ -133,8 +133,8 @@ describe("TaskDetailsSheet terminal entry", () => {
     expect(onOpenChat).toHaveBeenCalledOnce();
   });
 
-  it("hides Ajax chat when orchestration chat is off or the task is not session-capable", () => {
-    const { rerender } = render(
+  it("hides Ajax chat when orchestration chat is off", () => {
+    render(
       <TaskDetailsSheet
         open
         onOpenChange={vi.fn()}
@@ -146,14 +146,33 @@ describe("TaskDetailsSheet terminal entry", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: "Ajax chat" })).not.toBeInTheDocument();
+  });
 
-    rerender(
+  it("shows Ajax chat for acp-capable tasks before provision (#1092)", () => {
+    const onOpenChat = vi.fn();
+    render(
       <TaskDetailsSheet
         open
         onOpenChange={vi.fn()}
         panelId="task-panel"
         mode="terminal"
-        detail={detail({ session_capable: false })}
+        detail={detail({ session_capable: false, agent: "Codex" })}
+        orchestrationChat
+        onOpenChat={onOpenChat}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ajax chat" }));
+    expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("hides Ajax chat when the task agent has no ACP entry point", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="terminal"
+        detail={detail({ session_capable: false, agent: "Other" })}
         orchestrationChat
         onOpenChat={vi.fn()}
       />,
