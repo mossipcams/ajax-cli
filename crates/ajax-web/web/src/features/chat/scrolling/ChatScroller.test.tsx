@@ -104,9 +104,7 @@ describe("ChatScroller integration", () => {
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
     stubScrollMetrics(thread, 2000, 400, 120);
-    act(() => {
-      fireEvent.scroll(thread);
-    });
+    fireEvent.scroll(thread);
 
     const before = thread.scrollTop;
     send({ type: "message", role: "agent", text: "Second", itemId: "a2" });
