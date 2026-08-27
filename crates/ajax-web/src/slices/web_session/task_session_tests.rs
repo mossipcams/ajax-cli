@@ -3,7 +3,10 @@ use super::test_support::{
 };
 use super::{SessionServerEvent, MAX_QUEUED_PROMPTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
-use crate::adapters::web_session_store;
+use crate::adapters::web_session_store::{
+    self,
+    prompt_ledger::{self, PromptLedger},
+};
 use ajax_core::models::AgentClient;
 use std::{
     thread,
@@ -207,7 +210,7 @@ fn prompt_submitted_while_busy_runs_after_active_prompt() {
 }
 
 #[test]
-fn submit_prompt_cap_drops_oldest_while_in_flight() {
+fn submit_prompt_cap_rejects_without_dropping_acknowledged_queue() {
     let dir = scratch_dir("submit-cap");
     let handle = "web/submit-cap";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -223,12 +226,15 @@ fn submit_prompt_cap_drops_oldest_while_in_flight() {
                 .expect("hold");
             for i in 0..MAX_QUEUED_PROMPTS {
                 directory
-                    .submit_prompt(handle, format!("q{i}"))
+                    .submit_prompt_with_id(handle, format!("queued-{i}"), format!("q{i}"))
                     .expect("queue");
             }
-            directory
-                .submit_prompt(handle, "overflow".to_string())
-                .expect("overflow");
+            let overflow = directory.submit_prompt_with_id(
+                handle,
+                "overflow".to_string(),
+                "overflow".to_string(),
+            );
+            assert_eq!(overflow, Err("prompt queue is full".to_string()));
 
             directory.cancel(handle, true).expect("cancel");
             pump_until(&directory, handle, Duration::from_secs(15), |events| {
@@ -447,6 +453,335 @@ fn cancel_ends_turn_after_auto_approved_permission_hold() {
                     .iter()
                     .any(|event| matches!(event, SessionServerEvent::PermissionRequest { .. })),
                 "auto-approved permission must not surface: {events:?}"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn duplicate_prompt_id_uses_ledger_not_transcript_for_dedupe() {
+    let dir = scratch_dir("ledger-dedupe");
+    let handle = "web/ledger-dedupe";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        directory
+            .submit_prompt_with_id(handle, "prompt-1".to_string(), "first".to_string())
+            .expect("first");
+        pump_until(&directory, handle, Duration::from_secs(5), |events| {
+            agent_pong_count(events) == 1
+        });
+
+        let mut ledger = PromptLedger::default();
+        ledger.upsert_queued(
+            "prompt-1".to_string(),
+            "first".to_string(),
+            "first".to_string(),
+            Vec::new(),
+        );
+        ledger.mark_completed("prompt-1");
+        prompt_ledger::persist(&dir, handle, &ledger).expect("seed ledger");
+
+        directory
+            .submit_prompt_with_id(handle, "prompt-1".to_string(), "retry".to_string())
+            .expect("duplicate ack");
+        pump_until(&directory, handle, Duration::from_secs(2), |_| true);
+        let (events, _) = directory.read_from(handle, 0);
+        assert_eq!(agent_pong_count(&events), 1);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Message { role, text, .. }
+                if role == "user" && text == "retry"
+        )));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_queued_prompts_after_session_recreation() {
+    let dir = scratch_dir("ledger-recover-queued");
+    let handle = "web/ledger-recover-queued";
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            let directory = BlockingSessionDirectory::new(dir.clone());
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "in-flight".to_string(), "hold".to_string())
+                .expect("hold");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "recovered".to_string())
+                .expect("queue");
+
+            directory.release(handle);
+            drop(directory);
+        });
+
+        let ledger = prompt_ledger::load(&dir, handle).expect("load ledger");
+        assert!(ledger.entry("queued-1").is_some());
+
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("re-acquire");
+
+        pump_until(&directory, handle, Duration::from_secs(10), |events| {
+            agent_pong_count(events) >= 1
+                && events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { role, text, .. }
+                            if role == "user" && text == "recovered"
+                    )
+                })
+        });
+        let (events, _) = directory.read_from(handle, 0);
+        assert_eq!(agent_pong_count(&events), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_dispatching_prompt_is_interrupted_without_retry() {
+    let dir = scratch_dir("ledger-recover-dispatching");
+    let handle = "web/ledger-recover-dispatching";
+    let script = fake_acp_fixture();
+
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "dispatching-1".to_string(),
+        "orphan".to_string(),
+        "orphan".to_string(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("dispatching-1"));
+    prompt_ledger::persist(&dir, handle, &ledger).expect("seed ledger");
+
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Error { message }
+                if message.contains("dispatching-1") && message.contains("interrupted")
+        )));
+        assert_eq!(
+            prompt_ledger::load(&dir, handle)
+                .expect("load ledger")
+                .entry("dispatching-1")
+                .map(|entry| entry.phase),
+            Some(prompt_ledger::PromptPhase::Interrupted)
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn ledger_phase(
+    state_dir: &std::path::Path,
+    handle: &str,
+    client_message_id: &str,
+) -> Option<prompt_ledger::PromptPhase> {
+    prompt_ledger::load(state_dir, handle)
+        .ok()?
+        .entry(client_message_id)
+        .map(|entry| entry.phase)
+}
+
+#[test]
+fn thought_only_turn_completes_from_command_result_not_stream_chunk() {
+    let dir = scratch_dir("thought-only");
+    let handle = "web/thought-only";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--thought-only"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "thought-1".to_string(), "think".to_string())
+                .expect("submit");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::Message { role, text, .. }
+                    if role == "thought" && text == "thinking-only"
+            )));
+            assert_eq!(
+                ledger_phase(&dir, handle, "thought-1"),
+                Some(prompt_ledger::PromptPhase::Completed)
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn tool_only_turn_completes_from_command_result() {
+    let dir = scratch_dir("tool-only");
+    let handle = "web/tool-only";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--tool-only"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "tool-1".to_string(), "tools".to_string())
+                .expect("submit");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+            assert_eq!(
+                ledger_phase(&dir, handle, "tool-1"),
+                Some(prompt_ledger::PromptPhase::Completed)
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn no_agent_text_turn_completes_from_command_result() {
+    let dir = scratch_dir("no-agent-text");
+    let handle = "web/no-agent-text";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--no-agent-text"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "empty-1".to_string(), "silent".to_string())
+                .expect("submit");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+            assert_eq!(
+                ledger_phase(&dir, handle, "empty-1"),
+                Some(prompt_ledger::PromptPhase::Completed)
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn terminal_prompt_rpc_error_marks_interrupted_and_blocks_retry() {
+    let dir = scratch_dir("prompt-fail");
+    let handle = "web/prompt-fail";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--prompt-fail"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "fail-1".to_string(), "boom".to_string())
+                .expect("dispatch");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Error { message } if message.contains("prompt failed")
+                    )
+                })
+            });
+            assert_eq!(
+                ledger_phase(&dir, handle, "fail-1"),
+                Some(prompt_ledger::PromptPhase::Interrupted)
+            );
+            let retry =
+                directory.submit_prompt_with_id(handle, "fail-1".to_string(), "retry".to_string());
+            assert!(retry.is_err());
+            assert!(retry
+                .unwrap_err()
+                .contains("interrupted and was not executed"));
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn cancel_finalizes_active_prompt_once_and_advances_queue_in_order() {
+    let dir = scratch_dir("cancel-ledger-order");
+    let handle = "web/cancel-ledger-order";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "hold".to_string())
+                .expect("active");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "next".to_string())
+                .expect("queued");
+            directory.cancel(handle, true).expect("cancel");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { role, text, .. }
+                            if role == "user" && text == "next"
+                    )
+                }) && events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::TurnEnd {
+                            stop_reason: Some(reason)
+                        } if reason == "cancelled"
+                    )
+                })
+            });
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(prompt_ledger::PromptPhase::Completed)
+            );
+            directory.pump(handle);
+            directory.pump(handle);
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(prompt_ledger::PromptPhase::Completed),
+                "duplicate terminal transition must not rewrite ledger"
             );
         });
     });

@@ -1,4 +1,4 @@
-use super::task_session::disk_read_from;
+use super::task_session_outbound::disk_read_from;
 use super::test_support::{
     fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
 };

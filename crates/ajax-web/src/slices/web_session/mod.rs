@@ -14,7 +14,11 @@ mod replay;
 mod session_activity;
 mod session_cleanup;
 mod task_session;
+mod task_session_answers;
 mod task_session_directory;
+mod task_session_exit;
+mod task_session_outbound;
+mod task_session_replacement;
 mod task_session_spawn;
 mod transcript;
 mod ws_bridge;
@@ -330,25 +334,31 @@ pub enum PromptDispatch {
 /// One validated prompt waiting behind an in-flight turn.
 #[derive(Debug, Clone)]
 pub struct QueuedPrompt {
+    pub client_message_id: String,
     pub transcript_text: String,
+    pub prompt_text: String,
+    pub wire_blocks: Vec<prompt_content::PromptContentBlockWire>,
     pub blocks: Vec<agent_client_protocol::schema::v1::ContentBlock>,
 }
+
+/// Queue is full; caller must reject without dropping acknowledged work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptQueueFull;
 
 /// Decide whether to start a prompt now or enqueue it behind the in-flight turn.
 pub fn dispatch_prompt(
     prompt_in_flight: bool,
     queued: &mut VecDeque<QueuedPrompt>,
     payload: QueuedPrompt,
-) -> PromptDispatch {
+) -> Result<PromptDispatch, PromptQueueFull> {
     if prompt_in_flight {
-        // ponytail: cap at 8 queued prompts; upgrade path is block + error event to the operator.
         if queued.len() >= MAX_QUEUED_PROMPTS {
-            queued.pop_front();
+            return Err(PromptQueueFull);
         }
         queued.push_back(payload);
-        PromptDispatch::Queued
+        Ok(PromptDispatch::Queued)
     } else {
-        PromptDispatch::StartNow
+        Ok(PromptDispatch::StartNow)
     }
 }
 
@@ -445,6 +455,12 @@ mod fake_acp_tests;
 
 #[cfg(test)]
 mod task_session_tests;
+
+#[cfg(test)]
+mod task_session_reliability_tests;
+
+#[cfg(test)]
+mod task_session_phase2_tests;
 
 #[cfg(test)]
 mod task_session_idle_eviction_tests;

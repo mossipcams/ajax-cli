@@ -190,8 +190,36 @@ existing paths.
 
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order
-  (cap 8; oldest dropped when full).
-- Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
+  (cap 8). When the cap is reached the host **rejects** the new submit with
+  `prompt queue is full`; it must not drop already-acknowledged queued work.
+- Prompt ownership lives in a versioned sidecar ledger
+  (`web-session/<handle>.prompt-ledger.json`), separate from bounded transcript
+  JSONL. The host persists **queued** rows before `prompt_accepted`, and
+  **dispatching** rows before ACP `session/prompt`. The ledger is the dedupe
+  authority for `clientMessageId`; transcript `prompt_accepted` events remain for
+  browser replay but are not consulted for idempotency.
+- After `ajax-web` restart or TaskSession slot recreation, **queued** ledger rows
+  reload into the in-memory host FIFO. **Dispatching** rows recovered from disk
+  become **interrupted**: the host emits one typed `error` event and does not
+  automatically retry the prompt.
+- Ledger persist failure rejects the submit before acknowledgement or ACP dispatch.
+- The live `TaskSession` actor owns prompt terminal transitions and FIFO
+  advancement. Only the `session/prompt` command result (success,
+  cancellation-shaped abort, or terminal RPC error) may finalize the active
+  ledger row; streamed agent, thought, or tool chunks must not complete a turn.
+- The actor pairs the ACP request ID returned by `begin_prompt` with the durable
+  `clientMessageId`. Stale, duplicate, or mismatched command results are ignored;
+  they cannot finalize another prompt or advance its queue.
+- On terminal resolution the host marks the active `clientMessageId`
+  **completed** (success or operator cancellation) or **interrupted** (terminal
+  RPC error or begin failure) exactly once, persists that phase durably, and
+  only then dispatches the next queued prompt.
+- A failed terminal ledger write retains the terminal outcome and retries it;
+  the next prompt stays queued until the terminal phase is durable. A failed
+  queued-to-dispatching write likewise leaves the prompt queued and sends
+  nothing to ACP until persistence succeeds.
+- Cancel with `keepQueue: false` clears the queue and removes queued ledger rows.
+- Cancel with `keepQueue: false` cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
 - When `session/prompt` RPC fails with a cancellation-shaped transport abort
@@ -235,8 +263,10 @@ existing paths.
   when present). A stored `stopping` state is restored as `queued`. Removing the
   queue, dispatching it, or a committed Drop clears the stored queue entry.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
-  `prompt_accepted` acknowledgement and dispatches each ID at most once. The
-  browser retries only prompts still absent from that acknowledgement.
+  `prompt_accepted` acknowledgement and dispatches each ID at most once. Dedupe
+  and queue ownership are enforced by the sidecar prompt ledger, not by scanning
+  transcript rows. The browser retries only prompts still absent from that
+  acknowledgement.
 - A CI failure notification uses the same `submit_prompt_with_id` command and
   FIFO, with its deterministic failure-episode ID as `clientMessageId`. The CI
   attempt reducer starts a failed episode and may deliver the prompt as soon as
@@ -279,6 +309,26 @@ existing paths.
 - The per-task Tokio command loop continues after the last WebSocket subscriber
   detaches while a turn is in flight or the host queue is non-empty, and keeps
   draining idle grace-retained slots until eviction or shutdown.
+
+## ACP child health and replacement
+
+- The live `TaskSession` actor reconciles an **unexpected** ACP child exit exactly
+  once per child death. Expected cancel, detach, idle eviction, and shutdown paths
+  suppress duplicate `ACP process exited` evidence and do not emit a second terminal
+  transition for the same death.
+- When a child dies during an active prompt, the host durably marks the active
+  `clientMessageId` **interrupted** before clearing busy state. FIFO advancement
+  stays parked while no healthy client exists or while exit-interruption persistence
+  is still retrying.
+- A failed exit-interruption ledger write retains the pending interruption and
+  retries on every poll tick and before replacement; it is never consumed or dropped.
+- Replacement is transactional: the host reaps the prior child, stages the newly
+  spawned stdio client, runs prompt-ledger recovery, and marks the slot healthy
+  only when recovery succeeds. If recovery fails, the staged client is discarded
+  and a later acquire retries recovery ([#1086](https://github.com/mossipcams/ajax-cli/issues/1086)).
+- Queued ledger rows survive unexpected child exit; the host dispatches them only
+  after a healthy replacement client is installed and any interrupted active row
+  is durable.
 
 ## Shutdown and slot retention
 

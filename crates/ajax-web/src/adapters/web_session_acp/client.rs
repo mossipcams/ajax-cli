@@ -667,6 +667,11 @@ fn spawn_acp_process(
     model: Option<&str>,
 ) -> Result<Child, String> {
     #[cfg(test)]
+    fn fake_acp_state_dir(worktree_path: &Path) -> PathBuf {
+        worktree_path.to_path_buf()
+    }
+
+    #[cfg(test)]
     if let Some(program) = TEST_ACP_PROGRAM.with(|slot| slot.borrow().clone()) {
         let extra_args = TEST_ACP_EXTRA_ARGS.with(|slot| slot.borrow().clone());
         let mut command = std::process::Command::new("node");
@@ -680,6 +685,10 @@ fn spawn_acp_process(
         }
         command.args(extra_args);
         command
+            .env(
+                "FAKE_ACP_STATE_DIR",
+                fake_acp_state_dir(worktree_path).as_os_str(),
+            )
             .current_dir(worktree_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -704,6 +713,10 @@ fn spawn_acp_process(
                 }
             }
             command
+                .env(
+                    "FAKE_ACP_STATE_DIR",
+                    fake_acp_state_dir(worktree_path).as_os_str(),
+                )
                 .current_dir(worktree_path)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
