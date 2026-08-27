@@ -195,9 +195,9 @@ where
         state_for_prepare.prepare_task_session_attach(&handle_for_prepare, &model_raw)
     })
     .await
-    .unwrap_or_else(|_error| {
-        Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat)
-    });
+    .unwrap_or(Err(
+        crate::slices::web_session::SessionRouteError::NotOrchestrationChat,
+    ));
 
     let plan = match prepare_result {
         Ok(plan) => plan,

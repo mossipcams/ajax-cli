@@ -20,13 +20,11 @@ pub(crate) fn tmux_task_pane_runs_live_agent(runner: &mut impl CommandRunner, ta
     if observed.is_empty() || is_shell_command(observed) {
         return false;
     }
-    expected.iter().any(|name| *name == observed)
+    expected.contains(&observed)
 }
 
 fn live_pane_basenames(agent: AgentClient) -> Option<&'static [&'static str]> {
-    if acp_launch_for_agent(agent).is_none() {
-        return None;
-    }
+    acp_launch_for_agent(agent)?;
     Some(match agent {
         AgentClient::Cursor => &["agent", "cursor"],
         AgentClient::Codex => &["codex"],

@@ -28,7 +28,7 @@ pub fn prepare_task_session<R: Registry>(
     }
 
     if !task.skip_interactive_agent() {
-        if tmux_task_pane_runs_live_agent(runner, &task) {
+        if tmux_task_pane_runs_live_agent(runner, task) {
             return Err(SessionRouteError::NotOrchestrationChat);
         }
         let Some(task_mut) = context.registry.get_task_mut(&task_id) else {
