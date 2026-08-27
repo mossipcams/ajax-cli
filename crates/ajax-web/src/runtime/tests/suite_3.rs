@@ -46,6 +46,50 @@ fn committed_operation_fixture_matches_production_response_builder() {
     assert_eq!(committed, actual);
 }
 
+/// Regression for #1075: a panicked start worker must release the operation gate
+/// so later starts are not stuck on 409 until ajax-web restarts.
+#[tokio::test]
+async fn axum_start_task_panic_releases_operation_gate() {
+    let (_state, cookie, app) = app_with(
+        context_with_web_repo(),
+        TestBridge {
+            start_panic: true,
+            ..TestBridge::default()
+        },
+        "axum-start-panic-gate",
+    );
+
+    let first = post_json(
+        &app,
+        &cookie,
+        "/api/tasks",
+        r#"{"request_id":"start-panic-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+    )
+    .await;
+
+    assert_eq!(first.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let first_json = json_of(first).await;
+    assert_eq!(first_json["ok"], false);
+    assert_eq!(first_json["request_id"], "start-panic-1");
+    assert!(first_json["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("task start worker failed"));
+
+    let second = post_json(
+        &app,
+        &cookie,
+        "/api/tasks",
+        r#"{"request_id":"start-panic-2","repo":"web","title":"Other task","agent":"codex"}"#,
+    )
+    .await;
+
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_json = json_of(second).await;
+    assert_eq!(second_json["ok"], true);
+    assert_eq!(second_json["request_id"], "start-panic-2");
+}
+
 #[tokio::test]
 async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
     let (_state, cookie, app) = app_with(

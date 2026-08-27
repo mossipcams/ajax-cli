@@ -124,9 +124,13 @@ existing paths.
   Pin satisfaction
   is per-option `currentValue` match, not string equality on a synthetic id.
 - Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
-  catalog ids unchanged for explicit pins). Legacy WebSocket `set_model` persists
-  desired `session_model` first, then applies in-band; keep process, `sessionId`,
-  and JSONL. Respawn (`session/new`, no resume) only when the child is dead or no
+  catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
+  handshake ids reconstruct to exploded catalog ids before argv, never passing
+  `|` or `[` on the spawn command line
+  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Legacy WebSocket
+  `set_model` persists desired `session_model` first, then applies in-band; keep
+  process, `sessionId`, and JSONL. JSONL meta stores pipe-form, not bare handshake
+  `currentValue`. Respawn (`session/new`, no resume) only when the child is dead or no
   model control is advertised. In-band refusal is a typed error; the child keeps
   running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
@@ -190,6 +194,22 @@ existing paths.
 - Cancel with `keepQueue: false` clears the queue and cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
+- When `session/prompt` RPC fails with a cancellation-shaped transport abort
+  (for example plain `canceled`/`cancelled` text such as `context canceled`,
+  harness `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
+  `error code cancel` / `CANCEL (0x8)`), the host emits `turn_end` with
+  `stopReason: cancelled` instead of a typed `error` event
+  ([#1066](https://github.com/mossipcams/ajax-cli/issues/1066)). Untagged HTTP/2
+  stream close/reset, `INTERNAL_ERROR (0x2)`, untagged `REFUSED_STREAM (0x7)`,
+  bare `aborted`, and bare `stream reset` remain typed `error` events. Non-cancel
+  `RetriableError` and similar harness transport dumps become one host-owned
+  sentence (`The connection was interrupted. Try sending again.`) so the raw
+  `RetriableError: …` text never reaches the operator or transcript. Older
+  transcripts replay the same mapping in `explainAcpError` for every
+  `RetriableError:` string; live cancel vs interrupt classification stays
+  host-owned. Genuine non-retriable prompt failures still surface as errors with
+  their original message. Non-prompt RPC methods still surface
+  cancellation-shaped messages as errors. The host does not retry the prompt.
 - After a WebSocket drop and reconnect, the browser supplies the last applied
   cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
   `snapshot` plus only events after that cursor; invalid or compacted-away
@@ -204,6 +224,11 @@ existing paths.
   composer. Drafts are text-only presentation state: attachments are not
   persisted, and a successful send or composer clear removes the stored draft.
   This is not task truth, transcript, or a second prompt queue.
+- When a turn ends in an error having produced no agent response, the prompt that
+  opened it is restored into the composer as an ordinary draft so the operator can
+  edit and resend. It is restored once per failed turn, never over text the
+  operator has already typed, and never resent automatically. The prompt is read
+  back from the transcript, so attachments are not restored with it.
 - The browser's one editable queued follow-up is also kept in `localStorage`
   per task handle (`ajax.web.session.composer.queue.<handle>`). Queue → leave
   task → return restores the queued text (and JSON-serializable content blocks
@@ -213,9 +238,17 @@ existing paths.
   `prompt_accepted` acknowledgement and dispatches each ID at most once. The
   browser retries only prompts still absent from that acknowledgement.
 - A CI failure notification uses the same `submit_prompt_with_id` command and
-  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The host
-  may deliver it while other checks on the same attempt are still pending; it
-  does not wait for the full check matrix to settle. Delivery acquires or resumes
+  FIFO, with its deterministic failure-episode ID as `clientMessageId`. The CI
+  attempt reducer starts a failed episode and may deliver the prompt as soon as
+  at least one check is terminally failed, even while sibling checks on the same
+  attempt are still pending; suppression applies only while attempt status is
+  `Pending` (no terminal failure yet) or a post-failure rerun is still in flight
+  (`rerun_in_progress`) until a Full refresh records settled terminal failure
+  (or cleared). A busy agent does not extend that suppression — the prompt still
+  queues on the FIFO and delivers when due. Task-associated CI probes run only
+  on `RefreshTier::Full` when `checks_due` allows (minimum 10-second gap while
+  pending or failed); the web background tick runs Full refresh and attention
+  delivery every 30 seconds on the same tick. Delivery acquires or resumes
   the task's associated ACP session through the normal `TaskSessionDirectory`
   path (creating the session when none is persisted, same as operator Chat
   attach), submits on the FIFO, and releases; it is not a second CI poller and
@@ -400,11 +433,13 @@ existing paths.
   emit a summed total. Duplicate usage for the same request, generation, or turn
   id is dropped. Cursor does not emit standard `usage_update` events, so context
   pressure stays unknown unless another harness reports it — per-turn tokens must
-  not populate the context meter. When the host emits `turn_usage`, the live head
-  shows a quiet line (`Turn tokens: input N · …`) listing only the counts that
-  were present on the wire; missing input, output, cache, or total fields are
-  omitted rather than shown as zero. Context pressure and per-turn tokens may
-  both appear; they stay separate indicators.
+  not populate the context meter. When the host emits `turn_usage`, the browser
+  records it on the session snapshot but the live head does not render it: the
+  turn-as-chapter pass removed that line so the head keeps a single context
+  indicator at phone width. Any surface that does render these counts lists only
+  the counts present on the wire; missing input, output, cache, or total fields
+  are omitted rather than shown as zero, which `formatTurnUsage` enforces.
+  Context pressure and per-turn tokens stay separate indicators.
 - `messageId` is optional in ACP v1. It is carried when present and refines both
   host-side coalescing and browser-side grouping; with it absent, role adjacency
   decides message boundaries as before.
@@ -508,11 +543,14 @@ only the chat live head knew a turn was in flight.
   Status derivation (`ui_state::derive_task_status`) is unchanged — this supplies
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
-- Transitions are read off the outbound wire the browser already receives, so the
-  task page and the chat head cannot disagree: `prompt_accepted` and a resolved
-  ask report `AgentRunning`; `permission_request` / `elicitation_request` report
-  `WaitingForApproval`; `turn_end` reports `Done`, or `Blocked` when the turn
-  errored. Detail inside a turn (messages, tool calls, usage) reports nothing.
+- Transitions are derived from the same session events the host appends to the
+  JSONL transcript: `prompt_accepted` and a resolved ask report `AgentRunning`;
+  `permission_request` / `elicitation_request` report `WaitingForApproval`;
+  `turn_end` reports `Done`, or `Blocked` when the turn errored. Detail inside a
+  turn (messages, tool calls, usage) reports nothing. The host applies each
+  transition as task evidence at transcript-append time — not from the browser
+  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
+  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.
@@ -538,7 +576,9 @@ dividers for cancellations, reconnects, harness switches and context resets.
   replay after a reconnect updates existing rows instead of appending duplicates.
 - Assistant responses are revealed by completed paragraph, never token by token,
   and never split inside a fenced block. The whole response renders once the turn
-  ends. The paragraph gate applies only to the row still being written: once a
+  ends. While the live assistant row waits on that gate, a pending indicator at
+  the tail shows that writing is in progress without exposing withheld text. The
+  paragraph gate applies only to the row still being written: once a
   tool call, an ask or a later message follows a message, that message is
   finished and renders whole, so a one-paragraph "Let me look at the handler."
   is not withheld for the rest of the turn.
@@ -555,11 +595,15 @@ dividers for cancellations, reconnects, harness switches and context resets.
   projection boundary, so every reader — approval control and transcript marker
   alike — shows the command as it will run.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
-  diffs. Collapsed, it shows the current operation while the turn runs (replacing
-  it, never appending) and a counted summary once the turn settles
-  (`Read 6 files · edited 2 files · ran 4 commands · 38s`). A completed tool call
-  leaves the collapsed row as soon as ACP reports completion — there is no
-  collapse timeout.
+  diffs. Tool call rows are always visible — one line each on the activity grid,
+  with bodies collapsed by default for completed calls and open only when a call
+  is running or failed with content. Thoughts, plans and permission markers stay
+  behind the disclosure until expanded. Collapsed, the summary row shows a
+  counted line while the turn runs once at least one tool row is present
+  (`Read 6 files · edited 2 files · ran 4 commands · 38s`); if the agent is only
+  thinking or planning, the summary shows the current operation instead so the
+  turn is not silent. Once the turn settles, the summary is always the counted
+  line.
 - It expands itself for failed, blocked and approval-required activity; a manual
   open or close by the operator wins from then on.
 - Reasoning is a row on the activity grid inside that disclosure, never an italic

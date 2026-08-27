@@ -124,9 +124,12 @@ mutating operation persisted to disk.
 `ajax_pull_requests` / `PullRequestRef` metadata is the only task-to-PR
 association. Full refresh discovers the open branch PR every 300 seconds and
 runs `gh pr checks <number> --json name,state,link` only for that associated
-open PR: every 30 seconds while pending or failed, and every 300 seconds after a
-stable pass. A changed head SHA starts a new attempt; closed or merged PRs retire
-the attempt.
+open PR when `checks_due` allows: a minimum 10-second gap while pending or
+failed, and every 300 seconds after a stable pass. Probes run on
+`RefreshTier::Full` only; web `/api/cockpit` is Live. The web background tick
+runs Full refresh (including CI probes) and attention delivery every 30 seconds
+on the same tick before notifying. A changed head SHA starts a new attempt;
+closed or merged PRs retire the attempt.
 
 Failed checks reduce to
 `LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from

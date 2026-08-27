@@ -12,7 +12,7 @@ describe("task workspace routing", () => {
 
   it("routes Diff Review back through task workspace hash resolution in App", () => {
     const diffBlock = appSource.match(/<DiffReview[\s\S]*?\/>/)?.[0] ?? "";
-    expect(diffBlock).toMatch(/resolveTaskWorkspaceHash\(route\.handle/);
+    expect(diffBlock).toMatch(/resolveTaskWorkspaceHash\(handle/);
     expect(diffBlock).toMatch(/detailSessionCapable\(/);
   });
 });

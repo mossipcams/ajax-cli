@@ -13,6 +13,23 @@ use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
+/// JSONL meta must store Ajax pipe-form (or catalog ids), not bare handshake bases ([#1079]).
+fn meta_model_for_persist(report: &SpawnReport, operator_model: &str) -> String {
+    meta_model_from_config_options(report.config_options.as_deref(), operator_model)
+}
+
+fn meta_model_from_config_options(
+    config_options: Option<&[agent_client_protocol::schema::v1::SessionConfigOption]>,
+    operator_model: &str,
+) -> String {
+    if let Some(options) = config_options {
+        if let Ok(pipe) = applied_model_id_for_persist(options) {
+            return pipe;
+        }
+    }
+    operator_model.trim().to_string()
+}
+
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
     if let Some(options) = report.config_options.as_deref() {
         state.session_config_options = Some(config_option_descriptors(options));
@@ -68,7 +85,7 @@ pub(super) async fn acquire(
         &state.state_dir,
         &state.qualified_handle,
         Some(client.session_id()),
-        &report.applied_model,
+        &meta_model_for_persist(&report, model),
     );
     state.client = Some(client);
     state.model = model.to_string();
@@ -122,7 +139,7 @@ pub(super) async fn apply_model(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
-                &state.applied_model,
+                &meta_model_from_config_options(outcome.config_options.as_deref(), model),
             );
             state.pending_model_snapshot = Some(outcome.applied_model);
             state.pending_config_snapshot = state.session_config_options.clone();
@@ -177,7 +194,7 @@ pub(super) async fn apply_config_option(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
-                &state.applied_model,
+                &meta_model_from_config_options(outcome.config_options.as_deref(), &state.model),
             );
             state.pending_model_snapshot = Some(outcome.applied_model);
             state.pending_config_snapshot = state.session_config_options.clone();
@@ -266,7 +283,7 @@ pub(super) async fn reset_harness_context(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
-        &report.applied_model,
+        &meta_model_for_persist(&report, model),
     );
     state.client = Some(new_client);
     state.model = model.to_string();
@@ -334,7 +351,7 @@ fn install_replaced_client(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
-        &report.applied_model,
+        &meta_model_for_persist(report, model),
     );
     state.client = Some(new_client);
     state.model = model.to_string();

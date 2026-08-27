@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useRef } from "react";
-import { useSwipePageTransition, SWIPE_PAGE_COMMIT_MS } from "./useSwipePageTransition";
+import {
+  PageCrossSlideProvider,
+  useSwipePageTransition,
+  SWIPE_PAGE_COMMIT_MS,
+  CROSS_SLIDE_ARMED_SLACK_MS,
+} from "./useSwipePageTransition";
+import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import {
   setTerminalDoubleTapPending,
@@ -58,9 +64,18 @@ function Harness({
   return <div ref={ref} data-testid="swipe-target" style={style} />;
 }
 
+function renderHarness(props: Parameters<typeof Harness>[0] = {}) {
+  return render(
+    <PageCrossSlideProvider>
+      <Harness {...props} />
+    </PageCrossSlideProvider>,
+  );
+}
+
 describe("useSwipePageTransition", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    while (gestureBusyGate.isBusy()) gestureBusyGate.end();
     vi.mocked(setSwipeEnterDirection).mockClear();
     vi.mocked(telemetry.captureSwipe).mockClear();
     vi.mocked(telemetry.markNavigationStart).mockClear();
@@ -74,17 +89,17 @@ describe("useSwipePageTransition", () => {
 
   it("commits left after the slide animation", async () => {
     const onLeft = vi.fn();
-    render(<Harness onLeft={onLeft} />);
+    renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
     node.dispatchEvent(touch("touchmove", 120, 42, node));
-    node.dispatchEvent(touch("touchend", 120, 42, node));
     await act(async () => {
+      node.dispatchEvent(touch("touchend", 120, 42, node));
+      await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(setSwipeEnterDirection).toHaveBeenCalledWith("left");
     expect(onLeft).toHaveBeenCalledOnce();
     expect(telemetry.captureSwipe).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -100,7 +115,7 @@ describe("useSwipePageTransition", () => {
 
   it("ignores sub-dead-zone drags without telemetry", async () => {
     const onLeft = vi.fn();
-    render(<Harness onLeft={onLeft} />);
+    renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
@@ -111,14 +126,13 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onLeft).not.toHaveBeenCalled();
-    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     expect(telemetry.captureSwipe).not.toHaveBeenCalled();
   });
 
   it("springs back without navigation when engaged but under commit", async () => {
     const onLeft = vi.fn();
-    render(<Harness onLeft={onLeft} />);
+    renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
@@ -129,7 +143,6 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onLeft).not.toHaveBeenCalled();
-    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     expect(telemetry.captureSwipe).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -146,16 +159,15 @@ describe("useSwipePageTransition", () => {
     const commitRef: { current: ((direction: "left" | "right") => void) | null } = {
       current: null,
     };
-    render(<Harness onRight={onRight} commitRef={commitRef} />);
+    renderHarness({ onRight, commitRef });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
     commitRef.current!("right");
-    expect(onRight).not.toHaveBeenCalled();
+    expect(onRight).toHaveBeenCalledOnce();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(setSwipeEnterDirection).toHaveBeenCalledWith("right");
     expect(onRight).toHaveBeenCalledOnce();
   });
 
@@ -164,7 +176,7 @@ describe("useSwipePageTransition", () => {
     const commitRef: { current: ((direction: "left" | "right") => void) | null } = {
       current: null,
     };
-    render(<Harness onRight={onRight} commitRef={commitRef} />);
+    renderHarness({ onRight, commitRef });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
@@ -178,7 +190,7 @@ describe("useSwipePageTransition", () => {
 
   it("aborts an in-flight swipe when terminal text selecting becomes active", async () => {
     const onLeft = vi.fn();
-    render(<Harness onLeft={onLeft} />);
+    renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
@@ -190,33 +202,30 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onLeft).not.toHaveBeenCalled();
-    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     setTerminalSelecting(false);
   });
 
-  it("aborts settle on unmount without swipe or nav mark side effects", async () => {
+  it("commits navigation before the swipe surface unmounts", async () => {
     const onLeft = vi.fn();
-    const { unmount } = render(<Harness onLeft={onLeft} />);
+    const { unmount } = renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
     node.dispatchEvent(touch("touchmove", 120, 42, node));
     node.dispatchEvent(touch("touchend", 120, 42, node));
+    expect(onLeft).toHaveBeenCalledOnce();
     unmount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(onLeft).not.toHaveBeenCalled();
-    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
-    expect(telemetry.captureSwipe).not.toHaveBeenCalled();
-    expect(telemetry.markNavigationStart).not.toHaveBeenCalled();
+    expect(onLeft).toHaveBeenCalledOnce();
   });
 
   it("does not arm swipe on terminal when a double-tap is pending", async () => {
     const onLeft = vi.fn();
-    render(<Harness onLeft={onLeft} />);
+    renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
     Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
@@ -232,8 +241,62 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onLeft).not.toHaveBeenCalled();
-    expect(setSwipeEnterDirection).not.toHaveBeenCalled();
     expect(node.style.transform).toBe("");
     setTerminalDoubleTapPending(false);
+  });
+
+  it("settles and reattaches swipe listeners when animating flip is skipped (#1077)", async () => {
+    // Same-module spyOn cannot intercept beginCommit's internal call; jsdom's
+    // setTimeout(0) flip path would still run. Force the double-rAF branch with a
+    // no-op requestAnimationFrame so the animating flip callback never fires.
+    const originalUserAgent = navigator.userAgent;
+    const originalRaf = window.requestAnimationFrame;
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+      configurable: true,
+    });
+    window.requestAnimationFrame = vi.fn(() => 0) as typeof requestAnimationFrame;
+
+    try {
+      const onLeft = vi.fn();
+      renderHarness({ onLeft });
+      const node = screen.getByTestId("swipe-target");
+      Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+      node.dispatchEvent(touch("touchstart", 200, 40, node));
+      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      await act(async () => {
+        node.dispatchEvent(touch("touchend", 120, 42, node));
+      });
+      expect(onLeft).toHaveBeenCalledOnce();
+      expect(gestureBusyGate.isBusy()).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 40);
+      });
+      // Inner flip fallback never scheduled; beginCommit fallback not yet due.
+      expect(gestureBusyGate.isBusy()).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CROSS_SLIDE_ARMED_SLACK_MS);
+      });
+      expect(gestureBusyGate.isBusy()).toBe(false);
+
+      node.dispatchEvent(touch("touchstart", 200, 40, node));
+      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      await act(async () => {
+        node.dispatchEvent(touch("touchend", 120, 42, node));
+        await vi.advanceTimersByTimeAsync(
+          SWIPE_PAGE_COMMIT_MS + 40 + CROSS_SLIDE_ARMED_SLACK_MS,
+        );
+      });
+      expect(onLeft).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        value: originalUserAgent,
+        configurable: true,
+      });
+      window.requestAnimationFrame = originalRaf;
+    }
   });
 });

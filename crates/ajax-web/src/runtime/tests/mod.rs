@@ -49,6 +49,7 @@ pub(super) struct TestBridge {
     operate_entered: Option<Arc<Notify>>,
     operate_release: Option<Arc<(Mutex<bool>, Condvar)>>,
     start_calls: Arc<AtomicUsize>,
+    start_panic: bool,
     start_entered: Option<Arc<Notify>>,
     start_release: Option<Arc<(Mutex<bool>, Condvar)>>,
     refresh_calls: Arc<AtomicUsize>,
@@ -87,6 +88,7 @@ impl Default for TestBridge {
             operate_entered: None,
             operate_release: None,
             start_calls: Arc::new(AtomicUsize::new(0)),
+            start_panic: false,
             start_entered: None,
             start_release: None,
             refresh_calls: Arc::new(AtomicUsize::new(0)),
@@ -192,6 +194,9 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         }
         wait_for_release(&self.start_release, call_index);
         std::thread::sleep(self.start_delay);
+        if self.start_panic && call_index == 0 {
+            panic!("start bridge panic");
+        }
         self.start = Some(request);
         let result = self.start_result.clone();
         if let Ok(outcome) = &result {

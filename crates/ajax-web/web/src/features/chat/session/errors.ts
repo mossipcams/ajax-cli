@@ -1,7 +1,13 @@
 export { OPEN_FAILURE } from "./transport/contracts";
 
+export const CONNECTION_INTERRUPTED_MESSAGE =
+  "The connection was interrupted. Try sending again.";
+
 /** Map opaque ACP error strings to operator-facing copy. Human messages pass through. */
 export function explainAcpError(message: string): string {
+  if (/^RetriableError:/i.test(message)) {
+    return CONNECTION_INTERRUPTED_MESSAGE;
+  }
   if (/internal error/i.test(message)) {
     return "The agent rejected that request. Try sending again, or reopen the session.";
   }

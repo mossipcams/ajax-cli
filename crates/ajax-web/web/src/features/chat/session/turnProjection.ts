@@ -316,18 +316,44 @@ function settleOpenToolCalls(
   return bumpRevision({ ...state, view: { ...state.view, conversation } });
 }
 
+/** Walk back from the transcript tail toward the prompt that opened the turn. */
+function scanTurnTail(conversation: ConversationItem[]): {
+  userPromptText: string | null;
+  errorNoteId: string | null;
+  hasAgentProse: boolean;
+} {
+  let errorNoteId: string | null = null;
+  for (let i = conversation.length - 1; i >= 0; i -= 1) {
+    const item = conversation[i];
+    if (item.kind === "prose" && item.role === "user") {
+      return { userPromptText: item.text, errorNoteId, hasAgentProse: false };
+    }
+    if (item.kind === "note" && item.tone === "error") {
+      errorNoteId = item.id;
+      continue;
+    }
+    if (item.kind === "prose" && item.role === "agent" && item.text.trim()) {
+      return { userPromptText: null, errorNoteId, hasAgentProse: true };
+    }
+  }
+  return { userPromptText: null, errorNoteId: null, hasAgentProse: false };
+}
+
 /** Whether this turn already told the operator how it went. Walk back to the
  * prompt that opened it: a host error explained the failure, and an answer
  * means the turn was not silent. */
 function turnAlreadyReported(state: ChatSessionReducerState): boolean {
-  const conversation = state.view.conversation;
-  for (let i = conversation.length - 1; i >= 0; i -= 1) {
-    const item = conversation[i];
-    if (item.kind === "prose" && item.role === "user") return false;
-    if (item.kind === "note" && item.tone === "error") return true;
-    if (item.kind === "prose" && item.role === "agent" && item.text.trim()) return true;
-  }
-  return false;
+  const { errorNoteId, hasAgentProse } = scanTurnTail(state.view.conversation);
+  return hasAgentProse || errorNoteId !== null;
+}
+
+/** Prompt text to put back in the composer after a failed turn with no answer. */
+export function failedTurnPromptToRestore(
+  conversation: ConversationItem[],
+): { promptText: string; failureKey: string } | null {
+  const { userPromptText, errorNoteId, hasAgentProse } = scanTurnTail(conversation);
+  if (hasAgentProse || !errorNoteId || !userPromptText?.trim()) return null;
+  return { promptText: userPromptText, failureKey: errorNoteId };
 }
 
 export function applyTurnEnd(

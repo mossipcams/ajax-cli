@@ -720,6 +720,20 @@ describe("explainAcpError", () => {
     ).toMatch(/Could not save the selected model/i);
     expect(explainAcpError("session task stopped")).toMatch(/session worker stopped/i);
   });
+
+  it("maps non-cancel RetriableError harness dumps (#1066)", () => {
+    const raw = "RetriableError: connection reset by peer";
+    expect(explainAcpError(raw)).toMatch(/connection was interrupted/i);
+    expect(explainAcpError(raw)).not.toContain("RetriableError");
+  });
+
+  it("maps cancel-shaped RetriableError replay dumps without leaking raw text (#1066)", () => {
+    const raw =
+      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)";
+    expect(explainAcpError(raw)).toMatch(/connection was interrupted/i);
+    expect(explainAcpError(raw)).not.toContain("RetriableError");
+    expect(explainAcpError(raw)).not.toContain("http/2");
+  });
 });
 
 describe("explainOpenFailure", () => {

@@ -72,7 +72,7 @@
   padding-bottom: 0;
 }
 
-[data-testid="route-scroll"]:has([data-outlet="session"]) > [data-outlet="session"] {
+[data-testid="route-scroll"]:has([data-outlet="session"]) [data-outlet="session"] {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;

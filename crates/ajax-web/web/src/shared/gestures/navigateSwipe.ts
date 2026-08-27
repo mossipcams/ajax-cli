@@ -14,10 +14,37 @@ export interface NavigateSwipeState {
   direction: NavigateSwipeDirection;
   /** Signed horizontal travel (negative = left). */
   dx: number;
+  /** Raw dx when horizontal engagement first locked; translate starts at 0 there. */
+  engageDx: number;
 }
 
 export function navigateSwipeStart(): NavigateSwipeState {
-  return { engaged: false, direction: "none", dx: 0 };
+  return { engaged: false, direction: "none", dx: 0, engageDx: 0 };
+}
+
+/** Remaining travel (px) for a committed cross-slide after finger release. */
+export function crossSlideRemainingPx(
+  direction: Exclude<NavigateSwipeDirection, "none">,
+  dragX: number,
+  pageWidth: number,
+): number {
+  return direction === "left" ? pageWidth + dragX : pageWidth - dragX;
+}
+
+/** Entering pane offset that keeps it flush with the leaving pane mid-gesture. */
+export function crossSlideEnteringOffset(
+  direction: Exclude<NavigateSwipeDirection, "none">,
+  dragX: number,
+  pageWidth: number,
+): number {
+  return direction === "left" ? pageWidth + dragX : -pageWidth + dragX;
+}
+
+export function crossSlideLeavingTarget(
+  direction: Exclude<NavigateSwipeDirection, "none">,
+  pageWidth: number,
+): number {
+  return direction === "left" ? -pageWidth : pageWidth;
 }
 
 export function navigateSwipeMove(
@@ -27,22 +54,24 @@ export function navigateSwipeMove(
   pageWidth: number,
 ): NavigateSwipeState {
   let engaged = state.engaged;
+  let engageDx = state.engageDx;
   if (!engaged) {
     if (Math.abs(dx) < ENGAGE_MIN) return state;
     if (Math.abs(dx) <= Math.abs(dy) * LOCK_RATIO) {
-      return { engaged: false, direction: "none", dx: 0 };
+      return navigateSwipeStart();
     }
     engaged = true;
+    engageDx = dx;
   }
   const max = Math.max(pageWidth, NAVIGATE_SWIPE_TRIGGER);
   const clamped = Math.max(-max, Math.min(max, dx));
   if (dx <= -NAVIGATE_SWIPE_TRIGGER) {
-    return { engaged, direction: "left", dx: clamped };
+    return { engaged, direction: "left", dx: clamped, engageDx };
   }
   if (dx >= NAVIGATE_SWIPE_TRIGGER) {
-    return { engaged, direction: "right", dx: clamped };
+    return { engaged, direction: "right", dx: clamped, engageDx };
   }
-  return { engaged, direction: "none", dx: clamped };
+  return { engaged, direction: "none", dx: clamped, engageDx };
 }
 
 export function navigateSwipeEnd(state: NavigateSwipeState): NavigateSwipeDirection {
@@ -52,7 +81,7 @@ export function navigateSwipeEnd(state: NavigateSwipeState): NavigateSwipeDirect
 /** Visual translate for left-open / right-back feedback while dragging. */
 export function navigateSwipeTranslateX(state: NavigateSwipeState): number {
   if (!state.engaged) return 0;
-  return state.dx;
+  return state.dx - state.engageDx;
 }
 
 /** Off-screen target when a swipe commits. */

@@ -185,7 +185,7 @@ describe("App shell", () => {
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*display:\s*flex/,
     );
     expect(mobileBlock).toMatch(
-      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*>\s*\[data-outlet="task"\]\s*\{[^}]*flex:\s*1\s+1\s+0%/,
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\[data-outlet="task"\]\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
     expect(mobileBlock).toMatch(
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+0%/,
@@ -366,6 +366,26 @@ describe("App shell", () => {
     expect(stylesSource).toMatch(
       /\[data-testid="route-scroll"\]::-webkit-scrollbar\s*\{[^}]*(?:display:\s*none|width:\s*0)/,
     );
+  });
+
+  it("cross-slide wrappers use display:contents at rest so the mobile flex chain stays intact", () => {
+    const stylesSource = loadStylesSource();
+
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-host\.page-cross-slide-host-idle\s*\{[^}]*display:\s*contents/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-pane\.page-cross-slide-pane-idle\s*\{[^}]*display:\s*contents/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-leaving\s*\{[^}]*will-change:\s*transform/,
+    );
+    expect(stylesSource).toMatch(
+      /\.page-cross-slide-entering\s*\{[^}]*will-change:\s*transform/,
+    );
+    expect(stylesSource).not.toMatch(/\.page-cross-slide-pane\s*\{[^}]*will-change:\s*transform/);
+    expect(appSource).toMatch(/page-cross-slide-host-idle/);
+    expect(appSource).toMatch(/page-cross-slide-pane-idle/);
   });
 
   it("hides the xterm DOM scrollbar the viewport override cannot reach", () => {

@@ -221,14 +221,6 @@ where
     let persist_session_model: PersistSessionModel = Arc::new(move |model: &str| {
         state_for_persist.persist_task_session_model(&handle_for_persist, model)
     });
-    let state_for_activity = state.clone();
-    let handle_for_activity = plan.qualified_handle.clone();
-    let report_activity: crate::slices::web_session::ReportSessionActivity =
-        std::sync::Arc::new(move |activity| {
-            // Evidence reporting is best-effort: a lost race with another
-            // writer must not disturb the turn it was describing.
-            let _ = state_for_activity.report_task_session_activity(&handle_for_activity, activity);
-        });
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -242,7 +234,6 @@ where
             plan,
             client_cursor,
             Some(persist_session_model),
-            Some(report_activity),
         )
         .await;
     })
@@ -500,7 +491,9 @@ where
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
         return gate_rejection_response(rejection, Some(&request_id), &task_key, "task start");
     }
+    let state_for_finish = state.clone();
     let error_request_id = request_id.clone();
+    let task_key_for_finish = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
@@ -532,10 +525,16 @@ where
     })
     .await
     .unwrap_or_else(|error| {
-        response_from_web_error(
+        let response = response_from_web_error(
             WebError::CommandFailed(format!("task start worker failed: {error}")),
             Some(&error_request_id),
-        )
+        );
+        state_for_finish.operations().finish(
+            Some(&error_request_id),
+            &task_key_for_finish,
+            &response,
+        );
+        response
     });
     response.into_axum_response()
 }
@@ -623,7 +622,9 @@ where
     let log_request_id = request_id.clone();
     let log_task_key = task_key.clone();
     let log_action = action.clone();
+    let state_for_finish = state.clone();
     let error_request_id = request_id.clone();
+    let task_key_for_finish = task_key.clone();
     let cleanup_after_drop = action == "drop";
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
@@ -648,10 +649,16 @@ where
     })
     .await
     .unwrap_or_else(|error| {
-        response_from_web_error(
+        let response = response_from_web_error(
             WebError::CommandFailed(format!("operation worker failed: {error}")),
             error_request_id.as_deref(),
-        )
+        );
+        state_for_finish.operations().finish(
+            error_request_id.as_deref(),
+            &task_key_for_finish,
+            &response,
+        );
+        response
     });
 
     if response.status_code >= 400 {

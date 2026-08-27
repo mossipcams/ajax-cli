@@ -150,26 +150,23 @@ export function useChatScroll({
     setBehind(!atLive);
   }, [historyScroll?.windowGeneration, threadRef]);
 
-  // First paint and session identity: stick to the live edge programmatically.
+  // Session identity is separate from pin state so setPinned(true) here does not
+  // re-run this effect and cancel the layout-settle poll (#1065).
   useLayoutEffect(() => {
     const node = threadRef.current;
-    if (!node) return;
+    if (!node || prevSessionKeyRef.current === sessionKey) return;
 
-    const sessionChanged = prevSessionKeyRef.current !== sessionKey;
     prevSessionKeyRef.current = sessionKey;
-
-    if (sessionChanged) {
-      setPinned(true);
-      setBehind(false);
-      pinnedRef.current = true;
-      seenRevisionRef.current = revisionRef.current;
-      contentScrollHeightRef.current = node.scrollHeight;
-      autoLoadRef.current = { armed: false, lastLoadAt: 0 };
-      prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
-      pendingTopRestoreRef.current = null;
-      return scrollToLiveEdge(node, true);
-    }
-  }, [sessionKey, scrollToLiveEdge, threadRef, historyScroll?.windowGeneration]);
+    setPinned(true);
+    setBehind(false);
+    pinnedRef.current = true;
+    seenRevisionRef.current = revisionRef.current;
+    contentScrollHeightRef.current = node.scrollHeight;
+    autoLoadRef.current = { armed: false, lastLoadAt: 0 };
+    prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
+    pendingTopRestoreRef.current = null;
+    return scrollToLiveEdge(node, true);
+  }, [sessionKey, scrollToLiveEdge, threadRef]);
 
   useLayoutEffect(() => {
     const node = threadRef.current;

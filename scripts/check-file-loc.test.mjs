@@ -14,6 +14,7 @@ import {
   evaluateChangedLoc,
   evaluateFileLoc,
   evaluatePrLoc,
+  evaluateStagedFiles,
   formatAnnotation,
   inspectStagedFileLoc,
   isScannedSourcePath,
@@ -110,6 +111,17 @@ test("changed file LOC warns and fails at its thresholds", () => {
 test("PR LOC warns and fails at its thresholds", () => {
   assert.equal(evaluatePrLoc(PR_LOC_WARN_AT).level, "warning");
   assert.equal(evaluatePrLoc(PR_LOC_FAIL_AT).level, "error");
+});
+
+test("evaluateStagedFiles can skip PR aggregate LOC during merge commits", () => {
+  const entries = [{ path: "crates/foo.rs", additions: PR_LOC_FAIL_AT, deletions: 0 }];
+  const withAggregate = evaluateStagedFiles(entries, () => 1);
+  const withoutAggregate = evaluateStagedFiles(entries, () => 1, {
+    skipPrAggregate: true,
+  });
+
+  assert.ok(withAggregate.some((f) => f.path === "PR"));
+  assert.ok(!withoutAggregate.some((f) => f.path === "PR"));
 });
 
 test("Husky pre-commit runs the staged LOC check", () => {

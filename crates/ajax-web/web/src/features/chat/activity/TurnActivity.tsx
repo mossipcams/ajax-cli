@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ConversationItem } from "../session/public";
+import { useActivityDisclosurePreference } from "./activityDisclosurePreference";
 import { activitySummary } from "./activitySummary";
 import { currentOperation } from "./currentOperation";
 import { cleanTitle } from "./presentation";
@@ -33,11 +34,23 @@ function WorkRow({ item }: { item: ConversationItem }) {
   }
 }
 
-/** One disclosure per turn. Collapsed it is the current operation while the turn
- * runs and the summary once it settles; a completed call is inside the moment
- * ACP says so, because the collapsed row never lists calls at all. States that
- * want the operator — a failure, an ask — open themselves, and a tap in either
- * direction sticks for the rest of the session. */
+function toolItems(items: ConversationItem[]): ConversationItem[] {
+  return items.filter((item) => item.kind === "tool");
+}
+
+function summaryTarget(items: ConversationItem[], live: boolean, expanded: boolean): string {
+  if (live && !expanded) {
+    return toolItems(items).length > 0 ? activitySummary(items) : currentOperation(items);
+  }
+  return activitySummary(items);
+}
+
+/** One disclosure per turn. Collapsed it always lists tool rows (bodies follow
+ * ToolCard status); thoughts, plans and permission markers stay inside until
+ * expanded. The summary is the counted line while tools are visible on a live
+ * turn, otherwise the current operation so a thinking-only turn is not silent.
+ * States that want the operator — a failure, an ask — open themselves, and a
+ * tap in either direction sticks for the rest of the session. */
 export default function TurnActivity({
   items,
   live,
@@ -47,11 +60,15 @@ export default function TurnActivity({
   live: boolean;
   attention: boolean;
 }) {
-  const [open, setOpen] = useState<boolean | null>(null);
+  const { preference: sessionPreference, setPreference: setSessionPreference } =
+    useActivityDisclosurePreference();
+  const [turnOverride, setTurnOverride] = useState<boolean | null>(null);
   if (items.length === 0) return null;
 
   const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
-  const expanded = open ?? (failed || attention);
+  const expanded =
+    turnOverride ?? (failed || attention || (sessionPreference ?? false));
+  const visibleItems = expanded ? items : toolItems(items);
 
   return (
     <div
@@ -65,12 +82,18 @@ export default function TurnActivity({
         data-testid="session-turn-work-summary"
         mark="⚙"
         tailChars={0}
-        target={live && !expanded ? currentOperation(items) : activitySummary(items)}
+        target={summaryTarget(items, live, expanded)}
         meta={expanded ? "⌃" : "⌄"}
         aria-expanded={expanded}
-        onClick={() => setOpen(!expanded)}
+        onClick={() => {
+          const next = !expanded;
+          setTurnOverride(next);
+          setSessionPreference(next);
+        }}
       />
-      {expanded ? items.map((item) => <WorkRow key={item.id} item={item} />) : null}
+      {visibleItems.map((item) => (
+        <WorkRow key={item.id} item={item} />
+      ))}
     </div>
   );
 }

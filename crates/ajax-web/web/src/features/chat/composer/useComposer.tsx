@@ -34,18 +34,17 @@ import {
   writeComposerQueue,
 } from "./draftStorage";
 import {
-  beginStopAndSend,
   clearQueue,
   composerIsStopping,
-  composerQueuedContentBlocks,
   composerQueuedText,
-  queueFollowUp,
   restoreQueuedDraft,
   type ComposerState,
 } from "./composerState";
 import {
+  applySubmitResult,
   composerStateAfterFlush,
   flushQueuedFollowUp,
+  submitComposerDraft,
 } from "./submit";
 import { useChatSpeech } from "./speech/useChatSpeech";
 import {
@@ -53,6 +52,8 @@ import {
   insertSlashCommand,
   parseSlashPrefix,
 } from "./slashCompletion";
+import { failedTurnPromptToRestore } from "../session/public";
+import type { ConversationItem } from "../session/public";
 
 export type ComposerCommands = {
   sendPrompt: (text: string, contentBlocks?: PromptContentBlockWire[]) => boolean;
@@ -65,6 +66,8 @@ export type ComposerProviderProps = ComposerCommands & {
   connected: boolean;
   busy: boolean;
   everOpened: boolean;
+  conversation: ConversationItem[];
+  conversationRevision: number;
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
   composerRef: RefObject<HTMLTextAreaElement | null>;
@@ -119,6 +122,8 @@ export function ComposerProvider({
   connected,
   busy,
   everOpened,
+  conversation,
+  conversationRevision,
   availableCommands,
   promptCapabilities,
   composerRef,
@@ -142,6 +147,7 @@ export function ComposerProvider({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const holdRestoredQueueRef = useRef(initialQueue.status !== "idle");
+  const handledFailedTurnKeyRef = useRef<string | null>(null);
   const [restoreIdleCheck, setRestoreIdleCheck] = useState(0);
   composerStateRef.current = composerState;
   const busyRef = useRef(busy);
@@ -165,6 +171,7 @@ export function ComposerProvider({
     if (stored) setDraftRestoreGeneration((generation) => generation + 1);
     setComposerState(readComposerQueue(handle));
     holdRestoredQueueRef.current = readComposerQueue(handle).status !== "idle";
+    handledFailedTurnKeyRef.current = null;
   }, [handle]);
 
   useEffect(() => {
@@ -177,6 +184,19 @@ export function ComposerProvider({
     },
     [handle],
   );
+
+  useEffect(() => {
+    if (busy) return;
+    const candidate = failedTurnPromptToRestore(conversation);
+    if (!candidate) return;
+    if (handledFailedTurnKeyRef.current === candidate.failureKey) return;
+    handledFailedTurnKeyRef.current = candidate.failureKey;
+    if (draftRef.current.trim()) return;
+    draftRef.current = candidate.promptText;
+    persistDraft(candidate.promptText);
+    setDraft(candidate.promptText);
+    setDraftRestoreGeneration((generation) => generation + 1);
+  }, [busy, conversation, conversationRevision, persistDraft]);
 
   const setDraftWithPersist = useCallback(
     (value: string) => {
@@ -243,52 +263,67 @@ export function ComposerProvider({
 
   const sendDraft = useCallback(() => {
     if (!connected) return;
-    const text = draftRef.current.trim();
-    const queuedText = composerQueuedText(composerState);
-    const isStopping = composerIsStopping(composerState);
 
-    if (queuedText !== null) {
-      if (text) {
-        setComposerState(
-          queueFollowUp(composerState, text, composerQueuedContentBlocks(composerState)),
-        );
-      }
-      clearDraftText();
-      clearDraftAttachments();
-      if (busy && !isStopping) {
-        sendCancel();
-        setComposerState(beginStopAndSend(composerState));
-      }
-      scrollToLatest();
-      return;
-    }
+    const result = submitComposerDraft({
+      connected,
+      busy,
+      draft: draftRef.current,
+      composerState,
+    });
 
-    if (!text) return;
-    if (busy) {
-      setComposerState(
-        queueFollowUp(composerState, text, contentBlocks.length ? contentBlocks : undefined),
-      );
-      clearDraftText();
-      clearDraftAttachments();
-      scrollToLatest();
-      return;
-    }
+    if (result.action === "none") return;
 
-    if (promptFrameFits(text, contentBlocks)) {
-      setAttachmentError(null);
-      deliverPrompt(text, contentBlocks);
-      return;
-    }
-
-    void (async () => {
-      const fitted = await fitPromptContentBlocks(text, contentBlocks);
-      if (fitted.error) {
-        setAttachmentError(fitted.error);
+    if (result.action === "send") {
+      const text = result.text;
+      if (promptFrameFits(text, contentBlocks)) {
+        setAttachmentError(null);
+        deliverPrompt(text, contentBlocks);
         return;
       }
-      setAttachmentError(null);
-      deliverPrompt(text, fitted.blocks);
-    })();
+
+      void (async () => {
+        const fitted = await fitPromptContentBlocks(text, contentBlocks);
+        if (fitted.error) {
+          setAttachmentError(fitted.error);
+          return;
+        }
+        setAttachmentError(null);
+        deliverPrompt(text, fitted.blocks);
+      })();
+      return;
+    }
+
+    if ("clearDraft" in result && result.clearDraft) {
+      clearDraftText();
+      clearDraftAttachments();
+    }
+
+    if (
+      result.action === "stop_and_send" &&
+      busy &&
+      !composerIsStopping(composerStateRef.current)
+    ) {
+      sendCancel();
+    }
+
+    setComposerState((current) =>
+      applySubmitResult(result, current, {
+        connected,
+        busy,
+        draft: draftRef.current,
+        composerState: current,
+        contentBlocks,
+      }),
+    );
+
+    if (
+      result.action === "scroll" ||
+      result.action === "queue" ||
+      result.action === "update_queue" ||
+      result.action === "stop_and_send"
+    ) {
+      scrollToLatest();
+    }
   }, [
     busy,
     clearDraftAttachments,
