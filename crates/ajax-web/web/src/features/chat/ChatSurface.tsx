@@ -146,6 +146,8 @@ function ChatSessionBody({
           connected={connected}
           busy={view.turn.busy}
           everOpened={everOpened}
+          conversation={view.conversation}
+          conversationRevision={view.revision}
           availableCommands={availableCommands}
           promptCapabilities={promptCapabilities}
           composerRef={composerRef}

@@ -29,6 +29,7 @@ export {
   thoughtSnippet,
   toolCount,
 } from "./selectors";
+export { failedTurnPromptToRestore } from "./turnProjection";
 export { projectWireEvent, projectWireInput } from "./projectWireInput";
 export { reduceChatSession, initialChatSessionReducerState } from "./reducer";
 export { useChatSession } from "./useChatSession";
