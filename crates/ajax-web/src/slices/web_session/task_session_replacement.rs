@@ -6,8 +6,27 @@ use super::task_session_exit::{
 };
 use super::transcript::{already_noted, context_reset_needed, context_reset_note};
 use super::SessionServerEvent;
-use crate::adapters::web_session_acp::{config_option_descriptors, AcpStdioClient, SpawnReport};
+use crate::adapters::web_session_acp::{
+    applied_model_id_for_persist, config_option_descriptors, AcpStdioClient, SpawnReport,
+};
 use crate::adapters::web_session_store;
+
+/// JSONL meta must store Ajax pipe-form (or catalog ids), not bare handshake bases ([#1079]).
+pub(super) fn meta_model_for_persist(report: &SpawnReport, operator_model: &str) -> String {
+    meta_model_from_config_options(report.config_options.as_deref(), operator_model)
+}
+
+pub(super) fn meta_model_from_config_options(
+    config_options: Option<&[agent_client_protocol::schema::v1::SessionConfigOption]>,
+    operator_model: &str,
+) -> String {
+    if let Some(options) = config_options {
+        if let Ok(pipe) = applied_model_id_for_persist(options) {
+            return pipe;
+        }
+    }
+    operator_model.trim().to_string()
+}
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
     if let Some(options) = report.config_options.as_deref() {
@@ -38,7 +57,7 @@ pub(super) fn finalize_client_metadata(
         &state.state_dir,
         &state.qualified_handle,
         Some(session_id),
-        &report.applied_model,
+        &meta_model_for_persist(report, model),
     );
     state.model = model.to_string();
     state.applied_model = report.applied_model.clone();

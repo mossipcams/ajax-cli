@@ -5,7 +5,8 @@ use super::task_session_exit::{
     interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
 };
 use super::task_session_replacement::{
-    discard_staged_client, finish_first_acquire, install_replaced_client,
+    discard_staged_client, finish_first_acquire, install_replaced_client, meta_model_for_persist,
+    meta_model_from_config_options,
 };
 use super::transcript::{harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionServerEvent};
@@ -105,7 +106,7 @@ pub(super) async fn apply_model(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
-                &state.applied_model,
+                &meta_model_from_config_options(outcome.config_options.as_deref(), model),
             );
             state.pending_model_snapshot = Some(outcome.applied_model);
             state.pending_config_snapshot = state.session_config_options.clone();
@@ -160,7 +161,7 @@ pub(super) async fn apply_config_option(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
-                &state.applied_model,
+                &meta_model_from_config_options(outcome.config_options.as_deref(), &state.model),
             );
             state.pending_model_snapshot = Some(outcome.applied_model);
             state.pending_config_snapshot = state.session_config_options.clone();
@@ -256,7 +257,7 @@ pub(super) async fn reset_harness_context(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
-        &report.applied_model,
+        &meta_model_for_persist(&report, model),
     );
     state.client = Some(new_client);
     state.model = model.to_string();

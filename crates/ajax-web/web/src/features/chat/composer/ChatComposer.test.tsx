@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { fireEvent, screen, act, within } from "@testing-library/react";
+import { fireEvent, screen, act, within, render } from "@testing-library/react";
+import { StrictMode } from "react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -15,6 +16,7 @@ import {
   send,
   typeComposer,
   transport,
+  ChatWithSheet,
 } from "../ChatSurface.testHarness";
 
 const composerCssPath = join(
@@ -135,6 +137,43 @@ describe("ChatComposer", () => {
 
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", []);
     expect(screen.getByTestId("session-note-info")).toHaveTextContent("Stopped");
+  });
+
+  it("calls sendCancel exactly once on empty submit while queued under StrictMode", () => {
+    render(
+      <StrictMode>
+        <ChatWithSheet />
+      </StrictMode>,
+    );
+
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+    transport.sendCancel.mockClear();
+    typeComposer("Next");
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+
+    expect(transport.sendCancel).toHaveBeenCalledTimes(1);
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
+  });
+
+  // ajax-cli#1081: typing a new message while a follow-up is queued replaces it without cancelling.
+  it("replaces a queued follow-up when the operator types again (#1081)", () => {
+    mountChat();
+
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+    transport.sendCancel.mockClear();
+    typeComposer("A");
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("A");
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+
+    typeComposer("B");
+
+    expect(transport.sendCancel).not.toHaveBeenCalled();
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("B");
+    expect(screen.getByLabelText("Message")).toHaveValue("");
   });
 
   it("lets the operator edit or drop the queued follow-up", () => {
@@ -472,6 +511,77 @@ describe("ChatComposer", () => {
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Next");
     expect(localStorage.getItem("ajax.web.session.composer.queue.web%2Ffix-login")).toContain(
       "Next",
+    );
+  });
+
+  it("restores the failed prompt into the composer when a turn ends without an agent answer", () => {
+    mountChat();
+    typeComposer("Please fix the flaky test");
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+    transport.sendPrompt.mockClear();
+
+    send({ type: "turn_end", stopReason: "error" });
+
+    expect(screen.getByLabelText("Message")).toHaveValue("Please fix the flaky test");
+    expect(screen.getByTestId("session-note-error")).toBeInTheDocument();
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a non-empty composer draft when a turn fails", () => {
+    localStorage.setItem(
+      "ajax.web.session.composer.draft.web%2Ffix-login",
+      "operator replacement",
+    );
+    mountChat();
+    expect(screen.getByLabelText("Message")).toHaveValue("operator replacement");
+    act(() => {
+      chatH.emit?.({ type: "ready", model: "auto", busy: true, reset: false });
+    });
+    send({ type: "message", role: "user", text: "sent prompt", itemId: "u1" });
+    transport.sendPrompt.mockClear();
+
+    send({ type: "turn_end", stopReason: "error" });
+
+    expect(screen.getByLabelText("Message")).toHaveValue("operator replacement");
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("does not restore the prompt when the agent already answered before the error", () => {
+    mountChat();
+    typeComposer("go");
+    send({
+      type: "message",
+      role: "agent",
+      text: "Partial answer before disconnect",
+      itemId: "a1",
+    });
+    transport.sendPrompt.mockClear();
+
+    send({ type: "turn_end", stopReason: "error" });
+
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("restores a failed prompt only once even if the operator clears the composer", () => {
+    mountChat({ handle: "web/fix-login" });
+    typeComposer("retry me");
+    send({ type: "turn_end", stopReason: "error" });
+    expect(screen.getByLabelText("Message")).toHaveValue("retry me");
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "" } });
+    flushRaf();
+
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+    expect(localStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBeNull();
+  });
+
+  it("persists a restored failed prompt in localStorage", () => {
+    mountChat({ handle: "web/fix-login" });
+    typeComposer("survives reload");
+    send({ type: "turn_end", stopReason: "error" });
+    expect(localStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBe(
+      "survives reload",
     );
   });
 });

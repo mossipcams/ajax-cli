@@ -124,9 +124,13 @@ existing paths.
   Pin satisfaction
   is per-option `currentValue` match, not string equality on a synthetic id.
 - Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
-  catalog ids unchanged for explicit pins). Legacy WebSocket `set_model` persists
-  desired `session_model` first, then applies in-band; keep process, `sessionId`,
-  and JSONL. Respawn (`session/new`, no resume) only when the child is dead or no
+  catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
+  handshake ids reconstruct to exploded catalog ids before argv, never passing
+  `|` or `[` on the spawn command line
+  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Legacy WebSocket
+  `set_model` persists desired `session_model` first, then applies in-band; keep
+  process, `sessionId`, and JSONL. JSONL meta stores pipe-form, not bare handshake
+  `currentValue`. Respawn (`session/new`, no resume) only when the child is dead or no
   model control is advertised. In-band refusal is a typed error; the child keeps
   running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
@@ -248,6 +252,11 @@ existing paths.
   composer. Drafts are text-only presentation state: attachments are not
   persisted, and a successful send or composer clear removes the stored draft.
   This is not task truth, transcript, or a second prompt queue.
+- When a turn ends in an error having produced no agent response, the prompt that
+  opened it is restored into the composer as an ordinary draft so the operator can
+  edit and resend. It is restored once per failed turn, never over text the
+  operator has already typed, and never resent automatically. The prompt is read
+  back from the transcript, so attachments are not restored with it.
 - The browser's one editable queued follow-up is also kept in `localStorage`
   per task handle (`ajax.web.session.composer.queue.<handle>`). Queue → leave
   task → return restores the queued text (and JSON-serializable content blocks
@@ -474,11 +483,13 @@ existing paths.
   emit a summed total. Duplicate usage for the same request, generation, or turn
   id is dropped. Cursor does not emit standard `usage_update` events, so context
   pressure stays unknown unless another harness reports it — per-turn tokens must
-  not populate the context meter. When the host emits `turn_usage`, the live head
-  shows a quiet line (`Turn tokens: input N · …`) listing only the counts that
-  were present on the wire; missing input, output, cache, or total fields are
-  omitted rather than shown as zero. Context pressure and per-turn tokens may
-  both appear; they stay separate indicators.
+  not populate the context meter. When the host emits `turn_usage`, the browser
+  records it on the session snapshot but the live head does not render it: the
+  turn-as-chapter pass removed that line so the head keeps a single context
+  indicator at phone width. Any surface that does render these counts lists only
+  the counts present on the wire; missing input, output, cache, or total fields
+  are omitted rather than shown as zero, which `formatTurnUsage` enforces.
+  Context pressure and per-turn tokens stay separate indicators.
 - `messageId` is optional in ACP v1. It is carried when present and refines both
   host-side coalescing and browser-side grouping; with it absent, role adjacency
   decides message boundaries as before.
@@ -615,7 +626,9 @@ dividers for cancellations, reconnects, harness switches and context resets.
   replay after a reconnect updates existing rows instead of appending duplicates.
 - Assistant responses are revealed by completed paragraph, never token by token,
   and never split inside a fenced block. The whole response renders once the turn
-  ends. The paragraph gate applies only to the row still being written: once a
+  ends. While the live assistant row waits on that gate, a pending indicator at
+  the tail shows that writing is in progress without exposing withheld text. The
+  paragraph gate applies only to the row still being written: once a
   tool call, an ask or a later message follows a message, that message is
   finished and renders whole, so a one-paragraph "Let me look at the handler."
   is not withheld for the rest of the turn.
@@ -632,11 +645,15 @@ dividers for cancellations, reconnects, harness switches and context resets.
   projection boundary, so every reader — approval control and transcript marker
   alike — shows the command as it will run.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
-  diffs. Collapsed, it shows the current operation while the turn runs (replacing
-  it, never appending) and a counted summary once the turn settles
-  (`Read 6 files · edited 2 files · ran 4 commands · 38s`). A completed tool call
-  leaves the collapsed row as soon as ACP reports completion — there is no
-  collapse timeout.
+  diffs. Tool call rows are always visible — one line each on the activity grid,
+  with bodies collapsed by default for completed calls and open only when a call
+  is running or failed with content. Thoughts, plans and permission markers stay
+  behind the disclosure until expanded. Collapsed, the summary row shows a
+  counted line while the turn runs once at least one tool row is present
+  (`Read 6 files · edited 2 files · ran 4 commands · 38s`); if the agent is only
+  thinking or planning, the summary shows the current operation instead so the
+  turn is not silent. Once the turn settles, the summary is always the counted
+  line.
 - It expands itself for failed, blocked and approval-required activity; a manual
   open or close by the operator wins from then on.
 - Reasoning is a row on the activity grid inside that disclosure, never an italic
@@ -645,6 +662,24 @@ dividers for cancellations, reconnects, harness switches and context resets.
   while the operator is already at the bottom, offers `Jump to latest` whenever
   the operator is away from the live edge — not only when new content has arrived
   since — and never animates a scroll.
+- First paint of a long in-memory transcript renders only a recent window
+  (`DEFAULT_HISTORY_WINDOW` = 150 conversation rows). Older rows remain in the
+  session reducer; the browser does not become a second transcript authority.
+  Wire replay and JSONL attach still deliver the full transcript into reducer
+  state; the window only limits what Conversation paints.
+- The window start snaps forward to a user-turn boundary within the length cap
+  when one exists; otherwise the cap cut applies so a huge agent-only tail never
+  paints the full transcript. After first paint the window grows by exactly
+  the rows that arrive (live tail append or revealing already-held rows above)
+  so on-screen rows do not fold behind `Load earlier`.
+- Scrolling near the top auto-reveals earlier already-held rows (overflow gate,
+  200px preload band, 500ms cooldown, arm/disarm). Optional `Load earlier`
+  appears while hidden rows remain. Prepend growth preserves read position via
+  `scrollTop + scrollHeight` delta even when the pre-reveal window fit the
+  viewport (pinned); stale no-op reveals drop the anchor so a later live append
+  while scrolled up cannot jump. Layout observers skip stick-to-bottom while a
+  prepend restore is pending; after restore, pin intent is resampled from
+  scrollTop.
 - Conversation text and tool labels are proportional; monospace is reserved for
   code, commands, paths and output.
 
@@ -694,9 +729,10 @@ dividers for cancellations, reconnects, harness switches and context resets.
 - Orchestration session chat owns its mobile layout boundary: a bounded flex
   column (`session-chat-surface`) with LiveHead (`flex: none`), transcript
   scroller (`.session-thread`: `flex: 1 1 0%`, `min-height: 0`,
-  `overflow-y: auto`), and composer (`flex: none`) as siblings. Every ancestor
-  from `.app-viewport` through the surface has `min-height: 0`; route-scroll
-  does not compete as a vertical scroll owner on `#/session/<handle>`.
+  `overflow-y: auto`, chronological oldest-at-top column inside
+  `.session-thread-inner`), and composer (`flex: none`) as siblings. Every
+  ancestor from `.app-viewport` through the surface has `min-height: 0`;
+  route-scroll does not compete as a vertical scroll owner on `#/session/<handle>`.
 - While session chat is mounted, `html[data-session-viewport="owned"]` tells
   global CSS to **not** apply the `position: fixed` visual-viewport pin on
   `.app-viewport`. Task and terminal surfaces still use `html.keyboard-open` /
@@ -708,23 +744,25 @@ dividers for cancellations, reconnects, harness switches and context resets.
   applied twice.
 - No nested `position: fixed` pin on `.session-page.session-chat` inside the
   global band — double-applying `--app-top` strands the composer ([#877](https://github.com/mossipcams/ajax-cli/issues/877)).
-- Keyboard or composer resize is a layout change, not user scroll-up. Before
-  the transition, capture the transcript geometry (`scrollTop`, `scrollHeight`,
-  `clientHeight`, live-edge intent). Poll until flex layout settles (stable
+- Keyboard or composer resize is a layout change, not user scroll-up. Pin intent
+  is sampled on every user scroll into `pinnedRef` (16px slop from scrollTop).
+  Before a keyboard transition, capture transcript geometry (pinned vs history
+  scrollTop / scrollHeight). Poll until flex layout settles (stable
   `scrollHeight` / `clientHeight`, no animation). While settling after keyboard
-  close, if the operator was at the live bottom (`pinnedRef` or recent live-edge
-  intent), keep `scrollTop = scrollHeight` each frame so growing `clientHeight`
-  does not paint a keyboard-sized gap; history mode leaves `scrollTop` untouched
-  until settle completes. Then restore once: live bottom → new live edge;
-  reading history → same visible content plus any `scrollHeight` delta from
-  content inserted above the viewport. Ignore Safari resize-generated scroll
-  events as user scrolling during the transition.
-- While the operator stays pinned (`pinned` / `pinnedRef`), transcript growth
-  from streaming or layout (items effect, thread `MutationObserver` for
-  scrollHeight growth, thread `ResizeObserver` for box resizes) keeps
-  `scrollTop = scrollHeight`. Keyboard restore to the live bottom re-asserts
-  `pinned`. Scroll-up clears `pinned`; unpinned readers are not yanked back
-  to the live edge.
+  close, if the operator was pinned, keep assigning
+  `scrollTop = scrollHeight - clientHeight` each frame so growing `clientHeight`
+  does not paint a keyboard-sized gap; history mode leaves scroll untouched
+  until settle completes. Then restore once: pinned → stick-to-bottom;
+  reading history → same visible position plus any growth above the viewport
+  (`scrollTop + scrollHeight` delta). Ignore Safari resize-generated scroll
+  events as user scrolling during the transition. Live-edge intent comes from
+  scrollTop metrics, not layout rects or column-reverse polarity.
+- Composer height changes re-pin with stick-to-bottom only when the pre-resize
+  scroll sample was pinned (`pinnedRef`). Thread `ResizeObserver` and
+  `MutationObserver` do the same while pinned. Jump to latest always re-pins.
+  Scroll-up clears `pinned`; unpinned readers are not yanked when transcript
+  grows at the bottom. Prepend-style growth above the viewport (when added)
+  restores read position via `scrollTop + scrollHeight` delta.
   `useMobileKeyboard` clears keyboard geometry immediately on composer blur
   (focusout with no form control focused) and ignores stale visualViewport
   shrinks until a field is focused again, catching up when the viewport grows.

@@ -172,16 +172,20 @@ pub fn cursor_model_intents_match(
 ///
 /// Pipe-form picker selections persist base / effort / fast separately ([#991]);
 /// spawn argv must receive the catalog id Cursor accepts on `--model` ([#989]).
-/// Only `grok-*` bases receive the `cursor-grok-*` prefix; effort and fast suffixes
-/// are appended deterministically without inferring thinking variants.
+/// Only `grok-*` bases receive the `cursor-grok-*` prefix; `thinking=true` folds
+/// onto a `-thinking` base before effort and fast suffixes are appended.
 fn compose_cursor_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
-    let fast = intent.fast.unwrap_or(false);
-    let mut id = if let Some(version) = intent.base.strip_prefix("grok-") {
+    let canonical = canonical_cursor_model_intent(intent);
+    let fast = canonical.fast.unwrap_or(false);
+    let mut id = if let Some(version) = canonical.base.strip_prefix("grok-") {
         format!("cursor-grok-{version}")
     } else {
-        intent.base.clone()
+        canonical.base.clone()
     };
-    if let Some(effort) = &intent.effort {
+    if canonical.thinking == Some(true) {
+        id.push_str("-thinking");
+    }
+    if let Some(effort) = &canonical.effort {
         id.push('-');
         id.push_str(effort);
     }
@@ -193,12 +197,17 @@ fn compose_cursor_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
 
 /// Map an Ajax catalog id or pipe-form selection to the token Cursor accepts on spawn `--model`.
 ///
-/// Live Cursor honors catalog ids from `agent models` on spawn argv ([#989]).
-/// Pipe-form selections reconstruct those catalog ids; bracket synthesis is reserved
-/// for in-band apply via [`cursor_catalog_to_acp_in_band_token`].
+/// Live Cursor honors catalog ids and bare handshake bases from `agent models` on
+/// spawn argv ([#989]). Pipe-form and bracket handshake ids reconstruct those
+/// catalog ids; bare bases and exploded catalog ids pass through unchanged
+/// ([#1079]). Bracket synthesis is reserved for in-band apply via
+/// [`cursor_catalog_to_acp_in_band_token`].
 pub fn cursor_catalog_to_acp_spawn_token(raw: &str) -> String {
     let trimmed = raw.trim();
-    if trimmed.contains('|') {
+    if trimmed == CURSOR_DEFAULT_SPAWN_MODEL {
+        return trimmed.to_string();
+    }
+    if trimmed.contains('|') || trimmed.contains('[') {
         return parse_cursor_model_intent(trimmed)
             .map(|intent| compose_cursor_catalog_id_from_intent(&intent))
             .unwrap_or_else(|| trimmed.to_string());

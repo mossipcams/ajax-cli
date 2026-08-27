@@ -8,13 +8,27 @@ import {
   type UIEvent,
 } from "react";
 import {
+  SESSION_PIN_THRESHOLD_PX,
   afterTranscriptLayoutSettles,
   captureTranscriptGeometry,
+  pinTranscriptToLiveEdge,
   restoreTranscriptGeometry,
+  transcriptAtLiveEdge,
 } from "@/shared/lib/sessionViewport";
+import {
+  anchorIsStale,
+  autoLoadDecision,
+  restoreScrollAfterTopGrowth,
+} from "./historyScroll";
 
-/** Treat "within this many px of the bottom" as following the live edge. */
-export const PIN_THRESHOLD_PX = 48;
+/** Re-export for callers/tests that imported the hook-local constant. */
+export const PIN_THRESHOLD_PX = SESSION_PIN_THRESHOLD_PX;
+
+export interface HistoryScrollControl {
+  hasEarlier: boolean;
+  revealEarlier: () => number;
+  windowGeneration: number;
+}
 
 interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
@@ -24,18 +38,33 @@ interface Options {
   sessionKey: string;
   /** While true, keyboard/viewport layout settle owns scroll — do not re-pin. */
   layoutTransitionRef?: RefObject<boolean>;
+  historyScroll?: HistoryScrollControl;
 }
 
 function liveEdgeTarget(node: HTMLDivElement) {
-  return { ...captureTranscriptGeometry(node), atBottom: true };
+  return captureTranscriptGeometry(node);
 }
 
-export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitionRef }: Options) {
+export function useChatScroll({
+  threadRef,
+  revision,
+  sessionKey,
+  layoutTransitionRef,
+  historyScroll,
+}: Options) {
   const seenRevisionRef = useRef(0);
-  const prevSessionKeyRef = useRef(sessionKey);
+  const prevSessionKeyRef = useRef<string | null>(null);
   const revisionRef = useRef(revision);
   const pinnedRef = useRef(true);
   const ignoreScrollIntentRef = useRef(false);
+  const contentScrollHeightRef = useRef(0);
+  const autoLoadRef = useRef({ armed: false, lastLoadAt: 0 });
+  const prevWindowGenerationRef = useRef(0);
+  const pendingTopRestoreRef = useRef<{
+    scrollTop: number;
+    scrollHeight: number;
+    revealed: number;
+  } | null>(null);
 
   const [pinned, setPinned] = useState(true);
   const [behind, setBehind] = useState(false);
@@ -52,20 +81,20 @@ export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitio
   const scrollToLiveEdge = useCallback((node: HTMLDivElement, settle = false) => {
     const target = liveEdgeTarget(node);
     ignoreScrollIntentRef.current = true;
-    node.scrollTop = node.scrollHeight;
+    pinTranscriptToLiveEdge(node);
     ignoreScrollIntentRef.current = false;
     if (!settle) {
       return () => {};
     }
     return afterTranscriptLayoutSettles(
       node,
-      target,
+      { ...target, atBottom: true },
       () => {
         ignoreScrollIntentRef.current = true;
-        restoreTranscriptGeometry(node, target);
+        restoreTranscriptGeometry(node, { ...target, atBottom: true });
         ignoreScrollIntentRef.current = false;
       },
-      { ignoreProgrammaticScroll: ignoreScrollIntentRef },
+      { ignoreProgrammaticScroll: ignoreScrollIntentRef, pinnedRef },
     );
   }, []);
 
@@ -78,6 +107,49 @@ export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitio
     pinnedRef.current = true;
   }, [scrollToLiveEdge, threadRef]);
 
+  const loadEarlier = useCallback(() => {
+    const node = threadRef.current;
+    if (!node || !historyScroll?.hasEarlier) return 0;
+
+    const before = {
+      scrollTop: node.scrollTop,
+      scrollHeight: node.scrollHeight,
+    };
+    const revealed = historyScroll.revealEarlier();
+    if (revealed <= 0) return 0;
+
+    pendingTopRestoreRef.current = { ...before, revealed };
+    return revealed;
+  }, [historyScroll, threadRef]);
+
+  // Restore read position after prepend-style window growth.
+  useLayoutEffect(() => {
+    const generation = historyScroll?.windowGeneration ?? 0;
+    if (generation === prevWindowGenerationRef.current) return;
+    prevWindowGenerationRef.current = generation;
+
+    const node = threadRef.current;
+    const pending = pendingTopRestoreRef.current;
+    if (!node || !pending) {
+      pendingTopRestoreRef.current = null;
+      return;
+    }
+
+    if (anchorIsStale(pending.scrollHeight, node.scrollHeight, pending.revealed)) {
+      pendingTopRestoreRef.current = null;
+      return;
+    }
+    ignoreScrollIntentRef.current = true;
+    restoreScrollAfterTopGrowth(node, pending.scrollTop, pending.scrollHeight);
+    ignoreScrollIntentRef.current = false;
+    pendingTopRestoreRef.current = null;
+
+    const atLive = transcriptAtLiveEdge(node, PIN_THRESHOLD_PX);
+    pinnedRef.current = atLive;
+    setPinned(atLive);
+    setBehind(!atLive);
+  }, [historyScroll?.windowGeneration, threadRef]);
+
   // Session identity is separate from pin state so setPinned(true) here does not
   // re-run this effect and cancel the layout-settle poll (#1065).
   useLayoutEffect(() => {
@@ -89,6 +161,10 @@ export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitio
     setBehind(false);
     pinnedRef.current = true;
     seenRevisionRef.current = revisionRef.current;
+    contentScrollHeightRef.current = node.scrollHeight;
+    autoLoadRef.current = { armed: false, lastLoadAt: 0 };
+    prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
+    pendingTopRestoreRef.current = null;
     return scrollToLiveEdge(node, true);
   }, [sessionKey, scrollToLiveEdge, threadRef]);
 
@@ -96,49 +172,64 @@ export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitio
     const node = threadRef.current;
     if (!node) return;
 
-    if (!pinned) {
+    if (!pinnedRef.current) {
       if (revision !== seenRevisionRef.current) setBehind(true);
       return;
     }
 
     if (revision === seenRevisionRef.current) return;
 
-    scrollToLiveEdge(node);
+    pinTranscriptToLiveEdge(node);
     seenRevisionRef.current = revision;
-  }, [revision, pinned, scrollToLiveEdge, threadRef]);
+    contentScrollHeightRef.current = node.scrollHeight;
+  }, [revision, pinned, threadRef]);
 
   useEffect(() => {
     const node = threadRef.current;
     if (!node || typeof MutationObserver === "undefined") return;
     const observer = new MutationObserver(() => {
-      if (layoutTransitionRef?.current || !pinnedRef.current) return;
-      scrollToLiveEdge(node);
+      if (layoutTransitionRef?.current) return;
+      if (pendingTopRestoreRef.current) return;
+      if (pinnedRef.current) {
+        pinTranscriptToLiveEdge(node);
+        contentScrollHeightRef.current = node.scrollHeight;
+        return;
+      }
     });
     observer.observe(node, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
-  }, [sessionKey, scrollToLiveEdge, threadRef]);
+  }, [sessionKey, threadRef, layoutTransitionRef]);
 
   useEffect(() => {
     const node = threadRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
+
+    contentScrollHeightRef.current = node.scrollHeight;
     const observer = new ResizeObserver(() => {
-      if (layoutTransitionRef?.current || !pinnedRef.current) return;
-      scrollToLiveEdge(node);
+      if (layoutTransitionRef?.current) return;
+      if (pendingTopRestoreRef.current) return;
+      if (pinnedRef.current) {
+        pinTranscriptToLiveEdge(node);
+        contentScrollHeightRef.current = node.scrollHeight;
+      }
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [sessionKey, scrollToLiveEdge, threadRef]);
+  }, [sessionKey, threadRef, layoutTransitionRef]);
 
   function onThreadScroll(event: UIEvent<HTMLDivElement>) {
     if (ignoreScrollIntentRef.current || layoutTransitionRef?.current) return;
     const node = event.currentTarget;
-    const atLive = node.scrollHeight - node.scrollTop - node.clientHeight < PIN_THRESHOLD_PX;
+    const atLive = transcriptAtLiveEdge(node, PIN_THRESHOLD_PX);
     pinnedRef.current = atLive;
     setPinned(atLive);
-    // Away from the live edge is the whole condition. Waiting for new content
-    // to arrive first left a settled transcript with no way back down but a
-    // long drag on a phone.
     setBehind(!atLive);
+
+    if (!historyScroll) return;
+
+    const decision = autoLoadDecision(node, autoLoadRef.current, historyScroll.hasEarlier, Date.now());
+    autoLoadRef.current = decision.nextState;
+    if (decision.shouldLoad) loadEarlier();
   }
 
   return {
@@ -148,5 +239,7 @@ export function useChatScroll({ threadRef, revision, sessionKey, layoutTransitio
     scrollToLatest,
     restoreLiveEdge,
     onThreadScroll,
+    loadEarlier,
+    hasEarlier: historyScroll?.hasEarlier ?? false,
   };
 }

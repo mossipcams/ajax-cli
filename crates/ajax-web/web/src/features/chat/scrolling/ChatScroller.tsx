@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { useChatScroll } from "./useChatScroll";
+import { useChatScroll, type HistoryScrollControl } from "./useChatScroll";
 import { useChatViewport } from "./useChatViewport";
 
 interface ChatScrollerContextValue {
@@ -16,6 +16,8 @@ interface ChatScrollerContextValue {
   threadRef: RefObject<HTMLDivElement | null>;
   onThreadScroll: ReturnType<typeof useChatScroll>["onThreadScroll"];
   behind: boolean;
+  hasEarlier: boolean;
+  loadEarlier: () => number;
 }
 
 const ChatScrollerContext = createContext<ChatScrollerContextValue | null>(null);
@@ -34,6 +36,7 @@ interface Props {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   /** Opaque activity count for the jump label — scrolling does not inspect items. */
   activityCount?: number;
+  historyScroll?: HistoryScrollControl;
   children: ReactNode;
 }
 
@@ -43,17 +46,19 @@ export default function ChatScroller({
   sessionKey,
   composerRef,
   activityCount = 0,
+  historyScroll,
   children,
 }: Props) {
   const threadRef = useRef<HTMLDivElement | null>(null);
   const layoutTransitionRef = useRef(false);
   const seenActivityCountRef = useRef(0);
-  const { pinnedRef, ignoreScrollIntentRef, behind, scrollToLatest, restoreLiveEdge, onThreadScroll } =
+  const { pinnedRef, ignoreScrollIntentRef, behind, scrollToLatest, restoreLiveEdge, onThreadScroll, loadEarlier, hasEarlier } =
     useChatScroll({
       threadRef,
       revision,
       sessionKey,
       layoutTransitionRef,
+      historyScroll,
     });
   const { surfaceStyle } = useChatViewport({
     threadRef,
@@ -74,7 +79,7 @@ export default function ChatScroller({
 
   return (
     <ChatScrollerContext.Provider
-      value={{ surfaceStyle, scrollToLatest, threadRef, onThreadScroll, behind }}
+      value={{ surfaceStyle, scrollToLatest, threadRef, onThreadScroll, behind, hasEarlier, loadEarlier }}
     >
       {children}
       <ChatScrollJump unseenSteps={unseenSteps} />
@@ -83,7 +88,7 @@ export default function ChatScroller({
 }
 
 export function ChatScrollThread({ children }: { children: ReactNode }) {
-  const { threadRef, onThreadScroll } = useChatScroller();
+  const { threadRef, onThreadScroll, hasEarlier, loadEarlier } = useChatScroller();
   return (
     <div
       className="session-thread"
@@ -91,7 +96,19 @@ export function ChatScrollThread({ children }: { children: ReactNode }) {
       data-testid="session-thread"
       onScroll={onThreadScroll}
     >
-      {children}
+      <div className="session-thread-inner" data-testid="session-thread-inner">
+        {hasEarlier ? (
+          <button
+            type="button"
+            className="session-load-earlier"
+            data-testid="session-load-earlier"
+            onClick={() => loadEarlier()}
+          >
+            Load earlier
+          </button>
+        ) : null}
+        {children}
+      </div>
     </div>
   );
 }

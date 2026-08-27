@@ -26,11 +26,16 @@ export const BASELINE = {
    * Re-measured after removing dead `.detail-session-title` (PR #1056).
    * Re-measured after page cross-slide host CSS and chat swipe compositor hints (#1070).
    * Re-measured after cross-slide idle wrappers use display:contents (#1074).
-   * Re-measured after outlet flex selectors use descendant combinator (#1074). */
-  sourceStylesCssBytes: 107_336,
-  builtAppCssBytes: 92_978,
-  builtAppCssGzipBytes: 16_343,
-  classSelectorLines: 599,
+   * Re-measured after outlet flex selectors use descendant combinator (#1074).
+   * Re-measured after settled assistant prose copy control (in-flow `.pill`).
+   * Re-measured after live assistant row pending indicator (paragraph gate).
+   * Re-measured after the turn-disclosure comment caught up with always-visible
+   * tool rows (comment text only; built CSS is unchanged).
+   * Re-measured after chronological chat scroll and Load earlier CSS (#1088). */
+  sourceStylesCssBytes: 108_587,
+  builtAppCssBytes: 94_038,
+  builtAppCssGzipBytes: 16_496,
+  classSelectorLines: 606,
   hasSelectors: 18,
 } as const;
 

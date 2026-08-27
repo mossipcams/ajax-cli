@@ -85,7 +85,14 @@ export default tseslint.config(
       ...vitest.configs.recommended.rules,
       "vitest/expect-expect": [
         "error",
-        { assertFunctionNames: ["expect", "expectHeightBandPin"] },
+        {
+          assertFunctionNames: [
+            "expect",
+            "expectHeightBandPin",
+            "expectThreadAtLiveEdge",
+            "expectThreadAwayFromLiveEdge",
+          ],
+        },
       ],
       "vitest/no-conditional-expect": "error",
       "vitest/valid-expect": "error",

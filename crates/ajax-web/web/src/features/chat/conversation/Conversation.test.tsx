@@ -46,11 +46,14 @@ describe("Conversation — assistant response reveal", () => {
     expect(message).not.toHaveTextContent("It is then han");
   });
 
-  it("shows nothing for an answer with no completed paragraph yet", () => {
+  it("shows a pending indicator without prose when no paragraph is complete yet", () => {
     const items = [userProse("u1", "Explain it"), agentProse("a1", "Still **strea")];
     render(<Conversation items={items} busy />);
 
-    expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
+    const message = screen.getByTestId("session-message-agent");
+    expect(screen.getByTestId("session-reply-pending")).toBeInTheDocument();
+    expect(message).not.toHaveTextContent("Still");
+    expect(message).not.toHaveTextContent("strea");
   });
 
   it("reveals the whole response, markdown and all, once the turn ends", () => {
@@ -103,11 +106,14 @@ describe("Conversation — assistant response reveal", () => {
     );
   });
 
-  it("still holds back the answer still being written", () => {
+  it("still holds back prose while showing a pending indicator for the live row", () => {
     const items = [userProse("u1", "Explain it"), agentProse("a1", "Half a sen")];
     render(<Conversation items={items} busy />);
 
-    expect(screen.queryByTestId("session-message-agent")).not.toBeInTheDocument();
+    const message = screen.getByTestId("session-message-agent");
+    expect(screen.getByTestId("session-reply-pending")).toBeInTheDocument();
+    expect(message).not.toHaveTextContent("Half");
+    expect(message).not.toHaveTextContent("sen");
   });
 
   it("settles earlier turns while the newest one is still live", () => {
@@ -120,8 +126,11 @@ describe("Conversation — assistant response reveal", () => {
     render(<Conversation items={items} busy />);
 
     const messages = screen.getAllByTestId("session-message-agent");
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(2);
     expect(messages[0]).toHaveTextContent("First answer, whole and unbroken.");
+    expect(messages[1]).toHaveTextContent("");
+    expect(within(messages[1]).getByTestId("session-reply-pending")).toBeInTheDocument();
+    expect(messages[1]).not.toHaveTextContent("Partial");
   });
 
   // #1043: a one-paragraph agent answer followed by tool/permission activity is

@@ -3,6 +3,7 @@ import {
   afterTranscriptLayoutSettles,
   captureTranscriptGeometry,
   claimSessionViewportOwnership,
+  pinTranscriptToLiveEdge,
   releaseSessionViewportOwnership,
   restoreTranscriptGeometry,
   sessionSurfaceStyle,
@@ -55,7 +56,7 @@ export function useChatViewport({
     };
     node.addEventListener("scroll", onScroll, { passive: true });
     return () => node.removeEventListener("scroll", onScroll);
-  }, [threadRef]);
+  }, [threadRef, ignoreScrollIntentRef]);
 
   useEffect(() => {
     const node = threadRef.current;
@@ -102,7 +103,7 @@ export function useChatViewport({
         layoutTransitionRef.current = false;
         if (closing) preKeyboardGeometryRef.current = null;
       },
-      { ignoreProgrammaticScroll: ignoreScrollIntentRef },
+      { ignoreProgrammaticScroll: ignoreScrollIntentRef, pinnedRef },
     );
 
     return () => {
@@ -129,17 +130,16 @@ export function useChatViewport({
       if (nextHeight === composerHeightRef.current) return;
       composerHeightRef.current = nextHeight;
 
-      const geo = geometryRef.current ?? captureTranscriptGeometry(node);
-      if (!pinnedRef.current && !geo.atBottom) return;
+      if (!pinnedRef.current) return;
 
       ignoreScrollIntentRef.current = true;
-      restoreTranscriptGeometry(node, { ...geo, atBottom: true });
+      pinTranscriptToLiveEdge(node);
       geometryRef.current = captureTranscriptGeometry(node);
       ignoreScrollIntentRef.current = false;
     });
     observer.observe(composer);
     return () => observer.disconnect();
-  }, [composerRef, pinnedRef, threadRef]);
+  }, [composerRef, pinnedRef, threadRef, ignoreScrollIntentRef]);
 
   const surfaceStyle = sessionSurfaceStyle(
     innerHeight,
