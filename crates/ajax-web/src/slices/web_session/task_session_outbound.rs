@@ -1,5 +1,6 @@
 use super::task_session::{AttachSnapshot, OutboundBatch, TaskSessionState};
 use super::{
+    context_continuity::ContextContinuity,
     protocol::{SessionChrome, SessionSnapshot},
     replay::{build_attach, pending_elicitation, pending_permission},
 };
@@ -9,7 +10,7 @@ pub(super) fn attach_snapshot(
     client_cursor: Option<usize>,
 ) -> AttachSnapshot {
     state.pump();
-    let (snapshot, replayed) = build_attach(
+    let (mut snapshot, replayed) = build_attach(
         &state.log,
         state.applied_model.clone(),
         state.busy(),
@@ -21,6 +22,8 @@ pub(super) fn attach_snapshot(
             session_title: state.session_title.clone(),
         },
     );
+    apply_continuity(&mut snapshot, &state.context_continuity);
+    snapshot.transcript_error = state.transcript_durability_fault.clone();
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -48,6 +51,9 @@ pub(super) fn collect_outbound(
         let _ = state.pending_capabilities_snapshot.take();
         state.pending_title_snapshot = false;
         Some(snapshot(state, model, false, config))
+    } else if state.pending_transcript_error_snapshot {
+        state.pending_transcript_error_snapshot = false;
+        Some(snapshot(state, state.applied_model.clone(), false, None))
     } else if state.pending_title_snapshot
         || state.pending_commands_snapshot.is_some()
         || state.pending_capabilities_snapshot.is_some()
@@ -88,7 +94,15 @@ fn snapshot(
             prompt_capabilities: state.session_prompt_capabilities.clone(),
             session_title: state.session_title.clone(),
         },
+        state.context_continuity.clone(),
     )
+    .with_transcript_error(state.transcript_durability_fault.clone())
+}
+
+fn apply_continuity(snapshot: &mut SessionSnapshot, continuity: &ContextContinuity) {
+    snapshot.context_state = continuity.state;
+    snapshot.context_epoch = continuity.epoch;
+    snapshot.context_error = continuity.error.clone();
 }
 
 #[cfg(test)]
