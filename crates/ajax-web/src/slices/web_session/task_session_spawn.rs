@@ -339,8 +339,17 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
     }
     state.suppress_exit_evidence = true;
     let result = (|| {
-        interrupt_active_prompt(state)?;
-        let Some(mut client) = state.client.take() else {
+        if let Some(active) = state.active_prompt.as_mut() {
+            active.mark_cancel_requested();
+        }
+        let awaiting_cancel_terminal = state
+            .active_prompt
+            .as_ref()
+            .is_some_and(|active| active.terminal.is_none());
+        if !awaiting_cancel_terminal {
+            interrupt_active_prompt(state)?;
+        }
+        let Some(client) = state.client.as_mut() else {
             return Ok(());
         };
         if !client.host_exited() {
@@ -360,6 +369,15 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
             }
             let _ = state.append_to_log(resolved);
         }
+        if awaiting_cancel_terminal {
+            state.pump();
+            if state.active_prompt.is_some() {
+                interrupt_active_prompt(state)?;
+            }
+        }
+        let Some(mut client) = state.client.take() else {
+            return Ok(());
+        };
         let message = if close_session {
             client.shutdown()
         } else {
