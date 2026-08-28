@@ -19,13 +19,22 @@ export const RESULT_AUTO_DISMISS_MS = 12000;
 export const RESULT_SUCCESS_DISMISS_MS = 4000;
 export const RESTART_POLL_MS = 500;
 export const RESTART_TIMEOUT_MS = 30000;
+export const RUNTIME_OPERATION_TIMEOUT_MS = 900_000;
+export const RUNTIME_STATUS_POLL_MS = 1000;
 export const TEST_IN_STABLE_TIMEOUT_MS = 900_000;
 // Bounds stalled LAN/TLS GETs; recovery comes from the existing poll interval.
 export const GET_REQUEST_TIMEOUT_MS = 10000;
 /** Diff Review runs `gh` / `git` which can exceed the default GET budget. */
 export const DIFF_REQUEST_TIMEOUT_MS = 45000;
 
-export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
+export type PollingRouteKind =
+  | "dashboard"
+  | "project"
+  | "task"
+  | "diff"
+  | "settings"
+  | "control"
+  | "session";
 
 export function cockpitRefreshIntervalMs(input: {
   visibilityState: DocumentVisibilityState;
@@ -36,7 +45,7 @@ export function cockpitRefreshIntervalMs(input: {
   if (input.routeKind === "task" || input.routeKind === "session") {
     return REFRESH_INTERVAL_TERMINAL_MS;
   }
-  if (input.routeKind === "settings" || input.routeKind === "diff") {
+  if (input.routeKind === "settings" || input.routeKind === "diff" || input.routeKind === "control") {
     return REFRESH_INTERVAL_IDLE_MS;
   }
   if (
