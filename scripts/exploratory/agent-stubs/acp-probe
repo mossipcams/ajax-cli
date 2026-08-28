@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { join as joinPath } from "node:path";
+
+const stubs = process.argv[2];
+const wrapperPath = process.argv[3];
+const cwd = process.argv[4];
+const ajaxArgv = JSON.parse(process.argv[5] ?? '["--model","composer-2.5","acp"]');
+const child = spawn(joinPath(stubs, "agent"), ajaxArgv, {
+  cwd,
+  stdio: ["pipe", "pipe", "inherit"],
+  env: { ...process.env, PATH: `${stubs}:${process.env.PATH}`, AJAX_EXPLORATORY_FAKE_ACP: wrapperPath },
+});
+const lines = [];
+child.stdout.on("data", (chunk) => {
+  for (const part of chunk.toString("utf8").split("\n")) {
+    const trimmed = part.trim();
+    if (trimmed) lines.push(trimmed);
+  }
+});
+function readLine() {
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (lines.length > 0) return resolve(JSON.parse(lines.shift()));
+      child.stdout.once("data", () => tick());
+      child.once("exit", () => reject(new Error("fake ACP exited before response")));
+    };
+    tick();
+  });
+}
+async function readUntilResult(requestId) {
+  while (true) {
+    const message = await readLine();
+    if (message?.id === requestId && message?.result != null) return message;
+  }
+}
+function write(obj) {
+  child.stdin.write(`${JSON.stringify(obj)}\n`);
+}
+try {
+  write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+  const init = await readUntilResult(1);
+  write({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: process.cwd() } });
+  const session = await readUntilResult(2);
+  const sessionId = session?.result?.sessionId ?? session?.result?.session?.id ?? "fake-sess-1";
+  write({
+    jsonrpc: "2.0", id: 3, method: "session/prompt",
+    params: { sessionId, prompt: [{ type: "text", text: "exploratory preflight ping" }] },
+  });
+  const prompt = await readUntilResult(3);
+  child.kill();
+  process.stdout.write(JSON.stringify({
+    initializeOk: init?.result != null,
+    sessionOk: session?.result != null,
+    promptOk: prompt?.result != null,
+    sessionId,
+    spawnModel: ajaxArgv.includes("composer-2.5"),
+  }));
+} catch (error) {
+  console.error(error);
+  process.exit(1);
+}

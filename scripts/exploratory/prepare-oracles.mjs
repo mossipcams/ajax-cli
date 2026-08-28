@@ -36,7 +36,7 @@ const WEB_LOG_PATHS = [
   "docs/architecture/web-cockpit.md",
 ];
 
-function defaultExecGh(repo) {
+function defaultExecGh(repo, state = "open") {
   return execFileSync(
     "gh",
     [
@@ -47,11 +47,11 @@ function defaultExecGh(repo) {
       "--label",
       "bug",
       "--state",
-      "open",
+      state,
       "--limit",
-      "40",
+      "100",
       "--json",
-      "number,title,url",
+      "number,title,body,url,state",
     ],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -100,6 +100,7 @@ export function emptyOracles() {
   return {
     version: 1,
     openBugs: [],
+    closedBugs: [],
     recentWebCommits: [],
     routes: ROUTES,
     boundaryHashes: BOUNDARY_HASHES,
@@ -122,16 +123,32 @@ export function buildOracles({
 
   if (repo) {
     try {
-      const raw = execGh(repo);
+      const raw = execGh(repo, "open");
       const issues = JSON.parse(raw.trim() || "[]");
-      oracles.openBugs = selectOpenBugs(issues).map(({ number, title, url }) => ({
+      oracles.openBugs = selectOpenBugs(issues).map(({ number, title, body, url, state }) => ({
         number,
         title,
+        body,
         url,
+        state,
       }));
     } catch (error) {
       oracles.bugsError = String(error?.message ?? error);
       oracles.openBugs = [];
+    }
+    try {
+      const rawClosed = execGh(repo, "closed");
+      const closed = JSON.parse(rawClosed.trim() || "[]");
+      oracles.closedBugs = closed.map(({ number, title, body, url, state }) => ({
+        number,
+        title,
+        body,
+        url,
+        state,
+      }));
+    } catch (error) {
+      oracles.closedBugsError = String(error?.message ?? error);
+      oracles.closedBugs = [];
     }
   }
 
