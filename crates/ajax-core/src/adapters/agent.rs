@@ -327,6 +327,11 @@ pub struct AcpLaunch {
     pub acp_package: Option<&'static str>,
     /// Shown when no candidate program can be spawned.
     pub install_hint: &'static str,
+    /// Ajax Chat continuity requires restoring a stored session via
+    /// `session/resume` or `loadSession` instead of silently starting fresh.
+    pub requires_durable_restore: bool,
+    /// Static audit: this harness advertises and honors durable restore.
+    pub supports_durable_restore: bool,
 }
 
 impl AcpLaunch {
@@ -334,6 +339,16 @@ impl AcpLaunch {
     pub fn model_pins_at_spawn(&self) -> bool {
         matches!(self.model_selection, AcpModelSelection::SpawnArg)
     }
+
+    /// True when Ajax may offer resumable orchestration chat for this harness.
+    pub fn admits_orchestration_chat(&self) -> bool {
+        !self.requires_durable_restore || self.supports_durable_restore
+    }
+}
+
+/// True when the harness may hold a resumable Ajax Chat session.
+pub fn acp_admits_orchestration_chat(client: AgentClient) -> bool {
+    acp_launch_for_agent(client).is_some_and(|launch| launch.admits_orchestration_chat())
 }
 
 /// ACP entry point for a harness, or `None` when Ajax has no ACP mapping for it.
@@ -347,6 +362,8 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: Some(CURSOR_DEFAULT_MODEL),
             acp_package: None,
             install_hint: "install the Cursor CLI (`agent`)",
+            requires_durable_restore: true,
+            supports_durable_restore: true,
         }),
         AgentClient::Codex => Some(AcpLaunch {
             candidates: &[("codex-acp", &[])],
@@ -356,6 +373,8 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: None,
             acp_package: Some("@agentclientprotocol/codex-acp"),
             install_hint: "npm install -g @agentclientprotocol/codex-acp",
+            requires_durable_restore: true,
+            supports_durable_restore: true,
         }),
         AgentClient::Claude => Some(AcpLaunch {
             candidates: &[("claude-agent-acp", &[])],
@@ -365,6 +384,8 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: None,
             acp_package: Some("@agentclientprotocol/claude-agent-acp"),
             install_hint: "npm install -g @agentclientprotocol/claude-agent-acp",
+            requires_durable_restore: true,
+            supports_durable_restore: true,
         }),
         AgentClient::Pi => Some(AcpLaunch {
             candidates: &[("pi-acp", &[])],
@@ -374,6 +395,8 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: None,
             acp_package: Some("pi-acp"),
             install_hint: "npm install -g pi-acp",
+            requires_durable_restore: true,
+            supports_durable_restore: true,
         }),
         AgentClient::Other => None,
     }
@@ -513,5 +536,62 @@ pub fn agent_launch_spec(
         cwd: None,
         mode: super::command::CommandMode::Capture,
         timeout: None,
+    }
+}
+
+#[cfg(test)]
+mod acp_launch_restore_tests {
+    use super::{
+        acp_admits_orchestration_chat, acp_launch_for_agent, AcpLaunch, AcpModelSelection,
+    };
+    use crate::models::AgentClient;
+
+    #[test]
+    fn acp_launch_reports_durable_restore_capability_per_harness() {
+        for client in [
+            AgentClient::Cursor,
+            AgentClient::Codex,
+            AgentClient::Claude,
+            AgentClient::Pi,
+        ] {
+            let launch = acp_launch_for_agent(client).expect("mapped harness");
+            assert!(
+                launch.requires_durable_restore,
+                "{client:?} Ajax Chat requires durable restore"
+            );
+            assert!(
+                launch.supports_durable_restore,
+                "{client:?} must advertise durable restore support"
+            );
+            assert!(
+                launch.admits_orchestration_chat(),
+                "{client:?} should admit orchestration chat"
+            );
+            assert!(
+                acp_admits_orchestration_chat(client),
+                "{client:?} admission helper must match launch mapping"
+            );
+        }
+
+        assert!(!acp_admits_orchestration_chat(AgentClient::Other));
+        assert!(acp_launch_for_agent(AgentClient::Other).is_none());
+    }
+
+    #[test]
+    fn acp_launch_blocks_orchestration_chat_when_restore_unsupported() {
+        let launch = AcpLaunch {
+            candidates: &[("fake-acp", &[])],
+            native_program: None,
+            model_selection: AcpModelSelection::ConfigOption,
+            default_model: None,
+            acp_package: Some("fake-acp"),
+            install_hint: "install fake-acp",
+            requires_durable_restore: true,
+            supports_durable_restore: false,
+        };
+        assert!(
+            !launch.admits_orchestration_chat(),
+            "unsupported restore must not advertise resumable Ajax Chat"
+        );
     }
 }
