@@ -17,11 +17,18 @@ pub(crate) enum PromptTerminalOutcome {
     Failed,
 }
 
-pub(crate) fn classify_prompt_terminal(result: &Result<Value, String>) -> PromptTerminalOutcome {
+pub(crate) fn classify_prompt_terminal(
+    result: &Result<Value, String>,
+    cancel_requested: bool,
+) -> PromptTerminalOutcome {
     match result {
         Ok(_) => PromptTerminalOutcome::Success,
         Err(message) if is_cancellation_shaped_prompt_error(message) => {
-            PromptTerminalOutcome::Cancelled
+            if cancel_requested {
+                PromptTerminalOutcome::Cancelled
+            } else {
+                PromptTerminalOutcome::Failed
+            }
         }
         Err(_) => PromptTerminalOutcome::Failed,
     }
@@ -50,6 +57,14 @@ pub(crate) struct AcpDrainOutcome {
 pub(crate) fn drain_acp_events(
     client: &AcpStdioClient,
     deduper: &mut UsageDeduper,
+) -> AcpDrainOutcome {
+    drain_acp_events_with_prompt_cancel(client, deduper, None)
+}
+
+pub(crate) fn drain_acp_events_with_prompt_cancel(
+    client: &AcpStdioClient,
+    deduper: &mut UsageDeduper,
+    prompt_cancel: Option<(u64, bool)>,
 ) -> AcpDrainOutcome {
     let mut events = Vec::new();
     let mut host_exited = false;
@@ -120,11 +135,20 @@ pub(crate) fn drain_acp_events(
             AcpClientEvent::RequestFinished {
                 result, method, id, ..
             } => {
-                let mapped = map_request_finished(method, result.clone(), Some(id), deduper);
+                let cancel_requested = prompt_cancel
+                    .filter(|(request_id, _)| *request_id == id)
+                    .is_some_and(|(_, requested)| requested);
+                let mapped = map_request_finished(
+                    method,
+                    result.clone(),
+                    Some(id),
+                    deduper,
+                    cancel_requested,
+                );
                 if method == "session/prompt" {
                     prompt_terminals.push(PromptTerminal {
                         request_id: id,
-                        outcome: classify_prompt_terminal(&result),
+                        outcome: classify_prompt_terminal(&result, cancel_requested),
                         events: mapped,
                     });
                 } else {
@@ -201,11 +225,11 @@ fn is_cancellation_shaped_prompt_error(message: &str) -> bool {
 }
 
 fn is_retriable_transport_error(message: &str) -> bool {
-    message.starts_with("RetriableError:")
+    message.contains("RetriableError:")
 }
 
 fn map_operator_visible_acp_error(message: &str) -> String {
-    if is_retriable_transport_error(message) && !is_cancellation_shaped_prompt_error(message) {
+    if is_retriable_transport_error(message) {
         CONNECTION_INTERRUPTED_MESSAGE.to_string()
     } else {
         message.to_string()
@@ -220,6 +244,7 @@ pub(crate) fn map_request_finished(
     result: Result<Value, String>,
     request_id: Option<u64>,
     deduper: &mut UsageDeduper,
+    cancel_requested: bool,
 ) -> Vec<SessionServerEvent> {
     match result {
         Ok(value) if method == "session/prompt" => {
@@ -241,9 +266,15 @@ pub(crate) fn map_request_finished(
         Err(message)
             if method == "session/prompt" && is_cancellation_shaped_prompt_error(&message) =>
         {
-            vec![SessionServerEvent::TurnEnd {
-                stop_reason: Some("cancelled".to_string()),
-            }]
+            if cancel_requested {
+                vec![SessionServerEvent::TurnEnd {
+                    stop_reason: Some("cancelled".to_string()),
+                }]
+            } else {
+                vec![SessionServerEvent::Error {
+                    message: CONNECTION_INTERRUPTED_MESSAGE.to_string(),
+                }]
+            }
         }
         Err(message) => vec![SessionServerEvent::Error {
             message: map_operator_visible_acp_error(&message),
