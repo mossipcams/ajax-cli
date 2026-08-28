@@ -42,6 +42,7 @@ use std::{
         mpsc::Sender,
         Arc, Mutex,
     },
+    time::Duration,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -52,7 +53,7 @@ pub(super) struct ConnectionReady {
     pub prompt_capabilities: super::PromptCapabilityDescriptor,
     pub close_advertised: bool,
     pub load_session_advertised: bool,
-    pub resumed: bool,
+    pub outcome: super::client::SpawnOutcome,
     pub applied_model: String,
     pub model_apply_error: Option<String>,
 }
@@ -422,31 +423,48 @@ async fn initialize_session(
         .session_capabilities
         .resume
         .is_some();
-    let mut resumed = false;
+    let mut outcome = super::client::SpawnOutcome::Created;
     let mut session_id = None;
     let mut config_options = None;
     if let Some(resume_id) = resume_session_id {
         runtime
             .suppress_handshake_transcript
             .store(true, Ordering::Release);
+        if !resume_advertised && !load_session_advertised {
+            runtime
+                .suppress_handshake_transcript
+                .store(false, Ordering::Release);
+            return Err(super::client::restore_unavailable_error(
+                resume_id,
+                "harness does not advertise session/resume or loadSession",
+            ));
+        }
+        let mut restored = false;
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
-                resumed = true;
+                restored = true;
                 config_options = response.config_options;
             }
         }
-        if !resumed && load_session_advertised {
+        if !restored && load_session_advertised {
             if let Some(response) = send_load(connection, resume_id, cwd).await {
-                resumed = true;
+                restored = true;
                 config_options = response.config_options;
             }
         }
-        if resumed {
+        if restored {
             session_id = Some(resume_id.to_string());
+            outcome = super::client::SpawnOutcome::Restored {
+                session_id: resume_id.to_string(),
+            };
         } else {
             runtime
                 .suppress_handshake_transcript
                 .store(false, Ordering::Release);
+            return Err(super::client::restore_unavailable_error(
+                resume_id,
+                "session/resume and session/load failed",
+            ));
         }
     }
 
@@ -504,7 +522,7 @@ async fn initialize_session(
         ),
         close_advertised,
         load_session_advertised,
-        resumed,
+        outcome,
         applied_model,
         model_apply_error,
     })
@@ -516,7 +534,7 @@ async fn send_resume(
     cwd: &Path,
 ) -> Option<agent_client_protocol::schema::v1::ResumeSessionResponse> {
     tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        restore_handshake_timeout(),
         connection
             .send_request(ResumeSessionRequest::new(
                 session_id.to_string(),
@@ -535,7 +553,7 @@ async fn send_load(
     cwd: &Path,
 ) -> Option<agent_client_protocol::schema::v1::LoadSessionResponse> {
     tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        restore_handshake_timeout(),
         connection
             .send_request(LoadSessionRequest::new(
                 session_id.to_string(),
@@ -546,6 +564,14 @@ async fn send_load(
     .await
     .ok()?
     .ok()
+}
+
+fn restore_handshake_timeout() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(500)
+    } else {
+        HANDSHAKE_TIMEOUT
+    }
 }
 
 /// Documented full-access mode select values, in preferred apply order.
