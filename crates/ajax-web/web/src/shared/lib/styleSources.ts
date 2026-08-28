@@ -36,10 +36,10 @@ export const BASELINE = {
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged).
    * Re-measured after runtime control panel CSS (#/control operator page). */
-  sourceStylesCssBytes: 110_487,
-  builtAppCssBytes: 96_262,
-  builtAppCssGzipBytes: 16_872,
-  classSelectorLines: 621,
+  sourceStylesCssBytes: 110_918,
+  builtAppCssBytes: 96_857,
+  builtAppCssGzipBytes: 16_945,
+  classSelectorLines: 624,
   hasSelectors: 18,
 } as const;
 
