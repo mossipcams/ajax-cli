@@ -1,0 +1,116 @@
+.runtime-control-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+}
+
+.runtime-control-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.runtime-control-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.runtime-control-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 0.75rem;
+  background: var(--paper);
+}
+
+.runtime-control-section h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.runtime-control-dl {
+  display: grid;
+  grid-template-columns: minmax(7rem, 40%) 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+}
+
+.runtime-control-dl dt {
+  margin: 0;
+  color: color-mix(in srgb, var(--ink) 65%, transparent);
+}
+
+.runtime-control-dl dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.runtime-control-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.runtime-control-actions button {
+  min-height: 44px;
+}
+
+.runtime-control-status,
+.runtime-control-note {
+  margin: 0;
+  color: color-mix(in srgb, var(--ink) 75%, transparent);
+  font-size: 0.95rem;
+}
+
+.runtime-control-error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--danger, #b42318) 35%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--danger, #b42318) 8%, var(--paper));
+}
+
+.runtime-control-error p {
+  margin: 0;
+  color: var(--ink);
+}
+
+.runtime-control-error button {
+  align-self: flex-start;
+  min-height: 44px;
+}
+
+.runtime-control-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+.runtime-control-overlay-card {
+  width: min(100%, 22rem);
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--paper);
+  box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+.runtime-control-log {
+  margin: 0;
+  padding: 0.75rem;
+  max-height: 10rem;
+  overflow: auto;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}

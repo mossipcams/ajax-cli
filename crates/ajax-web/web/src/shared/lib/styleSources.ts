@@ -34,11 +34,12 @@ export const BASELINE = {
    * Re-measured after chronological chat scroll and Load earlier CSS (#1088).
    * Re-measured after the turn-disclosure comment in conversation.css grew to
    * describe collapsed settled/live tool rows (comment text only; built CSS
-   * is unchanged). */
-  sourceStylesCssBytes: 108_606,
-  builtAppCssBytes: 94_038,
-  builtAppCssGzipBytes: 16_496,
-  classSelectorLines: 606,
+   * is unchanged).
+   * Re-measured after runtime control panel CSS (#/control operator page). */
+  sourceStylesCssBytes: 110_487,
+  builtAppCssBytes: 96_262,
+  builtAppCssGzipBytes: 16_872,
+  classSelectorLines: 621,
   hasSelectors: 18,
 } as const;
 
@@ -49,6 +50,7 @@ export const STYLES_SOURCE_MODULE_RELS = [
   "styles/foundation.css",
   "styles/app-shell.css",
   "styles/settings.css",
+  "styles/runtime-control.css",
   "styles/chat.css",
   "styles/chat/activity.css",
   "styles/chat/composer.css",
