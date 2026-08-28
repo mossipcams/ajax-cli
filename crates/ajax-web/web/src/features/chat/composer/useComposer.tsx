@@ -64,6 +64,7 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
+  promptingEnabled?: boolean;
   busy: boolean;
   everOpened: boolean;
   conversation: ConversationItem[];
@@ -91,6 +92,7 @@ type ComposerContextValue = {
   editQueued: () => void;
   removeQueued: () => void;
   connected: boolean;
+  promptingEnabled: boolean;
   everOpened: boolean;
   busy: boolean;
   slashMatches: LiveAvailableCommand[];
@@ -120,6 +122,7 @@ export function useComposerContext(): ComposerContextValue {
 export function ComposerProvider({
   handle,
   connected,
+  promptingEnabled = true,
   busy,
   everOpened,
   conversation,
@@ -152,6 +155,7 @@ export function ComposerProvider({
   composerStateRef.current = composerState;
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const canPrompt = connected && promptingEnabled;
 
   const slashPrefix = useMemo(() => parseSlashPrefix(draft), [draft]);
   const slashMatches = useMemo(
@@ -262,10 +266,10 @@ export function ComposerProvider({
   );
 
   const sendDraft = useCallback(() => {
-    if (!connected) return;
+    if (!canPrompt) return;
 
     const result = submitComposerDraft({
-      connected,
+      connected: canPrompt,
       busy,
       draft: draftRef.current,
       composerState,
@@ -308,7 +312,7 @@ export function ComposerProvider({
 
     setComposerState((current) =>
       applySubmitResult(result, current, {
-        connected,
+        connected: canPrompt,
         busy,
         draft: draftRef.current,
         composerState: current,
@@ -329,7 +333,7 @@ export function ComposerProvider({
     clearDraftAttachments,
     clearDraftText,
     composerState,
-    connected,
+    canPrompt,
     contentBlocks,
     deliverPrompt,
     scrollToLatest,
@@ -340,12 +344,12 @@ export function ComposerProvider({
     const { intents } = flushQueuedFollowUp({
       composerState: composerStateRef.current,
       busy,
-      connected,
+      connected: canPrompt,
     });
     if (intents.length === 0) return;
 
     if (holdRestoredQueueRef.current) {
-      if (!connected || !everOpened) return;
+      if (!canPrompt || !everOpened) return;
       if (busy) {
         holdRestoredQueueRef.current = false;
         return;
@@ -391,7 +395,7 @@ export function ComposerProvider({
     if (sendSucceeded) {
       setComposerState((current) => composerStateAfterFlush(current, true));
     }
-  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
+  }, [busy, canPrompt, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
 
   const editQueued = useCallback(() => {
     const restored = restoreQueuedDraft(composerState);
@@ -528,6 +532,7 @@ export function ComposerProvider({
     editQueued,
     removeQueued,
     connected,
+    promptingEnabled,
     everOpened,
     busy,
     slashMatches,

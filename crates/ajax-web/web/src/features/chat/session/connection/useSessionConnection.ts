@@ -90,6 +90,7 @@ export function useSessionConnection({
     let buffer: MessageBuffer | undefined;
     /** Survives in-page reconnect; cleared on full reload with the reducer. */
     let nextToReadCursor: number | undefined;
+    let contextUnavailable = false;
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -116,6 +117,19 @@ export function useSessionConnection({
     };
 
     const applySnapshot = (snapshot: SessionSnapshot) => {
+      contextUnavailable = snapshot.contextState === "unavailable";
+      dispatch({
+        type: "event",
+        event: {
+          type: "context_snapshot",
+          state: snapshot.contextState,
+          epoch: snapshot.contextEpoch,
+          ...(snapshot.contextError !== undefined ? { error: snapshot.contextError } : {}),
+          ...(snapshot.transcriptError !== undefined
+            ? { transcriptError: snapshot.transcriptError }
+            : {}),
+        },
+      });
       onSessionModel?.(snapshot.model);
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
       onSessionAvailableCommands?.(snapshot.availableCommands);
@@ -173,6 +187,10 @@ export function useSessionConnection({
           },
           onClosed: () => {
             if (disposed) return;
+            if (contextUnavailable) {
+              reconnecting = false;
+              return;
+            }
             reconnecting = true;
             if (!everOpenedRef.current) {
               handshakeAttempts += 1;

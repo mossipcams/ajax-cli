@@ -77,6 +77,8 @@ function ChatSessionBody({
   applyConfigOption,
   respondPermission,
   respondElicitation,
+  retryRestore,
+  startNewContext,
   composerRef,
   notice,
   dismissNotice,
@@ -99,6 +101,8 @@ function ChatSessionBody({
   applyConfigOption: ReturnType<typeof useChatSession>["applyConfigOption"];
   respondPermission: ReturnType<typeof useChatSession>["respondPermission"];
   respondElicitation: ReturnType<typeof useChatSession>["respondElicitation"];
+  retryRestore: ReturnType<typeof useChatSession>["retryRestore"];
+  startNewContext: ReturnType<typeof useChatSession>["startNewContext"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
   notice: string | null;
   dismissNotice: () => void;
@@ -108,6 +112,9 @@ function ChatSessionBody({
 }) {
   const { surfaceStyle, scrollToLatest } = useChatScroller();
   const { confirmedModel, configOptions, availableCommands, promptCapabilities } = view.model;
+  const contextUnavailable = view.context.state === "unavailable";
+  const transcriptBlocked = view.context.transcriptError !== undefined;
+  const promptingEnabled = connected && !contextUnavailable && !transcriptBlocked;
 
   return (
     <>
@@ -147,6 +154,7 @@ function ChatSessionBody({
         <ComposerProvider
           handle={handle}
           connected={connected}
+          promptingEnabled={promptingEnabled}
           busy={view.turn.busy}
           everOpened={everOpened}
           conversation={view.conversation}
@@ -178,7 +186,15 @@ function ChatSessionBody({
             setModelSheetOpen={setModelSheetOpen}
             onApply={applyConfigOption}
             renderComposer={({ notice: noticeSlot, modelControl }) => (
-              <ChatComposer notice={noticeSlot} modelControl={modelControl} />
+              <ChatComposer
+                notice={noticeSlot}
+                modelControl={modelControl}
+                contextUnavailable={contextUnavailable}
+                contextError={view.context.error}
+                transcriptError={view.context.transcriptError}
+                onRetryRestore={retryRestore}
+                onStartNewContext={startNewContext}
+              />
             )}
           />
         </ComposerProvider>
@@ -257,6 +273,8 @@ export default function ChatSurface({
     applyConfigOption,
     respondPermission,
     respondElicitation,
+    retryRestore,
+    startNewContext,
   } = useChatSession({ handle, detail, onMutated, onConfigError: showNotice });
 
   useEffect(() => {
@@ -297,6 +315,8 @@ export default function ChatSurface({
         applyConfigOption={applyConfigOption}
         respondPermission={respondPermission}
         respondElicitation={respondElicitation}
+        retryRestore={retryRestore}
+        startNewContext={startNewContext}
         composerRef={composerRef}
         notice={notice}
         dismissNotice={dismissNotice}

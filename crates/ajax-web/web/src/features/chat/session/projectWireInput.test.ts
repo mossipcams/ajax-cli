@@ -34,6 +34,8 @@ describe("projectWireInput", () => {
         model: "auto",
         turnState: "idle",
         reset: true,
+        contextState: "live",
+        contextEpoch: 0,
       }),
     ).toEqual([{ type: "session_ready", reset: true, busy: false }]);
   });

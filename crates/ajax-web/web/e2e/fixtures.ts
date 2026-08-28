@@ -102,6 +102,9 @@ export function sessionSnapshotJson(
     model: string;
     turnState: "idle" | "busy";
     reset: boolean;
+    contextState: "live" | "restored" | "unavailable";
+    contextEpoch: number;
+    contextError?: string;
     promptCapabilities: { image?: boolean; embeddedContext?: boolean };
   }> = {},
 ): string {
@@ -112,6 +115,8 @@ export function sessionSnapshotJson(
     model: "auto",
     turnState: "idle",
     reset: false,
+    contextState: "live",
+    contextEpoch: 0,
     ...overrides,
   });
 }
