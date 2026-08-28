@@ -36,6 +36,13 @@ pub struct PendingElicitation {
     pub schema: serde_json::Value,
 }
 
+/// Outstanding permission and elicitation prompts included in attach snapshots.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionPending {
+    pub permission: Option<PendingPermission>,
+    pub elicitation: Option<PendingElicitation>,
+}
+
 /// Attach state sent once per logical attach or generation change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
@@ -100,8 +107,7 @@ impl SessionSnapshot {
         model: String,
         busy: bool,
         reset: bool,
-        pending_permission: Option<PendingPermission>,
-        pending_elicitation: Option<PendingElicitation>,
+        pending: SessionPending,
         chrome: SessionChrome,
         continuity: ContextContinuity,
     ) -> Self {
@@ -116,8 +122,8 @@ impl SessionSnapshot {
             session_title: chrome.session_title,
             turn_state: if busy { "busy" } else { "idle" }.to_string(),
             reset,
-            pending_permission,
-            pending_elicitation,
+            pending_permission: pending.permission,
+            pending_elicitation: pending.elicitation,
             context_state: continuity.state,
             context_epoch: continuity.epoch,
             context_error: continuity.error,

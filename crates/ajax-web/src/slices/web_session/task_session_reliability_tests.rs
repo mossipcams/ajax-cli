@@ -1,4 +1,3 @@
-use super::context_continuity::ContextState;
 use super::test_support::{
     agent_pong_count, fake_acp_fixture, has_message, pump_until, scratch_dir,
     BlockingSessionDirectory, CONTEXT_RESET_NOTE,

@@ -1,6 +1,6 @@
 //! Unit and fake-stdio integration tests for [`super::client`].
 
-use super::client::{AcpClientEvent, AcpStdioClient, SpawnOutcome};
+use super::client::{AcpClientEvent, AcpStdioClient};
 use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::{
@@ -40,22 +40,6 @@ fn scratch_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn with_fake_acp_state_dir<F, R>(dir: &PathBuf, f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    std::env::set_var("FAKE_ACP_STATE_DIR", dir);
-    let result = f();
-    std::env::remove_var("FAKE_ACP_STATE_DIR");
-    result
-}
-
-fn read_recorded_methods(dir: &PathBuf) -> Vec<String> {
-    let path = dir.join(".fake-acp-methods");
-    let raw = fs::read_to_string(path).unwrap_or_default();
-    serde_json::from_str(&raw).unwrap_or_default()
 }
 
 fn session_update_text(params: &SessionNotification) -> Option<&str> {

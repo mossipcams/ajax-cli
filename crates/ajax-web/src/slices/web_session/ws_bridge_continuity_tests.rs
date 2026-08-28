@@ -2,7 +2,7 @@ use super::test_support::BlockingSessionDirectory;
 use super::{apply_client_message, ApplyClientMessageOutcome, SessionClientMessage};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 fn scratch_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ajax-web-bridge-{label}-{}", std::process::id()));

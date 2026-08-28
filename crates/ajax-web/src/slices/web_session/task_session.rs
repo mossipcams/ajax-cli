@@ -745,19 +745,20 @@ fn submit_prompt(
             ledger.mark_dispatching(&client_message_id);
         })?;
     }
-    state.append_to_log(vec![user_event]).map_err(|error| {
-        if !client_message_id.is_empty() {
-            let _ = persist_ledger_update(state, |ledger| {
-                ledger.upsert_queued(
-                    client_message_id.clone(),
-                    payload.transcript_text.clone(),
-                    text.trim().to_string(),
-                    wire_blocks_to_json(&content_blocks),
-                );
-            });
-        }
-        error
-    })?;
+    state
+        .append_to_log(vec![user_event])
+        .inspect_err(|_error| {
+            if !client_message_id.is_empty() {
+                let _ = persist_ledger_update(state, |ledger| {
+                    ledger.upsert_queued(
+                        client_message_id.clone(),
+                        payload.transcript_text.clone(),
+                        text.trim().to_string(),
+                        wire_blocks_to_json(&content_blocks),
+                    );
+                });
+            }
+        })?;
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };

@@ -1,6 +1,6 @@
 use super::context_continuity::{ContextContinuity, ContextState};
 use super::protocol::{
-    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionSnapshot,
+    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionPending, SessionSnapshot,
     SESSION_PROTOCOL_VERSION,
 };
 use crate::slices::web_session::SessionServerEvent;
@@ -12,8 +12,7 @@ fn snapshot_serializes_protocol_v2_fields() {
         "composer-2.5".to_string(),
         true,
         false,
-        None,
-        None,
+        SessionPending::default(),
         SessionChrome::default(),
         ContextContinuity::default(),
     );
@@ -36,8 +35,7 @@ fn snapshot_serializes_context_continuity_fields() {
         "composer-2.5".to_string(),
         true,
         false,
-        None,
-        None,
+        SessionPending::default(),
         SessionChrome::default(),
         ContextContinuity {
             state: ContextState::Restored,
@@ -58,8 +56,7 @@ fn snapshot_omits_context_error_when_none() {
         "auto".to_string(),
         false,
         false,
-        None,
-        None,
+        SessionPending::default(),
         SessionChrome::default(),
         ContextContinuity {
             state: ContextState::Live,

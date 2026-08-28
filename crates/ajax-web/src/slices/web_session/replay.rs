@@ -2,7 +2,8 @@
 
 use super::context_continuity::ContextContinuity;
 use super::protocol::{
-    PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
+    PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionPending,
+    SessionSnapshot,
 };
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
@@ -50,8 +51,10 @@ pub(crate) fn build_attach(
         model,
         busy,
         plan.reset,
-        pending_permission(log),
-        pending_elicitation(log),
+        SessionPending {
+            permission: pending_permission(log),
+            elicitation: pending_elicitation(log),
+        },
         chrome,
         ContextContinuity::default(),
     );

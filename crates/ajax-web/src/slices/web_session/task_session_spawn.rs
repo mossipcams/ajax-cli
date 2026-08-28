@@ -6,9 +6,8 @@ use super::task_session_exit::{
     interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
 };
 use super::task_session_replacement::{
-    apply_context_from_spawn, discard_staged_client, enter_restore_unavailable,
-    finish_first_acquire, install_new_context_client, install_replaced_client,
-    meta_model_for_persist, meta_model_from_config_options,
+    discard_staged_client, enter_restore_unavailable, finish_first_acquire,
+    install_new_context_client, install_replaced_client, meta_model_from_config_options,
 };
 use super::transcript::{context_reset_note, harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionServerEvent};

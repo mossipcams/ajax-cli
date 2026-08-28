@@ -265,6 +265,7 @@ pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
         .join(format!("{}.jsonl", encode_handle(handle)))
 }
 
+#[cfg(test)]
 fn persist<T: Serialize>(state_dir: &Path, handle: &str, session: &StoredSession<T>) {
     if let Err(error) = rewrite_file(state_dir, handle, session) {
         tracing::warn!(%error, handle, "failed to persist web session transcript");

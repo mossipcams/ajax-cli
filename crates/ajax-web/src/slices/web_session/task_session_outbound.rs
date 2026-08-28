@@ -1,7 +1,7 @@
 use super::task_session::{AttachSnapshot, OutboundBatch, TaskSessionState};
 use super::{
     context_continuity::ContextContinuity,
-    protocol::{SessionChrome, SessionSnapshot},
+    protocol::{SessionChrome, SessionPending, SessionSnapshot},
     replay::{build_attach, pending_elicitation, pending_permission},
 };
 
@@ -86,8 +86,10 @@ fn snapshot(
         model,
         state.busy(),
         reset,
-        pending_permission(&state.log),
-        pending_elicitation(&state.log),
+        SessionPending {
+            permission: pending_permission(&state.log),
+            elicitation: pending_elicitation(&state.log),
+        },
         SessionChrome {
             session_config_options: config.or_else(|| state.session_config_options.clone()),
             available_commands: state.session_available_commands.clone(),

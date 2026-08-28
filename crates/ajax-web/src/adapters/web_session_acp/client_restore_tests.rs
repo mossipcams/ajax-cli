@@ -7,7 +7,7 @@ use super::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::models::AgentClient;
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -28,7 +28,7 @@ fn scratch_dir(label: &str) -> PathBuf {
     dir
 }
 
-fn with_fake_acp_state_dir<F, R>(dir: &PathBuf, f: F) -> R
+fn with_fake_acp_state_dir<F, R>(dir: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
@@ -38,7 +38,7 @@ where
     result
 }
 
-fn read_recorded_methods(dir: &PathBuf) -> Vec<String> {
+fn read_recorded_methods(dir: &Path) -> Vec<String> {
     let path = dir.join(".fake-acp-methods");
     let raw = fs::read_to_string(path).unwrap_or_default();
     serde_json::from_str(&raw).unwrap_or_default()
