@@ -195,6 +195,34 @@ describe("initViewport", () => {
     document.documentElement.removeAttribute("data-session-viewport");
   });
 
+  it("clears keyboard-open when PWA innerHeight restores without visualViewport resize (#1106)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    document.body.appendChild(composer);
+    start();
+
+    composer.focus();
+    vvHeight = 520;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 520,
+    });
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 800,
+    });
+    window.dispatchEvent(new Event("resize"));
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+    composer.remove();
+  });
+
   it("absorbs a transient viewport expansion while typing (no teardown)", () => {
     start();
     vvHeight = 480;

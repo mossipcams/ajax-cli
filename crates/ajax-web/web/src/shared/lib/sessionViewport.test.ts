@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  isLayoutExpandedBeyondStaleVisualViewport,
   isSessionKeyboardOpen,
   layoutViewportShrinksWithKeyboard,
   pinTranscriptToLiveEdge,
@@ -29,6 +30,13 @@ describe("sessionViewport", () => {
   it("treats layout viewport shrink as already keyboard-aware (PWA / Android)", () => {
     expect(layoutViewportShrinksWithKeyboard(520, 500)).toBe(true);
     expect(sessionKeyboardPadding(520, 500, true)).toBe(0);
+  });
+
+  it("detects iOS PWA dismiss when innerHeight restored but visualViewport stayed short (#1106)", () => {
+    expect(isLayoutExpandedBeyondStaleVisualViewport(800, 520)).toBe(true);
+    expect(isLayoutExpandedBeyondStaleVisualViewport(520, 500)).toBe(false);
+    expect(isLayoutExpandedBeyondStaleVisualViewport(800, 500)).toBe(true);
+    expect(isLayoutExpandedBeyondStaleVisualViewport(800, 800)).toBe(false);
   });
 
   it("reserves bottom padding on iOS Safari (innerHeight constant, vv shrinks)", () => {
