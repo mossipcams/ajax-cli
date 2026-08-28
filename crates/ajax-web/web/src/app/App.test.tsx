@@ -440,6 +440,7 @@ describe("App shell", () => {
     expect(bottomNavRule).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
     expect(cockpitChromeRule).toMatch(/background:\s*var\(--paper\)/);
     expect(bottomNavRule).toMatch(/background:\s*var\(--paper\)/);
+    expect(bottomNavRule).toMatch(/grid-template-columns:\s*repeat\(3,\s*1fr\)/);
     expect(cockpitChromeRule).not.toMatch(/color-mix/);
     expect(bottomNavRule).not.toMatch(/color-mix/);
   });

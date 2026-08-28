@@ -44,7 +44,7 @@ test("validateFindingsDocument rejects confirmed without reproduction", async ()
       },
     ],
   });
-  assert.ok(problems.some((problem) => problem.includes("successful reproduction")));
+  assert.ok(problems.some((problem) => problem.includes("2 successful reproduction")));
 });
 
 test("normalizeFinding maps agent output to valid schema", async () => {
@@ -81,7 +81,8 @@ test("normalizeFinding maps agent output to valid schema", async () => {
   const normalized = normalizeFinding(agentFinding);
   assert.deepEqual(normalized.steps, agentFinding.reproSteps);
   assert.equal(normalized.confidence, "high");
-  assert.ok(normalized.reproductionSuccesses >= 1);
+  assert.equal(normalized.reproductionSuccesses, 0);
+  assert.equal(normalized.reproductionAttempts, 1);
   assert.equal(normalized.evidence.screenshots.length, 2);
   assert.deepEqual(normalized.relatedIssues, [835]);
   assert.equal(normalized.charter, undefined);
@@ -89,7 +90,10 @@ test("normalizeFinding maps agent output to valid schema", async () => {
 
   const doc = normalizeFindingsDocument({ version: 1, findings: [agentFinding] });
   const problems = validateFindingsDocument(doc);
-  assert.equal(problems.length, 0, problems.join("; "));
+  assert.ok(
+    problems.some((problem) => problem.includes("2 successful reproduction")),
+    problems.join("; "),
+  );
 });
 
 test("observation without expected/actual normalizes from title", async () => {
@@ -275,6 +279,271 @@ test("prepare-instance stays isolated when GIT_DIR points at the parent repo", (
   });
   assert.equal(nested.status, 0, nested.stderr);
   assert.equal(nested.stdout.trim(), demo);
+});
+
+test("validateFindingsDocument rejects confirmed evidence without existing files", async () => {
+  const { validateFindingsDocument } = await import("./exploratory/lib.mjs");
+  const problems = validateFindingsDocument({
+    version: 1,
+    findings: [
+      {
+        id: "x",
+        title: "Broken",
+        status: "confirmed",
+        confidence: "high",
+        area: "cockpit",
+        severity: "high",
+        reproductionAttempts: 2,
+        reproductionSuccesses: 2,
+        steps: ["open app"],
+        expected: "works",
+        actual: "fails",
+        evidence: {
+          notes: "only notes",
+          screenshots: ["exploratory-results/screenshots/missing.png"],
+        },
+        fingerprint: "cockpit|broken",
+      },
+    ],
+  });
+  assert.ok(problems.some((p) => p.includes("missing evidence file")));
+});
+
+test("validateFindingsSchema accepts observation with empty steps", async () => {
+  const { normalizeFindingsDocument, validateFindingsSchema } = await import("./exploratory/lib.mjs");
+  const doc = normalizeFindingsDocument({
+    version: 1,
+    findings: [
+      {
+        id: "obs-1",
+        title: "Maybe broken",
+        status: "observation",
+        area: "cockpit",
+        severity: "low",
+        reproSteps: [],
+        expected: "n/a",
+        actual: "Maybe broken",
+        evidence: {},
+      },
+    ],
+  });
+  const problems = validateFindingsSchema(doc);
+  assert.equal(problems.length, 0, problems.join("; "));
+});
+
+test("computeAgentBudget subtracts finalization reserve from agent timeout", async () => {
+  const { computeAgentBudget } = await import("./exploratory/lib.mjs");
+  assert.deepEqual(computeAgentBudget({ budgetMinutes: 12, finalizationReserveMinutes: 2 }), {
+    budgetMinutes: 12,
+    finalizationReserveMinutes: 2,
+    explorationMinutes: 10,
+    agentTimeoutSeconds: 600,
+  });
+  assert.deepEqual(computeAgentBudget({ budgetMinutes: 3, finalizationReserveMinutes: 5 }), {
+    budgetMinutes: 3,
+    finalizationReserveMinutes: 5,
+    explorationMinutes: 1,
+    agentTimeoutSeconds: 60,
+  });
+});
+
+test("prepare-prompt stop-after minutes match computeAgentBudget exploration window", () => {
+  const resultsDir = mkdtempSync(join(tmpdir(), "ajax-exploratory-prompt-"));
+  try {
+    writeFileSync(
+      join(resultsDir, "oracles.json"),
+      JSON.stringify({
+        version: 1,
+        openBugs: [],
+        recentWebCommits: [],
+        routes: ["#/"],
+        boundaryHashes: [],
+        memory: { dullActions: [], recommendedFocus: [], confirmedFingerprints: [] },
+      }),
+    );
+    writeFileSync(
+      join(resultsDir, "mission.json"),
+      JSON.stringify({
+        version: 1,
+        headSha: "abc",
+        sinceSha: null,
+        primary: { id: "garbage-hashes", charter: "Garbage hashes", area: "navigation", needsFakeAcp: false, seed: null },
+        fallback: { id: "happy-path-session", charter: "Happy path", area: "session", needsFakeAcp: true, seed: null },
+      }),
+    );
+
+    const budgetMinutes = 12;
+    const finalizationReserveMinutes = 2;
+    const result = spawnSync(process.execPath, ["scripts/exploratory/prepare-prompt.mjs"], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AJAX_EXPLORATORY_RESULTS: resultsDir,
+        AJAX_EXPLORATORY_MEMORY: join(resultsDir, "missing-memory.json"),
+        AJAX_EXPLORATORY_BUDGET_MINUTES: String(budgetMinutes),
+        AJAX_EXPLORATORY_FINALIZATION_MINUTES: String(finalizationReserveMinutes),
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+
+    const meta = JSON.parse(readFileSync(join(resultsDir, "prompt-meta.json"), "utf8"));
+    const prompt = readFileSync(join(resultsDir, "prompt.txt"), "utf8");
+    assert.equal(meta.explorationMinutes, budgetMinutes - finalizationReserveMinutes);
+    assert.match(
+      prompt,
+      new RegExp(`Stop active exploration after ~${meta.explorationMinutes} minutes`),
+    );
+    assert.doesNotMatch(
+      prompt,
+      new RegExp(`Stop active exploration after ~${meta.explorationMinutes - finalizationReserveMinutes} minutes`),
+    );
+  } finally {
+    rmSync(resultsDir, { recursive: true, force: true });
+  }
+});
+
+test("run-agent.sh applies finalization reserve to hard timeout", () => {
+  const script = readFileSync(join(root, "scripts/exploratory/run-agent.sh"), "utf8");
+  assert.match(script, /FINALIZATION_RESERVE_MINUTES/);
+  assert.match(script, /AGENT_TIMEOUT_SECONDS=\$\(\(EXPLORATION_MINUTES \* 60\)\)/);
+  assert.match(script, /"\$\{AGENT_TIMEOUT_SECONDS\}s"/);
+  assert.doesNotMatch(script, /BUDGET_SECONDS=\$\(\(BUDGET_MINUTES \* 60\)\)/);
+});
+
+test("run-agent.sh initializes budget variables before early-exit write_agent_status", () => {
+  const scriptPath = join(root, "scripts/exploratory/run-agent.sh");
+  const script = readFileSync(scriptPath, "utf8");
+  const lines = script.split("\n");
+
+  function firstLineIndex(matcher) {
+    for (let index = 0; index < lines.length; index += 1) {
+      if (matcher(lines[index])) return index;
+    }
+    return -1;
+  }
+
+  const firstEarlyExitStatus = firstLineIndex((line) =>
+    /write_agent_status\s+[12]\s+"/.test(line),
+  );
+  assert.notEqual(firstEarlyExitStatus, -1, "expected an early-exit write_agent_status call");
+
+  for (const variable of [
+    "FINALIZATION_RESERVE_MINUTES",
+    "EXPLORATION_MINUTES",
+    "AGENT_TIMEOUT_SECONDS",
+  ]) {
+    const assignmentLine = firstLineIndex((line) => line.includes(`${variable}=`));
+    assert.notEqual(assignmentLine, -1, `missing ${variable} assignment`);
+    assert.ok(
+      assignmentLine < firstEarlyExitStatus,
+      `${variable} must be assigned before early-exit write_agent_status (line ${assignmentLine + 1} vs ${firstEarlyExitStatus + 1})`,
+    );
+  }
+
+  const resultsDir = join(root, "exploratory-results");
+  mkdirSync(join(resultsDir, "logs"), { recursive: true });
+  writeFileSync(join(resultsDir, "run.json"), JSON.stringify({ version: 1 }));
+
+  const env = { ...process.env };
+  delete env.CURSOR_API_KEY;
+  const result = spawnSync("bash", [scriptPath], {
+    cwd: root,
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(result.status, 2, result.stderr + result.stdout);
+  assert.doesNotMatch(result.stderr, /unbound variable/i, result.stderr);
+  assert.match(result.stderr, /CURSOR_API_KEY/);
+
+  const run = JSON.parse(readFileSync(join(resultsDir, "run.json"), "utf8"));
+  assert.equal(run.agent.status, "failed");
+  assert.equal(run.agent.error, "missing CURSOR_API_KEY");
+  assert.equal(run.agent.budgetMinutes, 12);
+  assert.equal(run.agent.finalizationReserveMinutes, 2);
+  assert.equal(run.agent.explorationMinutes, 10);
+  assert.equal(run.agent.agentTimeoutSeconds, 600);
+});
+
+test("cli.json denies explorer writes to verifier evidence directory", () => {
+  const cli = JSON.parse(readFileSync(join(root, ".github/exploratory/cli.json"), "utf8"));
+  const deny = cli.permissions.deny.join("\n");
+  assert.match(deny, /Write\(exploratory-results\/verifier\/\*\*\)/);
+});
+
+test("hasIndependentVerifierEvidence requires deterministic-verifier source and on-disk verifier files", async () => {
+  const { hasIndependentVerifierEvidence } = await import("./exploratory/lib.mjs");
+  const finding = { id: "ownership-finding-1" };
+  const verifierDir = join(root, "exploratory-results", "verifier");
+  mkdirSync(verifierDir, { recursive: true });
+  const evidencePath = "exploratory-results/verifier/ownership-finding-1.png";
+  writeFileSync(join(root, evidencePath), "verifier-evidence\n");
+
+  const baseEntry = {
+    findingId: "ownership-finding-1",
+    reproductionSuccesses: 2,
+    evidence: { screenshots: [evidencePath] },
+  };
+
+  assert.equal(hasIndependentVerifierEvidence(finding, { version: 1, verifications: [] }), false);
+  assert.equal(
+    hasIndependentVerifierEvidence(finding, {
+      version: 1,
+      verifications: [{ ...baseEntry, source: "explorer-agent" }],
+    }),
+    false,
+  );
+  assert.equal(
+    hasIndependentVerifierEvidence(finding, {
+      version: 1,
+      verifications: [{ ...baseEntry, source: "deterministic-verifier" }],
+    }),
+    true,
+  );
+
+  rmSync(join(root, evidencePath));
+});
+
+test("isEligibleFinding rejects confirmed findings without verifier evidence", async () => {
+  const { isEligibleFinding } = await import("./exploratory/file-issues.mjs");
+  const { hasIndependentVerifierEvidence } = await import("./exploratory/lib.mjs");
+  const finding = {
+    id: "finding-agent-3",
+    status: "confirmed",
+    reproductionSuccesses: 2,
+    classification: "novel",
+    title: "Composer pending",
+    area: "session",
+    steps: ["reconnect"],
+    expected: "send works",
+    actual: "pending",
+    evidence: {},
+    fingerprint: "session|composer-pending",
+  };
+  const verifierDoc = { version: 1, verifications: [] };
+  assert.equal(hasIndependentVerifierEvidence(finding, verifierDoc), false);
+  assert.equal(isEligibleFinding(finding, { verifierDoc }), false);
+
+  const verifierEvidence = "exploratory-results/verifier/finding-agent-3.png";
+  mkdirSync(join(root, "exploratory-results", "verifier"), { recursive: true });
+  writeFileSync(join(root, verifierEvidence), "verifier-evidence\n");
+  assert.equal(
+    isEligibleFinding(finding, {
+      verifierDoc: {
+        version: 1,
+        verifications: [
+          {
+            findingId: "finding-agent-3",
+            source: "deterministic-verifier",
+            reproductionSuccesses: 2,
+            evidence: { screenshots: [verifierEvidence] },
+          },
+        ],
+      },
+    }),
+    true,
+  );
+  rmSync(join(root, verifierEvidence));
 });
 
 test("exploratory workflow stays off local verify path", async () => {

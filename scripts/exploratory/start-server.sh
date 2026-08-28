@@ -29,6 +29,7 @@ mkdir -p "$(dirname "$STATE")" "$WORKTREE_ROOT"
 
 STUBS="$ROOT/scripts/exploratory/agent-stubs"
 export PATH="$STUBS:$PATH"
+export AJAX_EXPLORATORY_FAKE_ACP="$STUBS/fake-acp"
 
 nohup "$BIN" \
   --config "$CONFIG" \

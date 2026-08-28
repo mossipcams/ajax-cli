@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Exploratory stub: Ajax launches Cursor as `agent [--model ID] acp`.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+FAKE="${AJAX_EXPLORATORY_FAKE_ACP:-$ROOT/scripts/exploratory/agent-stubs/fake-acp}"
+
+for arg in "$@"; do
+  if [[ "$arg" == "acp" ]]; then
+    exec "$FAKE" "$@"
+  fi
+done
+
+echo "exploratory agent stub: expected acp subcommand from Ajax" >&2
+exec sleep infinity

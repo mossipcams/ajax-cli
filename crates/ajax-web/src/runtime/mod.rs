@@ -36,6 +36,7 @@ use crate::adapters::http::{
 };
 
 mod bridge;
+mod server_routes;
 mod state;
 mod task_routes;
 use task_routes::{
@@ -83,10 +84,21 @@ where
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
         .route("/api/push/test", post(axum_push_test::<C, B>))
         .route("/api/version", get(axum_version))
-        .route("/api/server/restart", post(axum_server_restart))
+        .route(
+            "/api/server/runtime",
+            get(server_routes::axum_server_runtime),
+        )
+        .route(
+            "/api/server/restart",
+            post(server_routes::axum_server_restart),
+        )
+        .route(
+            "/api/server/update",
+            post(server_routes::axum_server_update),
+        )
         .route(
             "/api/server/test-in-stable",
-            post(axum_server_test_in_stable),
+            post(server_routes::axum_server_test_in_stable),
         )
         .route(
             "/api/dev-deploy",
@@ -487,45 +499,6 @@ where
             )
                 .into_response()
         }
-    }
-}
-
-async fn axum_server_restart() -> AxumResponse {
-    handle_server_restart().into_axum_response()
-}
-
-async fn axum_server_test_in_stable() -> AxumResponse {
-    handle_server_test_in_stable().into_axum_response()
-}
-
-fn handle_server_restart() -> Response {
-    server::schedule_process_restart();
-    Response {
-        status_code: 200,
-        content_type: "application/json; charset=utf-8",
-        body: br#"{"ok":true,"restarting":true}"#.to_vec(),
-    }
-}
-
-fn handle_server_test_in_stable() -> Response {
-    if !server::test_in_stable_enabled_from_env() {
-        return Response {
-            status_code: 404,
-            content_type: "application/json; charset=utf-8",
-            body: br#"{"ok":false,"error":"test in stable is not available"}"#.to_vec(),
-        };
-    }
-    let restarting = server::test_in_stable_restarts_current_instance();
-    server::schedule_test_in_stable();
-    let body = if restarting {
-        br#"{"ok":true,"restarting":true}"#.to_vec()
-    } else {
-        br#"{"ok":true,"restarting":false}"#.to_vec()
-    };
-    Response {
-        status_code: 200,
-        content_type: "application/json; charset=utf-8",
-        body,
     }
 }
 
