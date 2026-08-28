@@ -30,7 +30,7 @@ describe("TurnActivity", () => {
     expect(screen.getByTestId("session-turn-work-summary")).toBeInTheDocument();
   });
 
-  it("lists tool rows when collapsed", () => {
+  it("hides tool rows when collapsed and settled", () => {
     render(
       <TurnActivity
         items={[toolItem("t1"), toolItem("t2", { kind: "edit", title: "Edit", locations: ["/repo/b.ts"] })]}
@@ -40,10 +40,10 @@ describe("TurnActivity", () => {
     );
 
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
   });
 
-  it("shows the counted summary on a live collapsed turn when tool rows exist", () => {
+  it("shows only in-flight tool rows on a live collapsed turn", () => {
     render(
       <TurnActivity
         items={[
@@ -63,7 +63,8 @@ describe("TurnActivity", () => {
     expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
       "Read 1 file · ran 1 command",
     );
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
+    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
   });
 
   it("shows the current operation on a live collapsed turn with no tool rows yet", () => {
