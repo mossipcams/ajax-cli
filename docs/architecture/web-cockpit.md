@@ -804,12 +804,13 @@ state database and default web port, while dev uses the development state
 database and dev web port. The browser shell must not merge profile state in
 browser storage.
 
-### Runtime control panel (`#/control`)
+### Runtime control (Settings)
 
-The **Control** bottom-nav page is the operator surface for the currently
-installed Web Cockpit. It is separate from Settings **Test in Stable** and task
-details **Test in Dev**; those development workflows keep their existing routes,
-labels, and placement.
+The **Settings** page is the operator surface for the currently
+installed Web Cockpit, including server status, restart/update lifecycle
+actions, and reconnect handling. It is separate from Settings **Test in Stable**
+and task details **Test in Dev**; those development workflows keep their
+existing routes, labels, and placement within Settings and task details.
 
 | Method | Path | Role |
 | --- | --- | --- |
@@ -842,7 +843,7 @@ failure. It always deploys **stable** from `origin/main`. The endpoint is
 available on dev and stable profiles (like Settings **Test in Stable**): from
 dev it returns `{ok:true,restarting:false}` because the live dev listener stays
 up while stable rebuilds remotely; from stable it returns
-`{ok:true,restarting:true}` so the Control page waits for cutover. It spawns
+`{ok:true,restarting:true}` so Settings waits for cutover. It spawns
 `scripts/runtime-control.sh` into tmux session `ajax-runtime-update` and refuses
 when `ajax-test-in-stable` or an in-flight runtime update is already running.
 
@@ -851,9 +852,10 @@ worktrees, branches, agent processes, or registry rows. Process matching is
 limited to exact tmux session names for the web control plane and its detached
 launcher sessions.
 
-Frontend: `features/runtime-control/` with `public.ts`, route `#/control`,
+Frontend: `features/runtime-control/` with `public.ts`, embedded in `#/settings`,
 Settings design tokens, 44px targets, safe-area insets, reconnect overlay while
-health is down, and two-tap confirm on Restart and Update.
+health is down, and two-tap confirm on Restart and Update. Legacy `#/control`
+hashes redirect to `#/settings`.
 
 ### Test in Stable process model
 

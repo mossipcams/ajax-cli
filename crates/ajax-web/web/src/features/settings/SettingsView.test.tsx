@@ -8,6 +8,23 @@ import * as telemetry from "@/shared/lib/telemetry";
 import * as pushTest from "./pushTest";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
+vi.mock("@/features/runtime-control/useRuntimeControl", () => ({
+  useRuntimeControl: vi.fn(() => ({
+    status: null,
+    loading: false,
+    busy: false,
+    overlay: null,
+    error: null,
+    dismissError: vi.fn(),
+    confirmAction: null,
+    updateAvailable: false,
+    operationLabel: "idle",
+    terminalResult: null,
+    runRestart: vi.fn(),
+    runUpdate: vi.fn(),
+  })),
+}));
+
 vi.mock("@/shared/lib/telemetry", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib/telemetry")>(
     "@/shared/lib/telemetry",
@@ -281,7 +298,7 @@ describe("SettingsView", () => {
     expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("true");
   });
 
-  it("shows live debug info with origin and app version", async () => {
+  it("shows live debug info with origin", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: false,
@@ -294,7 +311,7 @@ describe("SettingsView", () => {
     render(<SettingsView />);
     const debug = screen.getByTestId("dev-settings-debug");
     expect(debug).toHaveTextContent(window.location.origin);
-    expect(debug).toHaveTextContent("0.42.0-test");
+    expect(debug).not.toHaveTextContent("0.42.0-test");
 
     meta.remove();
   });

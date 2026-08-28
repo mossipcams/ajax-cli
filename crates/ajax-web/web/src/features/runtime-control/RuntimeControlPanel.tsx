@@ -1,10 +1,6 @@
 import { Button } from "@/shared/ui/button";
 import { useRuntimeControl } from "./useRuntimeControl";
 
-interface Props {
-  onBack?: () => void;
-}
-
 function formatUptime(seconds?: number): string {
   if (seconds == null) return "—";
   if (seconds < 60) return `${seconds}s`;
@@ -15,7 +11,7 @@ function formatUptime(seconds?: number): string {
   return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
 
-export default function RuntimeControlView({ onBack }: Props) {
+export default function RuntimeControlPanel() {
   const {
     status,
     loading,
@@ -34,18 +30,11 @@ export default function RuntimeControlView({ onBack }: Props) {
   const logs = status?.logs ?? [];
 
   return (
-    <section className="runtime-control-view" aria-labelledby="runtime-control-heading">
-      <div className="runtime-control-header">
-        <Button type="button" variant="secondary" onClick={() => onBack?.()}>
-          Back
-        </Button>
-        <h2 id="runtime-control-heading">Control</h2>
-      </div>
-
-      <div className="runtime-control-section" data-testid="runtime-control-status">
-        <h3>Server status</h3>
-        {loading ? <p className="runtime-control-note">Loading…</p> : null}
-        <dl className="runtime-control-dl">
+    <>
+      <div className="settings-section" data-testid="runtime-control-status">
+        <h3>Server</h3>
+        {loading ? <p className="settings-note">Loading…</p> : null}
+        <dl className="settings-debug">
           <div>
             <dt>Health</dt>
             <dd>{status?.ok ? "ok" : "unknown"}</dd>
@@ -83,9 +72,9 @@ export default function RuntimeControlView({ onBack }: Props) {
         </dl>
       </div>
 
-      <div className="runtime-control-section" data-testid="runtime-control-actions">
+      <div className="settings-section" data-testid="runtime-control-actions">
         <h3>Lifecycle</h3>
-        <p className="runtime-control-note">
+        <p className="settings-note">
           Restart relaunches the currently installed control plane only. Update deploys
           origin/main to stable using the existing safe-deploy path.
         </p>
@@ -112,9 +101,9 @@ export default function RuntimeControlView({ onBack }: Props) {
       </div>
 
       {logs.length > 0 ? (
-        <div className="runtime-control-section" data-testid="runtime-control-logs">
+        <div className="settings-section" data-testid="runtime-control-logs">
           <h3>Recent logs</h3>
-          <pre className="runtime-control-log">{logs.join("\n")}</pre>
+          <pre className="settings-status">{logs.join("\n")}</pre>
         </div>
       ) : null}
 
@@ -135,10 +124,10 @@ export default function RuntimeControlView({ onBack }: Props) {
         <div className="runtime-control-overlay" role="status" aria-live="polite">
           <div className="runtime-control-overlay-card">
             <p className="runtime-control-status">{overlay}</p>
-            <p className="runtime-control-note">Waiting for the listener to return…</p>
+            <p className="settings-note">Waiting for the listener to return…</p>
           </div>
         </div>
       ) : null}
-    </section>
+    </>
   );
 }
