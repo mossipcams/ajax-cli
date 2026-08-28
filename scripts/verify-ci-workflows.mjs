@@ -89,8 +89,8 @@ function verifyExploratory(workflow, fail) {
   if (!triggers.includes("schedule")) {
     fail("exploratory-testing.yml must run on a schedule.");
   }
-  if (!triggers.includes("workflow_dispatch")) {
-    fail("exploratory-testing.yml must allow workflow_dispatch.");
+  if (triggers.includes("workflow_dispatch")) {
+    fail("exploratory-testing.yml must not expose agent-bearing workflow_dispatch.");
   }
   if (triggers.includes("push") || triggers.includes("pull_request")) {
     fail(
@@ -100,16 +100,13 @@ function verifyExploratory(workflow, fail) {
   }
 
   const dispatchInputs = on?.workflow_dispatch?.inputs ?? {};
-  if (dispatchInputs.budget_minutes?.default !== "12") {
-    fail("exploratory workflow_dispatch budget_minutes default must be \"12\".");
+  if (Object.keys(dispatchInputs).length > 0) {
+    fail("exploratory-testing.yml must not define workflow_dispatch inputs.");
   }
 
   const budgetEnv = workflow.env?.AJAX_EXPLORATORY_BUDGET_MINUTES ?? "";
-  if (!String(budgetEnv).includes("github.event.inputs.budget_minutes")) {
-    fail("exploratory-testing.yml must preserve budget_minutes workflow_dispatch override.");
-  }
-  if (!String(budgetEnv).includes("'12'")) {
-    fail("exploratory-testing.yml AJAX_EXPLORATORY_BUDGET_MINUTES fallback must be '12'.");
+  if (!String(budgetEnv).includes("'12'") && budgetEnv !== "12" && !String(budgetEnv).includes('"12"')) {
+    fail("exploratory-testing.yml AJAX_EXPLORATORY_BUDGET_MINUTES must be '12'.");
   }
 
   const jobs = workflow.jobs ?? {};
@@ -128,12 +125,21 @@ function verifyExploratory(workflow, fail) {
     fail("exploratory explore job must set timeout-minutes ≤ 45.");
   }
 
+  const schedule = on?.schedule ?? [];
+  const cronValues = schedule.map((entry) => entry.cron).filter(Boolean);
+  if (!cronValues.includes("17 6 * * *")) {
+    fail('exploratory-testing.yml schedule must include cron "17 6 * * *".');
+  }
+
   const text = JSON.stringify(explore);
   for (const needle of [
     "CURSOR_API_KEY",
     "actions/upload-artifact@v4",
     "always()",
     "scripts/exploratory/run-agent.sh",
+    "scripts/exploratory/plan-mission.mjs",
+    "scripts/exploratory/preflight-fake-acp.mjs",
+    "scripts/exploratory/classify-findings.mjs",
     "scripts/exploratory/prepare-oracles.mjs",
     "scripts/exploratory/file-issues.mjs",
     "npx playwright install --with-deps webkit",

@@ -1,10 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { DETERMINISTIC_VERIFIER_SOURCE } from "./exploratory/lib.mjs";
 
-function writeResults({ findings = [], run = {} } = {}) {
+const root = join(fileURLToPath(import.meta.url), "..", "..");
+const VERIFIER_FIXTURE_SUBDIR = "file-issues-test";
+
+function setupVerifierFixtures(findingIds) {
+  const verifierDir = join(root, "exploratory-results", "verifier", VERIFIER_FIXTURE_SUBDIR);
+  mkdirSync(verifierDir, { recursive: true });
+  const verifications = [];
+  const evidencePaths = [];
+  for (const findingId of findingIds) {
+    const evidencePath = `exploratory-results/verifier/${VERIFIER_FIXTURE_SUBDIR}/${findingId}.png`;
+    writeFileSync(join(root, evidencePath), "verifier-evidence\n");
+    evidencePaths.push(evidencePath);
+    verifications.push({
+      findingId,
+      source: DETERMINISTIC_VERIFIER_SOURCE,
+      reproductionSuccesses: 2,
+      evidence: { screenshots: [evidencePath] },
+    });
+  }
+  return {
+    doc: { version: 1, verifications },
+    cleanup() {
+      for (const evidencePath of evidencePaths) {
+        rmSync(join(root, evidencePath), { force: true });
+      }
+    },
+  };
+}
+
+function writeResults({ findings = [], run = {}, verifierFindingIds = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "expl-issues-"));
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -15,10 +46,18 @@ function writeResults({ findings = [], run = {} } = {}) {
     join(dir, "run.json"),
     JSON.stringify({ version: 1, headSha: "abc123def", ...run }),
   );
+  const verifier = verifierFindingIds.length > 0
+    ? setupVerifierFixtures(verifierFindingIds)
+    : null;
+  if (verifier) {
+    writeFileSync(join(dir, "verifier.json"), JSON.stringify(verifier.doc));
+  }
   return {
     findingsPath: join(dir, "findings.json"),
     runPath: join(dir, "run.json"),
     issuesPath: join(dir, "issues.json"),
+    verifierPath: join(dir, "verifier.json"),
+    cleanupVerifier: verifier?.cleanup ?? (() => {}),
   };
 }
 
@@ -27,6 +66,7 @@ function fileOpts(paths, extra = {}) {
     findingsPath: paths.findingsPath,
     runPath: paths.runPath,
     issuesPath: paths.issuesPath,
+    verifierPath: paths.verifierPath,
     argv: [],
     ...extra,
   };
@@ -51,6 +91,7 @@ function baseFinding(overrides = {}) {
       networkFailures: ["POST /api/messages 500"],
     },
     fingerprint: "session|composer-pending-after-reconnect",
+    classification: "novel",
     ...overrides,
   };
 }
@@ -67,6 +108,9 @@ function fakeGh({ listIssues = [], createShouldFail = false } = {}) {
         throw new Error("gh issue create failed");
       }
       return "https://github.com/mossipcams/ajax-cli/issues/99\n";
+    }
+    if (args[0] === "issue" && args[1] === "comment") {
+      return "";
     }
     throw new Error(`unexpected gh args: ${args.join(" ")}`);
   };
@@ -103,7 +147,7 @@ test("confirmed finding creates issue body with fingerprint and mapped severity"
   assert.match(body, /Console errors:/);
   assert.match(body, /Network failures:/);
 
-  const paths = writeResults({ findings: [finding] });
+  const paths = writeResults({ findings: [finding], verifierFindingIds: ["f1"] });
   const gh = fakeGh();
   const exitCode = fileIssues(
     fileOpts(paths, {
@@ -116,6 +160,7 @@ test("confirmed finding creates issue body with fingerprint and mapped severity"
       },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
   assert.equal(gh.calls.filter((args) => args[1] === "create").length, 1);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
@@ -126,7 +171,7 @@ test("confirmed finding creates issue body with fingerprint and mapped severity"
 test("duplicate by fingerprint avoids create", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const finding = baseFinding();
-  const paths = writeResults({ findings: [finding] });
+  const paths = writeResults({ findings: [finding], verifierFindingIds: ["f1"] });
   const gh = fakeGh({
     listIssues: [
       {
@@ -143,6 +188,7 @@ test("duplicate by fingerprint avoids create", async () => {
       env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
   assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
@@ -153,7 +199,7 @@ test("duplicate by fingerprint avoids create", async () => {
 test("duplicate by title avoids create", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const finding = baseFinding({ fingerprint: undefined });
-  const paths = writeResults({ findings: [finding] });
+  const paths = writeResults({ findings: [finding], verifierFindingIds: ["f1"] });
   const gh = fakeGh({
     listIssues: [
       {
@@ -170,20 +216,21 @@ test("duplicate by title avoids create", async () => {
       env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
   assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
   assert.equal(issues[0].action, "duplicate");
 });
 
-test("duplicate by relatedIssues avoids create even when titles differ", async () => {
+test("relatedIssues hints do not suppress filing", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const finding = baseFinding({
     title: "Totally different title from open issue",
     fingerprint: "session|unrelated-fingerprint",
     relatedIssues: [810],
   });
-  const paths = writeResults({ findings: [finding] });
+  const paths = writeResults({ findings: [finding], verifierFindingIds: ["f1"] });
   const gh = fakeGh({
     listIssues: [
       {
@@ -200,20 +247,52 @@ test("duplicate by relatedIssues avoids create even when titles differ", async (
       env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
     }),
   );
+  paths.cleanupVerifier();
+  assert.equal(exitCode, 0);
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 1);
+  const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
+  assert.equal(issues[0].action, "created");
+});
+
+test("known confirmed finding records duplicate without create", async () => {
+  const { fileIssues } = await import("./exploratory/file-issues.mjs");
+  const finding = baseFinding({
+    classification: "known",
+    fingerprint: "session|composer-pending-after-reconnect",
+  });
+  const paths = writeResults({ findings: [finding], verifierFindingIds: ["f1"] });
+  const gh = fakeGh({
+    listIssues: [
+      {
+        number: 12,
+        title: "[defect] Web Cockpit unrelated title",
+        body: "Some notes\n<!-- exploratory-fingerprint: session|composer-pending-after-reconnect -->",
+        url: "https://github.com/mossipcams/ajax-cli/issues/12",
+      },
+    ],
+  });
+  const exitCode = fileIssues(
+    fileOpts(paths, {
+      execGh: gh.exec,
+      env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
+    }),
+  );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
   assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
   assert.equal(issues[0].action, "duplicate");
-  assert.equal(issues[0].issueNumber, 810);
 });
 
 test("observation and rejected findings are not filed", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const paths = writeResults({
     findings: [
-      baseFinding({ id: "obs", status: "observation", reproductionSuccesses: 1 }),
-      baseFinding({ id: "rej", status: "rejected", reproductionSuccesses: 1 }),
+      baseFinding({ id: "obs", status: "observation", reproductionSuccesses: 2, classification: undefined }),
+      baseFinding({ id: "rej", status: "rejected", reproductionSuccesses: 2, classification: undefined }),
+      baseFinding({ id: "known", classification: "known" }),
     ],
+    verifierFindingIds: ["known"],
   });
   const gh = fakeGh();
   const exitCode = fileIssues(
@@ -222,16 +301,33 @@ test("observation and rejected findings are not filed", async () => {
       env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
-  assert.equal(gh.calls.length, 1);
-  assert.equal(gh.calls[0][1], "list");
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
+  const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].action, "duplicate");
+});
+
+test("confirmed finding without verifier evidence is not filed", async () => {
+  const { fileIssues } = await import("./exploratory/file-issues.mjs");
+  const paths = writeResults({ findings: [baseFinding()] });
+  const gh = fakeGh();
+  const exitCode = fileIssues(
+    fileOpts(paths, {
+      execGh: gh.exec,
+      env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
+    }),
+  );
+  assert.equal(exitCode, 0);
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
   assert.equal(issues.length, 0);
 });
 
 test("outside GitHub Actions without force skips filing", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
-  const paths = writeResults({ findings: [baseFinding()] });
+  const paths = writeResults({ findings: [baseFinding()], verifierFindingIds: ["f1"] });
   const gh = fakeGh();
   const exitCode = fileIssues(
     fileOpts(paths, {
@@ -239,6 +335,7 @@ test("outside GitHub Actions without force skips filing", async () => {
       env: { GITHUB_ACTIONS: "false" },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 0);
   assert.equal(gh.calls.length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
@@ -247,7 +344,7 @@ test("outside GitHub Actions without force skips filing", async () => {
 
 test("create failure exits 1", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
-  const paths = writeResults({ findings: [baseFinding()] });
+  const paths = writeResults({ findings: [baseFinding()], verifierFindingIds: ["f1"] });
   const gh = fakeGh({ createShouldFail: true });
   const exitCode = fileIssues(
     fileOpts(paths, {
@@ -255,6 +352,7 @@ test("create failure exits 1", async () => {
       env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
     }),
   );
+  paths.cleanupVerifier();
   assert.equal(exitCode, 1);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
   assert.equal(issues[0].action, "failed");
