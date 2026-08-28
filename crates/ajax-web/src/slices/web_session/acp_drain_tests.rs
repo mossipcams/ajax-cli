@@ -19,6 +19,7 @@ fn finished_prompt_reports_turn_end_with_stop_reason() {
         Ok(json!({ "stopReason": "end_turn" })),
         Some(1),
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
@@ -42,6 +43,7 @@ fn finished_prompt_with_cursor_usage_emits_turn_usage_before_turn_end() {
         })),
         Some(9),
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
@@ -68,7 +70,8 @@ fn finished_non_prompt_request_reports_nothing() {
             "session/cancel",
             Ok(json!({})),
             None,
-            &mut UsageDeduper::default()
+            &mut UsageDeduper::default(),
+            false,
         ),
         Vec::<SessionServerEvent>::new()
     );
@@ -81,6 +84,7 @@ fn failed_request_reports_error() {
         Err("boom".to_string()),
         None,
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
@@ -98,6 +102,7 @@ fn retriable_non_cancel_prompt_failure_maps_to_host_owned_error() {
         Err(raw.to_string()),
         None,
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
@@ -120,6 +125,7 @@ fn retriable_non_cancel_non_prompt_failure_maps_to_host_owned_error() {
         Err("RetriableError: deadline exceeded".to_string()),
         None,
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
@@ -130,10 +136,37 @@ fn retriable_non_cancel_non_prompt_failure_maps_to_host_owned_error() {
 }
 
 #[test]
-fn cancellation_shaped_prompt_failures_report_turn_end_cancelled() {
+fn host_requested_cancel_shaped_prompt_failures_report_turn_end_cancelled() {
     let cases = [
         "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
-        "RetriableError: [cancelled] http/2 stream closed with error code REFUSED_STREAM (0x7)",
+        "Error: RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+        "[canceled] http/2 stream closed",
+        "context canceled",
+        "http/2 stream closed with error code CANCEL (0x8)",
+    ];
+    for message in cases {
+        let events = map_request_finished(
+            "session/prompt",
+            Err(message.to_string()),
+            None,
+            &mut UsageDeduper::default(),
+            true,
+        );
+        assert_eq!(
+            events,
+            vec![SessionServerEvent::TurnEnd {
+                stop_reason: Some("cancelled".to_string()),
+            }],
+            "expected cancelled turn_end for host-requested cancel: {message}"
+        );
+    }
+}
+
+#[test]
+fn unsolicited_cancellation_shaped_prompt_failures_report_connection_interrupted() {
+    let cases = [
+        "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+        "Error: RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
         "[canceled] http/2 stream closed",
         "context canceled",
         "rpc error: code = Canceled desc = stream reset by peer",
@@ -145,13 +178,27 @@ fn cancellation_shaped_prompt_failures_report_turn_end_cancelled() {
             Err(message.to_string()),
             None,
             &mut UsageDeduper::default(),
+            false,
         );
         assert_eq!(
             events,
-            vec![SessionServerEvent::TurnEnd {
-                stop_reason: Some("cancelled".to_string()),
+            vec![SessionServerEvent::Error {
+                message: CONNECTION_INTERRUPTED_MESSAGE.to_string(),
             }],
-            "expected cancelled turn_end for cancel-shaped abort: {message}"
+            "expected connection interrupted for unsolicited cancel-shaped abort: {message}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. })),
+            "unsolicited cancel-shaped failure must not emit turn_end: {message}"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                SessionServerEvent::Error { message } if message.contains("RetriableError")
+            )),
+            "raw RetriableError must not reach the operator: {message}"
         );
     }
 }
@@ -187,6 +234,7 @@ fn non_cancel_transport_prompt_failures_report_host_owned_error() {
             Err(message.to_string()),
             None,
             &mut UsageDeduper::default(),
+            false,
         );
         assert_eq!(
             events,
@@ -212,6 +260,7 @@ fn genuine_prompt_failures_still_report_error() {
             Err(message.to_string()),
             None,
             &mut UsageDeduper::default(),
+            false,
         );
         assert_eq!(
             events,
@@ -230,6 +279,7 @@ fn cancellation_shaped_non_prompt_failure_still_reports_error() {
         Err("[canceled] http/2 stream closed".to_string()),
         None,
         &mut UsageDeduper::default(),
+        false,
     );
     assert_eq!(
         events,
