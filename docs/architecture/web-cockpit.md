@@ -221,9 +221,11 @@ field is refused (`unsupported_capability`). Same-harness Switch is refused;
 connected model, effort, and Fast changes use the composer controls. Cross-harness
 Switch clears the prior harness model pin, resets backend context on the live slot
 (cancel in-flight work, shut down the old ACP child, spawn the new harness with
-empty context), and keeps the TaskSession slot and JSONL transcript; with no live
-slot, persist `agent` with `session_model: None` and clear the stored resume id so
-the next attach uses `session/new`. Switch is refused for a task that was launched
+empty context via `session/new`, advance `contextEpoch`), and keeps the
+TaskSession slot and JSONL transcript; with no live slot, persist `agent` with
+`session_model: None` and clear the stored resume id so the next attach uses
+`session/new`. Switch discards the previous ACP conversation; Ajax does not
+restore, retry, or preserve model context across harness changes. Switch is refused for a task that was launched
 interactively, because that task's agent is live in its tmux pane and the registry
 must not name a harness that is not the running process.
 
@@ -305,8 +307,20 @@ reports a warning. New Task and idle catalog selection still use only
 
 **Harness Switch (MVP).** Cross-harness Switch in task details sends only the target
 harness (no model picker). It clears the prior harness model pin, resets ACP
-context, and keeps the transcript. Same-harness model changes use the connected
+context with a fresh `session/new` boundary, and keeps the transcript for
+operator visibility. Same-harness model changes use the connected
 composer controls or legacy `set_model`, not Switch.
+
+**ACP context continuity.** Snapshots expose required `contextState`,
+`contextEpoch`, and optional `contextError` / `transcriptError`. The browser
+must gate Send from host continuity state, not from replayed transcript rows
+alone. When restore fails, the host projects `unavailable` and refuses prompts
+instead of silently calling `session/new` behind the same session identity.
+Visible history is not model continuity. Live process-replacement smokes
+(2026-08-27): Codex passed; Cursor, Claude, and Pi failed external restore on
+this host — admission flags (`supports_durable_restore`) stay true; Ajax
+fail-closes rather than faking restore. See
+[`web-session-behavior.md`](web-session-behavior.md#acp-context-continuity).
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. Prompt

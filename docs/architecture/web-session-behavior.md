@@ -33,6 +33,33 @@ preference, or Diff routing.
   [`web-cockpit.md`](web-cockpit.md); Terminal is not the default Task Workspace
   surface for session-capable provisioned tasks.
 
+## ACP context continuity
+
+Host-owned context identity is separate from browser-visible transcript history.
+
+- Protocol v2 snapshots require `contextState` (`live`, `restored`, or
+  `unavailable`), `contextEpoch`, and optional `contextError` /
+  `transcriptError`. The browser gates prompting from these fields; it must not
+  infer model continuity from replayed JSONL rows alone.
+- A stored ACP session id means **restore this context**, never try resume/load
+  and silently fall back to `session/new`. When both restore paths fail or the
+  harness lacks restore capability, the host keeps the stored id, projects
+  `unavailable`, and refuses new prompts until explicit recovery or task Drop.
+- **Switch** (cross-harness) is a new-context boundary: cancel in-flight work,
+  shut down the old child, clear the stored resume id, spawn with `session/new`
+  (no resume/load), advance `contextEpoch`, and append a host note. The prior
+  ACP conversation is discarded; Ajax does not restore or retry it across Switch.
+- Idle detach and `ajax-web` restart may reload JSONL and reattach viewers, but
+  only a successful `session/resume` or `session/load` proves restored model
+  context (`restored`). Transcript replay after cold load is visible history,
+  not proof the agent remembers prior turns.
+- **Live restore evidence (2026-08-27):** deterministic tests and architecture
+  guards enforce fail-closed restore. External process-replacement smokes:
+  Codex bridge restore **passed**; Cursor, Claude, and Pi **failed** restore on
+  this host after one completed turn. Ajax `supports_durable_restore` admission
+  flags remain `true` for all four harnesses; Ajax blocks on restore failure
+  rather than silently starting fresh or removing Chat admission.
+
 ## Flag-off parity
 
 The browser preference (`ajax.web.session.orchestrationChat`) defaults **on**
@@ -162,9 +189,9 @@ existing paths.
   Switch resets backend context on the same public Ajax session: cancel any
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
-  transcript replay), append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot, JSONL transcript, and WebSocket
-  identity. With no live slot, persist only and clear the stored resume id so the
+  transcript replay), advance `contextEpoch`, append a host note (`Client switched harness. Context
+  reset.`), and keep the TaskSession slot and JSONL transcript for visible
+  history only. The prior ACP conversation is discarded. With no live slot, persist only and clear the stored resume id so the
   next attach uses empty context. Switch sends only `{ agent }`; a model field is
   refused. Persist `None` for Auto/unspecified; never store the literal string
   `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).

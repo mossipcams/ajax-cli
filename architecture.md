@@ -180,6 +180,21 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   must not import `ajax-web::runtime`. HTTP/WebSocket routes acquire directory
   handles and delegate through `ws_bridge` without interpreting queue, model,
   transcript, or permission state.
+- **ACP context continuity** is host-owned state in `web_session`, not browser
+  transcript replay. Protocol v2 snapshots carry required `contextState`,
+  `contextEpoch`, and optional `contextError` / `transcriptError`. A stored ACP
+  session id means restore this context: when `session/resume` and
+  `session/load` both fail, Ajax fail-closes (`unavailable`) and refuses new
+  prompts instead of silently calling `session/new` behind the same transcript.
+  Visible JSONL history is operator evidence only; it does not prove the harness
+  still holds model context. Cross-harness **Switch** is a new-context boundary
+  (`session/new` + epoch advance) that discards the previous ACP conversation;
+  Ajax does not restore, retry, or preserve context across Switch. Live
+  process-replacement restore smokes (2026-08-27): Codex passed; Cursor,
+  Claude, and Pi failed on external bridge restore — `supports_durable_restore`
+  admission flags stay true; Ajax blocks rather than faking restore or dropping
+  Chat admission. Falsifiable rules and failure UX live in
+  [`docs/architecture/web-session-behavior.md`](docs/architecture/web-session-behavior.md).
 - Automatic CI failures are transport-neutral core notifications. Web routes
   orchestration-chat (ACP) tasks through the existing `TaskSession` FIFO,
   acquiring or creating the associated session when needed (same path as Chat
