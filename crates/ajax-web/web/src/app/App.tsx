@@ -1,6 +1,5 @@
 import { Activity, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  controlHash,
   dashboardHash,
   parseRoute,
   projectHash,
@@ -27,7 +26,6 @@ import {
 } from "@/features/task/public";
 import DiffReview from "@/features/diff/DiffReview";
 import SettingsView from "@/features/settings/SettingsView";
-import { RuntimeControlView } from "@/features/runtime-control/public";
 import { useOrchestrationChatEnabled } from "@/features/settings/public";
 import {
   detailSessionCapable,
@@ -507,6 +505,17 @@ function AppContent() {
   }, [route.kind, route.handle, orchestrationChat]);
 
   useEffect(() => {
+    if (window.location.hash === "#/control") {
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}${settingsHash()}`,
+      );
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
+  }, []);
+
+  useEffect(() => {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
       document.title = `${route.handle} — Ajax`;
@@ -516,8 +525,6 @@ function AppContent() {
       document.title = "New session — Ajax";
     } else if (kind === "settings") {
       document.title = "Settings — Ajax";
-    } else if (kind === "control") {
-      document.title = "Control — Ajax";
     } else if (kind === "project" && route.project) {
       document.title = `${route.project} — Ajax`;
     } else {
@@ -529,7 +536,6 @@ function AppContent() {
     const kind = route.kind;
     const contentReady =
       kind === "settings" ||
-      kind === "control" ||
       (kind === "session" && (!route.handle || detail.status !== "loading")) ||
       (kind === "task" && detail.status !== "loading" && detail.data) ||
       kind === "diff" ||
@@ -739,19 +745,6 @@ function AppContent() {
       );
     }
 
-    if (activeRoute.kind === "control") {
-      return (
-        <section
-          key={surfaceKey}
-          data-outlet="control"
-          data-testid="outlet-control"
-          aria-live="polite"
-        >
-          <RuntimeControlView onBack={() => go(dashboardHash())} />
-        </section>
-      );
-    }
-
     if (activeRoute.kind === "session" && orchestrationChat && !activeRoute.handle) {
       return (
         <section
@@ -912,14 +905,6 @@ function AppContent() {
         onClick={() => go(dashboardHash())}
       >
         Dashboard
-      </button>
-      <button
-        type="button"
-        data-bottom-route="#/control"
-        aria-current={route.kind === "control" ? "page" : undefined}
-        onClick={() => go(controlHash())}
-      >
-        Control
       </button>
       <button
         type="button"

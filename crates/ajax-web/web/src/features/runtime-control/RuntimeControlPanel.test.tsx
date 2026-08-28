@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import RuntimeControlView from "./RuntimeControlView";
+import RuntimeControlPanel from "./RuntimeControlPanel";
 import { useRuntimeControl } from "./useRuntimeControl";
 
 const baseHook = {
@@ -33,9 +33,9 @@ vi.mock("./useRuntimeControl", () => ({
   useRuntimeControl: vi.fn(() => baseHook),
 }));
 
-describe("RuntimeControlView", () => {
+describe("RuntimeControlPanel", () => {
   it("renders status, actions, and logs", () => {
-    render(<RuntimeControlView />);
+    render(<RuntimeControlPanel />);
     expect(screen.getByTestId("runtime-control-status")).toBeInTheDocument();
     expect(screen.getByTestId("runtime-restart")).toBeInTheDocument();
     expect(screen.getByTestId("runtime-update")).toBeInTheDocument();
@@ -50,7 +50,7 @@ describe("RuntimeControlView", () => {
       dismissError,
     });
 
-    render(<RuntimeControlView />);
+    render(<RuntimeControlPanel />);
     expect(screen.getByTestId("runtime-control-error")).toBeInTheDocument();
     expect(
       screen.queryByText("Waiting for the listener to return…"),

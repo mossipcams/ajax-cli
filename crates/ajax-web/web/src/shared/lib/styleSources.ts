@@ -35,7 +35,7 @@ export const BASELINE = {
    * Re-measured after the turn-disclosure comment in conversation.css grew to
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged).
-   * Re-measured after runtime control panel CSS (#/control operator page). */
+   * Re-measured after runtime control panel CSS (Settings server section). */
   sourceStylesCssBytes: 110_918,
   builtAppCssBytes: 96_857,
   builtAppCssGzipBytes: 16_945,

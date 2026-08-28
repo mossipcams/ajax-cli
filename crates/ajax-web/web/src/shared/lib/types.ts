@@ -23,7 +23,6 @@ export type RouteKind =
   | "task"
   | "diff"
   | "settings"
-  | "control"
   | "session";
 
 /** Read-only Diff Review projection (mirrors ajax-web `diff_review` DTOs). */
