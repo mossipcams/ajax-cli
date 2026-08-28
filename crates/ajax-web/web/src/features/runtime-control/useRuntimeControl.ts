@@ -34,6 +34,8 @@ export function useRuntimeControl() {
     try {
       const next = await fetchRuntimeStatus();
       setStatus(next);
+    } catch {
+      // Poll failures leave status unchanged; operation errors use setError in runOperation.
     } finally {
       setLoading(false);
     }

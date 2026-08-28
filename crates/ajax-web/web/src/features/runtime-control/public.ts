@@ -1,1 +1,1 @@
-export { default as RuntimeControlView } from "./RuntimeControlView";
+export { default as RuntimeControlPanel } from "./RuntimeControlPanel";

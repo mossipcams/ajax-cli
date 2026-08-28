@@ -20,8 +20,8 @@ describe("parseRoute", () => {
     expect(parseRoute("#/settings")).toEqual({ kind: "settings" });
   });
 
-  it("parses the control route", () => {
-    expect(parseRoute("#/control")).toEqual({ kind: "control" });
+  it("redirects the legacy control hash to settings", () => {
+    expect(parseRoute("#/control")).toEqual({ kind: "settings" });
   });
 
   it("parses session starter and orchestration routes", () => {
@@ -112,7 +112,7 @@ describe("route formatters", () => {
   it("formats hashes with encoding", () => {
     expect(dashboardHash()).toBe("#/");
     expect(settingsHash()).toBe("#/settings");
-    expect(controlHash()).toBe("#/control");
+    expect(controlHash()).toBe("#/settings");
     expect(projectHash("my repo")).toBe("#/p/my%20repo");
     expect(taskHash("web/fix-login")).toBe("#/t/web%2Ffix-login");
     expect(taskDiffHash("web/fix-login")).toBe("#/t/web%2Ffix-login/diff");

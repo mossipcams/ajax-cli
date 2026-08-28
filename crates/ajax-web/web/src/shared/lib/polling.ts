@@ -33,7 +33,6 @@ export type PollingRouteKind =
   | "task"
   | "diff"
   | "settings"
-  | "control"
   | "session";
 
 export function cockpitRefreshIntervalMs(input: {
@@ -45,7 +44,7 @@ export function cockpitRefreshIntervalMs(input: {
   if (input.routeKind === "task" || input.routeKind === "session") {
     return REFRESH_INTERVAL_TERMINAL_MS;
   }
-  if (input.routeKind === "settings" || input.routeKind === "diff" || input.routeKind === "control") {
+  if (input.routeKind === "settings" || input.routeKind === "diff") {
     return REFRESH_INTERVAL_IDLE_MS;
   }
   if (
