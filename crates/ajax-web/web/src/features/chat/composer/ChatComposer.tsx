@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import ResultPanel from "@/shared/ui/ResultPanel";
+import { Button } from "@/shared/ui/button";
 import {
   attachComposerHotbarKeyboardRetention,
   preventComposerHotbarFocusSteal,
@@ -9,9 +11,25 @@ import { useComposerContext } from "./useComposer";
 export type ChatComposerProps = {
   notice?: ReactNode;
   modelControl?: ReactNode;
+  contextUnavailable?: boolean;
+  contextError?: string;
+  transcriptError?: string;
+  onRetryRestore?: () => void;
+  onStartNewContext?: () => void;
 };
 
-export default function ChatComposer({ notice = null, modelControl = null }: ChatComposerProps) {
+const DEFAULT_CONTEXT_UNAVAILABLE_MESSAGE =
+  "This session context could not be restored. Retry restore or start a new context to continue.";
+
+export default function ChatComposer({
+  notice = null,
+  modelControl = null,
+  contextUnavailable = false,
+  contextError,
+  transcriptError,
+  onRetryRestore,
+  onStartNewContext,
+}: ChatComposerProps) {
   const {
     draft,
     composerRef,
@@ -25,6 +43,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     onComposerKeyDown,
     submitComposer,
     connected,
+    promptingEnabled,
     everOpened,
     busy,
     slashMatches,
@@ -43,6 +62,11 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
   } = useComposerContext();
 
   const hotbarRef = useRef<HTMLDivElement>(null);
+  const [confirmStartNewContext, setConfirmStartNewContext] = useState(false);
+
+  useEffect(() => {
+    if (!contextUnavailable) setConfirmStartNewContext(false);
+  }, [contextUnavailable]);
 
   useLayoutEffect(() => {
     if (draftRestoreGeneration === 0) return;
@@ -57,6 +81,12 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     return attachComposerHotbarKeyboardRetention(hotbar);
   }, []);
 
+  const canPrompt = connected && promptingEnabled;
+  const contextNotice = contextUnavailable
+    ? (contextError?.trim() || DEFAULT_CONTEXT_UNAVAILABLE_MESSAGE)
+    : null;
+  const transcriptNotice = transcriptError?.trim() || null;
+
   return (
     <form
       className="session-composer"
@@ -65,6 +95,43 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
       onSubmit={submitComposer}
     >
       {notice}
+      {contextUnavailable && contextNotice ? (
+        <div
+          className="session-config-notice"
+          data-testid="session-context-notice"
+          role="alert"
+        >
+          <p>{contextNotice}</p>
+          <div className="session-context-recovery-actions" data-testid="session-context-recovery">
+            <Button type="button" variant="default" onClick={() => onRetryRestore?.()}>
+              Retry restore
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setConfirmStartNewContext(true)}>
+              Start new context
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {!contextUnavailable && transcriptNotice ? (
+        <div
+          className="session-config-notice"
+          data-testid="session-transcript-notice"
+          role="alert"
+        >
+          <p>{transcriptNotice}</p>
+        </div>
+      ) : null}
+      {confirmStartNewContext ? (
+        <ResultPanel
+          message="Start a new context? The visible transcript stays, but the agent will not remember prior turns."
+          onConfirm={() => {
+            onStartNewContext?.();
+            setConfirmStartNewContext(false);
+          }}
+          onCancelConfirm={() => setConfirmStartNewContext(false)}
+          onDismiss={() => setConfirmStartNewContext(false)}
+        />
+      ) : null}
       {attachmentError ? (
         <p className="session-composer-attachment-error" role="alert">
           {attachmentError}
@@ -136,7 +203,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           type="button"
           className="session-composer-button session-composer-attach"
           aria-label="Attach"
-          disabled={!connected || !canAttach}
+          disabled={!canPrompt || !canAttach}
           hidden={!canAttach}
           onMouseDown={preventComposerHotbarFocusSteal}
           onClick={() => attachInputRef.current?.click()}
@@ -162,7 +229,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           aria-label={micArmed ? "Stop voice input" : micAriaLabel}
           title={micArmed ? "Stop voice input" : micAriaLabel}
           disabled={
-            !connected ||
+            !canPrompt ||
             speechModel.state === "connecting" ||
             speechModel.state === "finalizing"
           }
@@ -175,7 +242,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!connected || (!draft.trim() && queued === null)}
+          disabled={!canPrompt || (!draft.trim() && queued === null)}
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg
@@ -204,11 +271,15 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
             ? everOpened
               ? "Reconnecting…"
               : "Starting…"
-            : queued !== null
-              ? "Enter stops this turn and sends…"
-              : busy
-                ? "Queues after this turn…"
-                : "Message…"
+            : !promptingEnabled
+              ? transcriptNotice
+                ? "Transcript unavailable…"
+                : "Context unavailable…"
+              : queued !== null
+                ? "Enter stops this turn and sends…"
+                : busy
+                  ? "Queues after this turn…"
+                  : "Message…"
         }
         aria-label="Message"
         ref={composerRef}

@@ -36,7 +36,7 @@ pub(super) fn answer_elicitation(
             .err()
             .is_some_and(|message| message == "ACP elicitation request is no longer pending")
     {
-        state.append_to_log(vec![SessionServerEvent::ElicitationResolved {
+        let _ = state.append_to_log(vec![SessionServerEvent::ElicitationResolved {
             request_id: request_id.to_string(),
             action: action.to_string(),
         }]);
@@ -65,7 +65,7 @@ pub(super) fn answer_permission(
             .err()
             .is_some_and(|message| message == "ACP permission request is no longer pending")
     {
-        state.append_to_log(vec![SessionServerEvent::PermissionResolved {
+        let _ = state.append_to_log(vec![SessionServerEvent::PermissionResolved {
             request_id: request_id.to_string(),
             approved,
         }]);

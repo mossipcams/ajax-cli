@@ -872,6 +872,92 @@ describe("the plan belongs to its turn", () => {
   });
 });
 
+describe("context continuity projection", () => {
+  const contextSnapshot = (
+    state: "live" | "restored" | "unavailable",
+    epoch: number,
+    error?: string,
+    transcriptError?: string,
+  ) =>
+    ({
+      type: "context_snapshot",
+      state,
+      epoch,
+      ...(error !== undefined ? { error } : {}),
+      ...(transcriptError !== undefined ? { transcriptError } : {}),
+    }) as const;
+
+  it("preserves transcript when projecting live context", () => {
+    const prior = run([agentMsg("hello", "i1")]);
+    const next = reduceChatSession(asReducer(prior), {
+      type: "event",
+      event: contextSnapshot("live", 0),
+    });
+    expect(next.view.conversation).toHaveLength(1);
+    expect(next.view.context).toEqual({ state: "live", epoch: 0 });
+  });
+
+  it("preserves transcript when projecting restored context", () => {
+    const prior = run([agentMsg("prior turn", "i1")]);
+    const next = reduceChatSession(asReducer(prior), {
+      type: "event",
+      event: contextSnapshot("restored", 3),
+    });
+    expect(next.view.conversation).toHaveLength(1);
+    expect(next.view.context).toEqual({ state: "restored", epoch: 3 });
+  });
+
+  it("preserves transcript when projecting unavailable context", () => {
+    const prior = run([agentMsg("still visible", "i1")]);
+    const next = reduceChatSession(asReducer(prior), {
+      type: "event",
+      event: contextSnapshot("unavailable", 2, "resume timed out"),
+    });
+    expect(next.view.conversation).toHaveLength(1);
+    expect(next.view.context).toEqual({
+      state: "unavailable",
+      epoch: 2,
+      error: "resume timed out",
+    });
+  });
+
+  it("projects transcriptError from host snapshots and clears it when absent", () => {
+    const prior = run([agentMsg("visible", "i1")]);
+    const blocked = reduceChatSession(asReducer(prior), {
+      type: "event",
+      event: contextSnapshot("live", 1, undefined, "forced append failure"),
+    });
+    expect(blocked.view.context).toEqual({
+      state: "live",
+      epoch: 1,
+      transcriptError: "forced append failure",
+    });
+    const cleared = reduceChatSession(blocked, {
+      type: "event",
+      event: contextSnapshot("live", 1),
+    });
+    expect(cleared.view.context).toEqual({ state: "live", epoch: 1 });
+  });
+
+  it("updates context without clearing conversation on state transitions", () => {
+    const prior = run([agentMsg("one", "i1"), agentMsg("two", "i2")]);
+    const restored = reduceChatSession(asReducer(prior), {
+      type: "event",
+      event: contextSnapshot("restored", 1),
+    });
+    const unavailable = reduceChatSession(restored, {
+      type: "event",
+      event: contextSnapshot("unavailable", 1, "child died"),
+    });
+    const live = reduceChatSession(unavailable, {
+      type: "event",
+      event: contextSnapshot("live", 1),
+    });
+    expect(live.view.conversation).toHaveLength(2);
+    expect(live.view.context).toEqual({ state: "live", epoch: 1 });
+  });
+});
+
 describe("the permission ask reads as a command, not as markdown", () => {
   // #1046 (sibling of #970, which fixed case-folding on this string): the
   // same control still rendered

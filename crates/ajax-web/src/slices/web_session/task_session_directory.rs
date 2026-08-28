@@ -389,9 +389,19 @@ impl TaskSessionDirectory {
             .await??;
             Ok(())
         } else {
-            web_session_store::clear_acp_session_id(&self.state_dir, handle);
+            let _ = web_session_store::clear_acp_session_id(&self.state_dir, handle);
             Ok(())
         }
+    }
+
+    pub async fn retry_restore(&self, handle: &str) -> Result<(), String> {
+        let tx = self.command_tx(handle)?;
+        send_command(&tx, |reply| TaskSessionCommand::RetryRestore { reply }).await?
+    }
+
+    pub async fn start_new_context(&self, handle: &str) -> Result<(), String> {
+        let tx = self.command_tx(handle)?;
+        send_command(&tx, |reply| TaskSessionCommand::StartNewContext { reply }).await?
     }
 
     pub async fn attach_snapshot(
@@ -634,6 +644,14 @@ pub(crate) async fn apply_client_message(
             directory
                 .answer_elicitation(handle, &request_id, &action, content)
                 .await?;
+            Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::RetryRestore => {
+            directory.retry_restore(handle).await?;
+            Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::StartNewContext => {
+            directory.start_new_context(handle).await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
     }

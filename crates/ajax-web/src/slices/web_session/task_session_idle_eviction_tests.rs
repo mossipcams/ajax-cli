@@ -5,6 +5,7 @@ use super::test_support::{
 use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
     thread,
@@ -360,6 +361,75 @@ fn idle_disconnected_slot_pumps_host_exit_without_holder() {
             assert_ne!(
                 child_before, child_after,
                 "re-acquire must respawn after poll observes host exit"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn idle_eviction_skips_session_without_restore_readiness() {
+    // Invariant 6: a live child without persisted restore identity is not evicted.
+    let dir = scratch_dir("evict-no-restore-ready");
+    let handle_a = "web/evict-no-restore-ready-a";
+    let handle_trigger = "web/evict-no-restore-ready-trigger";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
+            directory
+                .submit_prompt(handle_a, "ping".to_string())
+                .expect("prompt");
+            directory.release(handle_a);
+
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                events.iter().any(|event| match event {
+                    SessionServerEvent::TurnEnd { .. } => true,
+                    SessionServerEvent::Message { text, .. } => text == "pong",
+                    _ => false,
+                })
+            });
+            pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| snapshot.evictable)
+            });
+
+            web_session_store::clear_acp_session_id(&dir, handle_a).expect("clear identity");
+
+            pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| !snapshot.evictable)
+            });
+
+            let child_before = directory.child_id(handle_a).expect("child before");
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/evict-no-restore-ready-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            assert_eq!(
+                directory.child_id(handle_a),
+                Some(child_before),
+                "non-restorable live session must not be silently evicted"
             );
         });
     });

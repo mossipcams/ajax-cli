@@ -1,5 +1,6 @@
 //! Versioned WebSocket envelopes for orchestration chat (protocol v2).
 
+use super::context_continuity::{ContextContinuity, ContextState};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
     AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
@@ -33,6 +34,13 @@ pub struct PendingElicitation {
     pub request_id: String,
     pub message: String,
     pub schema: serde_json::Value,
+}
+
+/// Outstanding permission and elicitation prompts included in attach snapshots.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionPending {
+    pub permission: Option<PendingPermission>,
+    pub elicitation: Option<PendingElicitation>,
 }
 
 /// Attach state sent once per logical attach or generation change.
@@ -75,6 +83,22 @@ pub struct SessionSnapshot {
     pub pending_permission: Option<PendingPermission>,
     #[serde(rename = "pendingElicitation", skip_serializing_if = "Option::is_none")]
     pub pending_elicitation: Option<PendingElicitation>,
+    #[serde(rename = "contextState")]
+    pub context_state: ContextState,
+    #[serde(rename = "contextEpoch")]
+    pub context_epoch: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contextError"
+    )]
+    pub context_error: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcriptError"
+    )]
+    pub transcript_error: Option<String>,
 }
 
 impl SessionSnapshot {
@@ -83,9 +107,9 @@ impl SessionSnapshot {
         model: String,
         busy: bool,
         reset: bool,
-        pending_permission: Option<PendingPermission>,
-        pending_elicitation: Option<PendingElicitation>,
+        pending: SessionPending,
         chrome: SessionChrome,
+        continuity: ContextContinuity,
     ) -> Self {
         Self {
             kind: "snapshot".to_string(),
@@ -98,9 +122,18 @@ impl SessionSnapshot {
             session_title: chrome.session_title,
             turn_state: if busy { "busy" } else { "idle" }.to_string(),
             reset,
-            pending_permission,
-            pending_elicitation,
+            pending_permission: pending.permission,
+            pending_elicitation: pending.elicitation,
+            context_state: continuity.state,
+            context_epoch: continuity.epoch,
+            context_error: continuity.error,
+            transcript_error: None,
         }
+    }
+
+    pub fn with_transcript_error(mut self, error: Option<String>) -> Self {
+        self.transcript_error = error;
+        self
     }
 }
 

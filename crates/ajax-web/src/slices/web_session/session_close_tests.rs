@@ -1,12 +1,16 @@
 //! ACP `session/close` on child teardown when advertised.
 
-use super::test_support::{fake_acp_fixture, has_message, scratch_dir, BlockingSessionDirectory};
+use super::context_continuity::ContextState;
+use super::test_support::{
+    fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
+};
+use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
     with_test_acp_extra_args, with_test_acp_program, AcpStdioClient,
 };
 use ajax_core::models::AgentClient;
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 fn close_marker_path(worktree: &Path) -> std::path::PathBuf {
     worktree.join(".fake-acp-session-close-called")
@@ -196,6 +200,72 @@ fn advertised_close_skipped_on_detach_and_session_resumes() {
 }
 
 #[test]
+fn idle_eviction_detach_skips_session_close_and_resumes() {
+    // Invariant 6: restorable idle slots detach without ACP session/close.
+    let dir = scratch_dir("idle-evict-no-close");
+    let handle_a = "web/idle-evict-no-close-a";
+    let handle_trigger = "web/idle-evict-no-close-trigger";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let marker = close_marker_path(&dir);
+    let _ = std::fs::remove_file(&marker);
+
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            with_test_acp_extra_args(&["--session-close"], || {
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire a");
+                seed_user_turn(&directory, handle_a);
+                directory.release(handle_a);
+
+                pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                    directory
+                        .eviction_snapshot(handle_a)
+                        .is_some_and(|snapshot| snapshot.evictable)
+                });
+
+                let child_before = directory.child_id(handle_a).expect("child before");
+
+                for i in 0..MAX_IDLE_SESSIONS {
+                    let handle = format!("web/idle-evict-no-close-idle-{i}");
+                    directory
+                        .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                        .expect("acquire idle");
+                    directory.release(&handle);
+                }
+
+                directory
+                    .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire trigger");
+                directory.release(handle_trigger);
+
+                assert!(
+                    !marker.exists(),
+                    "idle eviction must not send session/close"
+                );
+
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("re-acquire a");
+                let child_after = directory.child_id(handle_a).expect("child after");
+                assert_ne!(
+                    child_before, child_after,
+                    "idle cap must evict the restorable disconnected session"
+                );
+                let (events, _) = directory.read_from(handle_a, 0);
+                assert!(
+                    !has_message(&events, "note", CONTEXT_RESET_NOTE),
+                    "resume after idle eviction must keep model context: {events:?}"
+                );
+            });
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn advertised_close_on_drop_session_prevents_resume() {
     // #1061: task Drop remains a terminal close.
     let dir = scratch_dir("close-prevents-resume");
@@ -219,10 +289,23 @@ fn advertised_close_on_drop_session_prevents_resume() {
             directory
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("re-acquire after close");
-            let (events, _) = directory.read_from(handle, 0);
+            let attach = directory
+                .runtime_handle()
+                .block_on(
+                    directory
+                        .inner()
+                        .attach_snapshot(handle, "auto".to_string(), None),
+                );
+            assert_eq!(
+                attach.snapshot.context_state,
+                ContextState::Unavailable,
+                "closed sessions must enter unavailable context, not silently resume"
+            );
             assert!(
-                has_message(&events, "note", CONTEXT_RESET_NOTE),
-                "closed sessions must not resume: {events:?}"
+                directory
+                    .submit_prompt(handle, "blocked".to_string())
+                    .is_err(),
+                "closed sessions must reject prompts until explicit recovery"
             );
         });
     });

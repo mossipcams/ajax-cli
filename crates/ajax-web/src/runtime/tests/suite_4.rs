@@ -452,7 +452,8 @@ fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
                     handle,
                     Some("old-resume-id"),
                     "auto",
-                );
+                )
+                .unwrap();
                 assert!(directory.has_live_entry(handle));
 
                 let response = post_json(

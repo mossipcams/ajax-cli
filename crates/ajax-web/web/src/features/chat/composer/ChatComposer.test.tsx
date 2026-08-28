@@ -96,6 +96,8 @@ describe("ChatComposer", () => {
         model: "auto",
         turnState: "idle",
         reset: false,
+        contextState: "live",
+        contextEpoch: 0,
         promptCapabilities: { image: true, embeddedContext: false },
       });
     });
@@ -271,6 +273,8 @@ describe("ChatComposer", () => {
         model: "auto",
         turnState: "idle",
         reset: false,
+        contextState: "live",
+        contextEpoch: 0,
         availableCommands: [
           { name: "web", description: "Query the web", inputHint: "query" },
           { name: "help", description: "Show help" },
@@ -296,6 +300,8 @@ describe("ChatComposer", () => {
         model: "auto",
         turnState: "idle",
         reset: false,
+        contextState: "live",
+        contextEpoch: 0,
         availableCommands: [{ name: "help", description: "Show help" }],
       });
     });
@@ -317,6 +323,8 @@ describe("ChatComposer", () => {
         model: "auto",
         turnState: "idle",
         reset: false,
+        contextState: "live",
+        contextEpoch: 0,
         promptCapabilities: { image: true, embeddedContext: false },
       });
     });
@@ -347,6 +355,8 @@ describe("ChatComposer", () => {
         model: "auto",
         turnState: "idle",
         reset: false,
+        contextState: "live",
+        contextEpoch: 0,
         promptCapabilities: { image: true, embeddedContext: false },
       });
     });
@@ -583,5 +593,83 @@ describe("ChatComposer", () => {
     expect(localStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBe(
       "survives reload",
     );
+  });
+
+  function emitContextSnapshot(
+    contextState: "live" | "restored" | "unavailable",
+    contextEpoch = 0,
+    contextError?: string,
+    transcriptError?: string,
+  ) {
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState,
+        contextEpoch,
+        ...(contextError !== undefined ? { contextError } : {}),
+        ...(transcriptError !== undefined ? { transcriptError } : {}),
+      });
+    });
+  }
+
+  it("disables Send and shows Retry plus confirmed Start new when context is unavailable", () => {
+    mountChat();
+    emitContextSnapshot("unavailable", 2, "resume timed out");
+
+    expect(screen.getByTestId("session-context-notice")).toHaveTextContent("resume timed out");
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Should not send" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry restore" }));
+    expect(transport.retryRestore).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start new context" }));
+    expect(screen.getByTestId("result-panel-confirm")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(transport.startNewContext).toHaveBeenCalledOnce();
+  });
+
+  it.each(["live", "restored"] as const)(
+    "leaves the normal composer unchanged when context is %s",
+    (contextState) => {
+      mountChat();
+      emitContextSnapshot(contextState, contextState === "restored" ? 3 : 0);
+
+      expect(screen.queryByTestId("session-context-notice")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Retry restore" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Start new context" })).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Message"), {
+        target: { value: "Still works" },
+      });
+      expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    },
+  );
+
+  it("disables Send and shows a durability notice when transcriptError is set", () => {
+    mountChat();
+    emitContextSnapshot("live", 1, undefined, "forced append failure");
+
+    expect(screen.getByTestId("session-transcript-notice")).toHaveTextContent(
+      "forced append failure",
+    );
+    expect(screen.queryByTestId("session-context-notice")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Should not send" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
   });
 });

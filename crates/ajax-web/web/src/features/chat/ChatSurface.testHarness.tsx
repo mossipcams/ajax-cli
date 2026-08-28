@@ -24,6 +24,8 @@ export const transport = {
   // "" when it refuses to send; the composer keys off that.
   sendPrompt: vi.fn(() => "cmid-1"),
   sendCancel: vi.fn(),
+  retryRestore: vi.fn(),
+  startNewContext: vi.fn(),
   setModel: vi.fn(),
   setConfigOption: vi.fn(),
   respondPermission: vi.fn(),
@@ -175,15 +177,22 @@ export function typeComposer(text: string) {
   fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 }
 
-export function emitConnectedSnapshot(model: string, options?: LiveSessionConfigOption[]) {
+export function emitConnectedSnapshot(
+  model: string,
+  options?: LiveSessionConfigOption[],
+  context: { contextState?: "live" | "restored" | "unavailable"; contextEpoch?: number } = {},
+) {
   act(() => {
     chatH.snapshot?.({
+      type: "snapshot",
       protocolVersion: 2,
       cursor: 0,
       model,
       sessionConfigOptions: options,
       turnState: "idle",
       reset: false,
+      contextState: context.contextState ?? "live",
+      contextEpoch: context.contextEpoch ?? 0,
     });
     chatH.ready?.(model);
   });
@@ -201,6 +210,9 @@ export function prepareChatSurface() {
   });
   vi.stubGlobal("cancelAnimationFrame", () => {});
   transport.sendPrompt.mockClear();
+  transport.sendCancel.mockClear();
+  transport.retryRestore.mockClear();
+  transport.startNewContext.mockClear();
   transport.setModel.mockClear();
   transport.setConfigOption.mockClear();
   transport.respondPermission.mockClear();
