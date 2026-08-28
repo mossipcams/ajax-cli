@@ -9,6 +9,12 @@ RESULTS="$ROOT/exploratory-results"
 PROMPT_FILE="$RESULTS/prompt.txt"
 AGENT_LOG="$RESULTS/logs/agent.log"
 BUDGET_MINUTES="${AJAX_EXPLORATORY_BUDGET_MINUTES:-12}"
+FINALIZATION_RESERVE_MINUTES="${AJAX_EXPLORATORY_FINALIZATION_MINUTES:-2}"
+EXPLORATION_MINUTES=$((BUDGET_MINUTES - FINALIZATION_RESERVE_MINUTES))
+if [ "$EXPLORATION_MINUTES" -lt 1 ]; then
+  EXPLORATION_MINUTES=1
+fi
+AGENT_TIMEOUT_SECONDS=$((EXPLORATION_MINUTES * 60))
 MODEL="composer-2.5"
 
 mkdir -p "$RESULTS/logs" "$HOME/.cursor"
@@ -17,15 +23,19 @@ cd "$SCRIPTS"
 write_agent_status() {
   local exit_code="$1"
   local error_message="${2:-}"
-  EXIT_CODE="$exit_code" ERROR_MESSAGE="$error_message" MODEL="$MODEL" BUDGET_MINUTES="$BUDGET_MINUTES" \
+  EXIT_CODE="$exit_code" ERROR_MESSAGE="$error_message" MODEL="$MODEL" BUDGET_MINUTES="$BUDGET_MINUTES" FINALIZATION_RESERVE_MINUTES="$FINALIZATION_RESERVE_MINUTES" AGENT_TIMEOUT_SECONDS="$AGENT_TIMEOUT_SECONDS" EXPLORATION_MINUTES="$EXPLORATION_MINUTES" \
     node --input-type=module <<'EOF'
 import { join } from "node:path";
-import { readJson, resultsDir, writeJson } from "./lib.mjs";
+import { computeAgentBudget, readJson, resultsDir, writeJson } from "./lib.mjs";
 
 const exitCode = Number(process.env.EXIT_CODE);
 const errorMessage = process.env.ERROR_MESSAGE || null;
 const timedOut = exitCode === 124;
 const run = readJson(join(resultsDir, "run.json"), {});
+const budget = computeAgentBudget({
+  budgetMinutes: Number(process.env.BUDGET_MINUTES),
+  finalizationReserveMinutes: Number(process.env.FINALIZATION_RESERVE_MINUTES ?? 2),
+});
 
 run.agent = {
   status:
@@ -39,8 +49,12 @@ run.agent = {
   exitCode,
   finishedAt: new Date().toISOString(),
   model: process.env.MODEL,
-  budgetMinutes: Number(process.env.BUDGET_MINUTES),
+  budgetMinutes: budget.budgetMinutes,
+  finalizationReserveMinutes: budget.finalizationReserveMinutes,
+  explorationMinutes: budget.explorationMinutes,
+  agentTimeoutSeconds: budget.agentTimeoutSeconds,
   error: errorMessage,
+  attempts: 1,
 };
 
 if (errorMessage || (!timedOut && exitCode !== 0)) {
@@ -113,77 +127,27 @@ if ! node "$SCRIPTS/assert-webkit.mjs" >>"$AGENT_LOG" 2>&1; then
   exit 1
 fi
 
-BUDGET_SECONDS=$((BUDGET_MINUTES * 60))
-DEADLINE=$((SECONDS + BUDGET_SECONDS))
-ATTEMPTS=0
-MAX_ATTEMPTS=2
-MIN_ATTEMPT_SECONDS=60
-EXIT_CODE=0
-CONTINUATION_SUFFIX=""
+MAX_ATTEMPTS=1
 
 set +e
-while true; do
-  ATTEMPTS=$((ATTEMPTS + 1))
-  REMAINING=$((DEADLINE - SECONDS))
-  if (( REMAINING <= 0 )); then
-    EXIT_CODE=124
-    break
-  fi
-
-  if (( ATTEMPTS > 1 )); then
-    echo "" >>"$AGENT_LOG"
-    echo "=== exploratory relaunch attempt ${ATTEMPTS}/${MAX_ATTEMPTS} (~$((REMAINING / 60))m remaining) ===" >>"$AGENT_LOG"
-  fi
-
-  ATTEMPT_STARTED=$SECONDS
-  # Process-group timeout so Playwright MCP children die with the agent.
-  timeout --signal=TERM --kill-after=60s "${REMAINING}s" \
-    "$AGENT_BIN" \
-    --print \
-    --trust \
-    --approve-mcps \
-    --force \
-    --model "$MODEL" \
-    --output-format text \
-    --workspace "$ROOT" \
-    "$(cat "$PROMPT_FILE")${CONTINUATION_SUFFIX}" \
-    >>"$AGENT_LOG" 2>&1
-  EXIT_CODE=$?
-  ATTEMPT_DURATION=$((SECONDS - ATTEMPT_STARTED))
-
-  if [[ "$EXIT_CODE" -eq 124 ]]; then
-    break
-  fi
-  if [[ "$EXIT_CODE" -ne 0 ]]; then
-    break
-  fi
-
-  REMAINING=$((DEADLINE - SECONDS))
-  if (( REMAINING < 120 )); then
-    break
-  fi
-  # Instant-exit agents must not spin the remaining budget.
-  if (( ATTEMPT_DURATION < MIN_ATTEMPT_SECONDS )); then
-    echo "agent returned in ${ATTEMPT_DURATION}s; not relaunching" >>"$AGENT_LOG"
-    break
-  fi
-  if [[ -f "$RESULTS/stop-reason.json" ]]; then
-    echo "agent recorded stop-reason.json; not relaunching" >>"$AGENT_LOG"
-    break
-  fi
-  if (( ATTEMPTS >= MAX_ATTEMPTS )); then
-    break
-  fi
-
-  CONTINUATION_SUFFIX=$'\n\n---\n\nContinuation: ~'"$((REMAINING / 60))"$' minutes remain in the exploration budget (a maximum, not a target). Read existing exploratory-results/ (findings, observations, memory-delta) and exploratory-results/oracles.json first. Continue only if high-value unfinished work remains — an untested high-priority suspicion or a sibling of a confirmed finding. If stopping criteria in the charter already apply, write stop-reason.json and exit. Do not restart a coverage tour or consume remaining time for its own sake. Skip dullActions from oracles/memory.'
-done
+timeout --signal=TERM --kill-after=60s "${AGENT_TIMEOUT_SECONDS}s" \
+  "$AGENT_BIN" \
+  --print \
+  --trust \
+  --approve-mcps \
+  --force \
+  --model "$MODEL" \
+  --output-format text \
+  --workspace "$ROOT" \
+  "$(cat "$PROMPT_FILE")" \
+  >>"$AGENT_LOG" 2>&1
+EXIT_CODE=$?
 set -e
 
 write_agent_status "$EXIT_CODE"
 
-# Budget timeout is a successful exploration stop if the wrapper reached it.
 if [[ "$EXIT_CODE" -eq 124 ]]; then
-  echo "exploration budget exhausted (${BUDGET_MINUTES}m); treating as controlled stop"
+  echo "exploration budget exhausted (${EXPLORATION_MINUTES}m agent runtime; ${FINALIZATION_RESERVE_MINUTES}m finalization reserve held back from timeout); treating as controlled stop"
   exit 0
 fi
 

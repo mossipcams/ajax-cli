@@ -51,6 +51,7 @@ function baseFinding(overrides = {}) {
       networkFailures: ["POST /api/messages 500"],
     },
     fingerprint: "session|composer-pending-after-reconnect",
+    classification: "novel",
     ...overrides,
   };
 }
@@ -67,6 +68,9 @@ function fakeGh({ listIssues = [], createShouldFail = false } = {}) {
         throw new Error("gh issue create failed");
       }
       return "https://github.com/mossipcams/ajax-cli/issues/99\n";
+    }
+    if (args[0] === "issue" && args[1] === "comment") {
+      return "";
     }
     throw new Error(`unexpected gh args: ${args.join(" ")}`);
   };
@@ -176,7 +180,7 @@ test("duplicate by title avoids create", async () => {
   assert.equal(issues[0].action, "duplicate");
 });
 
-test("duplicate by relatedIssues avoids create even when titles differ", async () => {
+test("relatedIssues hints do not suppress filing", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const finding = baseFinding({
     title: "Totally different title from open issue",
@@ -201,18 +205,47 @@ test("duplicate by relatedIssues avoids create even when titles differ", async (
     }),
   );
   assert.equal(exitCode, 0);
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 1);
+  const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
+  assert.equal(issues[0].action, "created");
+});
+
+test("known confirmed finding records duplicate without create", async () => {
+  const { fileIssues } = await import("./exploratory/file-issues.mjs");
+  const finding = baseFinding({
+    classification: "known",
+    fingerprint: "session|composer-pending-after-reconnect",
+  });
+  const paths = writeResults({ findings: [finding] });
+  const gh = fakeGh({
+    listIssues: [
+      {
+        number: 12,
+        title: "[defect] Web Cockpit unrelated title",
+        body: "Some notes\n<!-- exploratory-fingerprint: session|composer-pending-after-reconnect -->",
+        url: "https://github.com/mossipcams/ajax-cli/issues/12",
+      },
+    ],
+  });
+  const exitCode = fileIssues(
+    fileOpts(paths, {
+      execGh: gh.exec,
+      env: { GITHUB_ACTIONS: "true", GH_REPO: "mossipcams/ajax-cli" },
+    }),
+  );
+  assert.equal(exitCode, 0);
   assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
   assert.equal(issues[0].action, "duplicate");
-  assert.equal(issues[0].issueNumber, 810);
 });
 
 test("observation and rejected findings are not filed", async () => {
   const { fileIssues } = await import("./exploratory/file-issues.mjs");
   const paths = writeResults({
     findings: [
-      baseFinding({ id: "obs", status: "observation", reproductionSuccesses: 1 }),
-      baseFinding({ id: "rej", status: "rejected", reproductionSuccesses: 1 }),
+      baseFinding({ id: "obs", status: "observation", reproductionSuccesses: 2, classification: undefined }),
+      baseFinding({ id: "rej", status: "rejected", reproductionSuccesses: 2, classification: undefined }),
+      baseFinding({ id: "known", classification: "known" }),
     ],
   });
   const gh = fakeGh();
@@ -223,10 +256,10 @@ test("observation and rejected findings are not filed", async () => {
     }),
   );
   assert.equal(exitCode, 0);
-  assert.equal(gh.calls.length, 1);
-  assert.equal(gh.calls[0][1], "list");
+  assert.equal(gh.calls.filter((args) => args[1] === "create").length, 0);
   const issues = JSON.parse(readFileSync(paths.issuesPath, "utf8"));
-  assert.equal(issues.length, 0);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].action, "duplicate");
 });
 
 test("outside GitHub Actions without force skips filing", async () => {

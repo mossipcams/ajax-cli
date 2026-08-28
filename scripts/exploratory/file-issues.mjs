@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { emptyFindings, readJson, resultsDir, writeJson } from "./lib.mjs";
+import { emptyFindings, emptyVerifierDocument, evidenceSignature, memoryPath, readJson, resultsDir, writeJson, hasIndependentVerifierEvidence } from "./lib.mjs";
 
 const DEFAULT_REPO = "mossipcams/ajax-cli";
 const FINGERPRINT_COMMENT_RE = /<!--\s*exploratory-fingerprint:\s*(.+?)\s*-->/;
@@ -31,6 +31,13 @@ export function mapSeverity(severity) {
     return severity;
   }
   return "medium";
+}
+
+export function normalizeIssueTitle(title) {
+  return String(title ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 export function buildIssueTitle(finding) {
@@ -100,21 +107,40 @@ export function titleContainsFinding(issueTitle, findingTitle) {
   return issueTitle.toLowerCase().includes(findingTitle.toLowerCase());
 }
 
-export function isEligibleFinding(finding) {
-  return finding.status === "confirmed" && finding.reproductionSuccesses >= 1;
+export function isEligibleFinding(finding, { verifierDoc = null } = {}) {
+  return (
+    finding.status === "confirmed" &&
+    hasIndependentVerifierEvidence(finding, verifierDoc) &&
+    finding.reproductionSuccesses >= 2 &&
+    (finding.classification === "novel" ||
+      finding.classification === "regression" ||
+      finding.classification === "known")
+  );
+}
+
+function shouldCommentNewEvidence(memory, fingerprint, signature) {
+  const entry = (memory.confirmedFindings ?? []).find((item) => item.fingerprint === fingerprint);
+  const prior = entry?.evidenceSignatures ?? [];
+  return signature && !prior.includes(signature);
+}
+
+function recordEvidenceSignature(memory, fingerprint, signature) {
+  if (!signature) return;
+  const entry = (memory.confirmedFindings ?? []).find((item) => item.fingerprint === fingerprint);
+  if (!entry) return;
+  const next = [...(entry.evidenceSignatures ?? []).filter((item) => item !== signature), signature];
+  entry.evidenceSignatures = next.slice(-5);
+}
+
+function commentOnIssue(execGh, repo, issueNumber, body) {
+  execGh(["issue", "comment", String(issueNumber), "--repo", repo, "--body", body]);
 }
 
 export function findDuplicate(openIssues, finding, fingerprint) {
   const issueTitle = buildIssueTitle(finding);
-  const relatedIssues = Array.isArray(finding.relatedIssues)
-    ? finding.relatedIssues
-    : [];
   for (const issue of openIssues) {
     const bodyFingerprint = extractFingerprintFromBody(issue.body);
     if (bodyFingerprint === fingerprint) {
-      return issue;
-    }
-    if (relatedIssues.includes(issue.number)) {
       return issue;
     }
     if (titleContainsFinding(issue.title, finding.title)) {
@@ -207,7 +233,11 @@ export function fileIssues(options = {}) {
   const args = parseArgs(argv);
   const findingsDoc = readJson(findingsPath, emptyFindings());
   const run = readJson(runPath, {});
-  const eligible = (findingsDoc.findings ?? []).filter(isEligibleFinding);
+  const priorMemory = readJson(memoryPath, {});
+  const verifierDoc = readJson(join(resultsDir, "verifier.json"), emptyVerifierDocument());
+  const eligible = (findingsDoc.findings ?? []).filter((finding) =>
+    isEligibleFinding(finding, { verifierDoc }),
+  );
 
   const repo = env.GH_REPO || DEFAULT_REPO;
   const filingEnabled = shouldFileIssues(env, args.force);
@@ -248,6 +278,62 @@ export function fileIssues(options = {}) {
   for (const finding of eligible) {
     const fingerprint = fingerprintForFinding(finding);
     const title = buildIssueTitle(finding);
+    const signature = evidenceSignature(finding);
+
+    if (finding.classification === "known") {
+      const duplicate = findDuplicate(openIssues, finding, fingerprint);
+      if (duplicate) {
+        let commented = false;
+        if (
+          shouldCommentNewEvidence(priorMemory, fingerprint, signature) &&
+          !args.dryRun &&
+          signature
+        ) {
+          try {
+            commentOnIssue(
+              execGh,
+              repo,
+              String(duplicate.number),
+              `Exploratory run found materially new reproduction evidence for fingerprint \`${fingerprint}\` (signature \`${signature}\`).`,
+            );
+            commented = true;
+            recordEvidenceSignature(priorMemory, fingerprint, signature);
+          } catch (error) {
+            issues.push({
+              fingerprint,
+              title,
+              action: "failed",
+              issueUrl: duplicate.url,
+              issueNumber: duplicate.number,
+              error: error.message,
+            });
+            summary.failed += 1;
+            continue;
+          }
+        }
+        issues.push({
+          fingerprint,
+          title,
+          action: "duplicate",
+          issueUrl: duplicate.url,
+          issueNumber: duplicate.number,
+          commented,
+        });
+        summary.duplicate += 1;
+        continue;
+      }
+      issues.push({
+        fingerprint,
+        title,
+        action: "duplicate",
+        issueUrl: null,
+        issueNumber: null,
+        reason: "known finding without matching open issue",
+      });
+      summary.duplicate += 1;
+      continue;
+    }
+
     const body = buildIssueBody(finding, {
       fingerprint,
       version,
