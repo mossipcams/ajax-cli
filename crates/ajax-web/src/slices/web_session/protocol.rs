@@ -1,5 +1,6 @@
 //! Versioned WebSocket envelopes for orchestration chat (protocol v2).
 
+use super::context_continuity::{ContextContinuity, ContextState};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
     AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
@@ -75,6 +76,22 @@ pub struct SessionSnapshot {
     pub pending_permission: Option<PendingPermission>,
     #[serde(rename = "pendingElicitation", skip_serializing_if = "Option::is_none")]
     pub pending_elicitation: Option<PendingElicitation>,
+    #[serde(rename = "contextState")]
+    pub context_state: ContextState,
+    #[serde(rename = "contextEpoch")]
+    pub context_epoch: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contextError"
+    )]
+    pub context_error: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcriptError"
+    )]
+    pub transcript_error: Option<String>,
 }
 
 impl SessionSnapshot {
@@ -86,6 +103,7 @@ impl SessionSnapshot {
         pending_permission: Option<PendingPermission>,
         pending_elicitation: Option<PendingElicitation>,
         chrome: SessionChrome,
+        continuity: ContextContinuity,
     ) -> Self {
         Self {
             kind: "snapshot".to_string(),
@@ -100,7 +118,16 @@ impl SessionSnapshot {
             reset,
             pending_permission,
             pending_elicitation,
+            context_state: continuity.state,
+            context_epoch: continuity.epoch,
+            context_error: continuity.error,
+            transcript_error: None,
         }
+    }
+
+    pub fn with_transcript_error(mut self, error: Option<String>) -> Self {
+        self.transcript_error = error;
+        self
     }
 }
 

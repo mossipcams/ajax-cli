@@ -1,5 +1,6 @@
 //! Cursor validation and replay planning for protocol v2 attach.
 
+use super::context_continuity::ContextContinuity;
 use super::protocol::{
     PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
@@ -52,6 +53,7 @@ pub(crate) fn build_attach(
         pending_permission(log),
         pending_elicitation(log),
         chrome,
+        ContextContinuity::default(),
     );
     (snapshot, replayed)
 }

@@ -5,6 +5,7 @@ mod acp_map;
 pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
+mod context_continuity;
 pub(crate) mod model_change;
 mod normalize;
 mod output_content;
@@ -29,6 +30,7 @@ pub use prepare_session::prepare_task_session;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
+pub use context_continuity::{ContextContinuity, ContextState};
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
@@ -91,6 +93,10 @@ pub enum SessionClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<serde_json::Value>,
     },
+    #[serde(rename = "retry_restore")]
+    RetryRestore,
+    #[serde(rename = "start_new_context")]
+    StartNewContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -416,6 +422,12 @@ mod task_session_tests;
 mod task_session_reliability_tests;
 
 #[cfg(test)]
+mod task_session_continuity_tests;
+
+#[cfg(test)]
+mod task_session_restore_tests;
+
+#[cfg(test)]
 mod task_session_phase2_tests;
 
 #[cfg(test)]
@@ -445,6 +457,9 @@ mod acp_usage_tests;
 
 #[cfg(test)]
 mod ws_bridge_tests;
+
+#[cfg(test)]
+mod ws_bridge_continuity_tests;
 
 #[cfg(test)]
 mod session_cleanup_tests;

@@ -5,6 +5,10 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
+const noLoadSession = process.argv.includes('--no-load-session');
+const recordMethods = process.argv.includes('--record-methods');
+const hangResume = process.argv.includes('--hang-resume');
+const hangLoad = process.argv.includes('--hang-load');
 const holdPromptMode = process.argv.includes('--hold-prompt');
 const malformedMode = process.argv.includes('--malformed');
 const badInitialize = process.argv.includes('--bad-initialize');
@@ -34,6 +38,7 @@ const promptCapabilities = process.argv.includes('--prompt-capabilities');
 const richOutput = process.argv.includes('--rich-output');
 const sessionClose = process.argv.includes('--session-close');
 const sessionCloseFail = process.argv.includes('--session-close-fail');
+const rememberContext = process.argv.includes('--remember-context');
 const thoughtOnly = process.argv.includes('--thought-only');
 const toolOnly = process.argv.includes('--tool-only');
 const noAgentText = process.argv.includes('--no-agent-text');
@@ -48,6 +53,47 @@ if (!configuredStateRoot) {
   process.on('exit', () => fs.rmSync(stateRoot, { recursive: true, force: true }));
 }
 const persistedSessionsPath = path.join(stateRoot, '.fake-acp-sessions');
+const methodsLogPath = path.join(stateRoot, '.fake-acp-methods');
+const contextMemoryPath = path.join(stateRoot, '.fake-acp-context-memory');
+
+function clearContextMemory() {
+  if (!rememberContext) return;
+  try {
+    fs.unlinkSync(contextMemoryPath);
+  } catch {}
+}
+
+function loadContextMemory() {
+  if (!rememberContext) return null;
+  try {
+    return fs.readFileSync(contextMemoryPath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function saveContextMemory(value) {
+  if (!rememberContext) return;
+  fs.writeFileSync(contextMemoryPath, value);
+}
+
+function promptTextFromParams(params) {
+  if (!Array.isArray(params?.prompt)) return '';
+  return params.prompt
+    .filter((block) => block?.type === 'text')
+    .map((block) => block.text || '')
+    .join('');
+}
+
+function recordMethod(method) {
+  if (!recordMethods) return;
+  let methods = [];
+  try {
+    methods = JSON.parse(fs.readFileSync(methodsLogPath, 'utf8'));
+  } catch {}
+  methods.push(method);
+  fs.writeFileSync(methodsLogPath, JSON.stringify(methods));
+}
 
 function loadPersistedSessions() {
   try {
@@ -352,6 +398,7 @@ function replacementSlashCommands() {
 
 function handleRequest(msg) {
   const { id, method, params } = msg;
+  recordMethod(method);
   if (method === 'initialize') {
     if (badInitialize) {
       process.stderr.write('agent login required\n');
@@ -364,7 +411,7 @@ function handleRequest(msg) {
       result: {
         protocolVersion,
         agentCapabilities: {
-          loadSession: true,
+          loadSession: !noLoadSession,
           sessionCapabilities: {
             ...(resumeMode ? { resume: {} } : {}),
             ...(sessionClose ? { close: {} } : {}),
@@ -379,6 +426,7 @@ function handleRequest(msg) {
   }
   if (method === 'session/new') {
     assertExclusiveSessionNew();
+    clearContextMemory();
     persistSession(sessionId);
     send({
       jsonrpc: '2.0',
@@ -412,6 +460,12 @@ function handleRequest(msg) {
     return;
   }
   if (method === 'session/load' || method === 'session/resume') {
+    if (method === 'session/resume' && hangResume) {
+      return;
+    }
+    if (method === 'session/load' && hangLoad) {
+      return;
+    }
     if (method === 'session/load' && loadFail) {
       send({
         jsonrpc: '2.0',
@@ -592,6 +646,22 @@ function handleRequest(msg) {
         error: { code: -32000, message: 'prompt failed' },
       });
       return;
+    }
+    if (rememberContext) {
+      const text = promptTextFromParams(params);
+      if (text.startsWith('remember:')) {
+        const value = text.slice('remember:'.length);
+        saveContextMemory(value);
+        replayUpdate(`stored:${value}`);
+        send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        return;
+      }
+      if (text === 'recall') {
+        const stored = loadContextMemory();
+        replayUpdate(stored ? `recalled:${stored}` : 'recalled:none');
+        send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        return;
+      }
     }
     if (thoughtOnly) {
       send({
