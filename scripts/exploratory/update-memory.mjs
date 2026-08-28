@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   emptyMemory,
+  evidenceSignature,
   FINDING_AREAS,
   memoryPath,
   readJson,
@@ -13,6 +14,12 @@ import {
   resultsDir,
   writeJson,
 } from "./lib.mjs";
+import { extractFingerprintFromBody } from "./file-issues.mjs";
+import {
+  emptyMissionMemory,
+  resolveMissionOutcome,
+  touchMissionMemory,
+} from "./missions.mjs";
 
 function bumpArea(memory, area, at) {
   if (!memory.areas[area]) {
@@ -78,6 +85,22 @@ function mergeObservation(memory, summary, area, at) {
   }
 }
 
+function mergeRegressionFingerprints(memory, oracles) {
+  const seen = new Set((memory.regressions ?? []).map((item) => item.fingerprint));
+  for (const issue of oracles.closedBugs ?? []) {
+    const fingerprint = extractFingerprintFromBody(issue.body);
+    if (!fingerprint || seen.has(fingerprint)) continue;
+    memory.regressions.push({
+      fingerprint,
+      issueNumber: issue.number,
+      title: issue.title,
+      lastSeenAt: new Date().toISOString(),
+    });
+    seen.add(fingerprint);
+  }
+  memory.regressions = memory.regressions.slice(-50);
+}
+
 function main() {
   const memory = readJson(memoryPath, emptyMemory());
   const delta = readJson(join(resultsDir, "memory-delta.json"), {
@@ -96,11 +119,29 @@ function main() {
     version: 1,
     observations: [],
   });
+  const oracles = readJson(join(resultsDir, "oracles.json"), { closedBugs: [] });
   const run = readJson(join(resultsDir, "run.json"), {});
+  const missionDoc = readJson(join(resultsDir, "mission.json"), null);
   const at = new Date().toISOString();
   const headSha = resolveHeadSha(run);
   const recommendedFocus =
     delta.recommendedFocus ?? delta.recommendedFocusNextRun ?? [];
+
+  if (!memory.missions || Object.keys(memory.missions).length === 0) {
+    memory.missions = emptyMissionMemory();
+  }
+  const missionId = run.mission?.primary ?? missionDoc?.primary?.id;
+  const missionOutcome = resolveMissionOutcome({
+    run,
+    memoryDelta: delta,
+    findings: findingsDoc,
+    observations: observationsDoc,
+  });
+  if (missionId) {
+    touchMissionMemory(memory, missionId, headSha, at, missionOutcome);
+  }
+
+  mergeRegressionFingerprints(memory, oracles);
 
   for (const entry of delta.areasVisited ?? []) {
     const raw = normalizeAreaName(entry);
@@ -117,6 +158,7 @@ function main() {
     const fingerprint =
       finding.fingerprint ||
       `${finding.area}|${String(finding.title).toLowerCase().replace(/\s+/g, "-")}`;
+    const signature = evidenceSignature(finding);
     const existing = memory.confirmedFindings.find(
       (item) => item.fingerprint === fingerprint,
     );
@@ -124,12 +166,16 @@ function main() {
       existing.lastSeenAt = at;
       existing.title = finding.title;
       existing.area = finding.area;
+      if (signature) {
+        existing.evidenceSignatures = uniquePush(existing.evidenceSignatures ?? [], signature, 5);
+      }
     } else {
       memory.confirmedFindings.push({
         fingerprint,
         title: finding.title,
         area: finding.area,
         lastSeenAt: at,
+        evidenceSignatures: signature ? [signature] : [],
       });
     }
   }
@@ -159,10 +205,13 @@ function main() {
   memory.runs.push({
     at,
     sha: headSha,
+    mission: missionId ?? null,
+    missionOutcome,
     confirmed: (findingsDoc.findings ?? []).filter((f) => f.status === "confirmed")
       .length,
     observations: observationsCount,
     recommendedFocus,
+    classification: run.classification?.counts ?? null,
   });
   memory.runs = memory.runs.slice(-14);
   memory.lastRunSha = headSha;

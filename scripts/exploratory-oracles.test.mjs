@@ -29,11 +29,23 @@ test("buildOracles prefers Web Cockpit / [defect] bugs from gh", async () => {
 
   const oracles = buildOracles({
     repo: "mossipcams/ajax-cli",
-    execGh: () => JSON.stringify(fakeIssues),
+    execGh: (_repo, state) =>
+      state === "closed"
+        ? JSON.stringify([
+            {
+              number: 77,
+              title: "[defect] Web Cockpit closed regression",
+              body: "<!-- exploratory-fingerprint: terminal|paste-broken -->",
+              url: "https://github.com/x/y/issues/77",
+              state: "CLOSED",
+            },
+          ])
+        : JSON.stringify(fakeIssues),
     execGit: () => "abc1234 fix(web): route guard\n",
   });
 
   assert.ok(oracles.openBugs.some((bug) => bug.number === 835));
+  assert.ok(oracles.closedBugs.some((bug) => bug.number === 77));
   assert.ok(oracles.openBugs.some((bug) => bug.number === 810));
   assert.equal(oracles.openBugs[0].number, 835);
   assert.deepEqual(oracles.recentWebCommits, ["abc1234 fix(web): route guard"]);
@@ -113,7 +125,7 @@ test("memory fingerprints and dullActions round-trip from fixture", async () => 
   assert.deepEqual(written.memory.dullActions, oracles.memory.dullActions);
 });
 
-test("prepare-prompt embeds oracles and Garbage hashes charter", () => {
+test("prepare-prompt embeds mission and oracles", () => {
   const { resultsDir } = tmpExploratoryDirs();
   writeFileSync(
     join(resultsDir, "oracles.json"),
@@ -124,6 +136,16 @@ test("prepare-prompt embeds oracles and Garbage hashes charter", () => {
       routes: ["#/"],
       boundaryHashes: ["#/garbage"],
       memory: { dullActions: [], recommendedFocus: [], confirmedFingerprints: [] },
+    }),
+  );
+  writeFileSync(
+    join(resultsDir, "mission.json"),
+    JSON.stringify({
+      version: 1,
+      headSha: "abc",
+      sinceSha: null,
+      primary: { id: "garbage-hashes", charter: "Garbage hashes", area: "navigation", needsFakeAcp: false, seed: null },
+      fallback: { id: "happy-path-session", charter: "Happy path", area: "session", needsFakeAcp: true, seed: null },
     }),
   );
 
@@ -140,16 +162,12 @@ test("prepare-prompt embeds oracles and Garbage hashes charter", () => {
   assert.equal(result.status, 0, result.stderr);
 
   const prompt = readFileSync(join(resultsDir, "prompt.txt"), "utf8");
-  assert.match(prompt, /## Oracles \(this run\)/);
-  assert.match(prompt, /Garbage hashes/);
+  assert.match(prompt, /## Assigned mission \(primary\)/);
+  assert.match(prompt, /garbage-hashes/);
   assert.match(prompt, /abc fix\(web\): routes/);
   assert.doesNotMatch(prompt, /minutes minimum/);
-  assert.doesNotMatch(prompt, /keep going until the runner stops you/i);
   assert.match(prompt, /12 minutes maximum/i);
-  assert.match(prompt, /Stopping criteria/i);
-  assert.match(prompt, /WebKit/i);
-  assert.match(prompt, /information gained per action/i);
-  assert.match(prompt, /persisted memory/i);
+  assert.match(prompt, /two.*successful reset\/reproduction cycles/i);
 });
 
 test("assertWebkitMcpConfig accepts webkit and rejects chromium config", async () => {
@@ -193,25 +211,56 @@ test("mcp.json is WebKit-only and assert-webkit --config-only passes", () => {
   assert.match(result.stdout, /ok/);
 });
 
-test("run-agent.sh caps relaunches and honors stop-reason", () => {
+test("run-agent.sh runs exactly one explorer process", () => {
   const script = readFileSync(join(root, "scripts/exploratory/run-agent.sh"), "utf8");
-  assert.match(script, /MAX_ATTEMPTS=2/);
-  assert.doesNotMatch(script, /MAX_ATTEMPTS=8/);
-  assert.match(script, /stop-reason\.json/);
-  assert.doesNotMatch(script, /finish checklist is not permission to stop early/i);
+  assert.match(script, /MAX_ATTEMPTS=1/);
+  assert.doesNotMatch(script, /MAX_ATTEMPTS=2/);
+  assert.doesNotMatch(script, /relaunch/i);
+  assert.doesNotMatch(script, /Continuation:/);
   assert.match(script, /assert-webkit\.mjs/);
 });
 
-test("exploratory workflow uses WebKit and 12-minute default budget", () => {
+test("exploratory workflow is schedule-only with validate before memory update", () => {
   const workflow = readFileSync(
     join(root, ".github/workflows/exploratory-testing.yml"),
     "utf8",
   );
-  assert.match(workflow, /default: "12"/);
+  assert.match(workflow, /cron: "17 6 \* \* \*"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.doesNotMatch(workflow, /budget_minutes/);
   assert.match(workflow, /playwright install --with-deps webkit/);
   assert.doesNotMatch(workflow, /playwright install --with-deps chromium/);
-  assert.doesNotMatch(workflow, /playwright install --with-deps firefox/);
-  assert.match(workflow, /AJAX_EXPLORATORY_BUDGET_MINUTES: \$\{\{ github\.event\.inputs\.budget_minutes \|\| '12' \}\}/);
+
+  const validateIdx = workflow.indexOf("validate-run.mjs");
+  const classifyIdx = workflow.indexOf("classify-findings.mjs");
+  const fileIdx = workflow.indexOf("file-issues.mjs");
+  const memoryIdx = workflow.indexOf("update-memory.mjs");
+  const seedIdx = workflow.indexOf("seed-mission-state.mjs");
+  const preflightIdx = workflow.indexOf("preflight-fake-acp.mjs");
+  assert.ok(validateIdx > 0 && classifyIdx > validateIdx && fileIdx > classifyIdx && memoryIdx > fileIdx);
+  assert.ok(seedIdx > 0 && preflightIdx > seedIdx);
+});
+
+test("cli.json enables sandbox with network denied while keeping WebKit MCP", () => {
+  const cli = JSON.parse(readFileSync(join(root, ".github/exploratory/cli.json"), "utf8"));
+  const allow = cli.permissions.allow.join("\n");
+  assert.match(allow, /Mcp\(playwright/);
+  assert.doesNotMatch(allow, /Shell\(curl/);
+  assert.doesNotMatch(allow, /Shell\(rg/);
+  assert.equal(cli.sandbox?.mode, "enabled");
+  assert.equal(cli.sandbox?.networkAccess, "deny");
+});
+
+test("agent stub delegates acp launches to fake fixture wrapper", () => {
+  const agentStub = readFileSync(join(root, "scripts/exploratory/agent-stubs/agent"), "utf8");
+  assert.match(agentStub, /AJAX_EXPLORATORY_FAKE_ACP/);
+  assert.match(agentStub, /acp/);
+});
+
+test("fake-acp agent wrapper points at fixture without copying it", () => {
+  const wrapper = readFileSync(join(root, "scripts/exploratory/agent-stubs/fake-acp"), "utf8");
+  assert.match(wrapper, /fake_acp\.js/);
+  assert.doesNotMatch(wrapper, /sleep infinity/);
 });
 
 test("charter defines stopping criteria and maximum budget", () => {

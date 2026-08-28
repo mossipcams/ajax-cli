@@ -13,6 +13,8 @@ import {
   resultsDir,
   simulatedFinding,
   validateFindingsDocument,
+  validateFindingsSchema,
+  assessRunUsefulness,
   writeJson,
 } from "./lib.mjs";
 
@@ -65,7 +67,7 @@ function main() {
     );
     writeJson(join(resultsDir, "findings.json"), {
       version: 1,
-      findings: [simulatedFinding()],
+      findings: [{ ...simulatedFinding(), classification: "novel" }],
     });
     writeJson(join(resultsDir, "observations.json"), emptyObservations());
     writeJson(join(resultsDir, "run.json"), {
@@ -93,10 +95,21 @@ function main() {
   writeJson(findingsPath, findings);
   const findingProblems = validateFindingsDocument(findings);
   problems.push(...findingProblems);
+  problems.push(...validateFindingsSchema(findings));
 
   const run = readJson(join(resultsDir, "run.json"), {});
+  const missionDoc = readJson(join(resultsDir, "mission.json"), null);
   run.findingsSummary = summarizeFindings(findings);
   run.validatedAt = new Date().toISOString();
+
+  const memoryDelta = readJson(join(resultsDir, "memory-delta.json"), { areasVisited: [] });
+  const observations = readJson(join(resultsDir, "observations.json"), emptyObservations());
+  const usefulness = assessRunUsefulness({ run, memoryDelta, findings, observations, missionDoc });
+  run.usefulness = usefulness;
+  if (!usefulness.ok && !args.fixture) {
+    problems.push(usefulness.reason ?? "run was not useful");
+  }
+
   writeJson(join(resultsDir, "run.json"), run);
 
   if (args.checkReadonly) {

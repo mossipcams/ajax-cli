@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Exploratory wrapper: run the checked-in fake ACP fixture without live credentials.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+exec node "$ROOT/crates/ajax-web/tests/fixtures/fake_acp.js" --cursor-models --cli-default-model "$@"

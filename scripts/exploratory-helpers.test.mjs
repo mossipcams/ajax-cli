@@ -44,7 +44,7 @@ test("validateFindingsDocument rejects confirmed without reproduction", async ()
       },
     ],
   });
-  assert.ok(problems.some((problem) => problem.includes("successful reproduction")));
+  assert.ok(problems.some((problem) => problem.includes("2 successful reproduction")));
 });
 
 test("normalizeFinding maps agent output to valid schema", async () => {
@@ -81,7 +81,8 @@ test("normalizeFinding maps agent output to valid schema", async () => {
   const normalized = normalizeFinding(agentFinding);
   assert.deepEqual(normalized.steps, agentFinding.reproSteps);
   assert.equal(normalized.confidence, "high");
-  assert.ok(normalized.reproductionSuccesses >= 1);
+  assert.equal(normalized.reproductionSuccesses, 0);
+  assert.equal(normalized.reproductionAttempts, 1);
   assert.equal(normalized.evidence.screenshots.length, 2);
   assert.deepEqual(normalized.relatedIssues, [835]);
   assert.equal(normalized.charter, undefined);
@@ -89,7 +90,10 @@ test("normalizeFinding maps agent output to valid schema", async () => {
 
   const doc = normalizeFindingsDocument({ version: 1, findings: [agentFinding] });
   const problems = validateFindingsDocument(doc);
-  assert.equal(problems.length, 0, problems.join("; "));
+  assert.ok(
+    problems.some((problem) => problem.includes("2 successful reproduction")),
+    problems.join("; "),
+  );
 });
 
 test("observation without expected/actual normalizes from title", async () => {
@@ -275,6 +279,56 @@ test("prepare-instance stays isolated when GIT_DIR points at the parent repo", (
   });
   assert.equal(nested.status, 0, nested.stderr);
   assert.equal(nested.stdout.trim(), demo);
+});
+
+test("validateFindingsDocument rejects confirmed evidence without existing files", async () => {
+  const { validateFindingsDocument } = await import("./exploratory/lib.mjs");
+  const problems = validateFindingsDocument({
+    version: 1,
+    findings: [
+      {
+        id: "x",
+        title: "Broken",
+        status: "confirmed",
+        confidence: "high",
+        area: "cockpit",
+        severity: "high",
+        reproductionAttempts: 2,
+        reproductionSuccesses: 2,
+        steps: ["open app"],
+        expected: "works",
+        actual: "fails",
+        evidence: {
+          notes: "only notes",
+          screenshots: ["exploratory-results/screenshots/missing.png"],
+        },
+        fingerprint: "cockpit|broken",
+      },
+    ],
+  });
+  assert.ok(problems.some((p) => p.includes("missing evidence file")));
+});
+
+test("validateFindingsSchema accepts observation with empty steps", async () => {
+  const { normalizeFindingsDocument, validateFindingsSchema } = await import("./exploratory/lib.mjs");
+  const doc = normalizeFindingsDocument({
+    version: 1,
+    findings: [
+      {
+        id: "obs-1",
+        title: "Maybe broken",
+        status: "observation",
+        area: "cockpit",
+        severity: "low",
+        reproSteps: [],
+        expected: "n/a",
+        actual: "Maybe broken",
+        evidence: {},
+      },
+    ],
+  });
+  const problems = validateFindingsSchema(doc);
+  assert.equal(problems.length, 0, problems.join("; "));
 });
 
 test("exploratory workflow stays off local verify path", async () => {

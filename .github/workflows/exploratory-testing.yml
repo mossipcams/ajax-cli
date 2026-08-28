@@ -8,12 +8,6 @@ on:
   schedule:
     # Daily ~06:17 UTC — offset from usual top-of-hour CI noise.
     - cron: "17 6 * * *"
-  workflow_dispatch:
-    inputs:
-      budget_minutes:
-        description: "Exploration budget in minutes"
-        required: false
-        default: "12"
 
 concurrency:
   group: exploratory-testing
@@ -28,7 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   AJAX_EXPLORATORY_PORT: "18790"
   AJAX_EXPLORATORY_BASE_URL: "https://127.0.0.1:18790"
-  AJAX_EXPLORATORY_BUDGET_MINUTES: ${{ github.event.inputs.budget_minutes || '12' }}
+  AJAX_EXPLORATORY_BUDGET_MINUTES: "12"
   # Locked: exploratory runs always use Composer 2.5.
   AJAX_EXPLORATORY_MODEL: composer-2.5
 
@@ -106,11 +100,42 @@ jobs:
       - name: Prepare isolated Ajax instance
         run: node scripts/exploratory/prepare-instance.mjs
 
+      - name: Plan nightly mission
+        run: node scripts/exploratory/plan-mission.mjs
+
       - name: Start isolated Ajax Web
         run: bash scripts/exploratory/start-server.sh
 
       - name: Wait for Ajax Web readiness
         run: node scripts/exploratory/wait-ready.mjs
+
+      - name: Seed mission product state
+        run: node scripts/exploratory/seed-mission-state.mjs
+
+      - name: Preflight fake ACP fixture
+        id: preflight
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { readJson, resultsDir, writeJson } from "./scripts/exploratory/lib.mjs";
+          import { join } from "node:path";
+          import { preflightFakeAcp } from "./scripts/exploratory/preflight-fake-acp.mjs";
+          const mission = readJson(join(resultsDir, "mission.json"), {});
+          const result = mission.primary?.needsFakeAcp
+            ? await preflightFakeAcp({
+                mission: mission.primary,
+                verifyServer: Boolean(mission.primary?.seed),
+              })
+            : { status: "skipped", reason: "mission does not require fake ACP" };
+          const run = readJson(join(resultsDir, "run.json"), {});
+          run.preflight = result;
+          writeJson(join(resultsDir, "run.json"), run);
+          if (result.status === "blocked") {
+            console.error(result.error ?? "preflight blocked");
+            process.exit(1);
+          }
+          console.log(JSON.stringify(result));
+          EOF
 
       - name: Prepare exploration oracles
         env:
@@ -127,23 +152,28 @@ jobs:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: bash scripts/exploratory/run-agent.sh
 
-      - name: Update exploration memory
-        if: always()
-        run: node scripts/exploratory/update-memory.mjs
-
       - name: Validate findings and read-only checkout
         id: validate
         if: always()
         run: node scripts/exploratory/validate-run.mjs
 
+      - name: Classify validated findings
+        id: classify
+        if: always() && steps.validate.outcome == 'success'
+        run: node scripts/exploratory/classify-findings.mjs
+
       - name: File confirmed findings as GitHub issues
         id: file-issues
-        if: always() && steps.validate.outcome == 'success'
+        if: always() && steps.validate.outcome == 'success' && steps.classify.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           AJAX_EXPLORATORY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node scripts/exploratory/file-issues.mjs
+
+      - name: Update exploration memory
+        if: always() && steps.validate.outcome == 'success' && steps.classify.outcome == 'success' && steps.file-issues.outcome == 'success'
+        run: node scripts/exploratory/update-memory.mjs
 
       - name: Stop Ajax Web
         if: always()
@@ -165,12 +195,20 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          if [ "${{ steps.preflight.outcome }}" = "failure" ]; then
+            echo "Exploratory fake-ACP preflight blocked the run."
+            exit 1
+          fi
           if [ "${{ steps.explore.outcome }}" = "failure" ]; then
             echo "Exploratory agent infrastructure failed."
             exit 1
           fi
           if [ "${{ steps.validate.outcome }}" = "failure" ]; then
-            echo "Exploratory validation failed (schema or read-only violation)."
+            echo "Exploratory validation failed (schema, usefulness, or read-only violation)."
+            exit 1
+          fi
+          if [ "${{ steps.classify.outcome }}" = "failure" ]; then
+            echo "Exploratory classification failed."
             exit 1
           fi
           if [ "${{ steps.file-issues.outcome }}" = "failure" ]; then
@@ -187,6 +225,10 @@ jobs:
           const run = JSON.parse(readFileSync(path, "utf8"));
           if (run.infrastructure?.status === "failed") {
             console.error(run.infrastructure.error ?? "infrastructure failed");
+            process.exit(1);
+          }
+          if (run.usefulness && run.usefulness.ok === false) {
+            console.error(run.usefulness.reason ?? "run was not useful");
             process.exit(1);
           }
           const confirmed = run.findingsSummary?.confirmed ?? 0;

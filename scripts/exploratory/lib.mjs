@@ -1,8 +1,11 @@
 // Shared paths and helpers for CI-only Ajax Web exploratory testing.
 
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import Ajv2020 from "ajv/dist/2020.js";
+import findingsSchema from "../../.github/exploratory/findings.schema.json" with { type: "json" };
 
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const exploratoryDir = join(repoRoot, ".github", "exploratory");
@@ -39,12 +42,16 @@ export function emptyObservations() {
   return { version: 1, observations: [] };
 }
 
+export const MISSION_COOLDOWN_RUNS = 2;
+export const MISSION_NO_SIGNAL_COOLDOWN_MS = 48 * 60 * 60 * 1000;
+
 export function emptyMemory() {
   return {
     version: 1,
     updatedAt: null,
     lastRunSha: null,
     runs: [],
+    missions: {},
     areas: {
       cockpit: { visits: 0, lastVisitedAt: null },
       session: { visits: 0, lastVisitedAt: null },
@@ -57,6 +64,7 @@ export function emptyMemory() {
       other: { visits: 0, lastVisitedAt: null },
     },
     confirmedFindings: [],
+    regressions: [],
     observations: [],
     dullActions: [],
   };
@@ -197,9 +205,7 @@ export function normalizeFinding(finding) {
   let reproductionSuccesses =
     typeof finding.reproductionSuccesses === "number"
       ? Math.max(0, Math.floor(finding.reproductionSuccesses))
-      : status === "confirmed" && steps.length > 0
-        ? 1
-        : 0;
+      : 0;
 
   if (status === "confirmed" && steps.length === 0) {
     status = "observation";
@@ -208,8 +214,7 @@ export function normalizeFinding(finding) {
   }
 
   if (status === "confirmed" && steps.length > 0 && reproductionSuccesses === 0) {
-    reproductionAttempts = Math.max(reproductionAttempts, 1);
-    reproductionSuccesses = 1;
+    reproductionAttempts = Math.max(reproductionAttempts, steps.length > 0 ? 1 : 0);
   }
 
   if (reproductionSuccesses > reproductionAttempts) {
@@ -317,18 +322,180 @@ export function validateFindingsDocument(doc) {
     ) {
       problems.push(`${prefix}.reproductionSuccesses exceeds attempts`);
     }
-    if (finding?.status === "confirmed" && finding.reproductionSuccesses < 1) {
-      problems.push(`${prefix}: confirmed findings need ≥1 successful reproduction`);
+    if (finding?.status === "confirmed" && finding.reproductionSuccesses < 2) {
+      problems.push(`${prefix}: confirmed findings need ≥2 successful reproduction cycles`);
     }
-    if (
-      finding?.status === "confirmed" &&
-      (nonEmptyString(finding?.expected) === "" || nonEmptyString(finding?.actual) === "")
-    ) {
-      problems.push(`${prefix}: confirmed findings need non-empty expected and actual`);
+    if (finding?.status === "confirmed") {
+      const evidenceProblems = validateConfirmedEvidence(finding, prefix);
+      problems.push(...evidenceProblems);
     }
   });
 
   return problems;
+}
+
+const EVIDENCE_PREFIX = "exploratory-results/";
+
+function resolveEvidenceRelativePath(rawPath, prefix) {
+  const problems = [];
+  const path = String(rawPath ?? "").trim();
+  if (!path) return { problems, relativePath: null, absolutePath: null };
+
+  if (isAbsolute(path)) {
+    problems.push(`${prefix}: evidence path must be relative, not absolute (${path})`);
+    return { problems, relativePath: null, absolutePath: null };
+  }
+  if (path.includes("..")) {
+    problems.push(`${prefix}: evidence path must not contain traversal segments (${path})`);
+    return { problems, relativePath: null, absolutePath: null };
+  }
+  if (!path.startsWith(EVIDENCE_PREFIX)) {
+    problems.push(`${prefix}: evidence paths must live under ${EVIDENCE_PREFIX}`);
+    return { problems, relativePath: null, absolutePath: null };
+  }
+
+  const absolutePath = resolve(repoRoot, path);
+  const rel = relative(resultsDir, absolutePath);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    problems.push(`${prefix}: evidence path escapes exploratory-results (${path})`);
+    return { problems, relativePath: null, absolutePath: null };
+  }
+  return { problems, relativePath: path, absolutePath: absolutePath };
+}
+
+function validateConfirmedEvidence(finding, prefix) {
+  const problems = [];
+  if (!finding.fingerprint || String(finding.fingerprint).trim() === "") {
+    problems.push(`${prefix}.fingerprint is required for confirmed findings`);
+  }
+
+  const tracePath = finding.evidence?.trace;
+  const screenshots = finding.evidence?.screenshots ?? [];
+  const resolvedFiles = [];
+
+  if (tracePath) {
+    const resolved = resolveEvidenceRelativePath(tracePath, prefix);
+    problems.push(...resolved.problems);
+    if (resolved.absolutePath) resolvedFiles.push(resolved.absolutePath);
+  }
+  for (const screenshot of screenshots) {
+    const resolved = resolveEvidenceRelativePath(screenshot, prefix);
+    problems.push(...resolved.problems);
+    if (resolved.absolutePath) resolvedFiles.push(resolved.absolutePath);
+  }
+
+  if (resolvedFiles.length === 0) {
+    problems.push(`${prefix}: confirmed findings need at least one trace or screenshot file path`);
+  } else {
+    for (const absolutePath of resolvedFiles) {
+      if (!existsSync(absolutePath)) {
+        problems.push(`${prefix}: missing evidence file ${relative(repoRoot, absolutePath)}`);
+      }
+    }
+  }
+
+  return problems;
+}
+
+let findingsValidator = null;
+
+function getFindingsValidator() {
+  if (!findingsValidator) {
+    const ajv = new Ajv2020({ allErrors: true, strict: false });
+    findingsValidator = ajv.compile(findingsSchema);
+  }
+  return findingsValidator;
+}
+
+export function validateFindingsSchema(doc) {
+  const validate = getFindingsValidator();
+  const ok = validate(doc);
+  if (ok) return [];
+  return (validate.errors ?? []).map((error) => {
+    const path = error.instancePath || "(root)";
+    return `schema ${path}: ${error.message ?? "invalid"}`;
+  });
+}
+
+export function evidenceSignature(finding) {
+  const parts = [];
+  const evidence = finding?.evidence ?? {};
+  if (evidence.trace) parts.push(`trace:${evidence.trace}`);
+  for (const shot of evidence.screenshots ?? []) parts.push(`shot:${shot}`);
+  for (const err of evidence.consoleErrors ?? []) parts.push(`console:${err}`);
+  for (const fail of evidence.networkFailures ?? []) parts.push(`net:${fail}`);
+  if (evidence.notes) parts.push(`notes:${evidence.notes}`);
+  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+export function missionAreaFromDoc(missionDoc, run = {}) {
+  const missionId = run.mission?.primary ?? missionDoc?.primary?.id;
+  if (!missionId) return null;
+  return missionDoc?.primary?.area ?? null;
+}
+
+export function assessMissionCompletion({
+  missionDoc = null,
+  run = {},
+  memoryDelta = {},
+  findings = { findings: [] },
+  observations = { observations: [] },
+} = {}) {
+  const missionArea = missionAreaFromDoc(missionDoc, run);
+  if (!missionArea) {
+    return { ok: true, reason: null };
+  }
+
+  if (memoryDelta.missionCompleted === true) {
+    return { ok: true, reason: null };
+  }
+
+  const areas = (memoryDelta.areasVisited ?? [])
+    .map((entry) => (typeof entry === "string" ? entry : entry?.area))
+    .filter(Boolean);
+  if (areas.includes(missionArea)) {
+    return { ok: true, reason: null };
+  }
+
+  const findingCount = (findings.findings ?? []).length;
+  const observationCount =
+    (observations.observations ?? []).length +
+    (findings.findings ?? []).filter((f) => f.status === "observation").length;
+  if (findingCount > 0 || observationCount > 0) {
+    return { ok: true, reason: null };
+  }
+
+  return {
+    ok: false,
+    reason: `mission ${run.mission?.primary ?? missionDoc?.primary?.id} incomplete (no areasVisited, findings, or observations)`,
+  };
+}
+
+export function assessRunUsefulness({
+  run = {},
+  memoryDelta = {},
+  findings = { findings: [] },
+  observations = { observations: [] },
+  missionDoc = null,
+} = {}) {
+  if (run.preflight?.status === "blocked") {
+    return { ok: false, reason: run.preflight.error ?? "preflight blocked" };
+  }
+  if (run.agent?.status === "failed" || run.infrastructure?.status === "failed") {
+    return { ok: false, reason: run.infrastructure?.error ?? "infrastructure failed" };
+  }
+  const areas = Array.isArray(memoryDelta.areasVisited) ? memoryDelta.areasVisited : [];
+  const findingCount = findings.findings?.length ?? 0;
+  const observationCount = observations.observations?.length ?? 0;
+  const hasAreas = areas.length > 0;
+  if (!hasAreas && findingCount === 0 && observationCount === 0) {
+    return { ok: false, reason: "empty exploration skeleton (no areas, findings, or observations)" };
+  }
+  const mission = assessMissionCompletion({ missionDoc, run, memoryDelta, findings, observations });
+  if (!mission.ok) {
+    return mission;
+  }
+  return { ok: true, reason: null };
 }
 
 export function simulatedFinding() {
