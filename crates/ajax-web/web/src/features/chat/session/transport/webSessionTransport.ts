@@ -195,6 +195,12 @@ export function connectWebSessionTransport(
         ...(action === "accept" && content ? { content } : {}),
       });
     },
+    retryRestore() {
+      sendJson({ type: "retry_restore" });
+    },
+    startNewContext() {
+      sendJson({ type: "start_new_context" });
+    },
     dispose() {
       disposed = true;
       socket?.removeEventListener("message", messageListener);

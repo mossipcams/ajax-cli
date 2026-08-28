@@ -5,6 +5,7 @@ export {
   SESSION_PROTOCOL_VERSION,
 } from "./contracts";
 export type {
+  ContextState,
   ParsedServerFrame,
   SessionSnapshot,
   ToolContent,

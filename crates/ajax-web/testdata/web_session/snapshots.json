@@ -5,7 +5,9 @@
     "cursor": 0,
     "model": "auto",
     "turnState": "idle",
-    "reset": false
+    "reset": false,
+    "contextState": "live",
+    "contextEpoch": 0
   },
   {
     "type": "snapshot",
@@ -14,6 +16,8 @@
     "model": "composer-2.5",
     "turnState": "busy",
     "reset": false,
+    "contextState": "live",
+    "contextEpoch": 0,
     "pendingPermission": {
       "requestId": "p1",
       "title": "Run tests?",

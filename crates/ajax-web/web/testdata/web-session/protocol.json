@@ -5,7 +5,9 @@
     { "type": "cancel" },
     { "type": "cancel", "keepQueue": true },
     { "type": "set_model", "model": "composer-2.5" },
-    { "type": "permission", "requestId": "p1", "approved": true }
+    { "type": "permission", "requestId": "p1", "approved": true },
+    { "type": "retry_restore" },
+    { "type": "start_new_context" }
   ],
   "snapshots": [
     {
@@ -14,7 +16,9 @@
       "cursor": 0,
       "model": "auto",
       "turnState": "idle",
-      "reset": false
+      "reset": false,
+      "contextState": "live",
+      "contextEpoch": 0
     }
   ],
   "events": [

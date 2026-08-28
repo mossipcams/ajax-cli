@@ -1,18 +1,19 @@
 //! ACP child spawn, replace, and first attach for per-task session slots.
 
+use super::context_continuity::ContextState;
 use super::task_session::TaskSessionState;
 use super::task_session_exit::{
     interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
 };
 use super::task_session_replacement::{
-    discard_staged_client, finish_first_acquire, install_replaced_client, meta_model_for_persist,
-    meta_model_from_config_options,
+    discard_staged_client, enter_restore_unavailable, finish_first_acquire,
+    install_new_context_client, install_replaced_client, meta_model_from_config_options,
 };
-use super::transcript::{harness_switch_note, slot_must_replace};
+use super::transcript::{context_reset_note, harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionServerEvent};
 use crate::adapters::web_session_acp::{
-    applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
-    AcpStdioClient, SpawnReport,
+    applied_model_id_for_persist, config_option_descriptors, is_restore_unavailable,
+    option_triggers_model_persist, AcpStdioClient, SpawnReport,
 };
 use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::models::AgentClient;
@@ -47,35 +48,63 @@ pub(super) async fn acquire(
             &state.qualified_handle,
         );
         release_live_client(state, resume_id.is_none())?;
-        let (new_client, report) =
-            spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
-        install_replaced_client(state, new_client, &report, model)?;
+        match spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await {
+            Ok((new_client, report)) => {
+                install_replaced_client(state, new_client, &report, model)?;
+            }
+            Err(error) if is_restore_unavailable(&error) => {
+                enter_restore_unavailable(state, &error, model)?;
+            }
+            Err(error) => return Err(error),
+        }
         state.acquire_holder();
         return Ok(());
     }
 
     let stored: StoredSession<SessionServerEvent> =
         web_session_store::load(&state.state_dir, &state.qualified_handle);
+    state.context_continuity.epoch = stored.context_epoch;
     let resume_id = stored.acp_session_id.clone();
-    let (client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
-
-    state.client = Some(client);
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
-    apply_spawn_capabilities(state, &report);
-    state.log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-    state.generation = 0;
-    state.last_released = None;
-    state.acp_alive = false;
-    match recover_prompt_ledger(state) {
-        Ok(()) => finish_first_acquire(state, &report, model),
-        Err(error) => {
-            if let Some(client) = state.client.take() {
-                discard_staged_client(client);
-            }
+    match spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await {
+        Ok((client, report)) => {
+            state.model = model.to_string();
+            state.applied_model = report.applied_model.clone();
+            apply_spawn_capabilities(state, &report);
+            state.log =
+                super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+            state.generation = 0;
+            state.last_released = None;
             state.acp_alive = false;
-            Err(error)
+            match recover_prompt_ledger(state) {
+                Ok(()) => finish_first_acquire(state, client, &report, model),
+                Err(error) => {
+                    discard_staged_client(client);
+                    state.acp_alive = false;
+                    Err(error)
+                }
+            }
         }
+        Err(error) if is_restore_unavailable(&error) => {
+            state.log =
+                super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+            state.model = model.to_string();
+            state.applied_model = if stored.model.is_empty() {
+                model.to_string()
+            } else {
+                stored.model.clone()
+            };
+            state.generation = 0;
+            state.last_released = None;
+            match recover_prompt_ledger(state) {
+                Ok(()) => {
+                    enter_restore_unavailable(state, &error, model)?;
+                    state.acquire_holder();
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -102,7 +131,7 @@ pub(super) async fn apply_model(
             if let Some(options) = outcome.config_options.as_deref() {
                 state.session_config_options = Some(config_option_descriptors(options));
             }
-            web_session_store::save_meta(
+            let _ = web_session_store::save_meta(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
@@ -119,7 +148,7 @@ pub(super) async fn apply_model(
                     outcome.applied_model
                 )
             });
-            state.append_to_log(vec![SessionServerEvent::Error {
+            let _ = state.append_to_log(vec![SessionServerEvent::Error {
                 message: message.clone(),
             }]);
             Err(message)
@@ -157,7 +186,7 @@ pub(super) async fn apply_config_option(
             if let Some(options) = outcome.config_options.as_deref() {
                 state.session_config_options = Some(config_option_descriptors(options));
             }
-            web_session_store::save_meta(
+            let _ = web_session_store::save_meta(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
@@ -192,7 +221,7 @@ pub(super) async fn apply_config_option(
                     outcome.applied_model
                 )
             });
-            state.append_to_log(vec![SessionServerEvent::Error {
+            let _ = state.append_to_log(vec![SessionServerEvent::Error {
                 message: message.clone(),
             }]);
             Err(message)
@@ -226,8 +255,13 @@ pub(super) async fn respawn(
     );
     let agent = state.agent;
     release_live_client(state, resume_id.is_none())?;
-    let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
-    install_replaced_client(state, new_client, &report, model)?;
+    match spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await {
+        Ok((new_client, report)) => install_replaced_client(state, new_client, &report, model)?,
+        Err(error) if is_restore_unavailable(&error) => {
+            enter_restore_unavailable(state, &error, model)?;
+        }
+        Err(error) => return Err(error),
+    }
     Ok(state.generation)
 }
 
@@ -246,34 +280,55 @@ pub(super) async fn reset_harness_context(
         &state.prompt_ledger,
     );
 
-    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
-
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
-
     let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note]);
+    install_new_context_client(state, new_client, &report, model, Some(note), true)?;
 
-    web_session_store::save_meta(
-        &state.state_dir,
-        &state.qualified_handle,
-        Some(new_client.session_id()),
-        &meta_model_for_persist(&report, model),
-    );
-    state.client = Some(new_client);
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
-    apply_spawn_capabilities(state, &report);
     state.agent = agent;
-    state.generation = state.generation.saturating_add(1);
-    state.acp_alive = true;
     state.stream_normalizer = super::normalize::StreamNormalizer::default();
     state.usage_deduper = super::acp_usage::UsageDeduper::default();
-    if let Some(error) = &report.model_apply_error {
-        state.append_to_log(vec![SessionServerEvent::Error {
-            message: error.clone(),
-        }]);
-    }
     Ok(state.generation)
+}
+
+pub(super) async fn start_new_context(state: &mut TaskSessionState) -> Result<(), String> {
+    if !matches!(state.context_continuity.state, ContextState::Unavailable) {
+        return Err("ACP context is not unavailable".to_string());
+    }
+    let worktree_path = state
+        .worktree_path
+        .as_deref()
+        .ok_or_else(|| "worktree path missing".to_string())?;
+    let model = state.model.clone();
+    let agent = state.agent;
+    let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
+    let note = context_reset_note();
+    install_new_context_client(state, new_client, &report, &model, Some(note), true)
+}
+
+pub(super) async fn retry_restore(state: &mut TaskSessionState) -> Result<(), String> {
+    if !matches!(state.context_continuity.state, ContextState::Unavailable) {
+        return Err("ACP context is not unavailable".to_string());
+    }
+    let worktree_path = state
+        .worktree_path
+        .as_deref()
+        .ok_or_else(|| "worktree path missing".to_string())?;
+    let model = state.model.clone();
+    let agent = state.agent;
+    let stored =
+        web_session_store::load::<SessionServerEvent>(&state.state_dir, &state.qualified_handle);
+    let resume_id = stored
+        .acp_session_id
+        .as_deref()
+        .ok_or_else(|| "no stored ACP session id to restore".to_string())?;
+    match spawn_acp(agent, worktree_path, &model, Some(resume_id)).await {
+        Ok((new_client, report)) => install_replaced_client(state, new_client, &report, &model),
+        Err(error) if is_restore_unavailable(&error) => {
+            enter_restore_unavailable(state, &error, &model)?;
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Cancel and drop the live ACP child so the next spawn owns stdio alone.
@@ -303,7 +358,7 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
                     action: "cancel".to_string(),
                 });
             }
-            state.append_to_log(resolved);
+            let _ = state.append_to_log(resolved);
         }
         let message = if close_session {
             client.shutdown()
@@ -311,7 +366,7 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
             client.detach()
         };
         if let Some(message) = message {
-            state.append_to_log(vec![SessionServerEvent::Error { message }]);
+            let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
         }
         Ok(())
     })();

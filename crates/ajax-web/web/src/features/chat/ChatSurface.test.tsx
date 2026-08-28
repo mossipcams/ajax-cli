@@ -171,6 +171,52 @@ describe("ChatSurface smoke", () => {
     vi.useRealTimers();
   });
 
+  it("gates the composer when host context is unavailable", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "unavailable",
+        contextEpoch: 1,
+        contextError: "child died",
+      });
+    });
+
+    expect(screen.getByTestId("session-context-notice")).toHaveTextContent("child died");
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry restore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start new context" })).toBeInTheDocument();
+  });
+
+  it("gates the composer when host transcriptError is set without unavailable recovery", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 1,
+        transcriptError: "forced append failure",
+      });
+    });
+
+    expect(screen.getByTestId("session-transcript-notice")).toHaveTextContent(
+      "forced append failure",
+    );
+    expect(screen.queryByTestId("session-context-notice")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Retry restore" })).not.toBeInTheDocument();
+  });
+
   it("closes the task details sheet when Drop confirm arms (#947)", () => {
     const { rerender } = mountChat({ pendingConfirmAction: null });
     fireEvent.click(screen.getByTestId("session-details"));

@@ -3,7 +3,8 @@
 use super::acp_drain::drain_acp_events;
 use super::acp_map::map_acp_session_notification;
 use super::acp_usage::UsageDeduper;
-use super::protocol::{SessionChrome, SessionSnapshot};
+use super::context_continuity::ContextContinuity;
+use super::protocol::{SessionChrome, SessionPending, SessionSnapshot};
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
@@ -198,8 +199,7 @@ fn snapshot_serializes_available_commands_field() {
         "auto".to_string(),
         false,
         false,
-        None,
-        None,
+        SessionPending::default(),
         SessionChrome {
             session_config_options: None,
             available_commands: Some(vec![AvailableCommandDescriptor {
@@ -210,6 +210,7 @@ fn snapshot_serializes_available_commands_field() {
             prompt_capabilities: None,
             session_title: None,
         },
+        ContextContinuity::default(),
     );
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["availableCommands"][0]["name"], "web");
