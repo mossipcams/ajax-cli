@@ -110,7 +110,7 @@ jobs:
         run: node scripts/exploratory/wait-ready.mjs
 
       - name: Seed mission product state
-        run: node scripts/exploratory/seed-mission-state.mjs
+        run: node scripts/exploratory/plan-mission.mjs --seed
 
       - name: Preflight fake ACP fixture
         id: preflight

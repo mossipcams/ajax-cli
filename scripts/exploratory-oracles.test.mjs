@@ -235,7 +235,7 @@ test("exploratory workflow is schedule-only with validate before memory update",
   const classifyIdx = workflow.indexOf("classify-findings.mjs");
   const fileIdx = workflow.indexOf("file-issues.mjs");
   const memoryIdx = workflow.indexOf("update-memory.mjs");
-  const seedIdx = workflow.indexOf("seed-mission-state.mjs");
+  const seedIdx = workflow.indexOf("plan-mission.mjs --seed");
   const preflightIdx = workflow.indexOf("preflight-fake-acp.mjs");
   assert.ok(validateIdx > 0 && classifyIdx > validateIdx && fileIdx > classifyIdx && memoryIdx > fileIdx);
   assert.ok(seedIdx > 0 && preflightIdx > seedIdx);
