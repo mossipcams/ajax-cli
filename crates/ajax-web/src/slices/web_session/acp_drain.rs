@@ -54,6 +54,7 @@ pub(crate) struct AcpDrainOutcome {
     pub session_title_update: Option<Option<String>>,
 }
 
+#[cfg(test)]
 pub(crate) fn drain_acp_events(
     client: &AcpStdioClient,
     deduper: &mut UsageDeduper,
