@@ -228,13 +228,14 @@ export function fileIssues(options = {}) {
     findingsPath = join(resultsDir, "findings.json"),
     runPath = join(resultsDir, "run.json"),
     issuesPath = join(resultsDir, "issues.json"),
+    verifierPath = join(resultsDir, "verifier.json"),
   } = options;
 
   const args = parseArgs(argv);
   const findingsDoc = readJson(findingsPath, emptyFindings());
   const run = readJson(runPath, {});
   const priorMemory = readJson(memoryPath, {});
-  const verifierDoc = readJson(join(resultsDir, "verifier.json"), emptyVerifierDocument());
+  const verifierDoc = readJson(verifierPath, emptyVerifierDocument());
   const eligible = (findingsDoc.findings ?? []).filter((finding) =>
     isEligibleFinding(finding, { verifierDoc }),
   );
