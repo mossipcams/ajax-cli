@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, screen, waitFor, act, within } from "@testing-library/react";
+import { render, fireEvent, screen, waitFor } from "@testing-library/react";
 import { join } from "node:path";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import App from "./App";
