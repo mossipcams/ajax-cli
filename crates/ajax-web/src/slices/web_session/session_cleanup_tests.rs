@@ -28,8 +28,8 @@ fn issue_977_startup_prunes_unowned_persisted_sessions() {
     let dir = scratch_dir("startup-prune");
     let owned_handle = "web/owned";
     let stale_handle = "web/stale-dropped";
-    web_session_store::append_events(&dir, owned_handle, &[note("keep")]);
-    web_session_store::append_events(&dir, stale_handle, &[note("drop")]);
+    web_session_store::append_events(&dir, owned_handle, &[note("keep")]).unwrap();
+    web_session_store::append_events(&dir, stale_handle, &[note("drop")]).unwrap();
 
     let mut owned = std::collections::HashSet::new();
     owned.insert(owned_handle.to_string());
@@ -50,7 +50,7 @@ fn issue_977_startup_prunes_unowned_persisted_sessions() {
 fn issue_977_startup_keeps_owned_recoverable_task_transcripts() {
     let dir = scratch_dir("startup-keep");
     let handle = "web/fix-login";
-    web_session_store::append_events(&dir, handle, &[note("recoverable")]);
+    web_session_store::append_events(&dir, handle, &[note("recoverable")]).unwrap();
 
     let mut task = crate::test_support::fix_login_task();
     task.lifecycle_status = LifecycleStatus::Reviewable;
@@ -88,7 +88,7 @@ fn issue_977_drop_cleanup_isolates_handle_reuse() {
 
     let dir = scratch_dir("drop-reuse");
     let handle = "web/reuse-handle";
-    web_session_store::append_events(&dir, handle, &[note("old transcript")]);
+    web_session_store::append_events(&dir, handle, &[note("old transcript")]).unwrap();
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = super::test_support::fake_acp_fixture();
 

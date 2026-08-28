@@ -137,7 +137,7 @@ fn disk_backed_read_from_honors_dropped_offset() {
     let events: Vec<_> = (0..MAX_LOG_EVENTS + 5)
         .map(|i| note(&i.to_string()))
         .collect();
-    web_session_store::append_events(&dir, handle, &events);
+    web_session_store::append_events(&dir, handle, &events).unwrap();
     let loaded = web_session_store::load::<SessionServerEvent>(&dir, handle);
     assert_eq!(loaded.dropped, 5);
     assert_eq!(loaded.events.len(), MAX_LOG_EVENTS);

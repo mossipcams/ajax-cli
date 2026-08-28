@@ -20,6 +20,73 @@ fn fake_acp_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
 }
 
+fn close_marker_path(worktree: &std::path::Path) -> std::path::PathBuf {
+    worktree.join(".fake-acp-session-close-called")
+}
+
+/// Mirrors `bridge_task_session_socket` viewer lease: acquire on connect, release on disconnect.
+#[test]
+fn bridge_viewer_disconnect_does_not_close_session_or_reset_context() {
+    let dir = scratch_dir("bridge-viewer-disconnect");
+    let handle = "web/bridge-viewer-disconnect";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let marker = close_marker_path(&dir);
+    let _ = std::fs::remove_file(&marker);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--session-close"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("bridge acquire");
+            let child_before = directory.child_id(handle).expect("child");
+            let session_before = directory
+                .stored_acp_session_id(&dir, handle)
+                .expect("session id");
+            let epoch_before = directory
+                .attach_snapshot(handle, "auto")
+                .snapshot
+                .context_epoch;
+
+            directory
+                .submit_prompt(handle, "while-connected".to_string())
+                .expect("prompt");
+            directory.release(handle);
+
+            super::test_support::pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| match event {
+                    SessionServerEvent::TurnEnd { .. } => true,
+                    SessionServerEvent::Message { text, .. } => text == "pong",
+                    _ => false,
+                })
+            });
+
+            assert!(
+                !marker.exists(),
+                "viewer disconnect must not send ACP session/close"
+            );
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("bridge reconnect acquire");
+            assert_eq!(directory.child_id(handle), Some(child_before));
+            assert_eq!(
+                directory.stored_acp_session_id(&dir, handle),
+                Some(session_before)
+            );
+            assert_eq!(
+                directory
+                    .attach_snapshot(handle, "auto")
+                    .snapshot
+                    .context_epoch,
+                epoch_before
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn max_session_frame_bytes_is_256_kib() {
     assert_eq!(MAX_SESSION_FRAME_BYTES, 256 * 1024);
