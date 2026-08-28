@@ -321,6 +321,11 @@ fn target_from_raw_input(raw_input: Option<&Value>) -> Option<String> {
             return Some(value.to_string());
         }
     }
+    for key in ["toolName", "tool", "name"] {
+        if let Some(value) = map.get(key).and_then(non_empty_str) {
+            return Some(value.to_string());
+        }
+    }
     map.get("command")
         .and_then(non_empty_str)
         .map(str::to_string)
