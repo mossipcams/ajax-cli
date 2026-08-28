@@ -57,12 +57,12 @@ export default function Conversation({
             data-testid={turn.user ? "session-turn" : "session-turn-preamble"}
           >
             {turn.user ? <TranscriptRow item={turn.user} live={false} /> : null}
-            {turn.rows.map((row, rowIndex) =>
+            {turn.rows.map((row) =>
               row.kind === "work" ? (
                 <TurnActivity
                   key={row.id}
                   items={row.items}
-                  live={isLiveTurn && rowIndex === turn.rows.length - 1}
+                  live={isLiveTurn}
                   attention={awaiting}
                 />
               ) : (

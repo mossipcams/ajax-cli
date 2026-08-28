@@ -381,11 +381,11 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
   );
   expect(crushed).toBe(0);
 
-  // Collapsed, the summary stays visible and tool rows remain on the grid; only
-  // thoughts and plans hide behind the disclosure.
+  // Collapsed, the summary stays visible and completed tool rows hide behind it;
+  // thoughts and plans stay hidden too.
   await page.getByTestId("session-turn-work-summary").click();
   await expect(page.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
-  await expect(page.getByTestId("session-tool-card")).toHaveCount(2);
+  await expect(page.getByTestId("session-tool-card")).toHaveCount(0);
   await expect(page.getByTestId("session-plan")).toHaveCount(0);
   await expect(page.getByTestId("session-thinking")).toHaveCount(0);
   await expect(page.getByTestId("session-turn-work-summary")).toContainText(

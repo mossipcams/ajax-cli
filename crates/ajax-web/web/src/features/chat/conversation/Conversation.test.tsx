@@ -214,6 +214,46 @@ describe("Conversation — transcript event order", () => {
   });
 });
 
+describe("Conversation — activity disclosure live gating", () => {
+  it("keeps in-flight tool rows visible when agent prose follows work on a busy turn", () => {
+    const items: ConversationItem[] = [
+      userProse("u1", "Fix it"),
+      {
+        kind: "tool",
+        id: "t1",
+        call: {
+          callId: "c1",
+          title: "Read",
+          kind: "read",
+          status: "completed",
+          locations: ["/repo/a.ts"],
+          content: [],
+        },
+      },
+      {
+        kind: "tool",
+        id: "t2",
+        call: {
+          callId: "c2",
+          title: "cargo test",
+          kind: "execute",
+          status: "in_progress",
+          locations: [],
+          content: [],
+        },
+      },
+      agentProse("a1", "Running tests now."),
+    ];
+    render(<Conversation items={items} busy />);
+
+    const work = screen.getByTestId("session-turn-work");
+    expect(work).toHaveAttribute("data-live", "true");
+    expect(work).toHaveAttribute("data-expanded", "false");
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
+    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
+  });
+});
+
 describe("Conversation — what stays in the conversation", () => {
   it("keeps an unanswered permission ask in the column, without the buttons", () => {
     const items: ConversationItem[] = [
