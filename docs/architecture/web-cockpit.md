@@ -65,6 +65,18 @@ host promotes them on attach. A per-task browser preference
 session-capable tasks until cleared from task details. Diff Review
 Back returns to the mode the workspace selected.
 
+**Pointer policy (workspace composition):** hit-testing for dashboard row
+reveals, task-header Details, and workspace swipe-back belongs to
+`features/task-workspace` and `features/task`, not Chat or Terminal session
+code. Task-list swipe reveals keep `useSwipeReveal` but the revealed
+`ActionBar` sits above the full-row opener (`pointer-events` on
+`.task-row.is-revealed` / `.task-row-reveal`). Terminal-expanded Details stays
+in `.detail-header-controls` with explicit `pointer-events` and z-index above
+`.terminal-corner-actions`. Workspace swipe-right back is capped when the hash
+is already `#/` or `#/p/...` so a settling task surface cannot navigate past
+the dashboard; Chat keeps transcript-selection ignore only
+(`ChatSurface.tsx`).
+
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **on** (`ajax.web.session.orchestrationChat` in
@@ -308,8 +320,8 @@ reports a warning. New Task and idle catalog selection still use only
 **Harness Switch (MVP).** Cross-harness Switch in task details sends only the target
 harness (no model picker). It clears the prior harness model pin, resets ACP
 context with a fresh `session/new` boundary, and keeps the transcript for
-operator visibility. Same-harness model changes use the connected
-composer controls or legacy `set_model`, not Switch.
+operator visibility. Same-harness model changes use connected composer
+`set_config_option` picks, not Switch.
 
 **ACP context continuity.** Snapshots expose required `contextState`,
 `contextEpoch`, and optional `contextError` / `transcriptError`. The browser
@@ -397,10 +409,10 @@ queue empties, or idle retention evicts the slot.
 
 Reconnects do not send the browser `ajax.web.session.model` preference on the
 session WebSocket URL; task metadata remains authoritative
-([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
-on the task through a core-owned operation, then applies the pin in-band on the
-live ACP session when a slot exists (`session/set_config_option` with the mapped
-advertised ACP id). Cross-harness Switch resets backend context on the live slot
+([#910](https://github.com/mossipcams/ajax-cli/issues/910)). Live picks persist
+on the task through a core-owned operation, then apply the advertised
+`{ configId, value }` pair in-band on the live ACP session when a slot exists.
+Cross-harness Switch resets backend context on the live slot
 instead of dropping it.
 Incoming ACP v1 notifications remain typed through the per-task command loop.
 Stable message, thought, tool, plan, mode, configuration, session-info, and usage
@@ -768,7 +780,8 @@ supported external exposure model; it does not make direct origin bypass safe,
 so operators must still protect the origin with Cloudflare Tunnel, firewalling,
 or equivalent origin access controls. Live-control API routes such as
 `/api/cockpit`, `/api/version`, `/api/server/runtime`, `/api/server/restart`,
-`/api/server/update`, `/api/operations`, `/api/tasks`, and the task terminal
+`/api/server/update`, `/api/operations` (alias of `/api/actions`; same handler),
+`/api/tasks`, and the task terminal
 WebSocket route require the server-issued,
 HttpOnly, Secure, same-origin browser-session cookie. The HTML shell sets the
 cookie on normal loads, and `POST /api/session` exists only to renew or
@@ -1194,7 +1207,13 @@ rejected.
 
 ### `ajax-web::slices::operate`
 
-Owns browser-submitted operator actions. It accepts browser action requests,
+Owns browser-submitted operator actions. `POST /api/operations` and
+`POST /api/actions` are duplicate public aliases registered in
+`ajax-web::runtime` to the same `axum_action` handler; the browser shell posts
+to `/api/operations` while legacy tests and CLI web-backend fixtures may still
+use `/api/actions`. Both paths must remain until usage is proven zero.
+
+It accepts browser action requests,
 checks browser capability limits, delegates valid work to the existing core task
 operations, and returns the refreshed Cockpit projection. Unsupported
 capabilities return typed adapter capability outcomes rather than duplicated
@@ -1301,6 +1320,10 @@ HTTP listener, routing, connection handling, local HTTPS identity, graceful
 shutdown, and process-level startup by composing `ajax-web::slices::*` with
 `ajax-web::adapters::*`. If `ajax-cli` starts Web Cockpit, the CLI launcher
 passes resolved runtime context to `ajax-web` explicitly.
+
+Operator mutations register twice: `POST /api/actions` and `POST /api/operations`
+both map to `axum_action` with identical request/response semantics. This is
+intentional backward compatibility, not two handlers.
 
 Post-startup Web Cockpit routes snapshot registry state under a short mutex
 hold, run external tmux/git probes outside the lock, then merge deltas back
