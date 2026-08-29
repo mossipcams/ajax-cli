@@ -24,7 +24,6 @@ PORT=""
 INSTALL=1
 FOREGROUND=0
 WORKTREE=""
-RESTART_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -48,7 +47,6 @@ Options:
   --host HOST        Bind address (default: 0.0.0.0)
   --port PORT        Listen port (default: 8788 for dev, 8787 for stable)
   --profile NAME     Ajax profile (default: dev)
-  --restart-only     Restart the currently installed binary only (no fetch/build/install)
   -h, --help         Show this help
 
 Environment:
@@ -90,11 +88,6 @@ while [[ $# -gt 0 ]]; do
       PROFILE="${2:?--profile requires a value}"
       shift 2
       ;;
-    --restart-only)
-      RESTART_ONLY=1
-      INSTALL=0
-      shift
-      ;;
     -h | --help)
       usage
       exit 0
@@ -124,46 +117,6 @@ fi
 PID_FILE="$RUN_DIR/${PROFILE}-web.pid"
 LOG_FILE="$RUN_DIR/${PROFILE}-web.log"
 TMUX_SESSION="ajax-web-${PROFILE}"
-STATUS_FILE="${AJAX_RUNTIME_STATUS_FILE:-}"
-runtime_status_log() {
-  local line="$1"
-  [[ -n "$line" && -n "${AJAX_RUNTIME_LOG_FILE:-}" ]] || return 0
-  mkdir -p "$(dirname "$AJAX_RUNTIME_LOG_FILE")"
-  printf '%s\n' "$line" >>"$AJAX_RUNTIME_LOG_FILE"
-}
-
-runtime_status_patch() {
-  local phase="${1:-}"
-  local result="${2:-}"
-  local rollback="${3:-false}"
-  [[ -n "$STATUS_FILE" ]] || return 0
-  python3 - "$STATUS_FILE" "$phase" "$result" "$rollback" <<'PY' || true
-import json, sys, datetime
-from pathlib import Path
-
-path = Path(sys.argv[1])
-phase, result, rollback = sys.argv[2:5]
-now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-data = {}
-if path.is_file():
-    try:
-        data = json.loads(path.read_text())
-    except Exception:
-        data = {}
-op = data.get("operation") or {}
-if phase:
-    op["phase"] = phase
-if result:
-    op["result"] = result
-    op["finished_at"] = now
-    if rollback == "true":
-        op["rollback"] = True
-data["operation"] = op
-data["updated_at"] = now
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
-}
 SLOT_BIN_DIR="$RUN_DIR/bin"
 SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
@@ -230,19 +183,7 @@ agent_hooks_differs() {
 }
 
 SOURCE_ROOT="$MAIN_WORKTREE"
-if [[ "$RESTART_ONLY" -eq 1 ]]; then
-  runtime_status_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) restart-only: using installed binary for profile=$PROFILE"
-  runtime_status_patch "restarting" "" "false"
-  echo "Restart-only: skipping fetch/build/install for profile=$PROFILE"
-  mkdir -p "$RUN_DIR"
-  USE_SLOT_BIN=0
-  BIN_CMD=(ajax-cli)
-  if [[ "$PROFILE" == "dev" && -x "$SLOT_BIN" ]]; then
-    BIN_CMD=("$SLOT_BIN")
-    USE_SLOT_BIN=1
-  fi
-  HOOKS_CHANGED=0
-elif [[ -n "$WORKTREE" ]]; then
+if [[ -n "$WORKTREE" ]]; then
   if [[ ! -d "$WORKTREE" ]]; then
     echo "worktree path does not exist: $WORKTREE" >&2
     exit 1
@@ -255,10 +196,8 @@ elif [[ -n "$WORKTREE" ]]; then
     HOOKS_CHANGED=1
   fi
 else
-  runtime_status_patch "fetching" "" "false"
   PREV_HEAD="$(git -C "$MAIN_WORKTREE" rev-parse HEAD 2>/dev/null || true)"
   sync_main
-  runtime_status_patch "building" "" "false"
   if [[ -z "$PREV_HEAD" ]]; then
     HOOKS_CHANGED=1
   elif agent_hooks_differs "$MAIN_WORKTREE" "$PREV_HEAD" HEAD; then
@@ -267,7 +206,6 @@ else
   restore_model_router_symlinks
 fi
 
-if [[ "$RESTART_ONLY" -eq 0 ]]; then
 mkdir -p "$RUN_DIR"
 
 BIN_CMD=(ajax-cli)
@@ -331,7 +269,6 @@ if [[ "$INSTALL" -eq 1 ]]; then
 elif [[ -n "$WORKTREE" && -x "$SLOT_BIN" ]]; then
   BIN_CMD=("$SLOT_BIN")
   USE_SLOT_BIN=1
-fi
 fi
 
 if [[ "$HOOKS_CHANGED" -eq 1 ]]; then
@@ -482,7 +419,6 @@ fi
 if [[ -n "$WORKTREE" ]]; then
   echo "AJAX_DEV_DEPLOY_PHASE=restarting"
 fi
-runtime_status_patch "restarting" "" "false"
 OLD_PID=""
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -498,13 +434,11 @@ if ! start_web "$BIN_PATH"; then
   echo "${PROFILE} web failed to start; see $LOG_FILE" >&2
   tail -20 "$LOG_FILE" >&2 || true
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  runtime_status_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) start failed; attempting rollback"
   if restore_previous_binary; then
     echo "Retrying previous ${PROFILE} web binary ..."
     stop_tmux_session
     stop_pid_file
     if start_web "$RESTORE_BIN"; then
-      runtime_status_patch "rolled_back" "rolled_back" "true"
       echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
       echo "  URL:  https://127.0.0.1:$PORT"
       echo "  Log:  $LOG_FILE"
@@ -515,14 +449,12 @@ if ! start_web "$BIN_PATH"; then
     stop_tmux_session
     stop_pid_file
     if start_web "$CARGO_BIN"; then
-      runtime_status_patch "rolled_back" "rolled_back" "true"
       echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
       echo "  URL:  https://127.0.0.1:$PORT"
       echo "  Log:  $LOG_FILE"
       exit 1
     fi
   fi
-  runtime_status_patch "failed" "failed" "false"
   exit 1
 fi
 
@@ -533,7 +465,6 @@ if [[ -n "$OLD_PID" && -n "$NEW_PID" && "$OLD_PID" == "$NEW_PID" ]]; then
 fi
 
 # Health check against the local listener (not the Cloudflare URL).
-runtime_status_patch "health_check" "" "false"
 if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "${PROFILE} web started but /api/health failed; see $LOG_FILE" >&2
@@ -542,36 +473,14 @@ if command -v curl >/dev/null 2>&1; then
       stop_tmux_session
       stop_pid_file
       start_web "$RESTORE_BIN" || true
-      runtime_status_patch "rolled_back" "rolled_back" "true"
     elif restore_previous_cargo_bin; then
       stop_tmux_session
       stop_pid_file
       start_web "$CARGO_BIN" || true
-      runtime_status_patch "rolled_back" "rolled_back" "true"
-    else
-      runtime_status_patch "failed" "failed" "false"
     fi
     exit 1
   fi
 fi
-
-if [[ -n "$MAIN_WORKTREE" && -d "$MAIN_WORKTREE/.git" && "$RESTART_ONLY" -eq 0 && -z "$WORKTREE" ]]; then
-  COMMIT="$(git -C "$MAIN_WORKTREE" rev-parse HEAD 2>/dev/null || true)"
-  if [[ -n "$COMMIT" && -n "$STATUS_FILE" ]]; then
-    python3 - "$STATUS_FILE" "$COMMIT" <<'PY' || true
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-commit = sys.argv[2]
-data = json.loads(path.read_text()) if path.is_file() else {}
-data["commit"] = commit
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
-  fi
-fi
-
-runtime_status_patch "succeeded" "succeeded" "false"
-runtime_status_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) ${PROFILE} web running on port $PORT"
 
 echo "${PROFILE} web running (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
 echo "  URL:  https://127.0.0.1:$PORT"

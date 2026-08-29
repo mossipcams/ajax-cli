@@ -59,7 +59,6 @@ function callbacks(): WebSessionTransportCallbacks {
 describe("connectWebSessionTransport", () => {
   beforeEach(() => {
     sessionStorage.clear();
-    localStorage.clear();
   });
 
   afterEach(() => {
@@ -147,25 +146,6 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
-  // ajax-cli#1110: attachment-only prompts use the same durable outbox and live socket path.
-  it("queues and sends an attachment-only prompt", () => {
-    const socket = fakeSocket();
-    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
-    const contentBlocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
-
-    expect(transport.sendPrompt("   ", contentBlocks)).not.toBe("");
-    expect(localStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toContain(
-      '"contentBlocks"',
-    );
-
-    socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: snapshotJson() } as MessageEvent);
-    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
-      expect.objectContaining({ type: "prompt", text: "", contentBlocks }),
-    );
-    transport.dispose();
-  });
-
   it("assigns prompt ids and handles host acceptance acknowledgements", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
@@ -224,71 +204,6 @@ describe("connectWebSessionTransport", () => {
       clientMessageId: firstPrompt.clientMessageId,
     });
     second.dispose();
-  });
-
-  it("reloads unacknowledged outbox from localStorage after simulated tab closure", () => {
-    const outboxKey = "ajax.web.session.outbox.web%2Ffix-login";
-    const firstSocket = fakeSocket();
-    const first = connectWebSessionTransport(
-      "web/fix-login",
-      callbacks(),
-      platformFor(firstSocket),
-    );
-    firstSocket.readyState = OPEN_READY_STATE;
-    firstSocket.emit("message", { data: snapshotJson() } as MessageEvent);
-    first.sendPrompt("Survive tab close");
-    const firstPrompt = JSON.parse(firstSocket.sent.at(-1) ?? "{}") as Record<string, string>;
-    expect(localStorage.getItem(outboxKey)).not.toBeNull();
-    first.dispose();
-
-    sessionStorage.clear();
-
-    const secondSocket = fakeSocket();
-    const second = connectWebSessionTransport(
-      "web/fix-login",
-      callbacks(),
-      platformFor(secondSocket),
-    );
-    secondSocket.readyState = OPEN_READY_STATE;
-    secondSocket.emit("message", { data: snapshotJson() } as MessageEvent);
-    expect(JSON.parse(secondSocket.sent.at(-1) ?? "{}")).toEqual({
-      type: "prompt",
-      text: "Survive tab close",
-      clientMessageId: firstPrompt.clientMessageId,
-    });
-    second.dispose();
-  });
-
-  it("clears localStorage outbox after prompt_accepted", () => {
-    const outboxKey = "ajax.web.session.outbox.web%2Ffix-login";
-    const socket = fakeSocket();
-    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
-    socket.readyState = OPEN_READY_STATE;
-    socket.emit("message", { data: snapshotJson() } as MessageEvent);
-    transport.sendPrompt("Ack me");
-    const prompt = JSON.parse(socket.sent.at(-1) ?? "{}") as Record<string, string>;
-    expect(localStorage.getItem(outboxKey)).not.toBeNull();
-
-    socket.emit("message", {
-      data: eventJson(1, {
-        type: "prompt_accepted",
-        clientMessageId: prompt.clientMessageId as string,
-      }),
-    } as MessageEvent);
-    expect(localStorage.getItem(outboxKey)).toBeNull();
-    transport.dispose();
-  });
-
-  it("sends retry_restore and start_new_context client commands", () => {
-    const socket = fakeSocket();
-    socket.readyState = OPEN_READY_STATE;
-    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
-    socket.emit("message", { data: snapshotJson() } as MessageEvent);
-    transport.retryRestore();
-    transport.startNewContext();
-    expect(socket.sent).toContainEqual(JSON.stringify({ type: "retry_restore" }));
-    expect(socket.sent).toContainEqual(JSON.stringify({ type: "start_new_context" }));
-    transport.dispose();
   });
 
   it("sendCancel(true) sends keepQueue on the wire", () => {
@@ -374,7 +289,7 @@ describe("connectWebSessionTransport", () => {
   // The host rejects a frame over its ceiling before it can read the frame's
   // clientMessageId, so the prompt is never acknowledged. Queued, it was resent
   // on every reconnect and rejected every time — one long paste poisoned the
-  // session permanently, surviving reloads in localStorage.
+  // session permanently, surviving reloads in sessionStorage.
   it("refuses a prompt too large for the host frame limit instead of queueing it", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
@@ -387,12 +302,12 @@ describe("connectWebSessionTransport", () => {
     socket.readyState = OPEN_READY_STATE;
     socket.emit("message", { data: snapshotJson() } as MessageEvent);
     expect(socket.sent.filter((payload) => payload.includes('"type":"prompt"'))).toEqual([]);
-    expect(localStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
+    expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
     transport.dispose();
   });
 
   it("discards an already-poisoned oversized prompt from a stored outbox", () => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       "ajax.web.session.outbox.web%2Ffix-login",
       JSON.stringify([
         { text: "x".repeat(MAX_FRAME_BYTES), clientMessageId: "poison" },
@@ -662,8 +577,6 @@ describe("parseServerFrame", () => {
           model: "grok-4.6",
           turnState: "idle",
           reset: false,
-          contextState: "live",
-          contextEpoch: 0,
           sessionConfigOptions: [
             {
               id: "model",
@@ -782,88 +695,6 @@ describe("parseServerFrame", () => {
     expect(
       parseServerFrame(eventJson(0, { type: "turn_usage" })),
     ).toBeNull();
-  });
-
-  describe("context continuity", () => {
-    function snapshotWire(
-      overrides: Record<string, unknown> = {},
-    ): string {
-      return JSON.stringify({
-        type: "snapshot",
-        protocolVersion: 2,
-        cursor: 0,
-        model: "auto",
-        turnState: "idle",
-        reset: false,
-        contextState: "live",
-        contextEpoch: 0,
-        ...overrides,
-      });
-    }
-
-    it.each(["live", "restored", "unavailable"] as const)(
-      "accepts contextState %s with contextEpoch",
-      (contextState) => {
-        const frame = parseServerFrame(
-          snapshotWire({ contextState, contextEpoch: contextState === "restored" ? 3 : 0 }),
-        );
-        expect(frame).toEqual({
-          kind: "snapshot",
-          snapshot: expect.objectContaining({
-            contextState,
-            contextEpoch: contextState === "restored" ? 3 : 0,
-          }),
-        });
-      },
-    );
-
-    it("accepts optional contextError string", () => {
-      expect(
-        parseServerFrame(
-          snapshotWire({
-            contextState: "unavailable",
-            contextEpoch: 2,
-            contextError: "resume timed out",
-          }),
-        ),
-      ).toEqual({
-        kind: "snapshot",
-        snapshot: expect.objectContaining({
-          contextState: "unavailable",
-          contextEpoch: 2,
-          contextError: "resume timed out",
-        }),
-      });
-    });
-
-    it("ignores extra unknown snapshot fields", () => {
-      expect(
-        parseServerFrame(snapshotWire({ futureField: "ignored" })),
-      ).toEqual({
-        kind: "snapshot",
-        snapshot: expect.objectContaining({
-          contextState: "live",
-          contextEpoch: 0,
-        }),
-      });
-    });
-
-    it.each([
-      ["missing contextState", { contextState: undefined }],
-      ["missing contextEpoch", { contextEpoch: undefined }],
-      ["invalid contextState", { contextState: "dead" }],
-      ["non-integer contextEpoch", { contextEpoch: 1.5 }],
-      ["negative contextEpoch", { contextEpoch: -1 }],
-      ["string contextEpoch", { contextEpoch: "0" }],
-      ["non-string contextError", { contextError: 404 }],
-    ])("rejects %s", (_label, overrides) => {
-      const wire = snapshotWire(overrides);
-      const parsed = JSON.parse(wire) as Record<string, unknown>;
-      for (const [key, value] of Object.entries(overrides)) {
-        if (value === undefined) delete parsed[key];
-      }
-      expect(parseServerFrame(JSON.stringify(parsed))).toBeNull();
-    });
   });
 
   it("drops invalid JSON and variants missing required fields", () => {

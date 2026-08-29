@@ -100,7 +100,7 @@ describe("App harness swap", () => {
       }),
     );
 
-    localStorage.setItem(
+    sessionStorage.setItem(
       "ajax.web.session.outbox.web%2Ffix-login",
       JSON.stringify([{ text: "queued prompt", clientMessageId: "msg-1" }]),
     );
@@ -117,6 +117,6 @@ describe("App harness swap", () => {
     fireEvent.click(screen.getByTestId("harness-swap-apply"));
 
     await waitFor(() => expect(detailFetches).toBe(beforeSwap + 1));
-    expect(localStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
+    expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
   });
 });

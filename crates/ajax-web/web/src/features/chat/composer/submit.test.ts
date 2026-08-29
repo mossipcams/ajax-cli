@@ -49,29 +49,6 @@ describe("flushQueuedFollowUp", () => {
 });
 
 describe("submitComposerDraft", () => {
-  // ajax-cli#1110: a photo does not need a caption to be sent or queued.
-  it("sends or queues attachment-only drafts", () => {
-    const contentBlocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
-    expect(
-      submitComposerDraft({
-        connected: true,
-        busy: false,
-        draft: "   ",
-        composerState: { status: "idle" },
-        contentBlocks,
-      }),
-    ).toEqual({ action: "send", text: "", clearDraft: true });
-    expect(
-      submitComposerDraft({
-        connected: true,
-        busy: true,
-        draft: "",
-        composerState: { status: "idle" },
-        contentBlocks,
-      }),
-    ).toEqual({ action: "queue", text: "", clearDraft: true });
-  });
-
   it("queues while busy and stop-and-sends on a second Enter", () => {
     expect(
       submitComposerDraft({

@@ -45,62 +45,6 @@ describe("activitySummary", () => {
     ];
     expect(activitySummary(items)).toBe("Read 1 file · edited 1 file · ran 1 command");
   });
-
-  it("counts searches and other tools alongside reads and commands", () => {
-    const items: ConversationItem[] = [
-      {
-        kind: "tool",
-        id: "r1",
-        call: {
-          callId: "r1",
-          title: "Read File",
-          kind: "read",
-          status: "completed",
-          locations: ["/a"],
-          content: [],
-        },
-      },
-      {
-        kind: "tool",
-        id: "s1",
-        call: {
-          callId: "s1",
-          title: "Search files",
-          kind: "search",
-          status: "completed",
-          locations: ["auth"],
-          content: [],
-        },
-      },
-      {
-        kind: "tool",
-        id: "m1",
-        call: {
-          callId: "m1",
-          title: "MCP: tool",
-          kind: "fetch",
-          status: "completed",
-          locations: ["gitnexus_query"],
-          content: [],
-        },
-      },
-      {
-        kind: "tool",
-        id: "x1",
-        call: {
-          callId: "x1",
-          title: "cargo test",
-          kind: "execute",
-          status: "completed",
-          locations: [],
-          content: [],
-        },
-      },
-    ];
-    expect(activitySummary(items)).toBe(
-      "Read 1 file · searched 1 query · ran 1 command · used 1 tool",
-    );
-  });
 });
 
 describe("currentOperation", () => {

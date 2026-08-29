@@ -17,15 +17,12 @@ import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 import type { ComposerAttachment, PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
-  ATTACHMENT_TOO_LARGE,
   attachmentFromFile,
   attachmentFromPaste,
-  attachmentsArePreparing,
   attachmentsFromContentBlocks,
   canAttachFiles,
+  fitPromptContentBlocks,
   flattenAttachmentBlocks,
-  prepareImageFileForPrompt,
-  preparingImageAttachment,
   promptFrameFits,
 } from "@/shared/lib/promptContent";
 import { autoGrow } from "./autoGrow";
@@ -67,7 +64,6 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
-  promptingEnabled?: boolean;
   busy: boolean;
   everOpened: boolean;
   conversation: ConversationItem[];
@@ -95,7 +91,6 @@ type ComposerContextValue = {
   editQueued: () => void;
   removeQueued: () => void;
   connected: boolean;
-  promptingEnabled: boolean;
   everOpened: boolean;
   busy: boolean;
   slashMatches: LiveAvailableCommand[];
@@ -125,7 +120,6 @@ export function useComposerContext(): ComposerContextValue {
 export function ComposerProvider({
   handle,
   connected,
-  promptingEnabled = true,
   busy,
   everOpened,
   conversation,
@@ -158,7 +152,6 @@ export function ComposerProvider({
   composerStateRef.current = composerState;
   const busyRef = useRef(busy);
   busyRef.current = busy;
-  const canPrompt = connected && promptingEnabled;
 
   const slashPrefix = useMemo(() => parseSlashPrefix(draft), [draft]);
   const slashMatches = useMemo(
@@ -269,27 +262,34 @@ export function ComposerProvider({
   );
 
   const sendDraft = useCallback(() => {
-    if (!canPrompt) return;
-    if (attachmentsArePreparing(attachments)) return;
+    if (!connected) return;
 
     const result = submitComposerDraft({
-      connected: canPrompt,
+      connected,
       busy,
       draft: draftRef.current,
       composerState,
-      contentBlocks,
     });
 
     if (result.action === "none") return;
 
     if (result.action === "send") {
       const text = result.text;
-      if (!promptFrameFits(text, contentBlocks)) {
-        setAttachmentError(ATTACHMENT_TOO_LARGE);
+      if (promptFrameFits(text, contentBlocks)) {
+        setAttachmentError(null);
+        deliverPrompt(text, contentBlocks);
         return;
       }
-      setAttachmentError(null);
-      deliverPrompt(text, contentBlocks);
+
+      void (async () => {
+        const fitted = await fitPromptContentBlocks(text, contentBlocks);
+        if (fitted.error) {
+          setAttachmentError(fitted.error);
+          return;
+        }
+        setAttachmentError(null);
+        deliverPrompt(text, fitted.blocks);
+      })();
       return;
     }
 
@@ -308,7 +308,7 @@ export function ComposerProvider({
 
     setComposerState((current) =>
       applySubmitResult(result, current, {
-        connected: canPrompt,
+        connected,
         busy,
         draft: draftRef.current,
         composerState: current,
@@ -325,12 +325,11 @@ export function ComposerProvider({
       scrollToLatest();
     }
   }, [
-    attachments,
     busy,
     clearDraftAttachments,
     clearDraftText,
     composerState,
-    canPrompt,
+    connected,
     contentBlocks,
     deliverPrompt,
     scrollToLatest,
@@ -341,12 +340,12 @@ export function ComposerProvider({
     const { intents } = flushQueuedFollowUp({
       composerState: composerStateRef.current,
       busy,
-      connected: canPrompt,
+      connected,
     });
     if (intents.length === 0) return;
 
     if (holdRestoredQueueRef.current) {
-      if (!canPrompt || !everOpened) return;
+      if (!connected || !everOpened) return;
       if (busy) {
         holdRestoredQueueRef.current = false;
         return;
@@ -371,18 +370,28 @@ export function ComposerProvider({
       if (intent.type === "mark_stopped") markStopped();
       if (intent.type === "send_prompt") {
         const blocks = intent.contentBlocks ?? [];
-        if (!promptFrameFits(intent.text, blocks)) {
-          setAttachmentError(ATTACHMENT_TOO_LARGE);
+        if (promptFrameFits(intent.text, blocks)) {
+          setAttachmentError(null);
+          sendSucceeded = sendPrompt(intent.text, blocks);
           continue;
         }
-        setAttachmentError(null);
-        sendSucceeded = sendPrompt(intent.text, blocks);
+        void (async () => {
+          const fitted = await fitPromptContentBlocks(intent.text, blocks);
+          if (fitted.error) {
+            setAttachmentError(fitted.error);
+            return;
+          }
+          setAttachmentError(null);
+          if (sendPrompt(intent.text, fitted.blocks)) {
+            setComposerState((current) => composerStateAfterFlush(current, true));
+          }
+        })();
       }
     }
     if (sendSucceeded) {
       setComposerState((current) => composerStateAfterFlush(current, true));
     }
-  }, [busy, canPrompt, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
 
   const editQueued = useCallback(() => {
     const restored = restoreQueuedDraft(composerState);
@@ -441,51 +450,18 @@ export function ComposerProvider({
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
   }, []);
 
-  const prepareImageAttachment = useCallback(
-    (attachmentId: string, file: File) => {
-      void prepareImageFileForPrompt(file, draftRef.current).then((result) => {
-        setAttachments((current) =>
-          current.map((attachment) => {
-            if (attachment.id !== attachmentId) return attachment;
-            if ("error" in result) {
-              return { ...attachment, status: "error" as const, error: result.error };
-            }
-            return { ...attachment, status: "ready" as const, blocks: result.blocks };
-          }),
-        );
-      });
-    },
-    [],
-  );
-
-  const stageFileAttachment = useCallback(
-    async (file: File): Promise<ComposerAttachment | null> => {
-      if (!canAttachFiles(promptCapabilities)) return null;
-
-      const mimeType = file.type || "application/octet-stream";
-      if (mimeType.startsWith("image/") && promptCapabilities?.image) {
-        const preparing = preparingImageAttachment(file);
-        prepareImageAttachment(preparing.id, file);
-        return preparing;
-      }
-
-      return attachmentFromFile(file, promptCapabilities);
-    },
-    [prepareImageAttachment, promptCapabilities],
-  );
-
   const attachFiles = useCallback(
     async (files: FileList | File[]) => {
       const next: ComposerAttachment[] = [];
       for (const file of Array.from(files)) {
-        const attachment = await stageFileAttachment(file);
+        const attachment = await attachmentFromFile(file, promptCapabilities);
         if (attachment) next.push(attachment);
       }
       if (next.length) {
         setAttachments((current) => [...current, ...next]);
       }
     },
-    [stageFileAttachment],
+    [promptCapabilities],
   );
 
   const onComposerPaste = useCallback(
@@ -494,24 +470,14 @@ export function ComposerProvider({
       if (!items?.length) return;
       const next: ComposerAttachment[] = [];
       for (const item of Array.from(items)) {
-        if (item.kind !== "file") continue;
-        const file = item.getAsFile();
-        if (!file) continue;
-        const attachment =
-          file.type.startsWith("image/") && promptCapabilities?.image
-            ? (() => {
-                const preparing = preparingImageAttachment(file);
-                prepareImageAttachment(preparing.id, file);
-                return preparing;
-              })()
-            : await attachmentFromPaste(item, promptCapabilities);
+        const attachment = await attachmentFromPaste(item, promptCapabilities);
         if (attachment) next.push(attachment);
       }
       if (!next.length) return;
       event.preventDefault();
       setAttachments((current) => [...current, ...next]);
     },
-    [prepareImageAttachment, promptCapabilities],
+    [promptCapabilities],
   );
 
   const onComposerKeyDown = useCallback(
@@ -562,7 +528,6 @@ export function ComposerProvider({
     editQueued,
     removeQueued,
     connected,
-    promptingEnabled,
     everOpened,
     busy,
     slashMatches,

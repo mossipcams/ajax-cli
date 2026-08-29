@@ -63,7 +63,8 @@
         "reproductionSuccesses": { "type": "integer", "minimum": 0 },
         "steps": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
         },
         "expected": { "type": "string" },
         "actual": { "type": "string" },
@@ -88,45 +89,8 @@
             "notes": { "type": "string" }
           }
         },
-        "fingerprint": { "type": "string", "minLength": 1 },
-        "classification": {
-          "type": "string",
-          "enum": ["novel", "known", "regression"]
-        },
-        "relatedIssues": {
-          "type": "array",
-          "items": { "type": "integer" },
-          "uniqueItems": true
-        }
-      },
-      "allOf": [
-        {
-          "if": { "properties": { "status": { "const": "confirmed" } }, "required": ["status"] },
-          "then": {
-            "required": ["fingerprint", "steps"],
-            "properties": {
-              "steps": { "minItems": 1 },
-              "reproductionSuccesses": { "minimum": 2 }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "status": { "const": "observation" } }, "required": ["status"] },
-          "then": {
-            "properties": {
-              "steps": { "type": "array" }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "status": { "const": "rejected" } }, "required": ["status"] },
-          "then": {
-            "properties": {
-              "steps": { "type": "array" }
-            }
-          }
-        }
-      ]
+        "fingerprint": { "type": "string" }
+      }
     }
   }
 }

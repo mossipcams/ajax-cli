@@ -12,37 +12,11 @@ import type {
 } from "./model";
 import { initialChatSessionReducerState } from "./model";
 
-function applyContextEvent(
-  state: ChatSessionReducerState,
-  event: ChatSessionEvent,
-): ChatSessionReducerState {
-  if (event.type !== "context_snapshot") return state;
-  const context: typeof state.view.context = {
-    state: event.state,
-    epoch: event.epoch,
-  };
-  if (event.error !== undefined) context.error = event.error;
-  if (event.transcriptError !== undefined) context.transcriptError = event.transcriptError;
-  return {
-    ...state,
-    view: {
-      ...state.view,
-      revision: state.view.revision + 1,
-      context,
-    },
-  };
-}
-
-function isContextEvent(event: ChatSessionEvent): boolean {
-  return event.type === "context_snapshot";
-}
-
 function applyChatSessionEvent(
   state: ChatSessionReducerState,
   event: ChatSessionEvent,
 ): ChatSessionReducerState {
   if (isErrorOrTurnEndEvent(event)) return applyErrorEvent(state, event);
-  if (isContextEvent(event)) return applyContextEvent(state, event);
   if (isPermissionEvent(event)) return applyPermissionEvent(state, event);
   if (isElicitationEvent(event)) return applyElicitationEvent(state, event);
   if (isActivityEvent(event)) return applyActivityEvent(state, event);

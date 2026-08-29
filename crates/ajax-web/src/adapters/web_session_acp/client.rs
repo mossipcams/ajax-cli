@@ -171,29 +171,10 @@ pub enum AcpClientEvent {
     Exited,
 }
 
-/// Whether the ACP handshake created a fresh session or restored an existing one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SpawnOutcome {
-    /// Initial attach with no stored session id (`session/new`).
-    Created,
-    /// `session/resume` or `session/load` succeeded for the stored session id.
-    Restored { session_id: String },
-}
-
-impl SpawnOutcome {
-    pub fn is_created(&self) -> bool {
-        matches!(self, Self::Created)
-    }
-
-    pub fn is_restored(&self) -> bool {
-        matches!(self, Self::Restored { .. })
-    }
-}
-
 pub struct SpawnReport {
     pub load_session_advertised: bool,
     pub close_advertised: bool,
-    pub outcome: SpawnOutcome,
+    pub resumed: bool,
     /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     pub applied_model: String,
     pub model_apply_error: Option<String>,
@@ -203,24 +184,6 @@ pub struct SpawnReport {
 
 /// Bound on ACP `session/close` during child teardown.
 const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Prefix for typed restore failures returned from spawn when a stored session id
-/// cannot be resumed or loaded. T8 will project this into attachable host state.
-pub const RESTORE_UNAVAILABLE_MARKER: &str = "ACP restore unavailable";
-
-pub fn restore_unavailable_error(session_id: &str, reason: &str) -> String {
-    format!("{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: {reason}")
-}
-
-pub fn is_restore_unavailable(error: &str) -> bool {
-    error.starts_with(RESTORE_UNAVAILABLE_MARKER)
-}
-
-pub fn restore_unavailable_session_id(error: &str) -> Option<String> {
-    let rest = error.strip_prefix(&format!("{RESTORE_UNAVAILABLE_MARKER}: session_id="))?;
-    let session_id = rest.split(':').next()?.trim();
-    (!session_id.is_empty()).then(|| session_id.to_string())
-}
 
 pub struct AcpStdioClient {
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
@@ -346,11 +309,11 @@ impl AcpStdioClient {
             prompt_capabilities,
             close_advertised,
             load_session_advertised,
-            outcome,
+            resumed,
             applied_model,
             model_apply_error,
         } = ready;
-        if outcome.is_restored() {
+        if resumed {
             while event_rx.try_recv().is_ok() {}
             let _ = command_tx.send(ClientCommand::InstallLiveSession);
         }
@@ -369,7 +332,7 @@ impl AcpStdioClient {
         let report = SpawnReport {
             load_session_advertised,
             close_advertised,
-            outcome,
+            resumed,
             applied_model,
             model_apply_error,
             config_options,

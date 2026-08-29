@@ -102,14 +102,6 @@ import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 
-/** Host-reported ACP context continuity from session snapshots. */
-export interface ChatContextState {
-  state: import("./transport/contracts").ContextState;
-  epoch: number;
-  error?: string;
-  transcriptError?: string;
-}
-
 /** Host-confirmed model and advertised config options from session snapshots. */
 export interface ChatModelState {
   confirmedModel: string;
@@ -126,7 +118,6 @@ export interface ChatSessionView {
   elicitation: ChatElicitationState;
   status: ChatStatusState;
   usage: ChatUsageState;
-  context: ChatContextState;
   model: ChatModelState;
   revision: number;
 }
@@ -168,13 +159,6 @@ export type ChatSessionEvent =
   | { type: "turn_end"; stopReason?: string }
   | { type: "session_error"; message: string }
   | { type: "session_ready"; busy?: boolean; reset?: boolean }
-  | {
-      type: "context_snapshot";
-      state: ChatContextState["state"];
-      epoch: number;
-      error?: string;
-      transcriptError?: string;
-    }
   | { type: "prompt_accepted" };
 
 export type ChatSessionAction =
@@ -197,7 +181,6 @@ export const initialChatSessionView: ChatSessionView = {
   elicitation: { decision: null, resolvedIds: [] },
   status: { acpState: null, detail: null },
   usage: { context: null, turn: null },
-  context: { state: "live", epoch: 0 },
   model: { confirmedModel: "" },
   revision: 0,
 };

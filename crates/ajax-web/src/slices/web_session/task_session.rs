@@ -6,8 +6,7 @@ use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{
-        drain_acp_events_with_prompt_cancel, normalize_session_events, PromptTerminal,
-        PromptTerminalOutcome,
+        drain_acp_events, normalize_session_events, PromptTerminal, PromptTerminalOutcome,
     },
     acp_usage::UsageDeduper,
     apply_cancel_to_queue, prompt_content, QueuedPrompt, ReportSessionActivity, SessionActivity,
@@ -22,7 +21,6 @@ use ajax_core::models::AgentClient;
 use std::{collections::VecDeque, path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
-use super::context_continuity::ContextContinuity;
 use super::task_session_exit::{
     self, is_acp_exit_error, persist_ledger_update, reconcile_unexpected_child_exit,
     retry_pending_exit_interruption, try_dispatch_next_if_idle, try_finalize_active_prompt,
@@ -91,12 +89,6 @@ pub(crate) enum TaskSessionCommand {
         agent: AgentClient,
         reply: oneshot::Sender<Result<u64, String>>,
     },
-    RetryRestore {
-        reply: oneshot::Sender<Result<(), String>>,
-    },
-    StartNewContext {
-        reply: oneshot::Sender<Result<(), String>>,
-    },
     AttachSnapshot {
         model: String,
         client_cursor: Option<usize>,
@@ -148,7 +140,6 @@ pub(super) struct ActivePrompt {
     pub(super) client_message_id: Option<String>,
     pub(super) terminal: Option<PromptTerminal>,
     pub(super) persist_error_reported: bool,
-    pub(super) cancel_requested: bool,
 }
 
 impl ActivePrompt {
@@ -158,16 +149,7 @@ impl ActivePrompt {
             client_message_id,
             terminal: None,
             persist_error_reported: false,
-            cancel_requested: false,
         }
-    }
-
-    pub(super) fn mark_cancel_requested(&mut self) {
-        self.cancel_requested = true;
-    }
-
-    pub(super) fn drain_cancel_context(&self) -> (u64, bool) {
-        (self.request_id, self.cancel_requested)
     }
 
     pub(super) fn capture_terminal(&mut self, terminal: PromptTerminal) -> bool {
@@ -243,8 +225,6 @@ pub(crate) struct TaskSessionState {
     /// Agent-reported session title from ACP `session_info_update`.
     pub(super) session_title: Option<String>,
     pub(super) pending_title_snapshot: bool,
-    /// Set when transcript append fails; next collect_outbound emits transcriptError.
-    pub(super) pending_transcript_error_snapshot: bool,
     /// Dedupes ACP run-state transitions for task evidence for this slot.
     /// Activity that failed to persist on a prior append; retried before new events.
     pending_activity_report: Option<SessionActivity>,
@@ -264,10 +244,6 @@ pub(crate) struct TaskSessionState {
     pub(super) suppress_exit_evidence: bool,
     /// Prevents duplicate unexpected-exit reconciliation for one child death.
     pub(super) child_exit_reconciled: bool,
-    /// Host-owned ACP context continuity projected into protocol snapshots.
-    pub(super) context_continuity: ContextContinuity,
-    /// Set when transcript append fails; blocks new prompts until operator reset.
-    pub(super) transcript_durability_fault: Option<String>,
 }
 
 impl TaskSessionState {
@@ -279,9 +255,9 @@ impl TaskSessionState {
         self.holders.reset_to_one();
     }
 
-    pub(super) fn append_to_log(&mut self, events: Vec<SessionServerEvent>) -> Result<(), String> {
+    pub(super) fn append_to_log(&mut self, events: Vec<SessionServerEvent>) {
         if events.is_empty() {
-            return Ok(());
+            return;
         }
         self.flush_pending_activity_report();
         for event in &events {
@@ -294,18 +270,8 @@ impl TaskSessionState {
                 self.pending_activity_report = Some(activity);
             }
         }
-        match web_session_store::append_events(&self.state_dir, &self.qualified_handle, &events) {
-            Ok(()) => {
-                self.log.append(events);
-                Ok(())
-            }
-            Err(error) => {
-                let message = format!("transcript persistence unavailable: {error}");
-                self.transcript_durability_fault = Some(message.clone());
-                self.pending_transcript_error_snapshot = true;
-                Err(message)
-            }
-        }
+        self.log.append(events.clone());
+        web_session_store::append_events(&self.state_dir, &self.qualified_handle, &events);
     }
 
     fn flush_pending_activity_report(&mut self) {
@@ -340,12 +306,6 @@ impl TaskSessionState {
         self.holders.0 == 0
     }
 
-    fn has_restore_readiness(&self) -> bool {
-        web_session_store::load::<SessionServerEvent>(&self.state_dir, &self.qualified_handle)
-            .acp_session_id
-            .is_some()
-    }
-
     pub(super) fn busy(&self) -> bool {
         self.active_prompt.is_some()
             || !self.queued.is_empty()
@@ -357,14 +317,8 @@ impl TaskSessionState {
 
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
-        let prompt_cancel = self
-            .active_prompt
-            .as_ref()
-            .map(ActivePrompt::drain_cancel_context);
         let outcome = match self.client.as_mut() {
-            Some(client) => {
-                drain_acp_events_with_prompt_cancel(client, &mut self.usage_deduper, prompt_cancel)
-            }
+            Some(client) => drain_acp_events(client, &mut self.usage_deduper),
             None => return,
         };
         if let Some(model) = outcome.applied_model {
@@ -400,7 +354,7 @@ impl TaskSessionState {
         }
         if !events.is_empty() {
             let normalized = normalize_session_events(&mut self.stream_normalizer, events);
-            let _ = self.append_to_log(normalized);
+            self.append_to_log(normalized);
         }
         if host_gone && !self.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);
@@ -460,7 +414,6 @@ pub(crate) fn spawn_task_session(
             pending_capabilities_snapshot: None,
             session_title: None,
             pending_title_snapshot: false,
-            pending_transcript_error_snapshot: false,
             pending_activity_report: None,
             activity_reporter: SessionActivityReporter::default(),
             report_activity,
@@ -471,8 +424,6 @@ pub(crate) fn spawn_task_session(
             pending_exit_interruption: None,
             suppress_exit_evidence: false,
             child_exit_reconciled: false,
-            context_continuity: ContextContinuity::default(),
-            transcript_durability_fault: None,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -506,9 +457,6 @@ pub(crate) fn spawn_task_session(
         if let Some(mut client) = state.client.take() {
             state.suppress_exit_evidence = true;
             if !client.host_exited() {
-                if let Some(active) = state.active_prompt.as_mut() {
-                    active.mark_cancel_requested();
-                }
                 let _ = client.cancel();
             }
             let message = if close_on_exit {
@@ -518,7 +466,7 @@ pub(crate) fn spawn_task_session(
             };
             state.suppress_exit_evidence = false;
             if let Some(message) = message {
-                let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+                state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
             state.child_exit_reconciled = true;
             state.acp_alive = false;
@@ -612,14 +560,6 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
                     .await;
             let _ = reply.send(result);
         }
-        TaskSessionCommand::RetryRestore { reply } => {
-            let result = task_session_spawn::retry_restore(state).await;
-            let _ = reply.send(result);
-        }
-        TaskSessionCommand::StartNewContext { reply } => {
-            let result = task_session_spawn::start_new_context(state).await;
-            let _ = reply.send(result);
-        }
         TaskSessionCommand::AttachSnapshot {
             model,
             client_cursor,
@@ -645,7 +585,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         }
         #[cfg(test)]
         TaskSessionCommand::Record { event, reply } => {
-            let _ = state.append_to_log(vec![event]);
+            state.append_to_log(vec![event]);
             let _ = reply.send(());
         }
         #[cfg(test)]
@@ -664,7 +604,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::Pump => state.pump(),
         TaskSessionCommand::EvictionSnapshot { reply } => {
             let _ = reply.send(EvictionSnapshot {
-                evictable: state.is_idle() && !state.busy() && state.has_restore_readiness(),
+                evictable: state.is_idle() && !state.busy(),
                 holders: state.holders.0,
             });
         }
@@ -680,15 +620,6 @@ fn submit_prompt(
 ) -> Result<(), String> {
     if let Some(reason) = &state.ledger_unusable {
         return Err(format!("prompt ownership unavailable: {reason}"));
-    }
-    if let Some(reason) = &state.transcript_durability_fault {
-        return Err(reason.clone());
-    }
-    if state.context_continuity.prompts_blocked() {
-        let message = state.context_continuity.error.clone().unwrap_or_else(|| {
-            "ACP context unavailable — restore required before sending prompts".to_string()
-        });
-        return Err(message);
     }
     let caps = state
         .session_prompt_capabilities
@@ -712,7 +643,7 @@ fn submit_prompt(
                 PromptPhase::Completed | PromptPhase::Queued | PromptPhase::Dispatching => {
                     state.append_to_log(vec![SessionServerEvent::PromptAccepted {
                         client_message_id,
-                    }])?;
+                    }]);
                     return Ok(());
                 }
             }
@@ -750,7 +681,7 @@ fn submit_prompt(
         if !client_message_id.is_empty() {
             state.append_to_log(vec![SessionServerEvent::PromptAccepted {
                 client_message_id,
-            }])?;
+            }]);
         }
         return Ok(());
     }
@@ -765,20 +696,6 @@ fn submit_prompt(
             ledger.mark_dispatching(&client_message_id);
         })?;
     }
-    state
-        .append_to_log(vec![user_event])
-        .inspect_err(|_error| {
-            if !client_message_id.is_empty() {
-                let _ = persist_ledger_update(state, |ledger| {
-                    ledger.upsert_queued(
-                        client_message_id.clone(),
-                        payload.transcript_text.clone(),
-                        text.trim().to_string(),
-                        wire_blocks_to_json(&content_blocks),
-                    );
-                });
-            }
-        })?;
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };
@@ -797,11 +714,11 @@ fn submit_prompt(
         request_id,
         (!client_message_id.is_empty()).then_some(client_message_id.clone()),
     ));
+    let mut events = vec![user_event];
     if !client_message_id.is_empty() {
-        state.append_to_log(vec![SessionServerEvent::PromptAccepted {
-            client_message_id,
-        }])?;
+        events.push(SessionServerEvent::PromptAccepted { client_message_id });
     }
+    state.append_to_log(events);
     Ok(())
 }
 
@@ -809,22 +726,11 @@ pub(super) fn dispatch_queued_prompt(
     state: &mut TaskSessionState,
     next: &QueuedPrompt,
 ) -> Result<(), String> {
-    if let Some(reason) = &state.transcript_durability_fault {
-        return Err(reason.clone());
-    }
     if !next.client_message_id.is_empty() {
         persist_ledger_update(state, |ledger| {
             ledger.mark_dispatching(&next.client_message_id);
         })?;
     }
-    let item_id = state.stream_normalizer.fresh_item_id();
-    state.append_to_log(vec![SessionServerEvent::Message {
-        role: "user".to_string(),
-        text: next.transcript_text.clone(),
-        content_blocks: Vec::new(),
-        item_id,
-        message_id: None,
-    }])?;
     let Some(client) = state.client.as_mut() else {
         return Err("session slot missing".to_string());
     };
@@ -834,6 +740,14 @@ pub(super) fn dispatch_queued_prompt(
                 request_id,
                 (!next.client_message_id.is_empty()).then_some(next.client_message_id.clone()),
             ));
+            let item_id = state.stream_normalizer.fresh_item_id();
+            state.append_to_log(vec![SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: next.transcript_text.clone(),
+                content_blocks: Vec::new(),
+                item_id,
+                message_id: None,
+            }]);
             Ok(())
         }
         Err(error) => {
@@ -880,9 +794,6 @@ fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> 
         return Err("session slot missing".to_string());
     };
     let cancelled = client.cancel()?;
-    if let Some(active) = state.active_prompt.as_mut() {
-        active.mark_cancel_requested();
-    }
     let mut resolved = Vec::new();
     for request_id in cancelled.permissions {
         resolved.push(SessionServerEvent::PermissionResolved {
@@ -896,7 +807,7 @@ fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> 
             action: "cancel".to_string(),
         });
     }
-    state.append_to_log(resolved)?;
+    state.append_to_log(resolved);
     Ok(())
 }
 

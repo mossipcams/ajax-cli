@@ -1,18 +1,12 @@
 {
   "protocolVersion": 2,
-  "commands": [
-    { "type": "retry_restore" },
-    { "type": "start_new_context" }
-  ],
   "snapshot": {
     "type": "snapshot",
     "protocolVersion": 2,
     "cursor": 2,
     "model": "composer-2.5",
     "turnState": "idle",
-    "reset": false,
-    "contextState": "live",
-    "contextEpoch": 0
+    "reset": false
   },
   "event": {
     "type": "event",

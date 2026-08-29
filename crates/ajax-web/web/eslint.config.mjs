@@ -376,27 +376,6 @@ export default tseslint.config(
   },
   {
     ignores: ["**/*.test.{ts,tsx}"],
-    files: ["**/src/features/runtime-control/**/*.{ts,tsx}"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              regex: "^@/features/(chat|terminal|task|task-workspace|settings|diff)/.*",
-              message: "runtime-control must not import other feature internals.",
-            },
-            {
-              group: ["@/app/*", "**/app/*"],
-              message: "features must not import from the app shell.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-  {
-    ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/features/settings/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [

@@ -505,17 +505,6 @@ function AppContent() {
   }, [route.kind, route.handle, orchestrationChat]);
 
   useEffect(() => {
-    if (window.location.hash === "#/control") {
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${window.location.search}${settingsHash()}`,
-      );
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    }
-  }, []);
-
-  useEffect(() => {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
       document.title = `${route.handle} — Ajax`;

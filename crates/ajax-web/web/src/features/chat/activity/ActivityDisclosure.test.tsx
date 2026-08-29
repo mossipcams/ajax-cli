@@ -48,7 +48,7 @@ const tool = (id: string, overrides: Partial<ToolCall> = {}): ConversationItem =
 });
 
 describe("ActivityDisclosure", () => {
-  it("keeps thoughts, plans, and tool rows behind the disclosure when collapsed", () => {
+  it("keeps thoughts and plans behind the disclosure while tool rows stay visible", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       { kind: "thought", id: "t1", text: "Checking the router" },
@@ -59,35 +59,13 @@ describe("ActivityDisclosure", () => {
     render(<Conversation items={items} busy={false} />);
 
     expect(screen.getAllByTestId("session-turn-work-summary")).toHaveLength(1);
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-plan")).not.toBeInTheDocument();
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Fixed.");
   });
 
-  it("shows in-flight tool rows when agent prose follows work on a busy turn", () => {
-    const items: ConversationItem[] = [
-      userProse("u1", "Fix it"),
-      tool("e1", { kind: "read", status: "completed", locations: ["/repo/a.ts"] }),
-      tool("e2", {
-        kind: "execute",
-        title: "cargo test",
-        status: "in_progress",
-        locations: [],
-      }),
-      agentProse("a1", "Running tests now."),
-    ];
-    render(<Conversation items={items} busy />);
-
-    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
-      "Read 1 file · ran 1 command",
-    );
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
-    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
-    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-live", "true");
-  });
-
-  it("shows the counted summary and only in-flight tool rows while the turn runs", () => {
+  it("shows the counted summary and tool rows while the turn runs", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       tool("e1", { kind: "read", status: "completed", locations: ["/repo/src/config.ts"] }),
@@ -103,8 +81,7 @@ describe("ActivityDisclosure", () => {
     const summary = screen.getByTestId("session-turn-work-summary");
     expect(summary).toHaveTextContent("Read 1 file · ran 1 command");
     expect(summary).not.toHaveTextContent("Running cargo test");
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
-    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
+    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(2);
     expect(screen.queryByTestId("session-tool-output")).not.toBeInTheDocument();
   });
 
@@ -153,7 +130,7 @@ describe("ActivityDisclosure", () => {
     ];
     const view = render(<Conversation items={items} busy={false} />);
 
-    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.queryByTestId("session-thinking")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
@@ -223,7 +200,6 @@ describe("ActivityDisclosure", () => {
     ];
     render(<Conversation items={items} busy={false} />);
 
-    fireEvent.click(screen.getByTestId("session-turn-work-summary"));
     expect(screen.getByTestId("session-tool-card")).toBeInTheDocument();
     expect(screen.queryByTestId("session-tool-diff")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Edited config\.ts/i }));
@@ -283,17 +259,16 @@ describe("ActivityDisclosure", () => {
     );
   });
 
-  it("counts searches in the collapsed summary", () => {
+  it("omits the other-step filler from the collapsed summary", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
-      tool("s1", { kind: "search", status: "completed", locations: ["auth"] }),
+      tool("s1", { kind: "search", status: "completed" }),
       agentProse("a1", "Done."),
     ];
     render(<Conversation items={items} busy={false} />);
 
-    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
-      "Searched 1 query",
-    );
+    const summary = screen.getByTestId("session-turn-work-summary").textContent ?? "";
+    expect(summary).not.toMatch(/other step/i);
   });
 
   it("files an answered permission into the timeline as history", () => {

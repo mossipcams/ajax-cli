@@ -38,18 +38,6 @@ function toolItems(items: ConversationItem[]): ConversationItem[] {
   return items.filter((item) => item.kind === "tool");
 }
 
-function inFlightToolItems(items: ConversationItem[]): ConversationItem[] {
-  return items.filter(
-    (item) =>
-      item.kind === "tool" &&
-      (item.call.status === "pending" || item.call.status === "in_progress"),
-  );
-}
-
-function collapsedWorkItems(items: ConversationItem[], live: boolean): ConversationItem[] {
-  return live ? inFlightToolItems(items) : [];
-}
-
 function summaryTarget(items: ConversationItem[], live: boolean, expanded: boolean): string {
   if (live && !expanded) {
     return toolItems(items).length > 0 ? activitySummary(items) : currentOperation(items);
@@ -57,13 +45,12 @@ function summaryTarget(items: ConversationItem[], live: boolean, expanded: boole
   return activitySummary(items);
 }
 
-/** One disclosure per turn. Collapsed, a settled turn is the summary row only;
- * a live turn adds in-flight tool rows so the operator can watch the current
- * call. Thoughts, plans and permission markers stay inside until expanded.
- * The summary is the counted line once tools exist on a live turn, otherwise
- * the current operation so a thinking-only turn is not silent. States that
- * want the operator — a failure, an ask — open themselves, and a tap in either
- * direction sticks for the rest of the session. */
+/** One disclosure per turn. Collapsed it always lists tool rows (bodies follow
+ * ToolCard status); thoughts, plans and permission markers stay inside until
+ * expanded. The summary is the counted line while tools are visible on a live
+ * turn, otherwise the current operation so a thinking-only turn is not silent.
+ * States that want the operator — a failure, an ask — open themselves, and a
+ * tap in either direction sticks for the rest of the session. */
 export default function TurnActivity({
   items,
   live,
@@ -81,7 +68,7 @@ export default function TurnActivity({
   const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
   const expanded =
     turnOverride ?? (failed || attention || (sessionPreference ?? false));
-  const visibleItems = expanded ? items : collapsedWorkItems(items, live);
+  const visibleItems = expanded ? items : toolItems(items);
 
   return (
     <div

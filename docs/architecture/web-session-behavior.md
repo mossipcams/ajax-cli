@@ -33,33 +33,6 @@ preference, or Diff routing.
   [`web-cockpit.md`](web-cockpit.md); Terminal is not the default Task Workspace
   surface for session-capable provisioned tasks.
 
-## ACP context continuity
-
-Host-owned context identity is separate from browser-visible transcript history.
-
-- Protocol v2 snapshots require `contextState` (`live`, `restored`, or
-  `unavailable`), `contextEpoch`, and optional `contextError` /
-  `transcriptError`. The browser gates prompting from these fields; it must not
-  infer model continuity from replayed JSONL rows alone.
-- A stored ACP session id means **restore this context**, never try resume/load
-  and silently fall back to `session/new`. When both restore paths fail or the
-  harness lacks restore capability, the host keeps the stored id, projects
-  `unavailable`, and refuses new prompts until explicit recovery or task Drop.
-- **Switch** (cross-harness) is a new-context boundary: cancel in-flight work,
-  shut down the old child, clear the stored resume id, spawn with `session/new`
-  (no resume/load), advance `contextEpoch`, and append a host note. The prior
-  ACP conversation is discarded; Ajax does not restore or retry it across Switch.
-- Idle detach and `ajax-web` restart may reload JSONL and reattach viewers, but
-  only a successful `session/resume` or `session/load` proves restored model
-  context (`restored`). Transcript replay after cold load is visible history,
-  not proof the agent remembers prior turns.
-- **Live restore evidence (2026-08-27):** deterministic tests and architecture
-  guards enforce fail-closed restore. External process-replacement smokes:
-  Codex bridge restore **passed**; Cursor, Claude, and Pi **failed** restore on
-  this host after one completed turn. Ajax `supports_durable_restore` admission
-  flags remain `true` for all four harnesses; Ajax blocks on restore failure
-  rather than silently starting fresh or removing Chat admission.
-
 ## Flag-off parity
 
 The browser preference (`ajax.web.session.orchestrationChat`) defaults **on**
@@ -118,20 +91,13 @@ existing paths.
   `promptCapabilities.image` is true and embedded `resource` bodies only when
   `promptCapabilities.embeddedContext` is true. The file picker does not synthesize
   `resource_link` stubs for local paths; `resource_link` remains valid on the host wire
-  for real URIs. On attach (file picker or paste), the browser downscales/compresses
-  photos so staged image blocks already fit the 256 KiB WebSocket cap with headroom
-  for typed caption text; the attachment chip shows **Preparing…** until compression
-  finishes, and Send stays disabled while any attachment is preparing. Send then
-  uses the synchronous fit path — it does not compress again on the send tap. If
-  compression or decode fails, the attachment stays staged and the chip shows a
-  specific error.
+  for real URIs. Before send, the browser downscales/compresses attached photos so the
+  prompt JSON frame fits the 256 KiB WebSocket cap with headroom for typed text.
   WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
-  backward compatible; omitted `contentBlocks` is text-only. A prompt is sendable
-  when it has trimmed text or at least one content block, including an attachment
-  without caption text; neither means the prompt is rejected. The host validates
-  block types against advertised capabilities, omits an empty ACP text block, sends
-  the remaining ACP `ContentBlock` array on `session/prompt`, and records only
-  operator text plus attachment names in JSONL (no base64 in the operator transcript).
+  backward compatible; omitted `contentBlocks` is text-only. The host validates block
+  types against advertised capabilities, sends a real ACP `ContentBlock` array on
+  `session/prompt`, and records only operator text plus attachment names in JSONL
+  (no base64 in the operator transcript).
 - Non-text **output** from ACP `session/update` (agent/user/thought chunks and tool-call
   content) maps `image`, `resource_link`, and embedded `resource` blocks into wire
   `message.contentBlocks` and extended `tool_call.content` (text chunks and diffs
@@ -196,9 +162,9 @@ existing paths.
   Switch resets backend context on the same public Ajax session: cancel any
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
-  transcript replay), advance `contextEpoch`, append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot and JSONL transcript for visible
-  history only. The prior ACP conversation is discarded. With no live slot, persist only and clear the stored resume id so the
+  transcript replay), append a host note (`Client switched harness. Context
+  reset.`), and keep the TaskSession slot, JSONL transcript, and WebSocket
+  identity. With no live slot, persist only and clear the stored resume id so the
   next attach uses empty context. Switch sends only `{ agent }`; a model field is
   refused. Persist `None` for Auto/unspecified; never store the literal string
   `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
@@ -263,29 +229,22 @@ existing paths.
 - Cancel with `keepQueue: false` cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
-- When the host has already sent `session/cancel` for the in-flight prompt and
-  `session/prompt` then fails with a cancellation-shaped transport abort (for
-  example plain `canceled`/`cancelled` text such as `context canceled`, harness
-  `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
+- When `session/prompt` RPC fails with a cancellation-shaped transport abort
+  (for example plain `canceled`/`cancelled` text such as `context canceled`,
+  harness `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
   `error code cancel` / `CANCEL (0x8)`), the host emits `turn_end` with
-  `stopReason: cancelled` (Stopped). **Unsolicited** cancel-shaped
-  `session/prompt` failures — typical of Cursor ACP HTTP/2 `CANCEL (0x8)` on the
-  default agent transport — emit a typed `error` with the host-owned sentence
-  `The connection was interrupted. Try sending again.` and mark the prompt ledger
-  **interrupted**, not completed-cancelled
+  `stopReason: cancelled` instead of a typed `error` event
   ([#1066](https://github.com/mossipcams/ajax-cli/issues/1066)). Untagged HTTP/2
   stream close/reset, `INTERNAL_ERROR (0x2)`, untagged `REFUSED_STREAM (0x7)`,
-  bare `aborted`, and bare `stream reset` remain typed `error` events. Any
-  `RetriableError:` substring (including `Error: RetriableError: …` prefixes)
-  maps to that same host-owned sentence so raw harness dumps never reach the
-  operator or transcript. Older transcripts replay the same mapping in
-  `explainAcpError`. Genuine non-retriable prompt failures still surface as
-  errors with their original message. Non-prompt RPC methods still surface
+  bare `aborted`, and bare `stream reset` remain typed `error` events. Non-cancel
+  `RetriableError` and similar harness transport dumps become one host-owned
+  sentence (`The connection was interrupted. Try sending again.`) so the raw
+  `RetriableError: …` text never reaches the operator or transcript. Older
+  transcripts replay the same mapping in `explainAcpError` for every
+  `RetriableError:` string; live cancel vs interrupt classification stays
+  host-owned. Genuine non-retriable prompt failures still surface as errors with
+  their original message. Non-prompt RPC methods still surface
   cancellation-shaped messages as errors. The host does not retry the prompt.
-  Cursor `agent acp` cloud transport is HTTP/2 by default; operators can opt
-  into HTTP/1.1 via `"network": { "useHttp1ForAgent": true }` in
-  `~/.cursor/cli-config.json` (the config the ACP child reads — not IDE Network
-  settings).
 - After a WebSocket drop and reconnect, the browser supplies the last applied
   cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
   `snapshot` plus only events after that cursor; invalid or compacted-away
@@ -693,18 +652,16 @@ dividers for cancellations, reconnects, harness switches and context resets.
   projection boundary, so every reader — approval control and transcript marker
   alike — shows the command as it will run.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
-  diffs. Tool call rows follow the disclosure: collapsed settled turns show the
-  summary only; collapsed live turns add in-flight tool rows; expanded turns
-  show the full work log. Bodies stay collapsed by default for completed calls
-  and open only when a call is running or failed with content. The row target is
-  the first explicit location when present; otherwise the host derives one from
-  `rawInput` path, then query/pattern/glob, then tool name, then command, then
-  a diff path in tool content; the label strips generic tool titles (`Read
-  File`, `Edit File`, `MCP: tool`, …) until a real target arrives. Thoughts,
-  plans and permission markers stay behind the disclosure until expanded.
-  Collapsed, the summary row shows a counted line while the turn runs once at
-  least one tool row is present (`Read 6 files · edited 2 files · searched 3
-  queries · ran 4 commands · used 2 tools · 38s`); if the agent is only
+  diffs. Tool call rows are always visible — one line each on the activity grid,
+  with bodies collapsed by default for completed calls and open only when a call
+  is running or failed with content. The row target is the first explicit
+  location when present; otherwise the host derives one from `rawInput` path,
+  then query/pattern/glob, then command, then a diff path in tool content; the
+  label strips generic tool titles (`Read File`, `Edit File`, `grep`, …) until
+  a real target arrives. Thoughts, plans and permission markers stay
+  behind the disclosure until expanded. Collapsed, the summary row shows a
+  counted line while the turn runs once at least one tool row is present
+  (`Read 6 files · edited 2 files · ran 4 commands · 38s`); if the agent is only
   thinking or planning, the summary shows the current operation instead so the
   turn is not silent. Once the turn settles, the summary is always the counted
   line.

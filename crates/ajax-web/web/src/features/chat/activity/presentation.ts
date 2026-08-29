@@ -64,25 +64,11 @@ const GENERIC_TOOL_TITLES = new Set([
   "find",
   "grep",
   "search files",
-  "mcp: tool",
-  "mcp tool",
 ]);
 
 /** Generic ACP titles name the tool, not what it touched. */
 export function isGenericToolTitle(title: string): boolean {
-  const normalized = cleanTitle(title).toLowerCase();
-  if (GENERIC_TOOL_TITLES.has(normalized)) return true;
-  return normalized === "tool" || normalized === "mcp";
-}
-
-/** When the harness sends "MCP: gitnexus_query", the part after the prefix is
- * the row target; "MCP: tool" is still generic. */
-export function mcpToolNameFromTitle(title: string): string | null {
-  const match = cleanTitle(title).match(/^mcp:\s*(.+)$/i);
-  if (!match) return null;
-  const name = match[1]?.trim() ?? "";
-  if (!name || name.toLowerCase() === "tool") return null;
-  return name;
+  return GENERIC_TOOL_TITLES.has(cleanTitle(title).toLowerCase());
 }
 
 /** Execute titles can be whole scripts. The row names the first line or clause. */
@@ -109,9 +95,9 @@ export function toolTarget(call: {
     return shortPath(location);
   }
   const title = cleanTitle(call.title);
-  if (isGenericToolTitle(title)) return mcpToolNameFromTitle(title) ?? "";
+  if (isGenericToolTitle(title)) return "";
   if (call.kind === "execute") return shortCommand(title);
-  return mcpToolNameFromTitle(title) ?? (title || call.callId);
+  return title || call.callId;
 }
 
 /** Present tense for the live "currently doing" line. Past tense for settled
@@ -154,10 +140,8 @@ export function toolRowTarget(call: {
     return parts[parts.length - 1] ?? shortPath(location);
   }
   const title = cleanTitle(call.title);
-  if (isGenericToolTitle(title)) return mcpToolNameFromTitle(title) ?? "";
+  if (isGenericToolTitle(title)) return "";
   if (call.kind === "execute") return shortCommand(title);
-  const mcpName = mcpToolNameFromTitle(title);
-  if (mcpName) return mcpName;
   if (title) return title;
   return "";
 }
@@ -171,8 +155,7 @@ export function toolRowLabel(call: {
 }): string {
   const verb = OPERATION_VERBS_PAST[call.kind] ?? "Used";
   const target = toolRowTarget(call);
-  if (!target || isGenericToolTitle(target)) return verb;
-  return `${verb} ${target}`;
+  return target ? `${verb} ${target}` : verb;
 }
 
 const TOKEN_BOUNDARY = /[\s/\\:;,.|]/;

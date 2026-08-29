@@ -1,8 +1,7 @@
 # Issue reporting
 
-After a successful exploratory validate + classify step, eligible confirmed
-findings are filed as GitHub **Defect** issues on `mossipcams/ajax-cli` (or
-`GH_REPO` when set).
+After a successful exploratory validate step, confirmed findings are filed as
+GitHub **Defect** issues on `mossipcams/ajax-cli` (or `GH_REPO` when set).
 
 Filing runs in `scripts/exploratory/file-issues.mjs` — not in the Cursor Agent
 CLI (`gh` stays denied in `.github/exploratory/cli.json`).
@@ -12,29 +11,9 @@ CLI (`gh` stays denied in `.github/exploratory/cli.json`).
 File a finding when:
 
 - `status === "confirmed"`
-- `reproductionSuccesses >= 2` (two successful reset/reproduction cycles)
-- `classification` is `novel` or `regression`
-- fingerprint and evidence paths are present (enforced by validate)
+- `reproductionSuccesses >= 1` (required by the findings schema)
 
-Do **not** file observations, rejected hypotheses, or **known** duplicates.
-
-Agent `relatedIssues` are hints only; they do not suppress filing.
-
-## Classification
-
-`scripts/exploratory/classify-findings.mjs` assigns each confirmed finding:
-
-| Class | Rule |
-| --- | --- |
-| `known` | fingerprint/title matches an **open** bug issue body comment or exploration memory |
-| `regression` | fingerprint/title matches a **closed** bug issue or `memory.regressions` |
-| `novel` | otherwise |
-
-Known findings are recorded as duplicates during issue processing (before memory
-update). Duplicate comments are emitted only for materially new evidence signatures
-already absent from validated memory.
-
-Only `novel` and `regression` findings are eligible for auto-filing as new issues.
+Do **not** file observations or rejected hypotheses.
 
 ## Duplicate detection
 
@@ -78,4 +57,4 @@ Severity map: `critical` → `blocker`; `high` / `medium` / `low` unchanged.
   skipped (`action: skipped`) unless `--force`.
 - `--dry-run`: resolve duplicates and would-create without `gh issue create`.
 - Duplicates never fail the job. `gh issue create` failure exits 1.
-- Zero eligible findings → empty `issues.json`, exit 0.
+- Zero confirmed findings → empty `issues.json`, exit 0.

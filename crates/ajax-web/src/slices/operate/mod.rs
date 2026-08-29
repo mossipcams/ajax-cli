@@ -335,7 +335,7 @@ pub fn set_task_session_model<R: Registry>(
 /// True when the harness has an ACP entry point, so a provisioned (no send-keys)
 /// start can be driven from the browser instead of the tmux pane.
 pub fn supports_acp_session(agent: &str) -> bool {
-    ajax_core::adapters::acp_admits_orchestration_chat(agent_client_from_name(agent))
+    ajax_core::adapters::acp_launch_for_agent(agent_client_from_name(agent)).is_some()
 }
 
 fn agent_client_from_name(agent: &str) -> ajax_core::models::AgentClient {

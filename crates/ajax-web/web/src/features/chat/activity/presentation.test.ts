@@ -182,39 +182,6 @@ describe("toolRowLabel", () => {
     );
   });
 
-  it("does not render Used MCP: tool for a generic MCP title", () => {
-    expect(
-      toolRowLabel({
-        kind: "fetch",
-        title: "MCP: tool",
-        locations: [],
-        callId: "c1",
-      }),
-    ).toBe("Fetched");
-  });
-
-  it("names a real MCP tool from its location verb-first", () => {
-    expect(
-      toolRowLabel({
-        kind: "fetch",
-        title: "MCP: tool",
-        locations: ["gitnexus_query"],
-        callId: "c1",
-      }),
-    ).toBe("Fetched gitnexus_query");
-  });
-
-  it("names a real MCP tool from its title when the harness sends one", () => {
-    expect(
-      toolRowLabel({
-        kind: "fetch",
-        title: "MCP: gitnexus_query",
-        locations: [],
-        callId: "c1",
-      }),
-    ).toBe("Fetched gitnexus_query");
-  });
-
   it("keeps the live and settled verb maps aligned on kinds", () => {
     expect(Object.keys(OPERATION_VERBS).sort()).toEqual(Object.keys(OPERATION_VERBS_PAST).sort());
   });

@@ -77,7 +77,7 @@ fn session_capable<R: Registry>(
 ) -> bool {
     context.registry.get_task(id).is_some_and(|task| {
         task.skip_interactive_agent()
-            && ajax_core::adapters::acp_admits_orchestration_chat(task.selected_agent)
+            && ajax_core::adapters::acp_launch_for_agent(task.selected_agent).is_some()
     })
 }
 
@@ -162,7 +162,7 @@ pub fn browser_task_detail_view<R: Registry>(
 
     Some(BrowserTaskDetail {
         session_capable: task.skip_interactive_agent()
-            && ajax_core::adapters::acp_admits_orchestration_chat(task.selected_agent),
+            && ajax_core::adapters::acp_launch_for_agent(task.selected_agent).is_some(),
         qualified_handle: task.qualified_handle(),
         repo: task.repo.clone(),
         title: task.title.clone(),

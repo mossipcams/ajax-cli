@@ -55,7 +55,7 @@ Never classify an anomaly as confirmed immediately.
 4. Record the exact reproduction path.
 5. Reset relevant state when practical.
 6. Attempt reproduction (prefer multiple attempts).
-7. Reproduced twice with reset between attempts → confirmed finding. Not reproduced → observation only.
+7. Reproduced → confirmed finding. Not reproduced → observation only.
 
 ## High-confidence signals
 
@@ -112,9 +112,8 @@ Optimize for information gained per action and per model turn:
 
 ## Campaign framing
 
-This workflow runs nightly and persists memory across runs. Each run executes
-**one assigned mission** (primary, with one fallback). Multiple nightly runs
-over time are the exploration campaign.
+This workflow runs regularly and persists memory across runs. One run does not need to
+be exhaustive. Multiple daily runs over time are the exploration campaign.
 
 ## Budget
 

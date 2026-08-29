@@ -24,8 +24,6 @@ describe("webSessionFixtures", () => {
         model: "composer-2.5",
         turnState: "busy",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       },
     });
     expect(parseServerFrame(JSON.stringify({ type: "event", protocolVersion: 2, cursor: 1, payload: FIXTURE_EVENTS.agentMessage }))).toEqual({

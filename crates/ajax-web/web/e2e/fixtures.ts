@@ -102,9 +102,6 @@ export function sessionSnapshotJson(
     model: string;
     turnState: "idle" | "busy";
     reset: boolean;
-    contextState: "live" | "restored" | "unavailable";
-    contextEpoch: number;
-    contextError?: string;
     promptCapabilities: { image?: boolean; embeddedContext?: boolean };
   }> = {},
 ): string {
@@ -115,8 +112,6 @@ export function sessionSnapshotJson(
     model: "auto",
     turnState: "idle",
     reset: false,
-    contextState: "live",
-    contextEpoch: 0,
     ...overrides,
   });
 }
@@ -151,19 +146,7 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
     "/api/session/models": SESSION_MODELS,
     "/api/health":     { status: "ok" },
     "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
-    "/api/server/restart": { ok: true, restarting: true },
-    "/api/server/update": { ok: true, restarting: true },
-    "/api/server/runtime": {
-      ok: true,
-      version: "0.11.0",
-      commit: "abc123",
-      profile: "stable",
-      uptime_seconds: 120,
-      update_available: { known: true, available: false },
-      operation: null,
-      logs: [],
-      test_in_stable: true,
-    },
+    "/api/server/restart": {},
     "/api/server/test-in-stable": { ok: true, restarting: true },
     "__detail__":      DETAIL_FIXTURE,
     ...extra,

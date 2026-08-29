@@ -5,7 +5,7 @@ export const CONNECTION_INTERRUPTED_MESSAGE =
 
 /** Map opaque ACP error strings to operator-facing copy. Human messages pass through. */
 export function explainAcpError(message: string): string {
-  if (/RetriableError:/i.test(message)) {
+  if (/^RetriableError:/i.test(message)) {
     return CONNECTION_INTERRUPTED_MESSAGE;
   }
   if (/internal error/i.test(message)) {

@@ -11,7 +11,7 @@ import { clearSessionTransportState, type WebSessionTransport } from "./transpor
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
-import { hasPromptContent, type PromptContentBlockWire } from "@/shared/lib/promptContent";
+import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
   modelLiveOption,
   readLiveSelectCurrent,
@@ -146,20 +146,13 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   const sendPrompt = useCallback(
     (text: string, contentBlocks: PromptContentBlockWire[] = []): boolean => {
       const trimmed = text.trim();
-      if (
-        !hasPromptContent(trimmed, contentBlocks) ||
-        !connected ||
-        view.context.state === "unavailable" ||
-        view.context.transcriptError !== undefined
-      ) {
-        return false;
-      }
+      if (!trimmed || !connected) return false;
       if (!transportRef.current?.sendPrompt(trimmed, contentBlocks)) return false;
       if (!view.turn.busy) markActivity();
       dispatch({ type: "prompt", text: trimmed });
       return true;
     },
-    [connected, markActivity, view.context.state, view.context.transcriptError, view.turn.busy],
+    [connected, markActivity, view.turn.busy],
   );
 
   const sendCancel = useCallback(() => {
@@ -176,14 +169,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
 
   const applyModel = useCallback((catalogId: string) => {
     transportRef.current?.setModel(catalogId);
-  }, []);
-
-  const retryRestore = useCallback(() => {
-    transportRef.current?.retryRestore();
-  }, []);
-
-  const startNewContext = useCallback(() => {
-    transportRef.current?.startNewContext();
   }, []);
 
   const respondPermission = useCallback(
@@ -231,8 +216,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     markStopped,
     applyConfigOption,
     applyModel,
-    retryRestore,
-    startNewContext,
     respondPermission,
     respondElicitation,
     onMutated: handleMutated,

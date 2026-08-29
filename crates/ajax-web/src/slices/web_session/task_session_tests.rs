@@ -1,6 +1,5 @@
 use super::test_support::{
-    agent_pong_count, fake_acp_fixture, log_contains_text, note, pump_until,
-    pump_until_pong_or_turn_end, scratch_dir, BlockingSessionDirectory, CONTEXT_RESET_NOTE,
+    agent_pong_count, fake_acp_fixture, note, pump_until, scratch_dir, BlockingSessionDirectory,
 };
 use super::{SessionServerEvent, MAX_QUEUED_PROMPTS};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -26,7 +25,7 @@ fn reading_an_unknown_handle_loads_from_disk_when_present() {
     let dir = scratch_dir("disk-read");
     let handle = "web/fix-login";
     let events = vec![note("persisted")];
-    web_session_store::append_events(&dir, handle, &events).unwrap();
+    web_session_store::append_events(&dir, handle, &events);
     let directory = BlockingSessionDirectory::new(dir.clone());
     let (loaded, next) = directory.read_from(handle, 0);
     assert_eq!(loaded, events);
@@ -111,73 +110,6 @@ fn duplicate_client_prompt_id_is_not_dispatched_twice() {
             SessionServerEvent::Message { role, text, .. }
                 if role == "user" && text == "duplicate"
         )));
-    });
-
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn viewer_disconnect_release_reacquire_preserves_live_context_and_queued_work() {
-    let dir = scratch_dir("viewer-disconnect-context");
-    let handle = "web/viewer-disconnect-context";
-    let directory = BlockingSessionDirectory::new(dir.clone());
-    let script = fake_acp_fixture();
-
-    with_test_acp_program(&script, || {
-        directory
-            .acquire(handle, &dir, "auto", AgentClient::Cursor)
-            .expect("acquire");
-        let child_before = directory.child_id(handle).expect("child before disconnect");
-        let session_before = directory
-            .stored_acp_session_id(&dir, handle)
-            .expect("stored session id before disconnect");
-        let epoch_before = directory
-            .attach_snapshot(handle, "auto")
-            .snapshot
-            .context_epoch;
-
-        directory
-            .submit_prompt(handle, "first".to_string())
-            .expect("first");
-        directory
-            .submit_prompt(handle, "second".to_string())
-            .expect("second");
-        directory.release(handle);
-
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let (events, _) = directory.read_from(handle, 0);
-            if agent_pong_count(&events) >= 2 {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "queued work must continue without a viewer lease: {events:?}"
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
-
-        directory
-            .acquire(handle, &dir, "auto", AgentClient::Cursor)
-            .expect("re-acquire after viewer disconnect");
-        assert_eq!(
-            directory.child_id(handle),
-            Some(child_before),
-            "viewer reconnect must reuse the same live ACP child"
-        );
-        assert_eq!(
-            directory.stored_acp_session_id(&dir, handle),
-            Some(session_before.clone()),
-            "viewer reconnect must not replace the stored ACP session id"
-        );
-        assert_eq!(
-            directory
-                .attach_snapshot(handle, "auto")
-                .snapshot
-                .context_epoch,
-            epoch_before,
-            "viewer reconnect must not advance context epoch"
-        );
     });
 
     let _ = std::fs::remove_dir_all(dir);
@@ -857,6 +789,41 @@ fn cancel_finalizes_active_prompt_once_and_advances_queue_in_order() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+const CONTEXT_RESET_NOTE: &str =
+    "Model context reset after restart. Prior turns are still visible here.";
+
+fn log_contains_text(directory: &BlockingSessionDirectory, handle: &str, needle: &str) -> bool {
+    let (events, _) = directory.read_from(handle, 0);
+    events.iter().any(|event| match event {
+        SessionServerEvent::Message { text, .. } => text.contains(needle),
+        _ => false,
+    })
+}
+
+fn pump_until_pong_or_turn_end(
+    directory: &BlockingSessionDirectory,
+    handle: &str,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        directory.pump(handle);
+        let (events, _) = directory.read_from(handle, 0);
+        let done = events.iter().any(|event| match event {
+            SessionServerEvent::TurnEnd { .. } => true,
+            SessionServerEvent::Message { text, .. } => text == "pong",
+            _ => false,
+        });
+        if done {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for pong or turn_end; events={events:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn g1_respawns_after_child_death_and_prompt_works() {
     let dir = scratch_dir("g1");
@@ -882,6 +849,41 @@ fn g1_respawns_after_child_death_and_prompt_works() {
             .expect("submit_prompt");
         pump_until_pong_or_turn_end(&directory, handle, Duration::from_secs(5));
         assert!(directory.generation(handle) > 0);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn g1_load_fail_appends_context_reset_note() {
+    let dir = scratch_dir("load-fail");
+    let script = fake_acp_fixture();
+    let handle = "web/g1-load-fail";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: "seed".to_string(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".to_string(),
+                message_id: None,
+            },
+        );
+        directory.kill_host_for_test(handle);
+
+        with_test_acp_extra_args(&["--load-fail"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire after load-fail spawn");
+        });
+
+        assert!(log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
     });
 
     let _ = std::fs::remove_dir_all(dir);

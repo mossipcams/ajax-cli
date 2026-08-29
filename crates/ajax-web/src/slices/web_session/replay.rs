@@ -1,9 +1,7 @@
 //! Cursor validation and replay planning for protocol v2 attach.
 
-use super::context_continuity::ContextContinuity;
 use super::protocol::{
-    PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionPending,
-    SessionSnapshot,
+    PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
@@ -51,12 +49,9 @@ pub(crate) fn build_attach(
         model,
         busy,
         plan.reset,
-        SessionPending {
-            permission: pending_permission(log),
-            elicitation: pending_elicitation(log),
-        },
+        pending_permission(log),
+        pending_elicitation(log),
         chrome,
-        ContextContinuity::default(),
     );
     (snapshot, replayed)
 }

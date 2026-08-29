@@ -7,16 +7,12 @@ import { join } from "node:path";
 import {
   emptyFindings,
   emptyObservations,
-  emptyVerifierDocument,
   normalizeFindingsDocument,
-  applyVerifierConfirmationGate,
   readJson,
   repoRoot,
   resultsDir,
   simulatedFinding,
   validateFindingsDocument,
-  validateFindingsSchema,
-  assessRunUsefulness,
   writeJson,
 } from "./lib.mjs";
 
@@ -58,7 +54,6 @@ function main() {
   if (args.fixture) {
     mkdirSync(join(resultsDir, "traces"), { recursive: true });
     mkdirSync(join(resultsDir, "screenshots"), { recursive: true });
-    mkdirSync(join(resultsDir, "verifier"), { recursive: true });
     mkdirSync(join(resultsDir, "logs"), { recursive: true });
     writeFileSync(
       join(resultsDir, "traces", "sim-reconnect.zip"),
@@ -68,32 +63,9 @@ function main() {
       join(resultsDir, "screenshots", "sim-reconnect.png"),
       "simulated-screenshot\n",
     );
-    writeFileSync(
-      join(resultsDir, "verifier", "sim-reconnect.zip"),
-      "simulated-verifier-trace\n",
-    );
-    writeFileSync(
-      join(resultsDir, "verifier", "sim-reconnect.png"),
-      "simulated-verifier-screenshot\n",
-    );
-    const simulated = simulatedFinding();
     writeJson(join(resultsDir, "findings.json"), {
       version: 1,
-      findings: [{ ...simulated, classification: "novel" }],
-    });
-    writeJson(join(resultsDir, "verifier.json"), {
-      version: 1,
-      verifications: [
-        {
-          findingId: simulated.id,
-          source: "deterministic-verifier",
-          reproductionSuccesses: 2,
-          evidence: {
-            trace: "exploratory-results/verifier/sim-reconnect.zip",
-            screenshots: ["exploratory-results/verifier/sim-reconnect.png"],
-          },
-        },
-      ],
+      findings: [simulatedFinding()],
     });
     writeJson(join(resultsDir, "observations.json"), emptyObservations());
     writeJson(join(resultsDir, "run.json"), {
@@ -117,27 +89,14 @@ function main() {
 
   const findingsPath = join(resultsDir, "findings.json");
   const rawFindings = readJson(findingsPath, emptyFindings());
-  const verifierDoc = readJson(join(resultsDir, "verifier.json"), emptyVerifierDocument());
-  const normalized = normalizeFindingsDocument(rawFindings);
-  const findings = applyVerifierConfirmationGate(normalized, verifierDoc);
+  const findings = normalizeFindingsDocument(rawFindings);
   writeJson(findingsPath, findings);
   const findingProblems = validateFindingsDocument(findings);
   problems.push(...findingProblems);
-  problems.push(...validateFindingsSchema(findings));
 
   const run = readJson(join(resultsDir, "run.json"), {});
-  const missionDoc = readJson(join(resultsDir, "mission.json"), null);
   run.findingsSummary = summarizeFindings(findings);
   run.validatedAt = new Date().toISOString();
-
-  const memoryDelta = readJson(join(resultsDir, "memory-delta.json"), { areasVisited: [] });
-  const observations = readJson(join(resultsDir, "observations.json"), emptyObservations());
-  const usefulness = assessRunUsefulness({ run, memoryDelta, findings, observations, missionDoc });
-  run.usefulness = usefulness;
-  if (!usefulness.ok && !args.fixture) {
-    problems.push(usefulness.reason ?? "run was not useful");
-  }
-
   writeJson(join(resultsDir, "run.json"), run);
 
   if (args.checkReadonly) {

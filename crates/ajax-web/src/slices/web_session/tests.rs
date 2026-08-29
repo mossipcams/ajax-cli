@@ -226,26 +226,6 @@ fn map_tool_call_derives_location_from_raw_input_path_for_1090() {
     );
 }
 
-/// Regression for #1090: MCP tools can name themselves on rawInput.toolName.
-#[test]
-fn map_tool_call_derives_location_from_raw_input_tool_name() {
-    let update = serde_json::json!({
-        "update": {
-            "sessionUpdate": "tool_call",
-            "toolCallId": "call_mcp",
-            "title": "MCP: tool",
-            "kind": "fetch",
-            "status": "in_progress",
-            "rawInput": { "toolName": "gitnexus_query" }
-        }
-    });
-    let events = map_acp_session_update(&update);
-    let SessionServerEvent::ToolCall { locations, .. } = &events[0] else {
-        panic!("expected tool call, got {events:?}");
-    };
-    assert_eq!(locations, &vec!["gitnexus_query".to_string()]);
-}
-
 /// Regression for #1090: an empty update still derives the target from rawInput.
 #[test]
 fn map_tool_call_update_derives_location_from_raw_input_for_1090() {

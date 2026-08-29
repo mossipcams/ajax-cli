@@ -6,7 +6,7 @@ use super::{
     SessionRouteError,
 };
 use ajax_core::{
-    adapters::{acp_admits_orchestration_chat, CommandRunner},
+    adapters::{acp_launch_for_agent, CommandRunner},
     commands::CommandContext,
     models::TaskId,
     registry::Registry,
@@ -23,7 +23,7 @@ pub fn prepare_task_session<R: Registry>(
         return Err(SessionRouteError::TaskNotFound);
     };
 
-    if !acp_admits_orchestration_chat(task.selected_agent) {
+    if acp_launch_for_agent(task.selected_agent).is_none() {
         return Err(SessionRouteError::NotOrchestrationChat);
     }
 

@@ -22,7 +22,6 @@ pub struct StoredSession<T> {
     pub model: String,
     pub events: Vec<T>,
     pub dropped: usize,
-    pub context_epoch: u64,
 }
 
 impl<T> Default for StoredSession<T> {
@@ -32,7 +31,6 @@ impl<T> Default for StoredSession<T> {
             model: "auto".to_string(),
             events: Vec::new(),
             dropped: 0,
-            context_epoch: 0,
         }
     }
 }
@@ -46,8 +44,6 @@ struct DiskMeta {
     model: String,
     #[serde(default)]
     dropped: usize,
-    #[serde(default)]
-    context_epoch: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +79,6 @@ pub fn load<T: DeserializeOwned>(state_dir: &Path, handle: &str) -> StoredSessio
                 session.acp_session_id = meta.acp_session_id;
                 session.model = meta.model;
                 session.dropped = meta.dropped;
-                session.context_epoch = meta.context_epoch;
             }
             ParsedLine::Event(event) => session.events.push(event),
             ParsedLine::Skip => {}
@@ -92,73 +87,37 @@ pub fn load<T: DeserializeOwned>(state_dir: &Path, handle: &str) -> StoredSessio
     session
 }
 
-pub fn save_meta(
-    state_dir: &Path,
-    handle: &str,
-    acp_session_id: Option<&str>,
-    model: &str,
-) -> Result<(), std::io::Error> {
+pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, model: &str) {
     let mut session = load::<serde_json::Value>(state_dir, handle);
     session.acp_session_id = acp_session_id.map(str::to_string);
     session.model = model.to_string();
-    rewrite_file(state_dir, handle, &session).map_err(|error| {
-        tracing::warn!(%error, handle, "failed to persist web session transcript");
-        error
-    })
-}
-
-/// Persist session identity and an explicit context epoch (Start new context / harness Switch).
-pub fn save_meta_with_context_epoch(
-    state_dir: &Path,
-    handle: &str,
-    acp_session_id: Option<&str>,
-    model: &str,
-    context_epoch: u64,
-) -> Result<(), std::io::Error> {
-    let mut session = load::<serde_json::Value>(state_dir, handle);
-    session.acp_session_id = acp_session_id.map(str::to_string);
-    session.model = model.to_string();
-    session.context_epoch = context_epoch;
-    rewrite_file(state_dir, handle, &session).map_err(|error| {
-        tracing::warn!(%error, handle, "failed to persist web session transcript");
-        error
-    })
+    persist(state_dir, handle, &session);
 }
 
 /// Clear the stored ACP resume id so the next attach uses `session/new`.
-pub fn clear_acp_session_id(state_dir: &Path, handle: &str) -> Result<(), std::io::Error> {
+pub fn clear_acp_session_id(state_dir: &Path, handle: &str) {
     let mut session = load::<serde_json::Value>(state_dir, handle);
     if session.acp_session_id.is_none() {
-        return Ok(());
+        return;
     }
     session.acp_session_id = None;
-    rewrite_file(state_dir, handle, &session).map_err(|error| {
-        tracing::warn!(%error, handle, "failed to persist web session transcript");
-        error
-    })
+    persist(state_dir, handle, &session);
 }
 
 pub fn append_events<T: Serialize + serde::de::DeserializeOwned>(
     state_dir: &Path,
     handle: &str,
     new_events: &[T],
-) -> Result<(), std::io::Error> {
+) {
     if new_events.is_empty() {
-        return Ok(());
+        return;
     }
 
     let path = session_path(state_dir, handle);
     if !path.is_file() {
-        rewrite_file(state_dir, handle, &StoredSession::<T>::default()).map_err(|error| {
-            tracing::warn!(%error, handle, "failed to persist web session transcript");
-            error
-        })?;
+        persist(state_dir, handle, &StoredSession::<T>::default());
     }
     let result = (|| -> Result<(), std::io::Error> {
-        #[cfg(test)]
-        if force_append_fail() {
-            return Err(std::io::Error::other("forced append_events failure"));
-        }
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
         for event in new_events {
             let row = serde_json::json!({
@@ -172,26 +131,23 @@ pub fn append_events<T: Serialize + serde::de::DeserializeOwned>(
     })();
     if let Err(error) = result {
         tracing::warn!(%error, handle, "failed to append web session transcript");
-        return Err(error);
+        return;
     }
 
     let oversized = fs::metadata(&path)
         .map(|metadata| metadata.len() > MAX_LOG_BYTES)
         .unwrap_or(false);
     if !oversized {
-        return Ok(());
+        return;
     }
     let mut session = load::<T>(state_dir, handle);
     let excess = session.events.len().saturating_sub(MAX_LOG_EVENTS);
     if excess == 0 {
-        return Ok(());
+        return;
     }
     session.events.drain(..excess);
     session.dropped += excess;
-    rewrite_file(state_dir, handle, &session).map_err(|error| {
-        tracing::warn!(%error, handle, "failed to persist web session transcript");
-        error
-    })
+    persist(state_dir, handle, &session);
 }
 
 enum ParsedLine<T> {
@@ -265,72 +221,10 @@ pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
         .join(format!("{}.jsonl", encode_handle(handle)))
 }
 
-#[cfg(test)]
 fn persist<T: Serialize>(state_dir: &Path, handle: &str, session: &StoredSession<T>) {
     if let Err(error) = rewrite_file(state_dir, handle, session) {
         tracing::warn!(%error, handle, "failed to persist web session transcript");
     }
-}
-
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(test)]
-static FORCE_SAVE_META_FAIL: AtomicBool = AtomicBool::new(false);
-
-#[cfg(test)]
-static FORCE_APPEND_FAIL: AtomicBool = AtomicBool::new(false);
-
-/// Test-scoped `save_meta` / `rewrite_file` failure injection; restores the prior flag on drop.
-#[cfg(test)]
-pub struct ForceSaveMetaFailGuard {
-    previous: bool,
-}
-
-#[cfg(test)]
-impl ForceSaveMetaFailGuard {
-    pub fn enable() -> Self {
-        let previous = FORCE_SAVE_META_FAIL.swap(true, Ordering::SeqCst);
-        Self { previous }
-    }
-}
-
-#[cfg(test)]
-impl Drop for ForceSaveMetaFailGuard {
-    fn drop(&mut self) {
-        FORCE_SAVE_META_FAIL.store(self.previous, Ordering::SeqCst);
-    }
-}
-
-#[cfg(test)]
-fn force_save_meta_fail() -> bool {
-    FORCE_SAVE_META_FAIL.load(Ordering::SeqCst)
-}
-
-/// Test-scoped `append_events` failure injection; restores the prior flag on drop.
-#[cfg(test)]
-pub struct ForceAppendFailGuard {
-    previous: bool,
-}
-
-#[cfg(test)]
-impl ForceAppendFailGuard {
-    pub fn enable() -> Self {
-        let previous = FORCE_APPEND_FAIL.swap(true, Ordering::SeqCst);
-        Self { previous }
-    }
-}
-
-#[cfg(test)]
-impl Drop for ForceAppendFailGuard {
-    fn drop(&mut self) {
-        FORCE_APPEND_FAIL.store(self.previous, Ordering::SeqCst);
-    }
-}
-
-#[cfg(test)]
-fn force_append_fail() -> bool {
-    FORCE_APPEND_FAIL.load(Ordering::SeqCst)
 }
 
 fn rewrite_file<T: Serialize>(
@@ -338,10 +232,6 @@ fn rewrite_file<T: Serialize>(
     handle: &str,
     session: &StoredSession<T>,
 ) -> Result<(), std::io::Error> {
-    #[cfg(test)]
-    if force_save_meta_fail() {
-        return Err(std::io::Error::other("forced save_meta failure"));
-    }
     let dir = state_dir.join(WEB_SESSION_DIR);
     fs::create_dir_all(&dir)?;
     let path = session_path(state_dir, handle);
@@ -353,7 +243,6 @@ fn rewrite_file<T: Serialize>(
         acp_session_id: session.acp_session_id.clone(),
         model: session.model.clone(),
         dropped: session.dropped,
-        context_epoch: session.context_epoch,
     };
     let meta_line = serde_json::to_string(&meta).map_err(std::io::Error::other)?;
     writeln!(file, "{meta_line}")?;

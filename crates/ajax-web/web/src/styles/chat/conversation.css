@@ -119,8 +119,8 @@
   gap: 0;
 }
 
-/* One disclosure per turn: collapsed settled is the summary only; collapsed live
-   adds in-flight tool rows; expanded shows the full timeline. */
+/* One disclosure per turn: tool rows always, the summary above them, and the
+   thoughts and plans behind it when asked for. */
 .session-turn-work {
   align-self: stretch;
   min-width: 0;
