@@ -17,12 +17,15 @@ import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 import type { ComposerAttachment, PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
+  ATTACHMENT_TOO_LARGE,
   attachmentFromFile,
   attachmentFromPaste,
+  attachmentsArePreparing,
   attachmentsFromContentBlocks,
   canAttachFiles,
-  fitPromptContentBlocks,
   flattenAttachmentBlocks,
+  prepareImageFileForPrompt,
+  preparingImageAttachment,
   promptFrameFits,
 } from "@/shared/lib/promptContent";
 import { autoGrow } from "./autoGrow";
@@ -267,6 +270,7 @@ export function ComposerProvider({
 
   const sendDraft = useCallback(() => {
     if (!canPrompt) return;
+    if (attachmentsArePreparing(attachments)) return;
 
     const result = submitComposerDraft({
       connected: canPrompt,
@@ -280,21 +284,12 @@ export function ComposerProvider({
 
     if (result.action === "send") {
       const text = result.text;
-      if (promptFrameFits(text, contentBlocks)) {
-        setAttachmentError(null);
-        deliverPrompt(text, contentBlocks);
+      if (!promptFrameFits(text, contentBlocks)) {
+        setAttachmentError(ATTACHMENT_TOO_LARGE);
         return;
       }
-
-      void (async () => {
-        const fitted = await fitPromptContentBlocks(text, contentBlocks);
-        if (fitted.error) {
-          setAttachmentError(fitted.error);
-          return;
-        }
-        setAttachmentError(null);
-        deliverPrompt(text, fitted.blocks);
-      })();
+      setAttachmentError(null);
+      deliverPrompt(text, contentBlocks);
       return;
     }
 
@@ -330,6 +325,7 @@ export function ComposerProvider({
       scrollToLatest();
     }
   }, [
+    attachments,
     busy,
     clearDraftAttachments,
     clearDraftText,
@@ -375,22 +371,12 @@ export function ComposerProvider({
       if (intent.type === "mark_stopped") markStopped();
       if (intent.type === "send_prompt") {
         const blocks = intent.contentBlocks ?? [];
-        if (promptFrameFits(intent.text, blocks)) {
-          setAttachmentError(null);
-          sendSucceeded = sendPrompt(intent.text, blocks);
+        if (!promptFrameFits(intent.text, blocks)) {
+          setAttachmentError(ATTACHMENT_TOO_LARGE);
           continue;
         }
-        void (async () => {
-          const fitted = await fitPromptContentBlocks(intent.text, blocks);
-          if (fitted.error) {
-            setAttachmentError(fitted.error);
-            return;
-          }
-          setAttachmentError(null);
-          if (sendPrompt(intent.text, fitted.blocks)) {
-            setComposerState((current) => composerStateAfterFlush(current, true));
-          }
-        })();
+        setAttachmentError(null);
+        sendSucceeded = sendPrompt(intent.text, blocks);
       }
     }
     if (sendSucceeded) {
@@ -455,18 +441,51 @@ export function ComposerProvider({
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
   }, []);
 
+  const prepareImageAttachment = useCallback(
+    (attachmentId: string, file: File) => {
+      void prepareImageFileForPrompt(file, draftRef.current).then((result) => {
+        setAttachments((current) =>
+          current.map((attachment) => {
+            if (attachment.id !== attachmentId) return attachment;
+            if ("error" in result) {
+              return { ...attachment, status: "error" as const, error: result.error };
+            }
+            return { ...attachment, status: "ready" as const, blocks: result.blocks };
+          }),
+        );
+      });
+    },
+    [],
+  );
+
+  const stageFileAttachment = useCallback(
+    async (file: File): Promise<ComposerAttachment | null> => {
+      if (!canAttachFiles(promptCapabilities)) return null;
+
+      const mimeType = file.type || "application/octet-stream";
+      if (mimeType.startsWith("image/") && promptCapabilities?.image) {
+        const preparing = preparingImageAttachment(file);
+        prepareImageAttachment(preparing.id, file);
+        return preparing;
+      }
+
+      return attachmentFromFile(file, promptCapabilities);
+    },
+    [prepareImageAttachment, promptCapabilities],
+  );
+
   const attachFiles = useCallback(
     async (files: FileList | File[]) => {
       const next: ComposerAttachment[] = [];
       for (const file of Array.from(files)) {
-        const attachment = await attachmentFromFile(file, promptCapabilities);
+        const attachment = await stageFileAttachment(file);
         if (attachment) next.push(attachment);
       }
       if (next.length) {
         setAttachments((current) => [...current, ...next]);
       }
     },
-    [promptCapabilities],
+    [stageFileAttachment],
   );
 
   const onComposerPaste = useCallback(
@@ -475,14 +494,24 @@ export function ComposerProvider({
       if (!items?.length) return;
       const next: ComposerAttachment[] = [];
       for (const item of Array.from(items)) {
-        const attachment = await attachmentFromPaste(item, promptCapabilities);
+        if (item.kind !== "file") continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        const attachment =
+          file.type.startsWith("image/") && promptCapabilities?.image
+            ? (() => {
+                const preparing = preparingImageAttachment(file);
+                prepareImageAttachment(preparing.id, file);
+                return preparing;
+              })()
+            : await attachmentFromPaste(item, promptCapabilities);
         if (attachment) next.push(attachment);
       }
       if (!next.length) return;
       event.preventDefault();
       setAttachments((current) => [...current, ...next]);
     },
-    [promptCapabilities],
+    [prepareImageAttachment, promptCapabilities],
   );
 
   const onComposerKeyDown = useCallback(

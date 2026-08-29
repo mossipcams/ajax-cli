@@ -118,8 +118,13 @@ existing paths.
   `promptCapabilities.image` is true and embedded `resource` bodies only when
   `promptCapabilities.embeddedContext` is true. The file picker does not synthesize
   `resource_link` stubs for local paths; `resource_link` remains valid on the host wire
-  for real URIs. Before send, the browser downscales/compresses attached photos so the
-  prompt JSON frame fits the 256 KiB WebSocket cap with headroom for typed text.
+  for real URIs. On attach (file picker or paste), the browser downscales/compresses
+  photos so staged image blocks already fit the 256 KiB WebSocket cap with headroom
+  for typed caption text; the attachment chip shows **Preparing…** until compression
+  finishes, and Send stays disabled while any attachment is preparing. Send then
+  uses the synchronous fit path — it does not compress again on the send tap. If
+  compression or decode fails, the attachment stays staged and the chip shows a
+  specific error.
   WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
   backward compatible; omitted `contentBlocks` is text-only. A prompt is sendable
   when it has trimmed text or at least one content block, including an attachment

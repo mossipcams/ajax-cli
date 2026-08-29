@@ -1,7 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import ResultPanel from "@/shared/ui/ResultPanel";
 import { Button } from "@/shared/ui/button";
-import { hasPromptContent } from "@/shared/lib/promptContent";
+import {
+  attachmentsArePreparing,
+  hasComposerPromptContent,
+} from "@/shared/lib/promptContent";
 import {
   attachComposerHotbarKeyboardRetention,
   preventComposerHotbarFocusSteal,
@@ -141,8 +144,18 @@ export default function ChatComposer({
       {attachments.length ? (
         <ul className="session-composer-attachments" data-testid="session-composer-attachments">
           {attachments.map((attachment) => (
-            <li key={attachment.id}>
-              <span>{attachment.label}</span>
+            <li
+              key={attachment.id}
+              data-status={attachment.status}
+              className={
+                attachment.status === "error" ? "session-composer-attachment-error-chip" : undefined
+              }
+            >
+              <span>
+                {attachment.label}
+                {attachment.status === "preparing" ? " (Preparing…)" : null}
+                {attachment.status === "error" && attachment.error ? ` — ${attachment.error}` : null}
+              </span>
               <button
                 type="button"
                 className="session-composer-attachment-remove"
@@ -243,7 +256,11 @@ export default function ChatComposer({
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!canPrompt || (queued === null && !hasPromptContent(draft, attachments))}
+          disabled={
+            !canPrompt ||
+            attachmentsArePreparing(attachments) ||
+            (queued === null && !hasComposerPromptContent(draft, attachments))
+          }
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg
