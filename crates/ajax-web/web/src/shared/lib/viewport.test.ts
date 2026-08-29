@@ -223,6 +223,105 @@ describe("initViewport", () => {
     composer.remove();
   });
 
+  // #1112: iOS PWA fires window.resize (innerHeight restored, vv still short) during
+  // Send/Attach pointerdown; stale-visualViewport dismiss must not blur mid-gesture.
+  it("defers PWA stale-viewport dismiss while pointer is down inside session composer (#1112)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    const send = document.createElement("button");
+    send.type = "button";
+    send.textContent = "Send";
+    shell.appendChild(send);
+    document.body.appendChild(shell);
+
+    start();
+    composer.focus();
+    vvHeight = 520;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 520,
+    });
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+    expect(composer).toHaveFocus();
+
+    send.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 800,
+    });
+    window.dispatchEvent(new Event("resize"));
+
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+    expect(composer).toHaveFocus();
+
+    send.dispatchEvent(new Event("pointerup", { bubbles: true }));
+
+    // Synthetic click has not landed yet; defer blur/relayout until next tick.
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+    expect(composer).toHaveFocus();
+
+    vi.advanceTimersByTime(0);
+
+    // iOS PWA often omits a second window.resize after pointerup.
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+
+    shell.remove();
+  });
+
+  it("still restores on window.resize after composer pointerup when stale (#1112)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    const send = document.createElement("button");
+    send.type = "button";
+    shell.appendChild(send);
+    document.body.appendChild(shell);
+
+    start();
+    composer.focus();
+    vvHeight = 520;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 520,
+    });
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    send.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => 800,
+    });
+    window.dispatchEvent(new Event("resize"));
+    expect(isKeyboardOpen()).toBe(true);
+
+    send.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    expect(isKeyboardOpen()).toBe(true);
+    expect(composer).toHaveFocus();
+
+    vi.advanceTimersByTime(0);
+    expect(isKeyboardOpen()).toBe(false);
+
+    window.dispatchEvent(new Event("resize"));
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+
+    shell.remove();
+  });
+
   it("absorbs a transient viewport expansion while typing (no teardown)", () => {
     start();
     vvHeight = 480;

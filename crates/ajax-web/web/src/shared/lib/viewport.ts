@@ -96,6 +96,8 @@ export function initViewport(): () => void {
   let keyboardOpen = false;
   /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
   let layoutShrinksWithKeyboard = false;
+  /** True while pointer/touch is down inside the session composer (#1112). */
+  let sessionComposerPointerDown = false;
 
   const setAppHeight = (height: number) => {
     root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
@@ -177,6 +179,15 @@ export function initViewport(): () => void {
     }
   };
 
+  /** Deferred stale-viewport dismiss after composer pointerup (#1112). */
+  let composerDismissTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelComposerDismiss = () => {
+    if (composerDismissTimer !== undefined) {
+      clearTimeout(composerDismissTimer);
+      composerDismissTimer = undefined;
+    }
+  };
+
   const dismissKeyboardOpen = () => {
     if (!keyboardOpen) return;
     keyboardOpen = false;
@@ -186,10 +197,33 @@ export function initViewport(): () => void {
     resetDocumentScroll();
   };
 
+  const isInsideSessionComposer = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    return target.closest('[data-testid="session-composer"]') !== null;
+  };
+
+  const onSessionComposerPointerDown = (event: Event) => {
+    if (isInsideSessionComposer(event.target)) {
+      sessionComposerPointerDown = true;
+    }
+  };
+
+  const onSessionComposerPointerUp = () => {
+    sessionComposerPointerDown = false;
+    // iOS synthetic click fires after pointerup; defer blur/relayout so Send/Attach
+    // can land. Restore still runs when iOS omits a second window.resize (#1112).
+    cancelComposerDismiss();
+    composerDismissTimer = setTimeout(() => {
+      composerDismissTimer = undefined;
+      dismissPwaKeyboardWithStaleVisualViewport();
+    }, 0);
+  };
+
   const dismissPwaKeyboardWithStaleVisualViewport = () => {
     if (
       !keyboardOpen ||
       !layoutShrinksWithKeyboard ||
+      sessionComposerPointerDown ||
       !isLayoutExpandedBeyondStaleVisualViewport(
         window.innerHeight,
         vv.height,
@@ -351,6 +385,12 @@ export function initViewport(): () => void {
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
   window.addEventListener("resize", onViewportResize);
+  document.addEventListener("pointerdown", onSessionComposerPointerDown, true);
+  document.addEventListener("pointerup", onSessionComposerPointerUp, true);
+  document.addEventListener("pointercancel", onSessionComposerPointerUp, true);
+  document.addEventListener("touchstart", onSessionComposerPointerDown, true);
+  document.addEventListener("touchend", onSessionComposerPointerUp, true);
+  document.addEventListener("touchcancel", onSessionComposerPointerUp, true);
   document.addEventListener("focusout", onSessionComposerFocusOut, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pageshow", onPageShow);
@@ -362,9 +402,16 @@ export function initViewport(): () => void {
 
   return () => {
     cancelCloseSettle();
+    cancelComposerDismiss();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     window.removeEventListener("resize", onViewportResize);
+    document.removeEventListener("pointerdown", onSessionComposerPointerDown, true);
+    document.removeEventListener("pointerup", onSessionComposerPointerUp, true);
+    document.removeEventListener("pointercancel", onSessionComposerPointerUp, true);
+    document.removeEventListener("touchstart", onSessionComposerPointerDown, true);
+    document.removeEventListener("touchend", onSessionComposerPointerUp, true);
+    document.removeEventListener("touchcancel", onSessionComposerPointerUp, true);
     document.removeEventListener("focusout", onSessionComposerFocusOut, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", onPageShow);
