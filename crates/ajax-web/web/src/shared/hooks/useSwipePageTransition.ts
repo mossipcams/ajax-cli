@@ -116,6 +116,11 @@ function swipeVelocity(distance_px: number, duration_ms: number): number {
   return Math.round((distance_px / duration_ms) * 1000) / 1000;
 }
 
+function isListRouteHash(hash: string): boolean {
+  const kind = parseRoute(hash).kind;
+  return kind === "dashboard" || kind === "project";
+}
+
 function readTouch(event: TouchEvent): { x: number; y: number } | null {
   const touch = event.changedTouches[0] ?? event.touches[0];
   if (!touch) return null;
@@ -361,6 +366,13 @@ export function useSwipePageTransition(
     const readFromRoute = () =>
       optsRef.current.from_route ?? window.location.hash;
 
+    const capRightCommit = () => {
+      const current = window.location.hash;
+      if (!isListRouteHash(current)) return false;
+      const origin = optsRef.current.from_route ?? current;
+      return !isListRouteHash(origin);
+    };
+
     const reset = () => {
       swipeRef.current = navigateSwipeStart();
       touchTargetRef.current = null;
@@ -488,6 +500,7 @@ export function useSwipePageTransition(
     };
 
     commitRef.current = (direction: SwipePageCommitDirection) => {
+      if (direction === "right" && capRightCommit()) return;
       const width = pageWidth();
       const swipeOutcome: SwipeOutcome = {
         direction,
@@ -556,7 +569,9 @@ export function useSwipePageTransition(
       if (!point) return;
       const dx = point.x - originRef.current.x;
       const dy = point.y - originRef.current.y;
-      const next = navigateSwipeMove(swipeRef.current, dx, dy, pageWidth());
+      const next = navigateSwipeMove(swipeRef.current, dx, dy, pageWidth(), {
+        capRightCommit: capRightCommit(),
+      });
       swipeRef.current = next;
       if (!next.engaged) return;
       if (event.cancelable) event.preventDefault();
@@ -579,7 +594,9 @@ export function useSwipePageTransition(
         reset();
         return;
       }
-      const direction = navigateSwipeEnd(swipeRef.current);
+      const direction = navigateSwipeEnd(swipeRef.current, {
+        capRightCommit: capRightCommit(),
+      });
       const width = pageWidth();
       const duration_ms = Math.round(performance.now() - touchStartedAtRef.current);
       const distance_px = Math.round(maxDistanceRef.current);

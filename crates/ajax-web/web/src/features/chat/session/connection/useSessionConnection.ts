@@ -11,11 +11,9 @@ import {
   type WebSessionServerEvent,
   type WebSessionTransport,
 } from "../transport/public";
-import {
-  explainOpenFailure,
-  projectWireEvent,
-  type ChatSessionAction,
-} from "../public";
+import { explainOpenFailure } from "../errors";
+import type { ChatSessionAction } from "../model";
+import { projectWireEvent } from "../projectWireInput";
 import {
   MAX_HANDSHAKE_ATTEMPTS,
   RECONNECT_BASE_MS,

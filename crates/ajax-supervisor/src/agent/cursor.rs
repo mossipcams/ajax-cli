@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ajax_core::events::AgentEvent;
 use serde_json::Value;
 
-use crate::process_observer::{ProcessProtocol, StdoutParser};
+use crate::process_protocol::{ProcessProtocol, StdoutParser};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CursorAdapter {
@@ -365,7 +365,7 @@ mod tests {
     use ajax_core::events::AgentEvent;
     use rstest::rstest;
 
-    use crate::process_observer::ProcessProtocol;
+    use crate::process_protocol::ProcessProtocol;
 
     use super::CursorAdapter;
 

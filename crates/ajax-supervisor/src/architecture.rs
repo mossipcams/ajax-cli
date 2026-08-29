@@ -11,6 +11,7 @@ mod tests {
             "agent",
             "event_log",
             "process_observer",
+            "process_protocol",
             "repo_observer",
             "renderer",
             "status",
