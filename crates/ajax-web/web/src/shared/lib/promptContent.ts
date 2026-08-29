@@ -227,7 +227,7 @@ export async function prepareImageFileForPrompt(
     if (!payload) return { error: ATTACHMENT_TOO_LARGE };
 
     const text = captionText.trim();
-    let block: Extract<PromptContentBlockWire, { type: "image" }> = {
+    const block: Extract<PromptContentBlockWire, { type: "image" }> = {
       type: "image",
       data: payload.data,
       mimeType: payload.mimeType,
