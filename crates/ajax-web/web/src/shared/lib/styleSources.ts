@@ -31,8 +31,11 @@ export const BASELINE = {
    * Re-measured after live assistant row pending indicator (paragraph gate).
    * Re-measured after the turn-disclosure comment caught up with always-visible
    * tool rows (comment text only; built CSS is unchanged).
-   * Re-measured after chronological chat scroll and Load earlier CSS (#1088). */
-  sourceStylesCssBytes: 108_587,
+   * Re-measured after chronological chat scroll and Load earlier CSS (#1088).
+   * Re-measured after the turn-disclosure comment in conversation.css grew to
+   * describe collapsed settled/live tool rows (comment text only; built CSS
+   * is unchanged). */
+  sourceStylesCssBytes: 108_606,
   builtAppCssBytes: 94_038,
   builtAppCssGzipBytes: 16_496,
   classSelectorLines: 606,
