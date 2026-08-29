@@ -61,9 +61,13 @@ Operator slices              ajax-core::task_operations::{start,resume,review,
         ↓
 Plan helpers                 ajax-core::commands/*  (not kernel)
         ↓
-Shared kernel                models, lifecycle, live, policy, output,
-                             registry traits, typed events, ghost_task,
-                             validity, and other cross-slice task-truth
+Shared kernel                models, lifecycle, live, live_application,
+                             agent_status, ui_state, attention, policy,
+                             output, registry traits, typed events,
+                             ghost_task, validity, and other cross-slice
+                             task-truth (run-state:
+                             `reduce_agent_status`, `apply_reduced_observation`,
+                             `derive_operator_status`)
         ↓
 Mechanisms                   adapters/*, registry/sqlite, ajax-supervisor
                              substrates
@@ -101,6 +105,12 @@ operator verb and not part of the shared domain kernel above.
 `task_operations::operator_dispatch` (if present) is composition glue that
 multiplexes `resume` / `review` / `repair` / `ship` for CLI and Web call sites.
 It is **not** a vertical slice and may call those four slices.
+
+**Run-state stack (Wave 3):** one observation→live function
+(`agent_status::reduce_agent_status`), one writer (`live_application::apply_reduced_observation`,
+plus `retract_stale_agent_running_at` for silent-source retraction), one operator
+projector (`ui_state::derive_operator_status`). Details in
+`docs/architecture/core-subsystems.md` (Live Status).
 
 ### Vertical slices
 
@@ -171,8 +181,9 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   WebSocket uses protocol v2 snapshot and cursor-bearing event envelopes.
   `ajax-web::slices::web_session` owns per-task session policy and sequencing
-  (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle,
-  transcript cursor, replay, queue, permissions, and idle retention).
+  (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle with
+  owned `AcpSlot`, `PromptQueue`, and `SessionEvidence`; transcript cursor,
+  replay, permissions, and idle retention).
   `adapters::web_session_acp` owns ACP stdio only and returns typed
   `AcpClientEvent` values. `adapters::web_session_store` owns JSONL transcripts
   under `state_dir` (`web-session/`), not registry or tmux. Session adapters must

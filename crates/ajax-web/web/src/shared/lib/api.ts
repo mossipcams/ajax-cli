@@ -9,50 +9,24 @@ import {
   assertOperationResponse,
 } from "./contracts";
 import { RESTART_POLL_MS, RESTART_TIMEOUT_MS, TEST_IN_STABLE_TIMEOUT_MS, GET_REQUEST_TIMEOUT_MS, DIFF_REQUEST_TIMEOUT_MS } from "./polling";
-import type {
-  BrowserCockpitView,
-  BrowserTaskDetail,
-  DevDeployResponse,
-  OperationRequest,
-  OperationResponse,
-  PullRequestView,
-  PushTestSubscription,
-  PushVapidResponse,
-  RuntimeStatusResponse,
-  StartTaskRequest,
-  TaskDiffView,
-  VersionResponse,
+import {
+  ApiError,
+  type ApiErrorKind,
+  type BrowserCockpitView,
+  type BrowserTaskDetail,
+  type DevDeployResponse,
+  type OperationRequest,
+  type OperationResponse,
+  type PullRequestView,
+  type PushTestSubscription,
+  type PushVapidResponse,
+  type RuntimeStatusResponse,
+  type StartTaskRequest,
+  type TaskDiffView,
+  type VersionResponse,
 } from "./types";
 
-export type ApiErrorKind =
-  | "network"
-  | "http"
-  | "conflict" // 409 — agent moved on
-  | "terminal" // 422 — needs the terminal instead
-  | "rate-limit" // 429 — slow down
-  | "stale-session" // 401 — browser shell session cookie is missing or stale
-  | "incompatible";
-
-export class ApiError extends Error {
-  readonly kind: ApiErrorKind;
-  readonly status: number | null;
-  readonly body: OperationResponse | null;
-  readonly code: string | null;
-  constructor(
-    kind: ApiErrorKind,
-    message: string,
-    status: number | null = null,
-    body: OperationResponse | null = null,
-    code: string | null = null,
-  ) {
-    super(message);
-    this.name = "ApiError";
-    this.kind = kind;
-    this.status = status;
-    this.body = body;
-    this.code = code;
-  }
-}
+export { ApiError, type ApiErrorKind };
 
 export function requestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {

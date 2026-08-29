@@ -1,13 +1,38 @@
+//! Live observation application: three entry meanings, one writer.
+//!
+//! All paths converge on `apply_reduced_observation`, the sole production writer
+//! of `Task.agent_status`, agent side flags, visible live status, and attempt sync.
+//!
+//! ## Apply modes
+//!
+//! - **Ordinary** (`apply_observation` / `apply_observation_at`): runs
+//!   `reduce_live_observation` on the task's current live row, then applies.
+//!   Use for reconciled pane/hook/refresh evidence that may be stale relative to
+//!   the task's stored live status.
+//! - **Authoritative** (`apply_authoritative_observation` /
+//!   `apply_authoritative_observation_at`): skips live-status reduction and
+//!   applies host-first evidence as given. ACP session activity maps host facts
+//!   to `ObservationSource::ProviderLifecycle`, runs [`reduce_agent_status`]
+//!   (`live::apply_provider_lifecycle_observation_at`), then calls this writer.
+//! - **Trusted** (`apply_trusted_observation` / `apply_trusted_observation_at`):
+//!   applies like authoritative, then may advance lifecycle on running-class or
+//!   `Done` evidence. Confirmed wrapper exit uses this path. **ACP must not use
+//!   trusted:** `TurnEnded` → `Done` would mark `Reviewable` between turns of the
+//!   same launch.
+//!
+//! The non-`_at` helpers are thin `observed_now()` wrappers around the timestamped
+//! entry points; the three meanings stay distinct.
+
 use std::time::SystemTime;
 
 use super::{reduce_live_observation, LiveObservation, LiveStatusKind};
 use crate::{
     lifecycle::{transition_lifecycle, LifecycleTransitionReason},
-    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
+    models::{sync_open_attempts, AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
 };
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
-    apply_observation_at(task, observation, SystemTime::now());
+    apply_observation_at(task, observation, observed_now());
 }
 
 pub fn apply_observation_at(
@@ -20,7 +45,7 @@ pub fn apply_observation_at(
 }
 
 pub fn apply_authoritative_observation(task: &mut Task, observation: LiveObservation) {
-    apply_authoritative_observation_at(task, observation, SystemTime::now());
+    apply_authoritative_observation_at(task, observation, observed_now());
 }
 
 pub fn apply_authoritative_observation_at(
@@ -32,7 +57,12 @@ pub fn apply_authoritative_observation_at(
 }
 
 pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) {
-    apply_trusted_observation_at(task, observation, SystemTime::now());
+    apply_trusted_observation_at(task, observation, observed_now());
+}
+
+#[inline]
+fn observed_now() -> SystemTime {
+    SystemTime::now()
 }
 
 pub fn apply_trusted_observation_at(
@@ -64,6 +94,25 @@ pub fn apply_trusted_observation_at(
 pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
     crate::attention::silence_notify_episode(task, at);
     task.record_attention_acknowledgment(at);
+}
+
+/// Retract a stale running claim when every agent evidence source is silent.
+///
+/// Unlike applying `LiveStatusKind::Unknown` through `apply_reduced_observation`
+/// (which clears live evidence and returns before assigning `agent_status`),
+/// this path sets `agent_status` to `Unknown` and removes `AgentRunning` without
+/// closing open launch attempts or touching `live_status`.
+pub fn retract_stale_agent_running_at(task: &mut Task, _observed_at: SystemTime) {
+    if !task.has_side_flag(SideFlag::AgentRunning)
+        && task.agent_status != AgentRuntimeStatus::Running
+    {
+        return;
+    }
+    task.remove_side_flag(SideFlag::AgentRunning);
+    if task.agent_status == AgentRuntimeStatus::Running {
+        task.agent_status = AgentRuntimeStatus::Unknown;
+    }
+    // Do not call `sync_open_attempts`: Unknown must not close launch episodes.
 }
 
 fn apply_reduced_observation(
@@ -168,6 +217,7 @@ fn apply_reduced_observation(
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
     }
+    sync_open_attempts(task, observed_at);
 }
 
 fn reduce_task_live_observation(task: &Task, next: LiveObservation) -> LiveObservation {
@@ -223,7 +273,10 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_attention, apply_observation, apply_observation_at};
+    use super::{
+        acknowledge_attention, apply_observation, apply_observation_at,
+        retract_stale_agent_running_at,
+    };
     use crate::attention::take_attention_transition_at;
     use crate::models::{
         AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
@@ -655,6 +708,27 @@ mod tests {
             task.live_status.as_ref().map(|live| live.kind),
             Some(LiveStatusKind::AgentRunning)
         );
+    }
+
+    #[test]
+    fn retract_stale_agent_running_sets_unknown_without_closing_attempts() {
+        use crate::models::AgentAttempt;
+
+        let mut task = active_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        task.agent_attempts
+            .push(AgentAttempt::new(AgentClient::Claude, "claude"));
+        let live_row = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting");
+        task.live_status = Some(live_row.clone());
+        task.live_status_observed_at = Some(UNIX_EPOCH + Duration::from_secs(2));
+
+        retract_stale_agent_running_at(&mut task, UNIX_EPOCH + Duration::from_secs(3));
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert_eq!(task.live_status.as_ref(), Some(&live_row));
+        assert!(task.agent_attempts[0].is_open());
     }
 
     #[test]

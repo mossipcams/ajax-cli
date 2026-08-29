@@ -248,6 +248,51 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
+  it("revealed Drop receives taps instead of the full-row opener (#1038)", () => {
+    const dropOnly: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/drop",
+          qualified_handle: "web/drop",
+          repo: "web",
+          title: "Drop me",
+          status: "idle",
+          last_activity_unix_secs: 0,
+          actions: [
+            {
+              action: "drop",
+              label: "Drop",
+              destructive: true,
+              confirmation_required: true,
+            },
+          ],
+        },
+      ],
+    };
+    const onOpenTask = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskList cockpit={dropOnly} onOpenTask={onOpenTask} onResult={onResult} />,
+    );
+    const row = screen.getByRole("button", { name: /web\/drop/ });
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    expect(row).toHaveClass("is-revealed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Drop" }));
+    expect(onResult).toHaveBeenCalledWith(
+      "Confirm Drop for web/drop?",
+      null,
+      false,
+      expect.objectContaining({
+        pendingConfirm: expect.objectContaining({ action: expect.objectContaining({ action: "drop" }) }),
+      }),
+    );
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";

@@ -60,8 +60,6 @@ pub enum ObservationSource {
     /// Weak visible-pane wait hint. Admissible only where the agent capability
     /// profile reports `Unavailable` or `Unverified` for the wait fact.
     PaneEvidence,
-    /// Process liveness — informational, never selects activity.
-    ProcessLiveness,
 }
 
 impl ObservationSource {
@@ -70,10 +68,6 @@ impl ObservationSource {
             Self::ProcessExit => 0,
             Self::ProviderLifecycle => 1,
             Self::PaneEvidence => 2,
-            // Dead variant: constructed nowhere. Liveness reaches the reducer as
-            // the separate `ProcessLiveness` input, never as a `StatusObservation`.
-            // Ranked below `PaneEvidence` so no two variants share a rank.
-            Self::ProcessLiveness => 3,
         }
     }
 }
@@ -287,6 +281,37 @@ fn state_rank(kind: ActivityKind) -> u8 {
 /// pairs with [`Reverse<SystemTime>`] for newest-observed_at tiebreaks.
 fn reversal(rank: u8) -> u8 {
     u8::MAX - rank
+}
+
+/// Run identity of the primary (session-level) agent run.
+pub const PRIMARY_RUN_ID: &str = "primary";
+
+/// Freshness window for non-terminal provider lifecycle observations.
+pub const PROVIDER_LIFECYCLE_FRESH_FOR: Duration = Duration::from_secs(30 * 60);
+/// Terminal provider lifecycle observations persist until superseded.
+pub const PROVIDER_LIFECYCLE_TERMINAL_FRESH_FOR: Duration = Duration::from_secs(365 * 24 * 3600);
+
+/// Build one [`StatusObservation`] at [`ObservationSource::ProviderLifecycle`].
+pub fn provider_lifecycle_observation(
+    kind: ActivityKind,
+    run_id: &str,
+    observed_at: SystemTime,
+) -> StatusObservation {
+    let expires_at = match kind {
+        ActivityKind::Done | ActivityKind::Failed => {
+            observed_at + PROVIDER_LIFECYCLE_TERMINAL_FRESH_FOR
+        }
+        _ => observed_at + PROVIDER_LIFECYCLE_FRESH_FOR,
+    };
+    StatusObservation {
+        source: ObservationSource::ProviderLifecycle,
+        observed_at,
+        expires_at,
+        confidence: Confidence::High,
+        run_id: run_id.to_string(),
+        parent_run_id: None,
+        kind,
+    }
 }
 
 /// True when the run is currently active (still running) per the resolved

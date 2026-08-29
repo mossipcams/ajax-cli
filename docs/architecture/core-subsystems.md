@@ -149,23 +149,58 @@ incremental completion within one episode does not re-fire.
 
 ### Live Status
 
-`agent_status` is the single agent reducer: it maps observations (source,
+Run-state ownership is three symbols — no fourth path:
+
+| Layer | Symbol | Module |
+| --- | --- | --- |
+| Observation → live | `reduce_agent_status` | `agent_status` |
+| Writer | `apply_reduced_observation` | `live_application` (via `live::apply_*`) |
+| Operator projector | `derive_operator_status` | `ui_state` |
+
+`reduce_agent_status` is the single agent reducer: it maps observations (source,
 freshness, confidence, `run_id` / `parent_run_id`, and parent-phase
 aggregation) onto one `LiveObservation`. Runtime refresh feeds it the folded
 native `RunSnapshot` observations (via `observations_from_run_snapshot`) plus
-the confirmed wrapper exit / liveness, and applies the result directly — the
-prior string-candidate arbitration reducer is gone. `LiveStatusKind` remains
-the presentation projection. `live.rs` keeps only `reduce_live_observation`
-(supervisor/application status folding) and the `apply_*` writers.
+the confirmed wrapper exit / liveness, and applies the result through the
+`live::apply_*` writers — the prior string-candidate arbitration reducer is
+gone. `LiveStatusKind` remains the presentation projection. `live.rs` keeps only
+`reduce_live_observation` (supervisor/application status folding) and the
+`apply_*` entry points.
 
-`live.rs` (`application` submodule) applies reduced observations to task state, agent status,
-side flags, activity timestamps, visible live status, and the live evidence's
-own durable `observed_at` timestamp. The application path
-separates ordinary observations from trusted wrapper/supervisor observations so
-only the trusted path may advance lifecycle on process start or successful
-completion. Confirmed stop or missing runtime records `Dead`. Uninstrumented
-sessions without hook or lifecycle evidence preserve prior credible state;
-process liveness alone never fabricates `AgentRunning`.
+`live.rs` (`application` submodule) applies reduced observations to task state,
+agent status, side flags, activity timestamps, visible live status, and the live
+evidence's own durable `observed_at` timestamp. **`apply_reduced_observation` is
+the sole live-apply writer** of `agent_status`, agent side flags, visible live
+status, and attempt sync (`sync_open_attempts`). Three public entry meanings
+converge on it:
+
+| Mode | Entry | Reduction | Lifecycle |
+| --- | --- | --- | --- |
+| Ordinary | `apply_observation` / `_at` | Yes — `reduce_live_observation` against the stored live row | No |
+| Authoritative | `apply_authoritative_observation` / `_at` | No — host-first evidence applied as given | No |
+| Trusted | `apply_trusted_observation` / `_at` | No | Yes — `Active` on running-class evidence; `Reviewable` on `Done` |
+
+The non-`_at` helpers are thin `SystemTime::now()` wrappers; the three meanings
+stay distinct. Runtime refresh selects the mode from observation source:
+`ProcessExit` → trusted, `ProviderLifecycle` → authoritative, otherwise ordinary.
+
+**ACP prohibition:** provisioned chat reports host transitions through
+`web_session::session_activity`, which maps each transition to
+`ObservationSource::ProviderLifecycle`, runs `reduce_agent_status`, then calls
+**`apply_authoritative_observation_at`** on the projection. ACP must not use
+trusted apply. ACP `TurnEnded` maps to `LiveStatusKind::Done` between turns of
+the same launch; trusted apply would incorrectly mark the task `Reviewable`.
+Confirmed wrapper exit remains the trusted path.
+
+Legacy direct writers outside live apply (inventory): SQLite load (`row_codec`),
+`mark_resource_missing`, and drop teardown (`mark_drop_agent_stopped`). Stale
+running retraction (`runtime_refresh::clear_stale_agent_running`) delegates to
+`live::retract_stale_agent_running_at`. No new `agent_status` assignments in
+web, CLI, or supervisor production code.
+
+Confirmed stop or missing runtime records `Dead`. Uninstrumented sessions
+without hook or lifecycle evidence preserve prior credible state; process
+liveness alone never fabricates `AgentRunning`.
 
 Trusted wrapper/hook evidence applies immediately. Trusted wrapper completion
 advances lifecycle to `Reviewable` only when the run-graph aggregation reports
@@ -185,6 +220,15 @@ lifecycle review, rate limits, response-ready settle, and parent phases that
 wait on delegated children remain visible as Waiting but do not
 phone-ping. Ordinary user waits and approvals still notify once the dwell
 confirms sustained attention.
+
+`AgentAttempt` rows are **launch-episode history**, not a second run-state
+writer and not a chat-turn log. Core opens a row on actual launch
+(`AgentCommandSent`; resume only when keys are re-sent). Core closes open rows
+only when the launch episode ends: `agent_status` `NotStarted` (never started /
+spawn-auth fail), `Dead`, or Drop — via `sync_open_attempts` beside
+`AgentAttempt::new`. Rows stay open across ACP `TurnEnded` → `Done` (“Response
+ready” between turns), `Waiting`, and `Blocked`. The browser cockpit renders
+attempts; it does not open or close them. See GitHub `#1096` `#925`.
 
 Opening a task persists an attention acknowledgment without changing lifecycle
 or deleting evidence. `live::acknowledge_attention` is agent-neutral:

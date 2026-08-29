@@ -27,8 +27,7 @@ use github_checks::{
     CI_PROBE_ERROR_KEY,
 };
 
-/// Run identity of the primary (session-level) agent run.
-pub const PRIMARY_RUN_ID: &str = "primary";
+pub use crate::agent_status::PRIMARY_RUN_ID;
 
 /// Source of native hook-derived agent-status evidence for a task.
 ///
@@ -831,10 +830,7 @@ fn clear_stale_agent_running<R: Registry>(
         return;
     };
     let previous = task.clone();
-    task.remove_side_flag(crate::models::SideFlag::AgentRunning);
-    if task.agent_status == AgentRuntimeStatus::Running {
-        task.agent_status = AgentRuntimeStatus::Unknown;
-    }
+    live::retract_stale_agent_running_at(task, SystemTime::now());
     refresh_cached_annotations(task);
     *changed |= *task != previous;
 }

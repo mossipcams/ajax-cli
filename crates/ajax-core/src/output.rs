@@ -2,10 +2,16 @@ use crate::{
     config::{Config, ManagedRepo},
     models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
-    remediation::RemediationOption,
     ui_state::{AttentionBand, TaskStatus},
 };
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RemediationOption {
+    pub id: String,
+    pub label: String,
+    pub skill_name: String,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskCard {
