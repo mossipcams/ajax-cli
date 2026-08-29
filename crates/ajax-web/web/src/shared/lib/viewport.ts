@@ -1,4 +1,8 @@
-import { SESSION_VIEWPORT_ATTR } from "@/shared/lib/sessionViewport";
+import {
+  isLayoutExpandedBeyondStaleVisualViewport,
+  layoutViewportShrinksWithKeyboard,
+  SESSION_VIEWPORT_ATTR,
+} from "@/shared/lib/sessionViewport";
 
 /**
  * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
@@ -90,6 +94,8 @@ export function initViewport(): () => void {
   let baselineHeight = vv.height;
   let baselineWidth = window.innerWidth;
   let keyboardOpen = false;
+  /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
+  let layoutShrinksWithKeyboard = false;
 
   const setAppHeight = (height: number) => {
     root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
@@ -174,9 +180,28 @@ export function initViewport(): () => void {
   const dismissKeyboardOpen = () => {
     if (!keyboardOpen) return;
     keyboardOpen = false;
+    layoutShrinksWithKeyboard = false;
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     blurSessionComposerIfFocused();
     resetDocumentScroll();
+  };
+
+  const dismissPwaKeyboardWithStaleVisualViewport = () => {
+    if (
+      !keyboardOpen ||
+      !layoutShrinksWithKeyboard ||
+      !isLayoutExpandedBeyondStaleVisualViewport(
+        window.innerHeight,
+        vv.height,
+        KEYBOARD_CLOSE_DELTA_PX,
+      )
+    ) {
+      return false;
+    }
+    cancelCloseSettle();
+    dismissKeyboardOpen();
+    restoreGeometryAfterKeyboardDismiss();
+    return true;
   };
 
   const isFormControlFocused = () => {
@@ -187,6 +212,8 @@ export function initViewport(): () => void {
   };
 
   const onViewportResize = () => {
+    if (dismissPwaKeyboardWithStaleVisualViewport()) return;
+
     const current = vv.height;
     const currentWidth = window.innerWidth;
 
@@ -218,6 +245,10 @@ export function initViewport(): () => void {
       }
       cancelCloseSettle();
       keyboardOpen = true;
+      layoutShrinksWithKeyboard = layoutViewportShrinksWithKeyboard(
+        window.innerHeight,
+        current,
+      );
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
@@ -319,6 +350,7 @@ export function initViewport(): () => void {
 
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
+  window.addEventListener("resize", onViewportResize);
   document.addEventListener("focusout", onSessionComposerFocusOut, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pageshow", onPageShow);
@@ -332,6 +364,7 @@ export function initViewport(): () => void {
     cancelCloseSettle();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
+    window.removeEventListener("resize", onViewportResize);
     document.removeEventListener("focusout", onSessionComposerFocusOut, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", onPageShow);
