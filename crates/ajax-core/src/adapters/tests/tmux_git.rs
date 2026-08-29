@@ -1,10 +1,5 @@
-use crate::adapters::{
-    agent_launch_spec, command, process, AgentLaunch, CommandMode, CommandRunner, CommandSpec,
-    GitAdapter, RecordingCommandRunner, TmuxAdapter,
-};
-use crate::models::{TaskWindowStatus, TmuxStatus};
+use crate::adapters::{CommandMode, CommandSpec, GitAdapter, TmuxAdapter};
 use proptest::prelude::*;
-use std::path::Path;
 
 fn safe_token() -> impl Strategy<Value = String> {
     "[A-Za-z0-9_.-]{1,32}"

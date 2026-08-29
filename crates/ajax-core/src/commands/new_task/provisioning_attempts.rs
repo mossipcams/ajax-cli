@@ -6,7 +6,7 @@ use super::{
 use crate::{
     commands::CommandContext,
     config::{Config, ManagedRepo},
-    models::{AgentClient, AgentRuntimeStatus, LifecycleStatus, SideFlag, Task, TaskId},
+    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
     registry::{InMemoryRegistry, Registry},
 };
 

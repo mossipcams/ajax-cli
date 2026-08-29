@@ -3,7 +3,6 @@ use super::{
     mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
     record_new_task, router_symlinks_seed_command, start_provisioning_step_for_command,
     task_from_new_request, NewTaskRequest, StartPlanObservation, StartProvisioningStep,
-    DEFAULT_TASK_WINDOW_NAME,
 };
 use crate::{
     adapters::GitAdapter,
