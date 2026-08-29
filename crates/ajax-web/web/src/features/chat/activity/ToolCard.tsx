@@ -13,7 +13,7 @@
 
 import { useState } from "react";
 import type { ToolCall, ToolContent } from "../session/public";
-import { OutputContentBlockView } from "../public";
+import OutputContentBlockView from "../conversation/OutputContentBlockView";
 import {
   cleanTitle,
   CONTENT_PREVIEW_LINES,

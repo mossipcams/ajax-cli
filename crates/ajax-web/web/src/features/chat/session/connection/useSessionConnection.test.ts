@@ -2,7 +2,7 @@ import { renderHook, act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as webSessionTransport from "../transport/public";
 import { writeSessionModel } from "@/features/task/public";
-import type { ChatSessionAction } from "../public";
+import type { ChatSessionAction } from "../model";
 import { initialConnectionState } from "./connectionState";
 import { useSessionConnection } from "./useSessionConnection";
 
@@ -36,7 +36,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -73,7 +72,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -114,7 +112,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -180,7 +177,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -237,7 +233,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -275,7 +270,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),
@@ -320,7 +314,6 @@ describe("useSessionConnection", () => {
     const transport: webSessionTransport.WebSessionTransport = {
       sendPrompt: vi.fn(() => "prompt-1"),
       sendCancel: vi.fn(),
-      setModel: vi.fn(),
       setConfigOption: vi.fn(),
       respondPermission: vi.fn(),
       dispose: vi.fn(),

@@ -26,7 +26,6 @@ export const transport = {
   sendCancel: vi.fn(),
   retryRestore: vi.fn(),
   startNewContext: vi.fn(),
-  setModel: vi.fn(),
   setConfigOption: vi.fn(),
   respondPermission: vi.fn(),
   dispose: vi.fn(),
@@ -213,7 +212,6 @@ export function prepareChatSurface() {
   transport.sendCancel.mockClear();
   transport.retryRestore.mockClear();
   transport.startNewContext.mockClear();
-  transport.setModel.mockClear();
   transport.setConfigOption.mockClear();
   transport.respondPermission.mockClear();
   localStorage.clear();

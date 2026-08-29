@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
@@ -71,8 +71,18 @@ const TaskRow = memo(function TaskRow({
     .filter(Boolean)
     .join(" ");
 
+  const closeRevealUnlessAction = (event: MouseEvent<HTMLDivElement>) => {
+    if (offset <= 0) return;
+    if ((event.target as Element).closest(".task-row-reveal")) return;
+    onOffset(card.qualified_handle, 0);
+  };
+
   return (
-    <div className="task-row-wrap" data-handle={card.qualified_handle}>
+    <div
+      className="task-row-wrap"
+      data-handle={card.qualified_handle}
+      onClick={closeRevealUnlessAction}
+    >
       {revealAction ? (
         <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
           <ActionBar

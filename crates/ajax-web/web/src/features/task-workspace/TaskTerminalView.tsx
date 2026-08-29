@@ -1,6 +1,7 @@
 import { lazy, Suspense, useRef } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { useSwipePageTransition } from "@/shared/hooks/useSwipePageTransition";
+import { taskHash } from "@/shared/lib/routes";
 import { ActionBar, visibleTaskActions } from "@/features/task/public";
 import TaskWorkspaceHeader from "./TaskWorkspaceHeader";
 
@@ -42,6 +43,7 @@ export default function TaskTerminalView({
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
   const { swiping, style, commit } = useSwipePageTransition(rootRef, {
+    from_route: taskHash(detail.qualified_handle),
     onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
   });

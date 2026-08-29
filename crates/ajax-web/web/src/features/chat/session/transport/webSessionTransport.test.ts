@@ -110,14 +110,18 @@ describe("connectWebSessionTransport", () => {
       itemId: "i1",
     });
 
-    transport.setModel("gpt-5.6-sol-medium");
-    expect(socket.sent).toContainEqual(
-      JSON.stringify({ type: "set_model", model: "gpt-5.6-sol-medium" }),
-    );
-
     transport.setConfigOption("model", "composer-2.5");
     expect(socket.sent).toContainEqual(
       JSON.stringify({ type: "set_config_option", configId: "model", value: "composer-2.5" }),
+    );
+
+    transport.setConfigOption("model", "gpt-5.6-sol-medium");
+    expect(socket.sent).toContainEqual(
+      JSON.stringify({
+        type: "set_config_option",
+        configId: "model",
+        value: "gpt-5.6-sol-medium",
+      }),
     );
 
     transport.dispose();

@@ -2,8 +2,6 @@
 // `crates/ajax-web/src/slices/*` exactly. The browser must not derive
 // lifecycle, action validity, or status from these; it renders them.
 
-import type { ApiError } from "./api";
-
 /** Canonical task status owned by Rust (`TaskStatus` serde lowercase). */
 export type TaskStatus = "running" | "waiting" | "idle" | "error" | "unknown";
 
@@ -225,6 +223,36 @@ export interface OperationResponse {
   error?: string | null;
   code?: string | null;
   restarting?: boolean;
+}
+
+export type ApiErrorKind =
+  | "network"
+  | "http"
+  | "conflict" // 409 — agent moved on
+  | "terminal" // 422 — needs the terminal instead
+  | "rate-limit" // 429 — slow down
+  | "stale-session" // 401 — browser shell session cookie is missing or stale
+  | "incompatible";
+
+export class ApiError extends Error {
+  readonly kind: ApiErrorKind;
+  readonly status: number | null;
+  readonly body: OperationResponse | null;
+  readonly code: string | null;
+  constructor(
+    kind: ApiErrorKind,
+    message: string,
+    status: number | null = null,
+    body: OperationResponse | null = null,
+    code: string | null = null,
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.kind = kind;
+    this.status = status;
+    this.body = body;
+    this.code = code;
+  }
 }
 
 export interface VersionResponse {
