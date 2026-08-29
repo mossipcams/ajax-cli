@@ -18,6 +18,7 @@ import {
 } from "./commands";
 import { clearSessionCursor, frameFits, readOutbox, writeOutbox } from "./outbox";
 import { parseServerFrame } from "./parse";
+import { hasPromptContent } from "@/shared/lib/promptContent";
 
 export function connectWebSessionTransport(
   handle: string,
@@ -143,7 +144,7 @@ export function connectWebSessionTransport(
   return {
     sendPrompt(text, contentBlocks = []) {
       const trimmed = text.trim();
-      if (!trimmed) return "";
+      if (!hasPromptContent(trimmed, contentBlocks)) return "";
       const prompt: PendingPrompt = {
         text: trimmed,
         clientMessageId: newPromptId(),

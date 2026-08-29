@@ -194,6 +194,15 @@ html.keyboard-open .session-composer textarea {
   font-size: var(--text-micro);
 }
 
+.session-composer-attachments li[data-status="preparing"] {
+  color: var(--ink-muted);
+}
+
+.session-composer-attachment-error-chip {
+  border-color: var(--warn, #c62828);
+  color: var(--warn, #c62828);
+}
+
 .session-composer-attachment-remove {
   min-height: 32px;
   padding: 0 6px;

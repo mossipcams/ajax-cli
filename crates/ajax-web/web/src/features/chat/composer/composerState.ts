@@ -1,4 +1,4 @@
-import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+import { hasPromptContent, type PromptContentBlockWire } from "@/shared/lib/promptContent";
 
 /** Browser composer queue: one editable follow-up, not a second host FIFO. */
 export type ComposerState =
@@ -60,9 +60,9 @@ export function restoreQueuedDraft(state: ComposerState): {
   };
 }
 
-/** stopping cannot exist without queued text — enforced by the union shape. */
+/** stopping cannot exist without queued prompt content. */
 export function assertComposerState(state: ComposerState): void {
-  if (state.status === "stopping" && !state.text.trim()) {
+  if (state.status === "stopping" && !hasPromptContent(state.text, state.contentBlocks)) {
     throw new Error("ComposerState stopping requires queued text");
   }
 }

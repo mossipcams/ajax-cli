@@ -147,6 +147,25 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
+  // ajax-cli#1110: attachment-only prompts use the same durable outbox and live socket path.
+  it("queues and sends an attachment-only prompt", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    const contentBlocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+
+    expect(transport.sendPrompt("   ", contentBlocks)).not.toBe("");
+    expect(localStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toContain(
+      '"contentBlocks"',
+    );
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "", contentBlocks }),
+    );
+    transport.dispose();
+  });
+
   it("assigns prompt ids and handles host acceptance acknowledgements", () => {
     const socket = fakeSocket();
     const cbs = callbacks();

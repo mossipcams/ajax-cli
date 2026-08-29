@@ -25,6 +25,74 @@ const composerCssPath = join(
 );
 const composerCss = readFileSync(composerCssPath, "utf8");
 
+function mockImageCompressionCanvas(options?: { deferImageLoad?: boolean }) {
+  const pendingImages: HTMLImageElement[] = [];
+  const nativeCreateElement = Document.prototype.createElement;
+  vi.spyOn(document, "createElement").mockImplementation(function (this: Document, tagName: string) {
+    const element = nativeCreateElement.call(this, tagName);
+    if (tagName !== "canvas") return element;
+    const canvas = element as HTMLCanvasElement;
+    canvas.getContext = vi.fn(() => ({
+      drawImage: vi.fn(),
+    })) as unknown as HTMLCanvasElement["getContext"];
+    canvas.toDataURL = vi.fn((_type?: string, quality?: number) => {
+      const scale = typeof quality === "number" ? quality : 0.92;
+      const targetLen = Math.max(512, Math.floor(1200 * scale));
+      return `data:image/jpeg;base64,${"B".repeat(targetLen)}`;
+    });
+    return canvas;
+  });
+  vi.spyOn(globalThis, "Image").mockImplementation(function MockImage(this: HTMLImageElement) {
+    Object.defineProperty(this, "naturalWidth", { value: 4000 });
+    Object.defineProperty(this, "naturalHeight", { value: 3000 });
+    if (options?.deferImageLoad) {
+      let assignedOnload: ((ev: Event) => void) | null = null;
+      Object.defineProperty(this, "onload", {
+        get: () => assignedOnload,
+        set: (fn) => {
+          assignedOnload = fn;
+        },
+        configurable: true,
+      });
+      Object.defineProperty(this, "src", {
+        set: () => {
+          pendingImages.push(this);
+        },
+        get: () => "",
+        configurable: true,
+      });
+      return this;
+    }
+    setTimeout(() => this.onload?.(new Event("load")), 0);
+    return this;
+  } as unknown as typeof Image);
+  return {
+    async flushPendingImageLoads() {
+      await vi.waitFor(() => {
+        expect(pendingImages.length).toBeGreaterThan(0);
+      });
+      for (const img of pendingImages.splice(0)) {
+        img.onload?.(new Event("load"));
+      }
+    },
+  };
+}
+
+async function waitForAttachmentReady() {
+  const sendButton = screen.getByRole("button", { name: /Send|Queue|Stop & send/ });
+  await vi.waitFor(() => expect(sendButton).toBeEnabled());
+}
+
+async function pasteImageFile(file: File) {
+  fireEvent.paste(screen.getByLabelText("Message"), {
+    clipboardData: {
+      items: [{ kind: "file", type: file.type, getAsFile: () => file }],
+    },
+  });
+  expect(await screen.findByText(new RegExp(file.name))).toBeInTheDocument();
+  await waitForAttachmentReady();
+}
+
 function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
 }
@@ -54,6 +122,179 @@ describe("ChatComposer", () => {
     );
     send({ type: "message", role: "user", text: "Please fix the flaky test", itemId: "u1" });
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
+  });
+
+  // ajax-cli#1110: attached photos are complete prompts without caption text.
+  it("enables Send and dispatches an attachment-only photo", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+
+    const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
+    await pasteImageFile(file);
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
+  });
+
+  it("does not send caption-only while a pasted photo is still preparing", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    const { flushPendingImageLoads } = mockImageCompressionCanvas({ deferImageLoad: true });
+
+    const hugeData = "A".repeat(300_000);
+    const file = new File([hugeData], "large.jpg", { type: "image/jpeg" });
+    fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
+      },
+    });
+    expect(await screen.findByText(/large\.jpg.*Preparing/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "What is this?" },
+    });
+    transport.sendPrompt.mockClear();
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await flushPendingImageLoads();
+    });
+    await waitForAttachmentReady();
+
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "What is this?",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
+  });
+
+  // ajax-cli#1110: large photos compress on attach; Send uses the sync fit path with caption.
+  it("prepares a large pasted photo on attach and sends it with a caption", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    mockImageCompressionCanvas();
+
+    const hugeData = "A".repeat(300_000);
+    const file = new File([hugeData], "large.jpg", { type: "image/jpeg" });
+    await pasteImageFile(file);
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "What is this?" },
+    });
+    transport.sendPrompt.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "What is this?",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
+  });
+
+  it("shows a chip error when photo preparation fails instead of silently ignoring Send", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    vi.spyOn(globalThis, "Image").mockImplementation(function MockImage(this: HTMLImageElement) {
+      setTimeout(() => this.onerror?.(new Event("error")), 0);
+      return this;
+    } as unknown as typeof Image);
+
+    const file = new File(["x".repeat(300_000)], "bad.jpg", { type: "image/jpeg" });
+    fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
+      },
+    });
+    expect(await screen.findByText(/bad\.jpg.*too large/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    transport.sendPrompt.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("queues an attachment-only photo while a turn is busy", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+
+    const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
+    await pasteImageFile(file);
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Queued");
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    send({ type: "turn_end", stopReason: "end_turn" });
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
   });
 
   it("queues one editable follow-up instead of sending it into a live turn", () => {
@@ -106,13 +347,7 @@ describe("ChatComposer", () => {
     transport.sendPrompt.mockClear();
 
     const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
-    const input = screen.getByLabelText("Message");
-    fireEvent.paste(input, {
-      clipboardData: {
-        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
-      },
-    });
-    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
+    await pasteImageFile(file);
 
     typeComposer("Next");
     send({ type: "turn_end", stopReason: "end_turn" });

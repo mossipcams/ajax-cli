@@ -22,10 +22,14 @@ export type PromptContentBlockWire =
       blob?: string;
     };
 
+export type ComposerAttachmentStatus = "preparing" | "ready" | "error";
+
 export type ComposerAttachment = {
   id: string;
   label: string;
+  status: ComposerAttachmentStatus;
   blocks: PromptContentBlockWire[];
+  error?: string;
 };
 
 /** Match host `ws_bridge::MAX_SESSION_FRAME_BYTES`. */
@@ -36,6 +40,26 @@ export const ATTACHMENT_TOO_LARGE =
 
 const PROMPT_FRAME_HEADROOM_BYTES = 4096;
 const PLACEHOLDER_CLIENT_MESSAGE_ID = "00000000-0000-4000-8000-000000000000";
+
+export function hasPromptContent(text: string, blocks: readonly unknown[] = []): boolean {
+  return Boolean(text.trim() || blocks.length);
+}
+
+export function hasReadyAttachments(attachments: readonly ComposerAttachment[]): boolean {
+  return attachments.some((attachment) => attachment.status === "ready");
+}
+
+export function attachmentsArePreparing(attachments: readonly ComposerAttachment[]): boolean {
+  return attachments.some((attachment) => attachment.status === "preparing");
+}
+
+/** Send/queue eligibility for the live composer (ready attachments only). */
+export function hasComposerPromptContent(
+  text: string,
+  attachments: readonly ComposerAttachment[],
+): boolean {
+  return Boolean(text.trim() || hasReadyAttachments(attachments));
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -182,6 +206,46 @@ function maxImageDataLength(text: string, blocks: PromptContentBlockWire[]): num
   return Math.max(0, budget);
 }
 
+export function preparingImageAttachment(file: File): ComposerAttachment {
+  const name = file.name.trim() || "attachment";
+  return {
+    id: attachmentId("image"),
+    label: name,
+    status: "preparing",
+    blocks: [],
+  };
+}
+
+/** Compress/downscale an image at attach time so staged blocks fit the prompt frame. */
+export async function prepareImageFileForPrompt(
+  file: File,
+  captionText = "",
+): Promise<{ blocks: PromptContentBlockWire[] } | { error: string }> {
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const payload = dataUrlPayload(dataUrl);
+    if (!payload) return { error: ATTACHMENT_TOO_LARGE };
+
+    const text = captionText.trim();
+    const block: Extract<PromptContentBlockWire, { type: "image" }> = {
+      type: "image",
+      data: payload.data,
+      mimeType: payload.mimeType,
+    };
+
+    if (promptFrameFits(text, [block])) return { blocks: [block] };
+
+    const maxDataLen = maxImageDataLength(text, [block]);
+    const compressed = await recompressImageBlock(block, maxDataLen);
+    if (!compressed || !promptFrameFits(text, [compressed])) {
+      return { error: ATTACHMENT_TOO_LARGE };
+    }
+    return { blocks: [compressed] };
+  } catch {
+    return { error: ATTACHMENT_TOO_LARGE };
+  }
+}
+
 export async function fitPromptContentBlocks(
   text: string,
   blocks: PromptContentBlockWire[],
@@ -221,6 +285,7 @@ export async function attachmentFromFile(
     return {
       id: attachmentId("image"),
       label: name,
+      status: "ready",
       blocks: [{ type: "image", data: payload.data, mimeType: payload.mimeType }],
     };
   }
@@ -230,6 +295,7 @@ export async function attachmentFromFile(
     return {
       id: attachmentId("resource"),
       label: name,
+      status: "ready",
       blocks: [{ type: "resource", uri, mimeType, text }],
     };
   }
@@ -239,6 +305,7 @@ export async function attachmentFromFile(
     return {
       id: attachmentId("resource"),
       label: name,
+      status: "ready",
       blocks: [{ type: "resource", uri, mimeType, blob }],
     };
   }
@@ -257,7 +324,9 @@ export async function attachmentFromPaste(
 }
 
 export function flattenAttachmentBlocks(attachments: ComposerAttachment[]): PromptContentBlockWire[] {
-  return attachments.flatMap((attachment) => attachment.blocks);
+  return attachments
+    .filter((attachment) => attachment.status === "ready")
+    .flatMap((attachment) => attachment.blocks);
 }
 
 export function attachmentsFromContentBlocks(blocks: PromptContentBlockWire[]): ComposerAttachment[] {
@@ -269,6 +338,7 @@ export function attachmentsFromContentBlocks(blocks: PromptContentBlockWire[]): 
         : block.type === "image"
           ? "Image"
           : block.uri.split("/").pop() || "Attachment",
+    status: "ready" as const,
     blocks: [block],
   }));
 }
