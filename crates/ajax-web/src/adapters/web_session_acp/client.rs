@@ -337,8 +337,18 @@ impl AcpStdioClient {
         });
         let ready = ready_rx
             .recv_timeout(HANDSHAKE_TIMEOUT + Duration::from_secs(1))
-            .map_err(|_| format!("ACP startup timed out{}", stderr_hint(&stderr_tail)))?
-            .map_err(|error| format!("{error}{}", stderr_hint(&stderr_tail)))?;
+            .map_err(|_| {
+                format_handshake_error(
+                    format!("ACP startup timed out{}", stderr_hint(&stderr_tail)),
+                    &stderr_tail,
+                )
+            })?
+            .map_err(|error| {
+                format_handshake_error(
+                    format!("{error}{}", stderr_hint(&stderr_tail)),
+                    &stderr_tail,
+                )
+            })?;
         let ConnectionReady {
             session_id,
             session_new_result,
@@ -609,6 +619,19 @@ fn stderr_hint(stderr_tail: &Mutex<String>) -> String {
         String::new()
     } else {
         format!(" — {}", line.chars().take(200).collect::<String>())
+    }
+}
+
+/// Avoid duplicating stderr tails on reconnect for stable auth-class errors ([#1040]).
+fn format_handshake_error(error: String, stderr_tail: &Mutex<String>) -> String {
+    if error.contains("Authentication required") {
+        return error;
+    }
+    let hint = stderr_hint(stderr_tail);
+    if hint.is_empty() || error.contains(hint.trim_start_matches(" — ")) {
+        error
+    } else {
+        format!("{error}{hint}")
     }
 }
 

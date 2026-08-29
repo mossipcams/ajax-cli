@@ -6,6 +6,7 @@ use super::task_session_exit::{
     has_healthy_client, recover_prompt_ledger, try_dispatch_next_if_idle,
 };
 use super::transcript::{already_noted, context_reset_note};
+use super::SessionError;
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
     applied_model_id_for_persist, config_option_descriptors, AcpStdioClient, SpawnOutcome,
@@ -32,9 +33,9 @@ pub(super) fn meta_model_from_config_options(
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
     if let Some(options) = report.config_options.as_deref() {
-        state.session_config_options = Some(config_option_descriptors(options));
+        state.acp.session_config_options = Some(config_option_descriptors(options));
     }
-    state.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
+    state.acp.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
 }
 
 pub(super) fn discard_staged_client(mut client: AcpStdioClient) {
@@ -49,14 +50,14 @@ fn persist_client_identity(
     session_id: &str,
     report: &SpawnReport,
     model: &str,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     web_session_store::save_meta(
         &state.state_dir,
         &state.qualified_handle,
         Some(session_id),
         &meta_model_for_persist(report, model),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| SessionError::persist(error.to_string()))
 }
 
 fn persist_new_context_identity(
@@ -65,7 +66,7 @@ fn persist_new_context_identity(
     report: &SpawnReport,
     model: &str,
     context_epoch: u64,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     web_session_store::save_meta_with_context_epoch(
         &state.state_dir,
         &state.qualified_handle,
@@ -73,7 +74,7 @@ fn persist_new_context_identity(
         &meta_model_for_persist(report, model),
         context_epoch,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| SessionError::persist(error.to_string()))
 }
 
 fn append_context_reset_note_if_needed(state: &mut TaskSessionState, report: &SpawnReport) {
@@ -99,10 +100,10 @@ pub(super) fn enter_restore_unavailable(
     state: &mut TaskSessionState,
     error: &str,
     model: &str,
-) -> Result<(), String> {
-    state.model = model.to_string();
-    state.client = None;
-    state.acp_alive = false;
+) -> Result<(), SessionError> {
+    state.acp.model = model.to_string();
+    state.acp.client = None;
+    state.acp.acp_alive = false;
     state.context_continuity =
         ContextContinuity::unavailable(state.context_continuity.epoch, error.to_string());
     if !state.log.events.is_empty() {
@@ -117,8 +118,8 @@ fn apply_installed_client_metadata(
     model: &str,
     bump_generation: bool,
 ) {
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
+    state.acp.model = model.to_string();
+    state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, report);
     if let Some(error) = &report.model_apply_error {
         let _ = state.append_to_log(vec![SessionServerEvent::Error {
@@ -128,8 +129,8 @@ fn apply_installed_client_metadata(
     if bump_generation {
         state.generation = state.generation.saturating_add(1);
     }
-    state.acp_alive = true;
-    state.child_exit_reconciled = false;
+    state.acp.acp_alive = true;
+    state.prompts.child_exit_reconciled = false;
 }
 
 pub(super) fn install_replaced_client(
@@ -137,27 +138,27 @@ pub(super) fn install_replaced_client(
     new_client: AcpStdioClient,
     report: &SpawnReport,
     model: &str,
-) -> Result<(), String> {
-    state.acp_alive = false;
+) -> Result<(), SessionError> {
+    state.acp.acp_alive = false;
     apply_spawn_capabilities(state, report);
     match recover_prompt_ledger(state) {
         Ok(()) => {
             let session_id = new_client.session_id().to_string();
             if let Err(error) = persist_client_identity(state, &session_id, report, model) {
                 discard_staged_client(new_client);
-                enter_restore_unavailable(state, &error, model)?;
+                enter_restore_unavailable(state, &error.to_string(), model)?;
                 return Ok(());
             }
             append_context_reset_note_if_needed(state, report);
             apply_context_from_spawn(state, report);
-            state.client = Some(new_client);
+            state.acp.client = Some(new_client);
             apply_installed_client_metadata(state, report, model, true);
             try_dispatch_next_if_idle(state);
             Ok(())
         }
         Err(error) => {
             discard_staged_client(new_client);
-            state.acp_alive = false;
+            state.acp.acp_alive = false;
             Err(error)
         }
     }
@@ -171,8 +172,8 @@ pub(super) fn install_new_context_client(
     model: &str,
     post_install_note: Option<SessionServerEvent>,
     bump_generation: bool,
-) -> Result<(), String> {
-    state.acp_alive = false;
+) -> Result<(), SessionError> {
+    state.acp.acp_alive = false;
     apply_spawn_capabilities(state, report);
     match recover_prompt_ledger(state) {
         Ok(()) => {
@@ -182,7 +183,7 @@ pub(super) fn install_new_context_client(
                 persist_new_context_identity(state, &session_id, report, model, new_epoch)
             {
                 discard_staged_client(new_client);
-                state.acp_alive = false;
+                state.acp.acp_alive = false;
                 return Err(error);
             }
             if let Some(note) = post_install_note {
@@ -191,14 +192,14 @@ pub(super) fn install_new_context_client(
                 }
             }
             state.context_continuity = ContextContinuity::live(new_epoch);
-            state.client = Some(new_client);
+            state.acp.client = Some(new_client);
             apply_installed_client_metadata(state, report, model, bump_generation);
             try_dispatch_next_if_idle(state);
             Ok(())
         }
         Err(error) => {
             discard_staged_client(new_client);
-            state.acp_alive = false;
+            state.acp.acp_alive = false;
             Err(error)
         }
     }
@@ -209,17 +210,17 @@ pub(super) fn finish_first_acquire(
     staged_client: AcpStdioClient,
     report: &SpawnReport,
     model: &str,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     let session_id = staged_client.session_id().to_string();
     if let Err(error) = persist_client_identity(state, &session_id, report, model) {
         discard_staged_client(staged_client);
-        enter_restore_unavailable(state, &error, model)?;
+        enter_restore_unavailable(state, &error.to_string(), model)?;
         state.acquire_holder();
         return Ok(());
     }
     append_context_reset_note_if_needed(state, report);
     apply_context_from_spawn(state, report);
-    state.client = Some(staged_client);
+    state.acp.client = Some(staged_client);
     apply_installed_client_metadata(state, report, model, false);
     state.reset_holders_to_one();
     try_dispatch_next_if_idle(state);

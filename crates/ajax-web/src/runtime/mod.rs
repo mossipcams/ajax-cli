@@ -110,6 +110,9 @@ where
             "/api/tasks/{*handle}",
             get(axum_task_get::<C, B>).post(axum_task_post::<C, B>),
         )
+        // Duplicate public aliases: both POST to `axum_action` (operate slice).
+        // Browser bundle uses `/api/operations`; legacy tests/CLI use `/api/actions`.
+        // Keep both until usage is proven zero — do not delete either casually.
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .fallback(axum_fallback)
