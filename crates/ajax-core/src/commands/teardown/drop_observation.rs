@@ -2,8 +2,8 @@ use super::{CommandContext, CommandError};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
     models::{
-        sync_open_attempts, AgentRuntimeStatus, LifecycleStatus, SideFlag, StepReceipt,
-        StepReceiptStatus, Task, TaskOperationKind, TmuxStatus,
+        AgentRuntimeStatus, LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task,
+        TaskOperationKind, TmuxStatus,
     },
     registry::{Registry, RegistryEventKind},
 };
@@ -123,7 +123,11 @@ pub fn mark_drop_agent_stopped<R: Registry>(
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
     task.agent_status = AgentRuntimeStatus::Dead;
     task.remove_side_flag(SideFlag::AgentRunning);
-    sync_open_attempts(task, std::time::SystemTime::now());
+    for attempt in &mut task.agent_attempts {
+        if attempt.status == AgentRuntimeStatus::Running {
+            attempt.status = AgentRuntimeStatus::Dead;
+        }
+    }
     context
         .registry
         .record_event(

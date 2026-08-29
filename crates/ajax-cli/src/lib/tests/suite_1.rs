@@ -321,38 +321,38 @@ impl std::io::Write for FlushingWriter {
     }
 }
 struct OpenNewTaskTaskSessionRunner;
-impl crate::tmux_task_session::TaskSessionRunner for OpenNewTaskTaskSessionRunner {
+impl crate::task_session::TaskSessionRunner for OpenNewTaskTaskSessionRunner {
     fn run_task_session(
         &mut self,
         _command: &CommandSpec,
-        _context: &crate::tmux_task_session::TaskSessionContext,
-    ) -> Result<crate::tmux_task_session::TaskSessionEnd, CliError> {
-        Ok(crate::tmux_task_session::TaskSessionEnd::OpenNewTask)
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
+        Ok(crate::task_session::TaskSessionEnd::OpenNewTask)
     }
 }
 #[derive(Default)]
 struct RecordingTaskSessionRunner {
     commands: Vec<CommandSpec>,
 }
-impl crate::tmux_task_session::TaskSessionRunner for RecordingTaskSessionRunner {
+impl crate::task_session::TaskSessionRunner for RecordingTaskSessionRunner {
     fn run_task_session(
         &mut self,
         command: &CommandSpec,
-        _context: &crate::tmux_task_session::TaskSessionContext,
-    ) -> Result<crate::tmux_task_session::TaskSessionEnd, CliError> {
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         self.commands.push(command.clone());
-        Ok(crate::tmux_task_session::TaskSessionEnd::Normal)
+        Ok(crate::task_session::TaskSessionEnd::Normal)
     }
 }
 struct FailingTaskSessionRunner {
     message: &'static str,
 }
-impl crate::tmux_task_session::TaskSessionRunner for FailingTaskSessionRunner {
+impl crate::task_session::TaskSessionRunner for FailingTaskSessionRunner {
     fn run_task_session(
         &mut self,
         _command: &CommandSpec,
-        _context: &crate::tmux_task_session::TaskSessionContext,
-    ) -> Result<crate::tmux_task_session::TaskSessionEnd, CliError> {
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         Err(CliError::CommandFailed(self.message.to_string()))
     }
 }

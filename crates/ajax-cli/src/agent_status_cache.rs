@@ -359,7 +359,7 @@ mod tests {
             "UserPromptSubmit",
             &serde_json::json!({}),
         )
-        .expect("appended");
+        .unwrap();
 
         let observations = source(&root).observations_for_task(&TaskId::new("web/fix-login"));
         assert!(observations

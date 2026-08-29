@@ -11,7 +11,6 @@ import routeScrollSource from "@/app/RouteScroll.tsx?raw";
 import appSource from "@/app/App.tsx?raw";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { SWIPE_PAGE_COMMIT_MS } from "@/shared/hooks/useSwipePageTransition";
-import { taskHash } from "@/shared/lib/routes";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
@@ -38,13 +37,11 @@ beforeEach(() => {
     },
   );
   vi.mocked(setSwipeEnterDirection).mockClear();
-  window.location.hash = taskHash("web/fix-login");
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  window.location.hash = "";
 });
 
 function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
@@ -566,17 +563,25 @@ describe("TaskTerminalView projection surface", () => {
     expect(modelPickerBlock).not.toMatch(/pointer-events:\s*none/); // #1022
   });
 
-  it("keeps Details tappable when terminal-expanded even with the expand corner present (#1095)", () => {
-    document.documentElement.classList.add("terminal-expanded");
-    renderWithSheet({
-      detail: detail({ session_capable: true }),
-      orchestrationChat: true,
-      onOpenChat: vi.fn(),
-    });
-    const details = screen.getByTestId("task-details");
-    expect(details).toBeEnabled();
-    fireEvent.click(details);
-    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
-    document.documentElement.classList.remove("terminal-expanded");
+  it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {
+    expect(stylesSource).not.toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s*\{[^}]*display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?pointer-events:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.detail-header-controls[\s\S]*?pointer-events:\s*auto/,
+    );
+
+    const expandedDetailsCss =
+      stylesSource.match(
+        /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.session-head-details\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(expandedDetailsCss).toMatch(/background:\s*var\(--paper-raised\)/);
+    expect(expandedDetailsCss).toMatch(/color:\s*var\(--ink\)/);
+    expect(expandedDetailsCss).toMatch(/min-height:\s*44px/);
+    expect(expandedDetailsCss).toMatch(/border:\s*1px solid var\(--rule-strong\)/);
+    expect(expandedDetailsCss).toMatch(/border-radius:\s*999px/);
   });
 });

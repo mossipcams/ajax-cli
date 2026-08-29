@@ -8,7 +8,6 @@ import {
   CROSS_SLIDE_ARMED_SLACK_MS,
 } from "./useSwipePageTransition";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
-import { taskHash } from "@/shared/lib/routes";
 import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
 import {
   setTerminalDoubleTapPending,
@@ -54,15 +53,13 @@ function Harness({
   onLeft,
   onRight,
   commitRef,
-  from_route,
 }: {
   onLeft?: () => void;
   onRight?: () => void;
   commitRef?: { current: ((direction: "left" | "right") => void) | null };
-  from_route?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { style, commit } = useSwipePageTransition(ref, { onLeft, onRight, from_route });
+  const { style, commit } = useSwipePageTransition(ref, { onLeft, onRight });
   if (commitRef) commitRef.current = commit;
   return <div ref={ref} data-testid="swipe-target" style={style} />;
 }
@@ -78,7 +75,6 @@ function renderHarness(props: Parameters<typeof Harness>[0] = {}) {
 describe("useSwipePageTransition", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    window.location.hash = taskHash("web/fix-login");
     while (gestureBusyGate.isBusy()) gestureBusyGate.end();
     vi.mocked(setSwipeEnterDirection).mockClear();
     vi.mocked(telemetry.captureSwipe).mockClear();
@@ -87,7 +83,6 @@ describe("useSwipePageTransition", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    window.location.hash = "";
     delete document.documentElement.dataset.ajaxTerminalSelecting;
     delete document.documentElement.dataset.ajaxTerminalDoubleTapPending;
   });
@@ -191,22 +186,6 @@ describe("useSwipePageTransition", () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onRight).toHaveBeenCalledOnce();
-  });
-
-  it("does not commit right when the list route is already active (#1064)", async () => {
-    window.location.hash = "#/";
-    const onRight = vi.fn();
-    renderHarness({ onRight, from_route: taskHash("web/fix-login") });
-    const node = screen.getByTestId("swipe-target");
-    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
-
-    await act(async () => {
-      node.dispatchEvent(touch("touchstart", 40, 40, node));
-      node.dispatchEvent(touch("touchmove", 120, 42, node));
-      node.dispatchEvent(touch("touchend", 120, 42, node));
-      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
-    });
-    expect(onRight).not.toHaveBeenCalled();
   });
 
   it("aborts an in-flight swipe when terminal text selecting becomes active", async () => {

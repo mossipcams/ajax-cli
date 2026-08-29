@@ -8,7 +8,7 @@ describe("webSessionFixtures", () => {
       "prompt",
       "cancel",
       "cancelKeepQueue",
-      "setConfigOption",
+      "setModel",
       "permission",
     ]);
   });

@@ -12,8 +12,6 @@ Composition shell and supervised agent execution.
 - `agent/codex.rs` owns Codex command construction and JSONL parsing.
 - `agent/cursor.rs` owns Cursor CLI command construction and stream-json parsing.
 - `repo_observer.rs` owns repository file-change observation and Git snapshots.
-- `process_protocol.rs` owns the `ProcessProtocol` trait and stdout parser type
-  used by agent adapters and the process observer.
 - `process_observer.rs` owns child process output, exit status, and hang
   detection.
 - `event_log.rs` owns optional append-only JSONL event persistence.
@@ -49,7 +47,7 @@ Composition shell and supervised agent execution.
   inherited terminal I/O while atomically writing the latest starting/running/
   exited snapshot and appending runtime history under the selected runtime
   cache directory.
-- `tmux_task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
+- `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q and Ctrl-T without installing
   tmux bindings, and resumes Cockpit when the task attach client detaches.
@@ -59,19 +57,3 @@ Startup behavior should stay inside normal CLI parsing and dispatch. Bare
 invocations may choose a default operator surface, and flags may select runtime
 profiles, but `main.rs` should not rewrite argv into hidden commands. Public CLI
 vocabulary remains operator-facing.
-
-## Native hook agent events
-
-`ajax-cli agent-event` (hidden) translates harness hook payloads into canonical
-JSONL under `AJAX_AGENT_EVENTS_DIR`. `run_agent_event` returns typed outcomes:
-
-- `NoIdentity` — no resolved task/run (including missing cwd index); success with
-  no write.
-- `Ignored` — event not mapped to a canonical kind; success with no write.
-- `RejectedByRuntime` — runtime snapshot gate refused the event; success with no
-  write.
-- `Appended` — one JSONL line was written.
-
-IO or clock failures return `AgentEventError` and fail the hook command with a
-non-zero exit — they must not be swallowed as success. Hook installs should treat
-write failures as operator-visible (stderr from `run_agent_event_command`).

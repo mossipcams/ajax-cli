@@ -7,14 +7,13 @@ mod ci_agent_delivery;
 mod cli;
 mod cockpit_actions;
 mod cockpit_backend;
-mod cockpit_snapshot;
 mod context;
 mod dispatch;
 mod execution_dispatch;
 mod render;
 mod snapshot_dispatch;
 mod supervise;
-mod tmux_task_session;
+mod task_session;
 mod web_backend;
 
 #[cfg(test)]

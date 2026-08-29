@@ -8,7 +8,7 @@ use crate::agent_runtime::{self, AgentRuntimeSnapshot, AgentRuntimeState};
 
 use super::{
     resolve_cursor_identity, run_agent_event, session_start_env_stdout, translate_native_event,
-    AgentEventIdentity, AgentEventOutcome,
+    AgentEventIdentity,
 };
 
 fn kind(client: &str, event: &str, payload: &serde_json::Value) -> Option<CanonicalEventKind> {
@@ -384,15 +384,13 @@ fn write_test_runtime_snapshot(
 
 #[test]
 fn run_agent_event_noop_without_identity() {
-    assert!(matches!(
-        run_agent_event(
-            None,
-            "claude",
-            "Stop",
-            &serde_json::json!({"background_tasks":[]}),
-        ),
-        Ok(AgentEventOutcome::NoIdentity)
-    ));
+    run_agent_event(
+        None,
+        "claude",
+        "Stop",
+        &serde_json::json!({"background_tasks":[]}),
+    )
+    .unwrap();
 }
 
 #[cfg(unix)]
@@ -487,15 +485,13 @@ fn run_agent_event_rejects_after_stale_exit_for_non_settle_events() {
     );
     let identity = test_identity(&dir, "web/fix-login");
 
-    assert!(matches!(
-        run_agent_event(
-            Some(&identity),
-            "cursor",
-            "preToolUse",
-            &serde_json::json!({}),
-        ),
-        Ok(AgentEventOutcome::RejectedByRuntime)
-    ));
+    run_agent_event(
+        Some(&identity),
+        "cursor",
+        "preToolUse",
+        &serde_json::json!({}),
+    )
+    .unwrap();
 
     let stem = "web__fix-login";
     assert!(!dir.join(format!("{stem}.jsonl")).exists());
@@ -530,15 +526,13 @@ fn run_agent_event_rejects_without_runtime_snapshot() {
     let (root, dir) = temp_events_fixture("runtime-missing");
     let identity = test_identity(&dir, "web/fix-login");
 
-    assert!(matches!(
-        run_agent_event(
-            Some(&identity),
-            "cursor",
-            "beforeSubmitPrompt",
-            &serde_json::json!({}),
-        ),
-        Ok(AgentEventOutcome::RejectedByRuntime)
-    ));
+    run_agent_event(
+        Some(&identity),
+        "cursor",
+        "beforeSubmitPrompt",
+        &serde_json::json!({}),
+    )
+    .unwrap();
 
     let stem = "web__fix-login";
     assert!(!dir.join(format!("{stem}.jsonl")).exists());
@@ -658,10 +652,7 @@ fn cursor_without_index_still_noops() {
     .is_none());
 
     write_test_runtime_snapshot(&events_dir, "web/fix-login", AgentRuntimeState::Running, 1);
-    assert!(matches!(
-        run_agent_event(None, "cursor", "beforeSubmitPrompt", &serde_json::json!({})),
-        Ok(AgentEventOutcome::NoIdentity)
-    ));
+    run_agent_event(None, "cursor", "beforeSubmitPrompt", &serde_json::json!({})).unwrap();
 
     let stem = "web__fix-login";
     assert!(!events_dir.join(format!("{stem}.jsonl")).exists());

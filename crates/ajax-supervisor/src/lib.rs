@@ -5,7 +5,6 @@ use std::{error::Error, fmt};
 pub mod agent;
 pub mod event_log;
 pub mod process_observer;
-pub mod process_protocol;
 pub mod renderer;
 pub mod repo_observer;
 pub mod runtime;

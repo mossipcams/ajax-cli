@@ -1,55 +1,11 @@
-//! Live status reduction and application.
-//!
-//! [`reduce_live_observation`] folds supervisor/application observations against
-//! the task's current live row. The `application` submodule exposes three apply
-//! meanings (ordinary, authoritative, trusted) that all write through
-//! `apply_reduced_observation`. See `live_application` module docs and
-//! `docs/architecture/core-subsystems.md` (Live Status — apply modes).
-
 #[path = "live_application.rs"]
 mod application;
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
     apply_observation, apply_observation_at, apply_trusted_observation,
-    apply_trusted_observation_at, retract_stale_agent_running_at,
+    apply_trusted_observation_at,
 };
-
-use std::time::SystemTime;
-
-use crate::{
-    agent_status::{
-        provider_lifecycle_observation, reduce_agent_status, ActivityKind, ReduceInput,
-        StatusObservation, PRIMARY_RUN_ID,
-    },
-    models::Task,
-};
-
-/// Map one provider-lifecycle fact through [`reduce_agent_status`], then apply
-/// authoritatively. ACP session activity uses this path — not trusted apply.
-pub fn apply_provider_lifecycle_observation_at(
-    task: &mut Task,
-    observation: StatusObservation,
-    now: SystemTime,
-) {
-    let projection = reduce_agent_status(ReduceInput {
-        now,
-        primary_run_id: PRIMARY_RUN_ID.to_string(),
-        process_liveness: None,
-        observations: std::slice::from_ref(&observation),
-    });
-    let observed_at = projection.selected_observed_at.unwrap_or(now);
-    apply_authoritative_observation_at(task, projection.live, observed_at);
-}
-
-/// Convenience for callers that know an [`ActivityKind`] only.
-pub fn apply_provider_lifecycle_kind_at(task: &mut Task, kind: ActivityKind, now: SystemTime) {
-    apply_provider_lifecycle_observation_at(
-        task,
-        provider_lifecycle_observation(kind, PRIMARY_RUN_ID, now),
-        now,
-    );
-}
 
 pub fn reduce_live_observation(
     current: Option<&LiveObservation>,
@@ -142,22 +98,6 @@ mod tests {
             "task",
             AgentClient::Codex,
         )
-    }
-
-    #[test]
-    fn provider_lifecycle_observation_routes_through_reducer_before_apply() {
-        let mut task = base_task();
-        super::apply_provider_lifecycle_kind_at(
-            &mut task,
-            crate::agent_status::ActivityKind::Working,
-            std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
-        );
-
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
-        assert_eq!(
-            task.live_status.as_ref().map(|live| live.summary.as_str()),
-            Some("agent running")
-        );
     }
 
     #[test]

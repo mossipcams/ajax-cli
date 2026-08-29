@@ -1,15 +1,13 @@
 use crate::{
     attention::annotate,
     models::{Annotation, Evidence, LifecycleStatus, Task},
+    output::{
+        AnnotationItem, CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse,
+        ReposResponse, TaskCard, TaskSummary, TasksResponse,
+    },
     recommended::{available_operator_actions, evidence_label, operator_action},
     remediation::remediations_for_task,
     ui_state::{attention_band, derive_operator_status},
-};
-
-use crate::output::{AnnotationItem, CockpitNextStep, CockpitSummary};
-pub use crate::output::{
-    CockpitProjection, CockpitResponse, CockpitView, InboxResponse, InspectResponse, NextResponse,
-    RepoSummary, ReposResponse, TaskCard, TaskSummary, TasksResponse,
 };
 
 pub(super) fn cockpit_summary(
