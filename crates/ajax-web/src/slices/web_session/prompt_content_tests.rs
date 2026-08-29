@@ -54,6 +54,23 @@ fn image_requires_advertised_capability() {
     assert!(matches!(&payload.blocks[1], ContentBlock::Image(_)));
 }
 
+// ajax-cli#1110: an advertised image is a complete prompt without caption text.
+#[test]
+fn attachment_only_image_builds_payload_without_empty_text_block() {
+    let block = PromptContentBlockWire::Image {
+        data: "aGVsbG8=".to_string(),
+        mime_type: "image/png".to_string(),
+    };
+    let payload = build_prompt_payload("   ", &[block], &caps(true, false)).unwrap();
+
+    assert_eq!(payload.transcript_text, "[attached: image (png)]");
+    assert_eq!(payload.blocks.len(), 1);
+    assert!(matches!(&payload.blocks[0], ContentBlock::Image(_)));
+
+    let error = build_prompt_payload("   ", &[], &caps(true, false)).unwrap_err();
+    assert_eq!(error, "prompt text or content is required");
+}
+
 #[test]
 fn embedded_resource_requires_advertised_capability() {
     let block = PromptContentBlockWire::Resource {

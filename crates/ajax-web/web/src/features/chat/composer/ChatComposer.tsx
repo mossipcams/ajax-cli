@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import ResultPanel from "@/shared/ui/ResultPanel";
 import { Button } from "@/shared/ui/button";
+import { hasPromptContent } from "@/shared/lib/promptContent";
 import {
   attachComposerHotbarKeyboardRetention,
   preventComposerHotbarFocusSteal,
@@ -242,7 +243,7 @@ export default function ChatComposer({
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!canPrompt || (!draft.trim() && queued === null)}
+          disabled={!canPrompt || (queued === null && !hasPromptContent(draft, attachments))}
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg

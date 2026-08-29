@@ -11,7 +11,7 @@ import { clearSessionTransportState, type WebSessionTransport } from "./transpor
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
-import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+import { hasPromptContent, type PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
   modelLiveOption,
   readLiveSelectCurrent,
@@ -147,7 +147,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     (text: string, contentBlocks: PromptContentBlockWire[] = []): boolean => {
       const trimmed = text.trim();
       if (
-        !trimmed ||
+        !hasPromptContent(trimmed, contentBlocks) ||
         !connected ||
         view.context.state === "unavailable" ||
         view.context.transcriptError !== undefined

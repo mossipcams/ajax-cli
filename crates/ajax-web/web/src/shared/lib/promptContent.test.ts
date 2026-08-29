@@ -4,11 +4,20 @@ import {
   estimatePromptFrameBytes,
   fitPromptContentBlocks,
   flattenAttachmentBlocks,
+  hasPromptContent,
   MAX_PROMPT_FRAME_BYTES,
   promptFrameFits,
 } from "./promptContent";
 
 describe("promptContent", () => {
+  // ajax-cli#1110: prompt content may be text, blocks, or both.
+  it("treats an attachment-only prompt as content while rejecting a truly empty prompt", () => {
+    const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+    expect(hasPromptContent("   ", blocks)).toBe(true);
+    expect(hasPromptContent("hello", [])).toBe(true);
+    expect(hasPromptContent("   ", [])).toBe(false);
+  });
+
   it("returns null when neither image nor embeddedContext is advertised", async () => {
     const file = new File(["hello"], "notes.md", { type: "text/markdown" });
     await expect(

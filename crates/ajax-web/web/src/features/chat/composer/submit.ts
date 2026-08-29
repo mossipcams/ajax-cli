@@ -1,4 +1,4 @@
-import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+import { hasPromptContent, type PromptContentBlockWire } from "@/shared/lib/promptContent";
 import type { ComposerState } from "./composerState";
 import {
   beginStopAndSend,
@@ -34,7 +34,8 @@ export function submitComposerDraft({
   busy,
   draft,
   composerState,
-}: Omit<ApplySubmitStateArgs, "contentBlocks">): SubmitComposerResult {
+  contentBlocks,
+}: ApplySubmitStateArgs): SubmitComposerResult {
   if (!connected) return { action: "none" };
 
   const text = draft.trim();
@@ -42,12 +43,14 @@ export function submitComposerDraft({
   const stopping = composerIsStopping(composerState);
 
   if (queued !== null) {
-    if (text) return { action: "update_queue", text, clearDraft: true };
+    if (hasPromptContent(text, contentBlocks)) {
+      return { action: "update_queue", text, clearDraft: true };
+    }
     if (busy && !stopping) return { action: "stop_and_send", sendCancel: true, clearDraft: true };
     return { action: "scroll" };
   }
 
-  if (!text) return { action: "none" };
+  if (!hasPromptContent(text, contentBlocks)) return { action: "none" };
   if (busy) return { action: "queue", text, clearDraft: true };
   return { action: "send", text, clearDraft: true };
 }

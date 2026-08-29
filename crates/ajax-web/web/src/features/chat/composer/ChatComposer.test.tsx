@@ -56,6 +56,75 @@ describe("ChatComposer", () => {
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
+  // ajax-cli#1110: attached photos are complete prompts without caption text.
+  it("enables Send and dispatches an attachment-only photo", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+
+    const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
+    fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
+      },
+    });
+    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
+  });
+
+  it("queues an attachment-only photo while a turn is busy", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        contextState: "live",
+        contextEpoch: 0,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+
+    const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
+    fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: {
+        items: [{ kind: "file", type: "image/jpeg", getAsFile: () => file }],
+      },
+    });
+    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("Queued");
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    send({ type: "turn_end", stopReason: "end_turn" });
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      "",
+      expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+    );
+  });
+
   it("queues one editable follow-up instead of sending it into a live turn", () => {
     mountChat();
 

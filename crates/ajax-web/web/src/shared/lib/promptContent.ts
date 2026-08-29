@@ -37,6 +37,10 @@ export const ATTACHMENT_TOO_LARGE =
 const PROMPT_FRAME_HEADROOM_BYTES = 4096;
 const PLACEHOLDER_CLIENT_MESSAGE_ID = "00000000-0000-4000-8000-000000000000";
 
+export function hasPromptContent(text: string, blocks: readonly unknown[] = []): boolean {
+  return Boolean(text.trim() || blocks.length);
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

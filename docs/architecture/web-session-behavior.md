@@ -121,10 +121,12 @@ existing paths.
   for real URIs. Before send, the browser downscales/compresses attached photos so the
   prompt JSON frame fits the 256 KiB WebSocket cap with headroom for typed text.
   WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
-  backward compatible; omitted `contentBlocks` is text-only. The host validates block
-  types against advertised capabilities, sends a real ACP `ContentBlock` array on
-  `session/prompt`, and records only operator text plus attachment names in JSONL
-  (no base64 in the operator transcript).
+  backward compatible; omitted `contentBlocks` is text-only. A prompt is sendable
+  when it has trimmed text or at least one content block, including an attachment
+  without caption text; neither means the prompt is rejected. The host validates
+  block types against advertised capabilities, omits an empty ACP text block, sends
+  the remaining ACP `ContentBlock` array on `session/prompt`, and records only
+  operator text plus attachment names in JSONL (no base64 in the operator transcript).
 - Non-text **output** from ACP `session/update` (agent/user/thought chunks and tool-call
   content) maps `image`, `resource_link`, and embedded `resource` blocks into wire
   `message.contentBlocks` and extended `tool_call.content` (text chunks and diffs
