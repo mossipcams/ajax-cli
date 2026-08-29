@@ -1,4 +1,7 @@
-import { SESSION_VIEWPORT_ATTR } from "@/shared/lib/sessionViewport";
+import {
+  layoutViewportShrinksWithKeyboard,
+  SESSION_VIEWPORT_ATTR,
+} from "@/shared/lib/sessionViewport";
 
 /**
  * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
@@ -90,6 +93,8 @@ export function initViewport(): () => void {
   let baselineHeight = vv.height;
   let baselineWidth = window.innerWidth;
   let keyboardOpen = false;
+  /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
+  let layoutShrinksWithKeyboard = false;
   /** True while pointer/touch is down inside the session composer (#1113). */
   let sessionComposerPointerDown = false;
 
@@ -185,6 +190,7 @@ export function initViewport(): () => void {
   const dismissKeyboardOpen = () => {
     if (!keyboardOpen) return;
     keyboardOpen = false;
+    layoutShrinksWithKeyboard = false;
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     blurSessionComposerIfFocused();
     resetDocumentScroll();
@@ -206,6 +212,7 @@ export function initViewport(): () => void {
     const visualHeight = vv.height;
     if (
       !keyboardOpen ||
+      !layoutShrinksWithKeyboard ||
       sessionComposerPointerDown ||
       visualHeight < MIN_USABLE_HEIGHT_PX ||
       layoutHeight - visualHeight <= KEYBOARD_CLOSE_DELTA_PX
@@ -268,6 +275,10 @@ export function initViewport(): () => void {
       }
       cancelCloseSettle();
       keyboardOpen = true;
+      layoutShrinksWithKeyboard = layoutViewportShrinksWithKeyboard(
+        window.innerHeight,
+        current,
+      );
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {

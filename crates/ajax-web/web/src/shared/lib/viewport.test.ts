@@ -250,6 +250,37 @@ describe("initViewport", () => {
     shell.remove();
   });
 
+  it("leaves keyboard-open after Safari composer pointerup when innerHeight never shrank (#1113)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    const send = document.createElement("button");
+    send.type = "button";
+    shell.appendChild(send);
+    document.body.appendChild(shell);
+
+    start();
+    composer.focus();
+    vvHeight = 520;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+
+    send.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    send.dispatchEvent(new Event("pointerup", { bubbles: true }));
+
+    expect(isKeyboardOpen()).toBe(true);
+    vi.advanceTimersByTime(0);
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+    expect(composer).toHaveFocus();
+
+    shell.remove();
+  });
+
   it("restores after composer pointerup when visualViewport stays stale (#1113)", () => {
     vi.stubGlobal("innerHeight", 800);
     document.documentElement.setAttribute("data-session-viewport", "owned");
