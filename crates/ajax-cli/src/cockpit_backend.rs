@@ -24,7 +24,7 @@ use crate::{
     },
     context::{load_context, save_context_with_state, state_file_mtime},
     render::render_response,
-    task_session::PtyTaskSessionRunner,
+    tmux_task_session::PtyTaskSessionRunner,
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -506,16 +506,7 @@ fn recover_cockpit_save_error(
     Ok(Some(error.to_string()))
 }
 
-pub(crate) fn build_cockpit_snapshot(
-    context: &CommandContext<InMemoryRegistry>,
-) -> CockpitSnapshot {
-    let view = commands::cockpit_view(context);
-    CockpitSnapshot {
-        repos: view.repos,
-        cards: view.cards,
-        inbox: view.inbox,
-    }
-}
+pub(crate) use crate::cockpit_snapshot::build_cockpit_snapshot;
 
 struct InteractiveCockpitHandler<'a, R: CommandRunner> {
     context: &'a mut CommandContext<InMemoryRegistry>,
