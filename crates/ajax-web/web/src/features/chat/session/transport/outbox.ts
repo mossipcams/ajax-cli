@@ -23,7 +23,7 @@ function cursorKey(handle: string): string {
 
 export function readOutbox(handle: string): PendingPrompt[] {
   try {
-    const raw = localStorage.getItem(outboxKey(handle));
+    const raw = sessionStorage.getItem(outboxKey(handle));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -41,8 +41,8 @@ export function readOutbox(handle: string): PendingPrompt[] {
 
 export function writeOutbox(handle: string, pending: PendingPrompt[]): void {
   try {
-    if (pending.length) localStorage.setItem(outboxKey(handle), JSON.stringify(pending));
-    else localStorage.removeItem(outboxKey(handle));
+    if (pending.length) sessionStorage.setItem(outboxKey(handle), JSON.stringify(pending));
+    else sessionStorage.removeItem(outboxKey(handle));
   } catch {
     // Private mode / storage denied: the live socket still works.
   }

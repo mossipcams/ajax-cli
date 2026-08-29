@@ -83,7 +83,7 @@ pub(super) fn retry_pending_exit_interruption(state: &mut TaskSessionState) {
             };
             if !slot.persist_error_reported {
                 slot.persist_error_reported = true;
-                let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+                state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
         }
     }
@@ -100,7 +100,7 @@ pub(super) fn reconcile_unexpected_child_exit(
     state.acp_alive = false;
 
     if !state.suppress_exit_evidence && !host_exit_from_drain {
-        let _ = state.append_to_log(vec![SessionServerEvent::Error {
+        state.append_to_log(vec![SessionServerEvent::Error {
             message: ACP_PROCESS_EXITED.to_string(),
         }]);
     }
@@ -152,7 +152,7 @@ pub(super) fn reconcile_unexpected_child_exit(
             if let Some(active) = state.active_prompt.as_mut() {
                 if !active.persist_error_reported {
                     active.persist_error_reported = true;
-                    let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+                    state.append_to_log(vec![SessionServerEvent::Error { message }]);
                 }
             }
         }
@@ -173,7 +173,7 @@ fn report_exit_interruption(
         }
         pending.interruption_error_reported = true;
     }
-    let _ = state.append_to_log(vec![SessionServerEvent::Error {
+    state.append_to_log(vec![SessionServerEvent::Error {
         message: format!(
             "Prompt {client_message_id} was interrupted because the ACP process exited and was not retried."
         ),
@@ -233,7 +233,7 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
                 .expect("active prompt retained");
             if !active.persist_error_reported {
                 active.persist_error_reported = true;
-                let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+                state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
             return;
         }
@@ -245,7 +245,7 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
         .and_then(|active| active.terminal)
         .expect("terminal prompt retained");
     if !terminal.events.is_empty() {
-        let _ = state.append_to_log(terminal.events);
+        state.append_to_log(terminal.events);
     }
 }
 
@@ -296,7 +296,7 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
         });
     }
     if !recovery_events.is_empty() {
-        let _ = state.append_to_log(recovery_events);
+        state.append_to_log(recovery_events);
     }
     Ok(())
 }
@@ -324,7 +324,7 @@ pub(super) fn try_dispatch_next_if_idle(state: &mut TaskSessionState) {
         }
         Err(message) if !state.queue_persist_error_reported => {
             state.queue_persist_error_reported = true;
-            let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+            state.append_to_log(vec![SessionServerEvent::Error { message }]);
         }
         Err(_) => {}
     }

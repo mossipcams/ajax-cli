@@ -103,37 +103,3 @@ fn prepare_task_session_promotes_when_tmux_probe_fails_issue_1092() {
         .expect("task")
         .skip_interactive_agent());
 }
-
-#[test]
-fn prepare_task_session_admits_durable_restore_capable_provisioned_harness() {
-    use ajax_core::adapters::acp_admits_orchestration_chat;
-
-    for agent in [
-        AgentClient::Cursor,
-        AgentClient::Codex,
-        AgentClient::Claude,
-        AgentClient::Pi,
-    ] {
-        assert!(
-            acp_admits_orchestration_chat(agent),
-            "{agent:?} must be admitted before attach"
-        );
-        let mut task = crate::test_support::fix_login_task();
-        task.selected_agent = agent;
-        task.set_skip_interactive_agent(true);
-        let worktree = std::env::temp_dir().join(format!(
-            "ajax-web-session-test-durable-admit-{}",
-            format!("{agent:?}").to_ascii_lowercase()
-        ));
-        let _ = std::fs::remove_dir_all(&worktree);
-        std::fs::create_dir_all(&worktree).expect("worktree dir");
-        task.worktree_path = worktree;
-        let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-        let mut runner = PaneRunner {
-            stdout: "zsh\n".to_string(),
-        };
-        let plan = prepare_task_session(&mut context, &mut runner, "web/fix-login", "auto")
-            .expect("provisioned durable-capable harness attaches");
-        assert_eq!(plan.agent, agent);
-    }
-}

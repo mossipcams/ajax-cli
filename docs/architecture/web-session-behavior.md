@@ -33,33 +33,6 @@ preference, or Diff routing.
   [`web-cockpit.md`](web-cockpit.md); Terminal is not the default Task Workspace
   surface for session-capable provisioned tasks.
 
-## ACP context continuity
-
-Host-owned context identity is separate from browser-visible transcript history.
-
-- Protocol v2 snapshots require `contextState` (`live`, `restored`, or
-  `unavailable`), `contextEpoch`, and optional `contextError` /
-  `transcriptError`. The browser gates prompting from these fields; it must not
-  infer model continuity from replayed JSONL rows alone.
-- A stored ACP session id means **restore this context**, never try resume/load
-  and silently fall back to `session/new`. When both restore paths fail or the
-  harness lacks restore capability, the host keeps the stored id, projects
-  `unavailable`, and refuses new prompts until explicit recovery or task Drop.
-- **Switch** (cross-harness) is a new-context boundary: cancel in-flight work,
-  shut down the old child, clear the stored resume id, spawn with `session/new`
-  (no resume/load), advance `contextEpoch`, and append a host note. The prior
-  ACP conversation is discarded; Ajax does not restore or retry it across Switch.
-- Idle detach and `ajax-web` restart may reload JSONL and reattach viewers, but
-  only a successful `session/resume` or `session/load` proves restored model
-  context (`restored`). Transcript replay after cold load is visible history,
-  not proof the agent remembers prior turns.
-- **Live restore evidence (2026-08-27):** deterministic tests and architecture
-  guards enforce fail-closed restore. External process-replacement smokes:
-  Codex bridge restore **passed**; Cursor, Claude, and Pi **failed** restore on
-  this host after one completed turn. Ajax `supports_durable_restore` admission
-  flags remain `true` for all four harnesses; Ajax blocks on restore failure
-  rather than silently starting fresh or removing Chat admission.
-
 ## Flag-off parity
 
 The browser preference (`ajax.web.session.orchestrationChat`) defaults **on**
@@ -118,20 +91,13 @@ existing paths.
   `promptCapabilities.image` is true and embedded `resource` bodies only when
   `promptCapabilities.embeddedContext` is true. The file picker does not synthesize
   `resource_link` stubs for local paths; `resource_link` remains valid on the host wire
-  for real URIs. On attach (file picker or paste), the browser downscales/compresses
-  photos so staged image blocks already fit the 256 KiB WebSocket cap with headroom
-  for typed caption text; the attachment chip shows **Preparing…** until compression
-  finishes, and Send stays disabled while any attachment is preparing. Send then
-  uses the synchronous fit path — it does not compress again on the send tap. If
-  compression or decode fails, the attachment stays staged and the chip shows a
-  specific error.
+  for real URIs. Before send, the browser downscales/compresses attached photos so the
+  prompt JSON frame fits the 256 KiB WebSocket cap with headroom for typed text.
   WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
-  backward compatible; omitted `contentBlocks` is text-only. A prompt is sendable
-  when it has trimmed text or at least one content block, including an attachment
-  without caption text; neither means the prompt is rejected. The host validates
-  block types against advertised capabilities, omits an empty ACP text block, sends
-  the remaining ACP `ContentBlock` array on `session/prompt`, and records only
-  operator text plus attachment names in JSONL (no base64 in the operator transcript).
+  backward compatible; omitted `contentBlocks` is text-only. The host validates block
+  types against advertised capabilities, sends a real ACP `ContentBlock` array on
+  `session/prompt`, and records only operator text plus attachment names in JSONL
+  (no base64 in the operator transcript).
 - Non-text **output** from ACP `session/update` (agent/user/thought chunks and tool-call
   content) maps `image`, `resource_link`, and embedded `resource` blocks into wire
   `message.contentBlocks` and extended `tool_call.content` (text chunks and diffs
@@ -196,9 +162,9 @@ existing paths.
   Switch resets backend context on the same public Ajax session: cancel any
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
-  transcript replay), advance `contextEpoch`, append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot and JSONL transcript for visible
-  history only. The prior ACP conversation is discarded. With no live slot, persist only and clear the stored resume id so the
+  transcript replay), append a host note (`Client switched harness. Context
+  reset.`), and keep the TaskSession slot, JSONL transcript, and WebSocket
+  identity. With no live slot, persist only and clear the stored resume id so the
   next attach uses empty context. Switch sends only `{ agent }`; a model field is
   refused. Persist `None` for Auto/unspecified; never store the literal string
   `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).

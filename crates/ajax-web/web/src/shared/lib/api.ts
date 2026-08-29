@@ -18,7 +18,6 @@ import type {
   PullRequestView,
   PushTestSubscription,
   PushVapidResponse,
-  RuntimeStatusResponse,
   StartTaskRequest,
   TaskDiffView,
   VersionResponse,
@@ -255,11 +254,6 @@ export async function fetchVersion(): Promise<VersionResponse> {
   return value as VersionResponse;
 }
 
-export async function fetchRuntimeStatus(): Promise<RuntimeStatusResponse> {
-  const value = await getJson("/api/server/runtime");
-  return value as RuntimeStatusResponse;
-}
-
 export async function fetchPushVapidPublicKey(): Promise<PushVapidResponse> {
   const value = await getJson("/api/push/vapid");
   if (
@@ -494,21 +488,6 @@ export async function restartServer(): Promise<OperationResponse> {
 
 export async function startTestInStable(): Promise<OperationResponse> {
   const { response, payload: rawPayload } = await postJson("/api/server/test-in-stable", {});
-  const payload = assertOperationResponse(rawPayload);
-  if (!response.ok) {
-    throw new ApiError(
-      classifyStatus(response.status),
-      payload.error || `HTTP ${response.status}`,
-      response.status,
-      payload,
-      operationErrorCode(payload),
-    );
-  }
-  return payload;
-}
-
-export async function updateServer(): Promise<OperationResponse> {
-  const { response, payload: rawPayload } = await postJson("/api/server/update", {});
   const payload = assertOperationResponse(rawPayload);
   if (!response.ok) {
     throw new ApiError(

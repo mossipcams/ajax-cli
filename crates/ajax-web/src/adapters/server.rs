@@ -6,9 +6,9 @@ use std::{process::Command, thread, time::Duration};
 #[cfg(not(test))]
 const RESTART_DELAY: Duration = Duration::from_millis(400);
 
-pub const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
-pub const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";
-pub const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
+const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
+const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";
+const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
 pub const AJAX_PROFILE_ENV: &str = "AJAX_PROFILE";
 pub const DEV_PROFILE: &str = "dev";
 pub const STABLE_PROFILE: &str = "stable";

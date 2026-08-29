@@ -8,10 +8,6 @@ export function snapshotJson(
     model: string;
     turnState: "idle" | "busy";
     reset: boolean;
-    contextState: "live" | "restored" | "unavailable";
-    contextEpoch: number;
-    contextError?: string;
-    transcriptError?: string;
     pendingPermission: { requestId: string; title?: string | null; detail?: string | null };
   }> = {},
 ): string {
@@ -22,8 +18,6 @@ export function snapshotJson(
     model: "auto",
     turnState: "idle",
     reset: false,
-    contextState: "live",
-    contextEpoch: 0,
     ...overrides,
   });
 }
@@ -53,8 +47,6 @@ export const FIXTURE_SNAPSHOT = {
     model: "composer-2.5",
     turnState: "idle",
     reset: false,
-    contextState: "live",
-    contextEpoch: 0,
   },
   busy: {
     type: "snapshot",
@@ -63,8 +55,6 @@ export const FIXTURE_SNAPSHOT = {
     model: "composer-2.5",
     turnState: "busy",
     reset: false,
-    contextState: "live",
-    contextEpoch: 0,
     pendingPermission: { requestId: "p1", title: "Run tests?" },
   },
 } as const;

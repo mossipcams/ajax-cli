@@ -17,13 +17,7 @@ export type ConnectionState =
   | "stale session";
 
 /** Hash-route kinds. */
-export type RouteKind =
-  | "dashboard"
-  | "project"
-  | "task"
-  | "diff"
-  | "settings"
-  | "session";
+export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
 
 /** Read-only Diff Review projection (mirrors ajax-web `diff_review` DTOs). */
 export interface PullRequestView {
@@ -230,49 +224,6 @@ export interface VersionResponse {
   version: string;
   test_in_stable?: boolean;
   profile?: string | null;
-}
-
-export type RuntimeOperationKind = "restart" | "update";
-
-export type RuntimeOperationPhase =
-  | "queued"
-  | "fetching"
-  | "building"
-  | "installing"
-  | "restarting"
-  | "health_check"
-  | "succeeded"
-  | "failed"
-  | "rolled_back";
-
-export type RuntimeOperationResult = "succeeded" | "failed" | "rolled_back";
-
-export interface RuntimeOperationView {
-  kind: RuntimeOperationKind;
-  phase: RuntimeOperationPhase;
-  started_at?: string | null;
-  finished_at?: string | null;
-  result?: RuntimeOperationResult | null;
-  rollback?: boolean;
-}
-
-export interface RuntimeUpdateAvailability {
-  known: boolean;
-  remote_commit?: string;
-  installed_commit?: string | null;
-  available?: boolean;
-}
-
-export interface RuntimeStatusResponse {
-  ok: boolean;
-  version: string;
-  commit?: string | null;
-  profile?: string | null;
-  uptime_seconds?: number;
-  update_available?: RuntimeUpdateAvailability | boolean;
-  operation?: RuntimeOperationView | null;
-  logs?: string[];
-  test_in_stable?: boolean;
 }
 
 export interface PushVapidResponse {

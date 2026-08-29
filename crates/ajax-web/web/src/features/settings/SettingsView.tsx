@@ -19,7 +19,6 @@ import {
   writeOrchestrationChatEnabled,
 } from "./orchestrationChatPreference";
 import { Button } from "@/shared/ui/button";
-import { RuntimeControlPanel } from "@/features/runtime-control/public";
 import {
   runPushNotificationTest,
   enablePushNotifications,
@@ -218,8 +217,6 @@ export default function SettingsView({
         <h2 id="settings-heading">Settings</h2>
       </div>
 
-      <RuntimeControlPanel />
-
       <div className="settings-section" data-testid="ajax-web-session-settings">
         <h3>Ajax web session</h3>
         <p className="settings-note">
@@ -275,6 +272,10 @@ export default function SettingsView({
 
         <h4 className="settings-subheading">Debug info</h4>
         <dl className="settings-debug" data-testid="dev-settings-debug">
+          <div>
+            <dt>App version</dt>
+            <dd>{appVersion}</dd>
+          </div>
           <div>
             <dt>Origin</dt>
             <dd>{origin}</dd>

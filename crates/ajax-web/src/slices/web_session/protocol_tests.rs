@@ -1,6 +1,5 @@
-use super::context_continuity::{ContextContinuity, ContextState};
 use super::protocol::{
-    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionPending, SessionSnapshot,
+    parse_client_cursor, SessionChrome, SessionEventEnvelope, SessionSnapshot,
     SESSION_PROTOCOL_VERSION,
 };
 use crate::slices::web_session::SessionServerEvent;
@@ -12,9 +11,9 @@ fn snapshot_serializes_protocol_v2_fields() {
         "composer-2.5".to_string(),
         true,
         false,
-        SessionPending::default(),
+        None,
+        None,
         SessionChrome::default(),
-        ContextContinuity::default(),
     );
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["type"], "snapshot");
@@ -23,51 +22,6 @@ fn snapshot_serializes_protocol_v2_fields() {
     assert_eq!(json["model"], "composer-2.5");
     assert_eq!(json["turnState"], "busy");
     assert_eq!(json["reset"], false);
-    assert_eq!(json["contextState"], "live");
-    assert_eq!(json["contextEpoch"], 0);
-    assert!(json.get("contextError").is_none());
-}
-
-#[test]
-fn snapshot_serializes_context_continuity_fields() {
-    let snapshot = SessionSnapshot::new(
-        7,
-        "composer-2.5".to_string(),
-        true,
-        false,
-        SessionPending::default(),
-        SessionChrome::default(),
-        ContextContinuity {
-            state: ContextState::Restored,
-            epoch: 3,
-            error: Some("resume timed out".to_string()),
-        },
-    );
-    let json = serde_json::to_value(&snapshot).unwrap();
-    assert_eq!(json["contextState"], "restored");
-    assert_eq!(json["contextEpoch"], 3);
-    assert_eq!(json["contextError"], "resume timed out");
-}
-
-#[test]
-fn snapshot_omits_context_error_when_none() {
-    let snapshot = SessionSnapshot::new(
-        0,
-        "auto".to_string(),
-        false,
-        false,
-        SessionPending::default(),
-        SessionChrome::default(),
-        ContextContinuity {
-            state: ContextState::Live,
-            epoch: 0,
-            error: None,
-        },
-    );
-    let json = serde_json::to_value(&snapshot).unwrap();
-    assert_eq!(json["contextState"], "live");
-    assert_eq!(json["contextEpoch"], 0);
-    assert!(json.get("contextError").is_none());
 }
 
 #[test]

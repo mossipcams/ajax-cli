@@ -36,7 +36,7 @@ describe("useChatSession", () => {
   });
 
   it("clears the session outbox when the task mutates", () => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       "ajax.web.session.outbox.web%2Ffix-login",
       JSON.stringify([{ text: "queued", clientMessageId: "c1" }]),
     );
@@ -61,7 +61,7 @@ describe("useChatSession", () => {
 
     act(() => result.current.onMutated());
 
-    expect(localStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
+    expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
     expect(onMutated).toHaveBeenCalledOnce();
     unmount();
   });
@@ -96,8 +96,6 @@ describe("useChatSession", () => {
         ],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("gpt-5.6-sol-medium");
@@ -127,8 +125,6 @@ describe("useChatSession", () => {
         ],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("claude-opus-5");
@@ -161,8 +157,6 @@ describe("useChatSession", () => {
         ],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
 
@@ -230,8 +224,6 @@ describe("useChatSession", () => {
         ],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("cursor-grok-4.6-high");
@@ -258,8 +250,6 @@ describe("useChatSession", () => {
         ],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("cursor-grok-4.6-xhigh");
@@ -370,8 +360,6 @@ describe("useChatSession", () => {
         sessionConfigOptions: liveOptions,
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("grok-4.6");
@@ -391,84 +379,10 @@ describe("useChatSession", () => {
         sessionConfigOptions: [{ ...liveOptions[0]!, currentValue: "gpt-5.6-sol" }],
         turnState: "idle",
         reset: false,
-        contextState: "live",
-        contextEpoch: 0,
       }),
     );
     expect(result.current.sessionModel).toBe("gpt-5.6-sol");
     expect(result.current.sessionConfigOptions?.[0]?.currentValue).toBe("gpt-5.6-sol");
-    unmount();
-  });
-
-  it("projects host context continuity into session view state", () => {
-    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
-    mockTransport(callbacks);
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({ handle: "web/fix-login", detail: null }),
-    );
-
-    act(() =>
-      callbacks[0]?.onSnapshot({
-        type: "snapshot",
-        protocolVersion: 2,
-        cursor: 0,
-        model: "auto",
-        turnState: "idle",
-        reset: false,
-        contextState: "restored",
-        contextEpoch: 3,
-      }),
-    );
-    expect(result.current.view.context).toEqual({ state: "restored", epoch: 3 });
-
-    act(() =>
-      callbacks[0]?.onSnapshot({
-        type: "snapshot",
-        protocolVersion: 2,
-        cursor: 1,
-        model: "auto",
-        turnState: "idle",
-        reset: false,
-        contextState: "unavailable",
-        contextEpoch: 3,
-        contextError: "resume timed out",
-      }),
-    );
-    expect(result.current.view.context).toEqual({
-      state: "unavailable",
-      epoch: 3,
-      error: "resume timed out",
-    });
-    unmount();
-  });
-
-  it("projects transcriptError from host snapshots into session view", () => {
-    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
-    mockTransport(callbacks);
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({ handle: "web/fix-login", detail: null }),
-    );
-
-    act(() =>
-      callbacks[0]?.onSnapshot({
-        type: "snapshot",
-        protocolVersion: 2,
-        cursor: 0,
-        model: "auto",
-        turnState: "idle",
-        reset: false,
-        contextState: "live",
-        contextEpoch: 1,
-        transcriptError: "forced append failure",
-      }),
-    );
-    expect(result.current.view.context).toEqual({
-      state: "live",
-      epoch: 1,
-      transcriptError: "forced append failure",
-    });
     unmount();
   });
 });

@@ -24,28 +24,6 @@ function optionalTokenField(
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-const CONTEXT_STATES = new Set(["live", "restored", "unavailable"]);
-
-function parseContextState(value: unknown): "live" | "restored" | "unavailable" | null {
-  return typeof value === "string" && CONTEXT_STATES.has(value)
-    ? (value as "live" | "restored" | "unavailable")
-    : null;
-}
-
-function parseContextEpoch(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function parseContextError(value: unknown): string | undefined | null {
-  if (value === undefined || value === null) return undefined;
-  return typeof value === "string" ? value : null;
-}
-
-function parseTranscriptError(value: unknown): string | undefined | null {
-  if (value === undefined || value === null) return undefined;
-  return typeof value === "string" ? value : null;
-}
-
 function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent | null {
   if (typeof payload.type !== "string") return null;
   switch (payload.type) {
@@ -264,13 +242,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
       const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
-      const contextState = parseContextState(payload.contextState);
-      const contextEpoch = parseContextEpoch(payload.contextEpoch);
-      if (!contextState || contextEpoch === null) return null;
-      const contextError = parseContextError(payload.contextError);
-      if (contextError === null) return null;
-      const transcriptError = parseTranscriptError(payload.transcriptError);
-      if (transcriptError === null) return null;
       return {
         kind: "snapshot",
         snapshot: {
@@ -280,16 +251,12 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           model: payload.model,
           turnState: payload.turnState,
           reset: payload.reset,
-          contextState,
-          contextEpoch,
           ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
           ...(availableCommands !== undefined ? { availableCommands } : {}),
           ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),
           ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
-          ...(contextError !== undefined ? { contextError } : {}),
-          ...(transcriptError !== undefined ? { transcriptError } : {}),
         },
       };
     }

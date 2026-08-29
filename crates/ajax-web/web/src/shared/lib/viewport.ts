@@ -1,7 +1,4 @@
-import {
-  layoutViewportShrinksWithKeyboard,
-  SESSION_VIEWPORT_ATTR,
-} from "@/shared/lib/sessionViewport";
+import { SESSION_VIEWPORT_ATTR } from "@/shared/lib/sessionViewport";
 
 /**
  * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
@@ -93,10 +90,6 @@ export function initViewport(): () => void {
   let baselineHeight = vv.height;
   let baselineWidth = window.innerWidth;
   let keyboardOpen = false;
-  /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
-  let layoutShrinksWithKeyboard = false;
-  /** True while pointer/touch is down inside the session composer (#1113). */
-  let sessionComposerPointerDown = false;
 
   const setAppHeight = (height: number) => {
     root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
@@ -178,62 +171,12 @@ export function initViewport(): () => void {
     }
   };
 
-  /** Deferred stale-viewport dismiss after composer pointerup (#1113). */
-  let composerDismissTimer: ReturnType<typeof setTimeout> | undefined;
-  const cancelComposerDismiss = () => {
-    if (composerDismissTimer !== undefined) {
-      clearTimeout(composerDismissTimer);
-      composerDismissTimer = undefined;
-    }
-  };
-
   const dismissKeyboardOpen = () => {
     if (!keyboardOpen) return;
     keyboardOpen = false;
-    layoutShrinksWithKeyboard = false;
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     blurSessionComposerIfFocused();
     resetDocumentScroll();
-  };
-
-  const isInsideSessionComposer = (target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) return false;
-    return target.closest('[data-testid="session-composer"]') !== null;
-  };
-
-  const onSessionComposerPointerDown = (event: Event) => {
-    if (isInsideSessionComposer(event.target)) {
-      sessionComposerPointerDown = true;
-    }
-  };
-
-  const dismissStaleVisualViewportAfterComposerGesture = () => {
-    const layoutHeight = window.innerHeight;
-    const visualHeight = vv.height;
-    if (
-      !keyboardOpen ||
-      !layoutShrinksWithKeyboard ||
-      sessionComposerPointerDown ||
-      visualHeight < MIN_USABLE_HEIGHT_PX ||
-      layoutHeight - visualHeight <= KEYBOARD_CLOSE_DELTA_PX
-    ) {
-      return false;
-    }
-    cancelCloseSettle();
-    dismissKeyboardOpen();
-    restoreGeometryAfterKeyboardDismiss();
-    return true;
-  };
-
-  const onSessionComposerPointerUp = () => {
-    sessionComposerPointerDown = false;
-    // iOS synthetic click fires after pointerup; defer blur/relayout so Send/Attach
-    // can land (#1113).
-    cancelComposerDismiss();
-    composerDismissTimer = setTimeout(() => {
-      composerDismissTimer = undefined;
-      dismissStaleVisualViewportAfterComposerGesture();
-    }, 0);
   };
 
   const isFormControlFocused = () => {
@@ -275,10 +218,6 @@ export function initViewport(): () => void {
       }
       cancelCloseSettle();
       keyboardOpen = true;
-      layoutShrinksWithKeyboard = layoutViewportShrinksWithKeyboard(
-        window.innerHeight,
-        current,
-      );
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
@@ -380,12 +319,6 @@ export function initViewport(): () => void {
 
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
-  document.addEventListener("pointerdown", onSessionComposerPointerDown, true);
-  document.addEventListener("pointerup", onSessionComposerPointerUp, true);
-  document.addEventListener("pointercancel", onSessionComposerPointerUp, true);
-  document.addEventListener("touchstart", onSessionComposerPointerDown, true);
-  document.addEventListener("touchend", onSessionComposerPointerUp, true);
-  document.addEventListener("touchcancel", onSessionComposerPointerUp, true);
   document.addEventListener("focusout", onSessionComposerFocusOut, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pageshow", onPageShow);
@@ -397,15 +330,8 @@ export function initViewport(): () => void {
 
   return () => {
     cancelCloseSettle();
-    cancelComposerDismiss();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
-    document.removeEventListener("pointerdown", onSessionComposerPointerDown, true);
-    document.removeEventListener("pointerup", onSessionComposerPointerUp, true);
-    document.removeEventListener("pointercancel", onSessionComposerPointerUp, true);
-    document.removeEventListener("touchstart", onSessionComposerPointerDown, true);
-    document.removeEventListener("touchend", onSessionComposerPointerUp, true);
-    document.removeEventListener("touchcancel", onSessionComposerPointerUp, true);
     document.removeEventListener("focusout", onSessionComposerFocusOut, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", onPageShow);

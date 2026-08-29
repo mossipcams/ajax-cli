@@ -1,6 +1,6 @@
 //! Spawn-level ACP reliability: optional live Cursor smoke.
 
-use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient, SpawnOutcome};
+use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::adapters::{
@@ -40,30 +40,44 @@ fn cursor_agent_present() -> bool {
         .unwrap_or(false)
 }
 
-fn bridge_acp_present(agent: AgentClient) -> bool {
-    let launch = acp_launch_for_agent(agent).expect("mapped harness");
-    let program = launch.candidates[0].0;
-    Command::new(program)
-        .arg("--help")
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 fn cursor_launch() -> ajax_core::adapters::AcpLaunch {
     acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp launch")
 }
 
-fn live_smoke_gated() -> bool {
-    std::env::var("AJAX_ACP_SMOKE").ok().as_deref() == Some("1")
+#[test]
+fn live_cursor_initialize_advertises_load_session() {
+    if !cursor_agent_present() {
+        eprintln!("skip: agent not on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("live-init");
+    let (client, report) =
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn live agent acp");
+    assert!(
+        report.load_session_advertised,
+        "initialize must advertise loadSession on current Cursor"
+    );
+    assert!(!client.session_id().is_empty());
+    drop(client);
+
+    let _ = fs::remove_dir_all(dir);
 }
 
-/// Spawn, complete one prompt turn, drop the child, respawn with session/load.
-fn live_prompt_and_session_load(agent: AgentClient, label: &str) {
-    let dir = scratch_dir(label);
+#[test]
+fn live_cursor_prompt_and_session_load() {
+    if std::env::var("AJAX_ACP_SMOKE").ok().as_deref() != Some("1") {
+        eprintln!("skip: AJAX_ACP_SMOKE not set");
+        return;
+    }
+    if !cursor_agent_present() {
+        eprintln!("skip: agent not on PATH");
+        return;
+    }
 
+    let dir = scratch_dir("live-smoke");
     let (mut client, _report) =
-        AcpStdioClient::spawn(agent, &dir, None, None).expect("spawn live agent acp");
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn live agent acp");
     let session_id = client.session_id().to_string();
 
     client
@@ -106,94 +120,13 @@ fn live_prompt_and_session_load(agent: AgentClient, label: &str) {
 
     drop(client);
 
-    let (client2, report2) = AcpStdioClient::spawn(agent, &dir, None, Some(&session_id))
-        .expect("respawn with session/load");
-    assert_eq!(
-        report2.outcome,
-        SpawnOutcome::Restored {
-            session_id: session_id.clone()
-        },
-        "session/load should report Restored"
-    );
+    let (client2, report2) =
+        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
+            .expect("respawn with session/load");
+    assert!(report2.resumed, "session/load should report resumed");
     drop(client2);
 
     let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn live_cursor_initialize_advertises_load_session() {
-    if !cursor_agent_present() {
-        eprintln!("skip: agent not on PATH");
-        return;
-    }
-
-    let dir = scratch_dir("live-init");
-    let (client, report) =
-        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn live agent acp");
-    assert!(
-        report.load_session_advertised,
-        "initialize must advertise loadSession on current Cursor"
-    );
-    assert!(!client.session_id().is_empty());
-    drop(client);
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn live_cursor_prompt_and_session_load() {
-    if !live_smoke_gated() {
-        eprintln!("skip: AJAX_ACP_SMOKE not set");
-        return;
-    }
-    if !cursor_agent_present() {
-        eprintln!("skip: agent not on PATH");
-        return;
-    }
-
-    live_prompt_and_session_load(AgentClient::Cursor, "live-smoke-cursor");
-}
-
-#[test]
-fn live_codex_prompt_and_session_load() {
-    if !live_smoke_gated() {
-        eprintln!("skip: AJAX_ACP_SMOKE not set");
-        return;
-    }
-    if !bridge_acp_present(AgentClient::Codex) {
-        eprintln!("skip: codex-acp not on PATH");
-        return;
-    }
-
-    live_prompt_and_session_load(AgentClient::Codex, "live-smoke-codex");
-}
-
-#[test]
-fn live_claude_prompt_and_session_load() {
-    if !live_smoke_gated() {
-        eprintln!("skip: AJAX_ACP_SMOKE not set");
-        return;
-    }
-    if !bridge_acp_present(AgentClient::Claude) {
-        eprintln!("skip: claude-agent-acp not on PATH");
-        return;
-    }
-
-    live_prompt_and_session_load(AgentClient::Claude, "live-smoke-claude");
-}
-
-#[test]
-fn live_pi_prompt_and_session_load() {
-    if !live_smoke_gated() {
-        eprintln!("skip: AJAX_ACP_SMOKE not set");
-        return;
-    }
-    if !bridge_acp_present(AgentClient::Pi) {
-        eprintln!("skip: pi-acp not on PATH");
-        return;
-    }
-
-    live_prompt_and_session_load(AgentClient::Pi, "live-smoke-pi");
 }
 
 // Regression for #979: parameterized picker applies Grok High as split options, not Fast.
@@ -481,23 +414,4 @@ fn live_cursor_spawn_product_scope_pins_issue_1079() {
         }
         let _ = fs::remove_dir_all(dir);
     }
-}
-
-#[test]
-fn acp_launch_admits_only_durable_restore_capable_harnesses() {
-    use ajax_core::adapters::{acp_admits_orchestration_chat, acp_launch_for_agent};
-
-    for client in [
-        AgentClient::Cursor,
-        AgentClient::Codex,
-        AgentClient::Claude,
-        AgentClient::Pi,
-    ] {
-        let launch = acp_launch_for_agent(client).expect("mapped harness");
-        assert!(launch.requires_durable_restore);
-        assert!(launch.supports_durable_restore);
-        assert!(acp_admits_orchestration_chat(client));
-    }
-
-    assert!(!acp_admits_orchestration_chat(AgentClient::Other));
 }

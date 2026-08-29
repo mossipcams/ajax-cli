@@ -46,7 +46,7 @@ export function parseRoute(hash: string): Route {
   const value = qIndex >= 0 ? raw.slice(0, qIndex) : raw;
   const query = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
 
-  if (value === "#/settings" || value === "#/control") return { kind: "settings" };
+  if (value === "#/settings") return { kind: "settings" };
   if (value === "#/session") return { kind: "session" };
   if (value.startsWith(SESSION_PREFIX)) {
     const handle = safeDecode(value.slice(SESSION_PREFIX.length));
@@ -86,11 +86,6 @@ export function dashboardHash(): string {
 
 export function settingsHash(): string {
   return "#/settings";
-}
-
-/** @deprecated Legacy `#/control` hash; use {@link settingsHash}. */
-export function controlHash(): string {
-  return settingsHash();
 }
 
 export function projectHash(project: string): string {

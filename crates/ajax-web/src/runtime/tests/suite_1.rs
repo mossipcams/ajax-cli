@@ -28,8 +28,6 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("DELETE", "/api/push/subscribe"),
         ("POST", "/api/push/test"),
         ("POST", "/api/server/restart"),
-        ("POST", "/api/server/update"),
-        ("GET", "/api/server/runtime"),
         ("POST", "/api/server/test-in-stable"),
         ("GET", "/api/dev-deploy"),
         ("POST", "/api/dev-deploy"),

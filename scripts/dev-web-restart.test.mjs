@@ -77,38 +77,3 @@ test("build and install complete before stop_tmux_session", () => {
   const stopBlock = script.indexOf("stop_tmux_session");
   assert.ok(installBlock >= 0 && stopBlock > installBlock);
 });
-
-test("restart-only skips fetch, build, and install", () => {
-  const restartOnlyBlock = script.indexOf('if [[ "$RESTART_ONLY" -eq 1 ]]; then');
-  const fetchPatch = script.indexOf('runtime_status_patch "fetching"');
-  assert.ok(restartOnlyBlock >= 0);
-  assert.ok(
-    restartOnlyBlock < fetchPatch,
-    "restart-only branch must precede fetch/build path",
-  );
-  assert.match(script, /Restart-only: skipping fetch\/build\/install/);
-  assert.doesNotMatch(
-    script.slice(restartOnlyBlock, script.indexOf("elif [[ -n \"$WORKTREE\" ]]")),
-    /rebuild_web/,
-  );
-});
-
-test("tmux targeting uses exact ajax-web profile session only", () => {
-  assert.match(script, /TMUX_SESSION="ajax-web-\$\{PROFILE\}"/);
-  assert.match(script, /tmux kill-session -t "\$TMUX_SESSION"/);
-  assert.match(script, /tmux new-session -d -s "\$TMUX_SESSION"/);
-  assert.doesNotMatch(script, /ajax-web-task/);
-  assert.doesNotMatch(script, /tmux ls/);
-});
-
-test("failed deploy records rolled_back in durable status", () => {
-  assert.match(script, /runtime_status_patch "rolled_back" "rolled_back" "true"/);
-});
-
-test("runtime_status_log writes JSONL only when AJAX_RUNTIME_LOG_FILE is set", () => {
-  assert.match(
-    script,
-    /runtime_status_log\(\) \{[\s\S]*?\[\[ -n "\$line" && -n "\$\{AJAX_RUNTIME_LOG_FILE:-\}" \]\]/,
-  );
-  assert.match(script, /runtime_status_patch\(\) \{[\s\S]*?\[\[ -n "\$STATUS_FILE" \]\]/);
-});

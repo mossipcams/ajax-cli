@@ -18,7 +18,6 @@ import {
 } from "./commands";
 import { clearSessionCursor, frameFits, readOutbox, writeOutbox } from "./outbox";
 import { parseServerFrame } from "./parse";
-import { hasPromptContent } from "@/shared/lib/promptContent";
 
 export function connectWebSessionTransport(
   handle: string,
@@ -144,7 +143,7 @@ export function connectWebSessionTransport(
   return {
     sendPrompt(text, contentBlocks = []) {
       const trimmed = text.trim();
-      if (!hasPromptContent(trimmed, contentBlocks)) return "";
+      if (!trimmed) return "";
       const prompt: PendingPrompt = {
         text: trimmed,
         clientMessageId: newPromptId(),
@@ -195,12 +194,6 @@ export function connectWebSessionTransport(
         action,
         ...(action === "accept" && content ? { content } : {}),
       });
-    },
-    retryRestore() {
-      sendJson({ type: "retry_restore" });
-    },
-    startNewContext() {
-      sendJson({ type: "start_new_context" });
     },
     dispose() {
       disposed = true;

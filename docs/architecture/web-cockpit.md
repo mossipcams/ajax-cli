@@ -221,11 +221,9 @@ field is refused (`unsupported_capability`). Same-harness Switch is refused;
 connected model, effort, and Fast changes use the composer controls. Cross-harness
 Switch clears the prior harness model pin, resets backend context on the live slot
 (cancel in-flight work, shut down the old ACP child, spawn the new harness with
-empty context via `session/new`, advance `contextEpoch`), and keeps the
-TaskSession slot and JSONL transcript; with no live slot, persist `agent` with
-`session_model: None` and clear the stored resume id so the next attach uses
-`session/new`. Switch discards the previous ACP conversation; Ajax does not
-restore, retry, or preserve model context across harness changes. Switch is refused for a task that was launched
+empty context), and keeps the TaskSession slot and JSONL transcript; with no live
+slot, persist `agent` with `session_model: None` and clear the stored resume id so
+the next attach uses `session/new`. Switch is refused for a task that was launched
 interactively, because that task's agent is live in its tmux pane and the registry
 must not name a harness that is not the running process.
 
@@ -262,17 +260,13 @@ advertised. The file picker attaches `image` blocks when `image` is advertised
 and embedded `resource` bodies when `embeddedContext` is advertised; it does
 not synthesize `resource_link` stubs for local files. `resource_link` remains
 valid on the host wire for real URIs supplied by agents or other surfaces.
-Submitting requires trimmed text or at least one content block, so an attached
-photo may be sent without a caption, and sends
-`{ type: "prompt", text, clientMessageId, contentBlocks? }`. On attach (file
-picker or paste), the browser downscales/compresses photos so staged image blocks
-already fit the 256 KiB WebSocket cap with headroom for typed caption text; the
-attachment chip shows **Preparing…** until compression finishes, and Send stays
-disabled while any attachment is preparing. Send then uses the synchronous fit
-path — it does not compress again on the send tap. If compression or decode
-fails, the attachment stays staged and the chip shows a specific error (not the
-generic “shorten the message” prompt). The host omits an empty ACP text block, forwards
-the attachment blocks, and keeps JSONL to text plus attachment names only.
+Submitting still requires typed text and sends
+`{ type: "prompt", text, clientMessageId, contentBlocks? }`; the browser
+downscales/compresses attached photos so the JSON frame fits the 256 KiB WebSocket
+cap with headroom for typed text before send. If compression cannot fit the frame,
+the composer keeps the attachment and surfaces a specific error (not the generic
+“shorten the message” prompt). The host forwards a full ACP `ContentBlock` array
+and keeps JSONL to text plus attachment names only.
 
 **Non-text output (ACP).** Agent/user/thought message updates and tool-call content may
 carry `image`, `resource_link`, or embedded `resource` blocks. The host maps them into
@@ -311,20 +305,8 @@ reports a warning. New Task and idle catalog selection still use only
 
 **Harness Switch (MVP).** Cross-harness Switch in task details sends only the target
 harness (no model picker). It clears the prior harness model pin, resets ACP
-context with a fresh `session/new` boundary, and keeps the transcript for
-operator visibility. Same-harness model changes use the connected
+context, and keeps the transcript. Same-harness model changes use the connected
 composer controls or legacy `set_model`, not Switch.
-
-**ACP context continuity.** Snapshots expose required `contextState`,
-`contextEpoch`, and optional `contextError` / `transcriptError`. The browser
-must gate Send from host continuity state, not from replayed transcript rows
-alone. When restore fails, the host projects `unavailable` and refuses prompts
-instead of silently calling `session/new` behind the same session identity.
-Visible history is not model continuity. Live process-replacement smokes
-(2026-08-27): Codex passed; Cursor, Claude, and Pi failed external restore on
-this host — admission flags (`supports_durable_restore`) stay true; Ajax
-fail-closes rather than faking restore. See
-[`web-session-behavior.md`](web-session-behavior.md#acp-context-continuity).
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. Prompt
@@ -771,9 +753,8 @@ before accepting the browser-session cookie. Cloudflare Access narrows the
 supported external exposure model; it does not make direct origin bypass safe,
 so operators must still protect the origin with Cloudflare Tunnel, firewalling,
 or equivalent origin access controls. Live-control API routes such as
-`/api/cockpit`, `/api/version`, `/api/server/runtime`, `/api/server/restart`,
-`/api/server/update`, `/api/operations`, `/api/tasks`, and the task terminal
-WebSocket route require the server-issued,
+`/api/cockpit`, `/api/version`, `/api/server/restart`, `/api/operations`,
+`/api/tasks`, and the task terminal WebSocket route require the server-issued,
 HttpOnly, Secure, same-origin browser-session cookie. The HTML shell sets the
 cookie on normal loads, and `POST /api/session` exists only to renew or
 bootstrap that same cookie when a live browser shell receives a `401` from a
@@ -807,59 +788,6 @@ Stable and dev runtime profiles remain separated by the host-native
 state database and default web port, while dev uses the development state
 database and dev web port. The browser shell must not merge profile state in
 browser storage.
-
-### Runtime control (Settings)
-
-The **Settings** page is the operator surface for the currently
-installed Web Cockpit, including server status, restart/update lifecycle
-actions, and reconnect handling. It is separate from Settings **Test in Stable**
-and task details **Test in Dev**; those development workflows keep their
-existing routes, labels, and placement within Settings and task details.
-
-| Method | Path | Role |
-| --- | --- | --- |
-| GET | `/api/server/runtime` | Status, uptime, update availability, durable operation + logs |
-| POST | `/api/server/restart` | Restart-only the live `ajax-web-<profile>` listener |
-| POST | `/api/server/update` | Deploy `origin/main` into stable using safe-deploy mechanics |
-| POST | `/api/server/test-in-stable` | Unchanged Settings development workflow |
-
-`GET /api/health` stays a public reachability probe (`{ok:true}`). Lifecycle
-truth lives on `/api/server/runtime` so the browser can reconnect after cutover
-and show `succeeded`, `failed`, or `rolled_back` from disk instead of only a
-timeout.
-
-Durable state is written under `<host-clone>/.ajax-dev-web/` as
-`runtime-control.json` and a bounded, redacted `runtime-control.log.jsonl`.
-The restart/update script patches phases before the listener dies; the new
-process reads the file on boot.
-
-**Restart Ajax** (`POST /api/server/restart`) must not fetch, build, install,
-or mutate git worktrees. It spawns `scripts/runtime-restart.sh`, which re-execs
-into tmux session `ajax-runtime-restart` and runs
-`dev-web-restart.sh --restart-only --profile <current> --port <current>`.
-That script starts the currently installed binary for the profile, targets
-exact tmux session `ajax-web-<profile>` only, and refuses unmanaged listeners.
-
-**Update Ajax** (`POST /api/server/update`) reuses Test in Stable mechanics:
-isolated main worktree, build before cutover, exact `ajax-web-stable` targeting,
-health validation, and restore of the previous `~/.cargo/bin/ajax-cli` on
-failure. It always deploys **stable** from `origin/main`. The endpoint is
-available on dev and stable profiles (like Settings **Test in Stable**): from
-dev it returns `{ok:true,restarting:false}` because the live dev listener stays
-up while stable rebuilds remotely; from stable it returns
-`{ok:true,restarting:true}` so Settings waits for cutover. It spawns
-`scripts/runtime-control.sh` into tmux session `ajax-runtime-update` and refuses
-when `ajax-test-in-stable` or an in-flight runtime update is already running.
-
-Neither restart nor update may kill, list, or rewrite task tmux sessions,
-worktrees, branches, agent processes, or registry rows. Process matching is
-limited to exact tmux session names for the web control plane and its detached
-launcher sessions.
-
-Frontend: `features/runtime-control/` with `public.ts`, embedded in `#/settings`,
-Settings design tokens, 44px targets, safe-area insets, reconnect overlay while
-health is down, and two-tap confirm on Restart and Update. Legacy `#/control`
-hashes redirect to `#/settings`.
 
 ### Test in Stable process model
 

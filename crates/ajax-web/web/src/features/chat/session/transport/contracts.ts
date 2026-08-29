@@ -83,8 +83,6 @@ export type WebSessionServerEvent =
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
 
-export type ContextState = "live" | "restored" | "unavailable";
-
 export interface SessionSnapshot {
   type: "snapshot";
   protocolVersion: number;
@@ -96,10 +94,6 @@ export interface SessionSnapshot {
   sessionTitle?: string;
   turnState: "idle" | "busy";
   reset: boolean;
-  contextState: ContextState;
-  contextEpoch: number;
-  contextError?: string;
-  transcriptError?: string;
   pendingPermission?: {
     requestId: string;
     title?: string | null;
@@ -138,8 +132,6 @@ export interface WebSessionTransport {
     action: "accept" | "decline" | "cancel",
     content?: Record<string, string | number | boolean | string[]>,
   ): void;
-  retryRestore(): void;
-  startNewContext(): void;
   dispose(): void;
 }
 

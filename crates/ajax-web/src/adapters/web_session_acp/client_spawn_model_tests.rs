@@ -1,6 +1,6 @@
 //! Spawn and in-band model apply integration tests for [`super::client`].
 
-use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient, SpawnOutcome};
+use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::operator_pin_satisfied;
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::adapters::{
@@ -10,7 +10,7 @@ use ajax_core::adapters::{
 use ajax_core::models::AgentClient;
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -29,24 +29,6 @@ fn scratch_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn with_fake_acp_state_dir<F, R>(dir: &PathBuf, f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    std::env::set_var("FAKE_ACP_STATE_DIR", dir);
-    let result = f();
-    std::env::remove_var("FAKE_ACP_STATE_DIR");
-    result
-}
-
-fn persist_fake_session(dir: &Path, session_id: &str) {
-    fs::write(
-        dir.join(".fake-acp-sessions"),
-        format!(r#"["{session_id}"]"#),
-    )
-    .unwrap();
 }
 fn cursor_launch() -> ajax_core::adapters::AcpLaunch {
     ajax_core::adapters::acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp launch")
@@ -273,51 +255,47 @@ fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let dir = scratch_dir("model-cursor-recover-resume-979");
     let script = fake_acp_fixture();
     let catalog_id = "cursor-grok-4.6-high";
-    let session_id = "fake-sess-1";
     let _mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
 
-    with_fake_acp_state_dir(&dir, || {
-        persist_fake_session(&dir, session_id);
-        with_test_acp_program(&script, || {
-            with_test_acp_extra_args(
-                &[
-                    "--resume",
-                    "--cli-default-model",
-                    "--cursor-models",
-                    "--ignore-spawn-model-once",
-                    "--refuse-in-band-once",
-                ],
-                || {
-                    let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
-                        AgentClient::Cursor,
-                        &dir,
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &[
+                "--resume",
+                "--cli-default-model",
+                "--cursor-models",
+                "--ignore-spawn-model-once",
+                "--refuse-in-band-once",
+            ],
+            || {
+                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                    AgentClient::Cursor,
+                    &dir,
+                    catalog_id,
+                    Some("fake-sess-1"),
+                )
+                .expect("spawn");
+                assert!(
+                    report.model_apply_error.is_none(),
+                    "recovery must satisfy {catalog_id}, not Composer Fast: {:?}",
+                    report.model_apply_error
+                );
+                assert!(
+                    super::config_options::pin_satisfied(
+                        report.config_options.as_deref(),
                         catalog_id,
-                        Some(session_id),
-                    )
-                    .expect("spawn");
-                    assert!(
-                        report.model_apply_error.is_none(),
-                        "recovery must satisfy {catalog_id}, not Composer Fast: {:?}",
-                        report.model_apply_error
-                    );
-                    assert!(
-                        super::config_options::pin_satisfied(
-                            report.config_options.as_deref(),
-                            catalog_id,
-                            true
-                        ),
-                        "recovery must satisfy {catalog_id}, applied {:?}",
-                        report.applied_model
-                    );
-                    assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
-                    assert_ne!(report.applied_model, "composer-2.5");
-                    assert!(
-                        matches!(report.outcome, SpawnOutcome::Created),
-                        "pin recovery must respawn with session/new after resume left Composer Fast"
-                    );
-                },
-            );
-        });
+                        true
+                    ),
+                    "recovery must satisfy {catalog_id}, applied {:?}",
+                    report.applied_model
+                );
+                assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
+                assert_ne!(report.applied_model, "composer-2.5");
+                assert!(
+                    !report.resumed,
+                    "recovery must respawn with session/new, not resume/load"
+                );
+            },
+        );
     });
 
     let _ = fs::remove_dir_all(dir);

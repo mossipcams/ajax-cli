@@ -166,6 +166,10 @@ pub(crate) fn harness_switch_note(item_id: String) -> SessionServerEvent {
     }
 }
 
+pub(crate) fn context_reset_needed(resumed: bool, log: &TranscriptLog) -> bool {
+    !resumed && !log.events.is_empty()
+}
+
 /// True when the log already ends with this note. Each restart would otherwise
 /// stack another identical copy on the transcript.
 pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> bool {

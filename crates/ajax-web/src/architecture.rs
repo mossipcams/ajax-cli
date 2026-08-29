@@ -117,14 +117,13 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 11] = [
+    const SLICES: [&str; 10] = [
         "cockpit",
         "dev_deploy",
         "diff_review",
         "install",
         "operate",
         "push",
-        "runtime_control",
         "session_models",
         "stt",
         "terminal",
@@ -379,7 +378,6 @@ mod tests {
                 PathBuf::from("web/src/styles/chat.css"),
                 PathBuf::from("web/src/styles/diff-review.css"),
                 PathBuf::from("web/src/styles/foundation.css"),
-                PathBuf::from("web/src/styles/runtime-control.css"),
                 PathBuf::from("web/src/styles/settings.css"),
                 PathBuf::from("web/src/styles/task/detail.css"),
                 PathBuf::from("web/src/styles/task/list.css"),

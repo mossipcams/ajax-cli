@@ -48,14 +48,12 @@ pub fn build_prompt_payload(
     caps: &PromptCapabilityDescriptor,
 ) -> Result<PromptPayload, String> {
     let trimmed = text.trim();
-    if trimmed.is_empty() && wire_blocks.is_empty() {
-        return Err("prompt text or content is required".to_string());
+    if trimmed.is_empty() {
+        return Err("prompt text is required".to_string());
     }
     reject_disallowed_wire_blocks(wire_blocks, caps)?;
     let mut blocks = Vec::with_capacity(wire_blocks.len() + 1);
-    if !trimmed.is_empty() {
-        blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
-    }
+    blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
     for block in wire_blocks {
         blocks.push(wire_to_content_block(block, caps)?);
     }
@@ -194,12 +192,7 @@ fn transcript_summary(text: &str, wire_blocks: &[PromptContentBlockWire]) -> Str
     if labels.is_empty() {
         return text.to_string();
     }
-    let attachments = format!("[attached: {}]", labels.join(", "));
-    if text.is_empty() {
-        attachments
-    } else {
-        format!("{text}\n\n{attachments}")
-    }
+    format!("{text}\n\n[attached: {}]", labels.join(", "))
 }
 
 fn block_label(block: &PromptContentBlockWire) -> Option<String> {
