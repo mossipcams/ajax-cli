@@ -4,20 +4,10 @@
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
     apply_steps_needing_send, build_set_config_request, is_unspecified_model,
-    model_config_advertised, pin_satisfied, read_model_applied, replace_config_options,
-    step_matches_current, sync_session_result_config_options, validate_config_change,
-    ConfigApplyStep,
+    map_pin_to_apply_steps, model_config_advertised, pin_satisfied, read_model_applied,
+    replace_config_options, step_matches_current, sync_session_result_config_options,
+    validate_config_change, ConfigApplyStep,
 };
-
-/// Map an operator desired pin to advertised in-band apply steps (model + effort + fast).
-/// Cursor reasoning vs effort encoding lives only here ([#1010](https://github.com/mossipcams/ajax-cli/issues/1010)).
-pub fn desired_pin_to_apply_steps(
-    options: &[SessionConfigOption],
-    desired: &str,
-    model_pins_at_spawn: bool,
-) -> Result<Vec<ConfigApplyStep>, String> {
-    super::config_options::map_pin_to_apply_steps(options, desired, model_pins_at_spawn)
-}
 use agent_client_protocol::schema::v1::SessionConfigOptionValue;
 use agent_client_protocol::schema::v1::{SessionConfigOption, SetSessionConfigOptionResponse};
 use agent_client_protocol::{Agent, ConnectionTo};
@@ -177,7 +167,7 @@ pub async fn apply_model_pin(
     if is_unspecified_model(desired_model) {
         if model_pins_at_spawn && !pin_satisfied(stored.as_deref(), "", model_pins_at_spawn) {
             if model_config_advertised(stored.as_deref()) {
-                match desired_pin_to_apply_steps(
+                match map_pin_to_apply_steps(
                     stored.as_deref().unwrap_or(&[]),
                     "",
                     model_pins_at_spawn,
@@ -251,7 +241,7 @@ pub async fn apply_model_pin(
     }
 
     let options = stored.as_deref().unwrap_or(&[]);
-    let steps = match desired_pin_to_apply_steps(options, raw, model_pins_at_spawn) {
+    let steps = match map_pin_to_apply_steps(options, raw, model_pins_at_spawn) {
         Ok(steps) => steps,
         Err(error) => {
             return ApplyModelOutcome {

@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    models::observations::{GitStatus, LiveObservation, LiveStatusKind},
+    models::{GitStatus, LiveObservation, LiveStatusKind},
     registry::{Registry, RegistryError},
 };
 

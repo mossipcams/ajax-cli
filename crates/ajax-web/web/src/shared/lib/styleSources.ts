@@ -36,12 +36,11 @@ export const BASELINE = {
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged).
    * Re-measured after runtime control panel CSS (Settings server section).
-   * Re-measured after 2-column bottom nav (Control merged into Settings).
-   * Re-measured after cockpit chrome CSS (task list / layout) (#1108). */
-  sourceStylesCssBytes: 111_276,
-  builtAppCssBytes: 97_007,
-  builtAppCssGzipBytes: 16_977,
-  classSelectorLines: 625,
+ * Re-measured after 2-column bottom nav (Control merged into Settings). */
+  sourceStylesCssBytes: 110_918,
+  builtAppCssBytes: 96_857,
+  builtAppCssGzipBytes: 16_942,
+  classSelectorLines: 624,
   hasSelectors: 18,
 } as const;
 

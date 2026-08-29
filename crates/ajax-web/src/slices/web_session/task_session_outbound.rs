@@ -12,18 +12,18 @@ pub(super) fn attach_snapshot(
     state.pump();
     let (mut snapshot, replayed) = build_attach(
         &state.log,
-        state.acp.applied_model.clone(),
+        state.applied_model.clone(),
         state.busy(),
         client_cursor,
         SessionChrome {
-            session_config_options: state.acp.session_config_options.clone(),
-            available_commands: state.acp.session_available_commands.clone(),
-            prompt_capabilities: state.acp.session_prompt_capabilities.clone(),
-            session_title: state.acp.session_title.clone(),
+            session_config_options: state.session_config_options.clone(),
+            available_commands: state.session_available_commands.clone(),
+            prompt_capabilities: state.session_prompt_capabilities.clone(),
+            session_title: state.session_title.clone(),
         },
     );
     apply_continuity(&mut snapshot, &state.context_continuity);
-    snapshot.transcript_error = state.evidence.transcript_durability_fault.clone();
+    snapshot.transcript_error = state.transcript_durability_fault.clone();
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -44,39 +44,24 @@ pub(super) fn collect_outbound(
         cursor
     };
     let snapshot = if generation_changed {
-        Some(snapshot(state, state.acp.applied_model.clone(), true, None))
-    } else if let Some(model) = state.acp.pending_model_snapshot.take() {
-        let config = state.acp.pending_config_snapshot.take();
-        let _ = state.acp.pending_commands_snapshot.take();
-        let _ = state.acp.pending_capabilities_snapshot.take();
-        state.acp.pending_title_snapshot = false;
+        Some(snapshot(state, state.applied_model.clone(), true, None))
+    } else if let Some(model) = state.pending_model_snapshot.take() {
+        let config = state.pending_config_snapshot.take();
+        let _ = state.pending_commands_snapshot.take();
+        let _ = state.pending_capabilities_snapshot.take();
+        state.pending_title_snapshot = false;
         Some(snapshot(state, model, false, config))
-    } else if state.evidence.pending_transcript_error_snapshot {
-        state.evidence.pending_transcript_error_snapshot = false;
-        Some(snapshot(
-            state,
-            state.acp.applied_model.clone(),
-            false,
-            None,
-        ))
-    } else if state.evidence.pending_activity_report_error_snapshot {
-        state.evidence.pending_activity_report_error_snapshot = false;
-        let mut snap = snapshot(state, state.acp.applied_model.clone(), false, None);
-        snap.transcript_error = state.evidence.activity_report_fault.clone();
-        Some(snap)
-    } else if state.acp.pending_title_snapshot
-        || state.acp.pending_commands_snapshot.is_some()
-        || state.acp.pending_capabilities_snapshot.is_some()
+    } else if state.pending_transcript_error_snapshot {
+        state.pending_transcript_error_snapshot = false;
+        Some(snapshot(state, state.applied_model.clone(), false, None))
+    } else if state.pending_title_snapshot
+        || state.pending_commands_snapshot.is_some()
+        || state.pending_capabilities_snapshot.is_some()
     {
-        let _ = state.acp.pending_commands_snapshot.take();
-        let _ = state.acp.pending_capabilities_snapshot.take();
-        state.acp.pending_title_snapshot = false;
-        Some(snapshot(
-            state,
-            state.acp.applied_model.clone(),
-            false,
-            None,
-        ))
+        let _ = state.pending_commands_snapshot.take();
+        let _ = state.pending_capabilities_snapshot.take();
+        state.pending_title_snapshot = false;
+        Some(snapshot(state, state.applied_model.clone(), false, None))
     } else {
         None
     };
@@ -106,14 +91,14 @@ fn snapshot(
             elicitation: pending_elicitation(&state.log),
         },
         SessionChrome {
-            session_config_options: config.or_else(|| state.acp.session_config_options.clone()),
-            available_commands: state.acp.session_available_commands.clone(),
-            prompt_capabilities: state.acp.session_prompt_capabilities.clone(),
-            session_title: state.acp.session_title.clone(),
+            session_config_options: config.or_else(|| state.session_config_options.clone()),
+            available_commands: state.session_available_commands.clone(),
+            prompt_capabilities: state.session_prompt_capabilities.clone(),
+            session_title: state.session_title.clone(),
         },
         state.context_continuity.clone(),
     )
-    .with_transcript_error(state.evidence.transcript_durability_fault.clone())
+    .with_transcript_error(state.transcript_durability_fault.clone())
 }
 
 fn apply_continuity(snapshot: &mut SessionSnapshot, continuity: &ContextContinuity) {
