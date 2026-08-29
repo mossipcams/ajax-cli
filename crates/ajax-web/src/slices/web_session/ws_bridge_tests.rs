@@ -2,7 +2,7 @@ use super::test_support::BlockingSessionDirectory;
 use super::ws_bridge::{should_send_keepalive, MAX_SESSION_FRAME_BYTES, SESSION_PING_INTERVAL};
 use super::{
     apply_client_message, ApplyClientMessageOutcome, SessionClientMessage, SessionServerEvent,
-    SessionSnapshot, TaskSessionDirectory,
+    SessionSnapshot,
 };
 use crate::adapters::web_session_acp::{
     with_test_acp_extra_args, with_test_acp_program, SessionConfigValue,
@@ -22,6 +22,13 @@ fn fake_acp_fixture() -> PathBuf {
 
 fn close_marker_path(worktree: &std::path::Path) -> std::path::PathBuf {
     worktree.join(".fake-acp-session-close-called")
+}
+
+fn set_model_config(model: &str) -> SessionClientMessage {
+    SessionClientMessage::SetConfigOption {
+        config_id: "model".to_string(),
+        value: SessionConfigValue::Select(model.to_string()),
+    }
 }
 
 /// Mirrors `bridge_task_session_socket` viewer lease: acquire on connect, release on disconnect.
@@ -119,22 +126,43 @@ fn set_config_option_accepts_only_string_or_boolean_values() {
 }
 
 #[tokio::test]
-async fn apply_client_message_rejects_invalid_model() {
-    let directory = TaskSessionDirectory::new(std::env::temp_dir());
-    let mut generation = 0;
-    let error = apply_client_message(
-        &directory,
-        "web/fix-login",
-        std::path::Path::new("/tmp"),
-        SessionClientMessage::SetModel {
-            model: "bad model".to_string(),
-        },
-        &mut generation,
-        None,
+async fn apply_client_message_rejects_legacy_set_model_wire() {
+    assert!(serde_json::from_str::<SessionClientMessage>(
+        r#"{"type":"set_model","model":"composer-2.5"}"#
     )
-    .await
-    .unwrap_err();
-    assert!(error.contains("whitespace"));
+    .is_err());
+}
+
+#[test]
+fn apply_client_message_rejects_unadvertised_config_value() {
+    let dir = scratch_dir("set-config-unadvertised");
+    let handle = "web/set-config-unadvertised";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let mut generation = directory.generation(handle);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let error = rt
+            .block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("not-advertised-model".to_string()),
+                },
+                &mut generation,
+                None,
+            ))
+            .unwrap_err();
+        assert!(error.contains("not-advertised") || error.contains("refused"));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -353,7 +381,7 @@ fn apply_client_message_set_config_option_leaves_child_unchanged_when_persist_fa
 }
 
 #[test]
-fn apply_client_message_set_model_surfaces_worker_stop_without_respawn_issue_962() {
+fn apply_client_message_set_config_option_surfaces_worker_stop_without_respawn_issue_962() {
     let dir = scratch_dir("set-model-worker-stop");
     let handle = "web/set-model-worker-stop";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -373,8 +401,9 @@ fn apply_client_message_set_model_surfaces_worker_stop_without_respawn_issue_962
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: "composer-2.5".to_string(),
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("composer-2.5".to_string()),
                 },
                 &mut generation,
                 Some(persist),
@@ -390,10 +419,10 @@ fn apply_client_message_set_model_surfaces_worker_stop_without_respawn_issue_962
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #942: set_model must publish the applied model on attach
+// Regression for issue #942: set_config_option must publish the applied model on attach
 // and keep it after the next prompt without replacing the ACP child in-band.
 #[test]
-fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
+fn apply_client_message_set_config_option_keeps_host_model_after_prompt_issue_942() {
     let dir = scratch_dir("set-model-prompt-942");
     let handle = "web/set-model-prompt";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -410,9 +439,7 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
             directory.inner(),
             handle,
             &dir,
-            SessionClientMessage::SetModel {
-                model: "composer-2.5".to_string(),
-            },
+            set_model_config("composer-2.5"),
             &mut generation,
             None,
         ))
@@ -462,7 +489,7 @@ fn apply_client_message_set_model_keeps_host_model_after_prompt_issue_942() {
 
 // Regression for #979: Switch to Grok High must keep the child alive and apply mapped ACP id.
 #[test]
-fn apply_client_message_set_model_grok_high_keeps_child_alive_issue_979() {
+fn apply_client_message_set_config_option_grok_high_keeps_child_alive_issue_979() {
     use ajax_core::adapters::cursor_catalog_to_acp_in_band_token;
 
     let dir = scratch_dir("set-model-grok-high-979");
@@ -484,9 +511,7 @@ fn apply_client_message_set_model_grok_high_keeps_child_alive_issue_979() {
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: catalog_id.to_string(),
-                },
+                set_model_config(&mapped),
                 &mut generation,
                 None,
             ))
@@ -509,7 +534,7 @@ fn apply_client_message_set_model_grok_high_keeps_child_alive_issue_979() {
 
 // In-band refusal falls back to one respawn; child id changes only on that path.
 #[test]
-fn apply_client_message_set_model_respawns_when_in_band_refused() {
+fn apply_client_message_set_config_option_respawns_when_in_band_refused() {
     let dir = scratch_dir("set-model-respawn-fallback");
     let handle = "web/set-model-respawn";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -528,8 +553,9 @@ fn apply_client_message_set_model_respawns_when_in_band_refused() {
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: "composer-2.5".to_string(),
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("composer-2.5".to_string()),
                 },
                 &mut generation,
                 None,
@@ -580,7 +606,8 @@ fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
 
 // Regression for #989: respawn fallback must shut down the live child before session/new.
 #[test]
-fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_new_issue_989() {
+fn apply_client_message_set_config_option_respawn_shuts_down_live_child_before_session_new_issue_989(
+) {
     let dir = scratch_dir("set-model-respawn-transport-989");
     let handle = "web/set-model-respawn-989";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -602,13 +629,14 @@ fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_n
                 let before = directory.child_id(handle).expect("child");
                 let mut generation = directory.generation(handle);
                 let rt = tokio::runtime::Runtime::new().unwrap();
+                let mapped = ajax_core::adapters::cursor_catalog_to_acp_in_band_token(
+                    "cursor-grok-4.6-high",
+                );
                 rt.block_on(apply_client_message(
                     directory.inner(),
                     handle,
                     &dir,
-                    SessionClientMessage::SetModel {
-                        model: "cursor-grok-4.6-high".to_string(),
-                    },
+                    set_model_config(&mapped),
                     &mut generation,
                     None,
                 ))
@@ -625,7 +653,7 @@ fn apply_client_message_set_model_respawn_shuts_down_live_child_before_session_n
 
 // Regression for #989: bridge harness respawn fallback also requires a lone stdio owner.
 #[test]
-fn apply_client_message_set_model_codex_respawn_shuts_down_live_child_issue_989() {
+fn apply_client_message_set_config_option_codex_respawn_shuts_down_live_child_issue_989() {
     let dir = scratch_dir("set-model-codex-respawn-989");
     let handle = "web/set-model-codex-respawn-989";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -645,8 +673,9 @@ fn apply_client_message_set_model_codex_respawn_shuts_down_live_child_issue_989(
                 directory.inner(),
                 handle,
                 &dir,
-                SessionClientMessage::SetModel {
-                    model: "composer-2.5".to_string(),
+                SessionClientMessage::SetConfigOption {
+                    config_id: "model".to_string(),
+                    value: SessionConfigValue::Select("composer-2.5".to_string()),
                 },
                 &mut generation,
                 None,
@@ -889,4 +918,31 @@ fn product_flow_create_live_switch_reload_and_cross_harness() {
     });
 
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn wave5_session_errors_distinguish_spawn_persist_and_protocol() {
+    use super::SessionError;
+
+    assert!(matches!(
+        SessionError::classify_spawn("ACP session/new failed: Authentication required"),
+        SessionError::Spawn(_)
+    ));
+    assert!(
+        SessionError::classify_spawn("ACP restore unavailable: session_id=s1: load failed")
+            .is_restore_unavailable()
+    );
+    assert!(matches!(
+        SessionError::persist("disk full"),
+        SessionError::Persist(_)
+    ));
+    assert!(matches!(
+        SessionError::protocol("session slot missing"),
+        SessionError::Protocol(_)
+    ));
+    assert_eq!(
+        SessionError::spawn_error_id(2, "ACP session/new failed: Authentication required")
+            .as_deref(),
+        Some("g2:spawn:auth")
+    );
 }
