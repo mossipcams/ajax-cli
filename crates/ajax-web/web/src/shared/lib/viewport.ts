@@ -1,5 +1,4 @@
 import {
-  isLayoutExpandedBeyondStaleVisualViewport,
   layoutViewportShrinksWithKeyboard,
   SESSION_VIEWPORT_ATTR,
 } from "@/shared/lib/sessionViewport";
@@ -96,7 +95,7 @@ export function initViewport(): () => void {
   let keyboardOpen = false;
   /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
   let layoutShrinksWithKeyboard = false;
-  /** True while pointer/touch is down inside the session composer (#1112). */
+  /** True while pointer/touch is down inside the session composer (#1113). */
   let sessionComposerPointerDown = false;
 
   const setAppHeight = (height: number) => {
@@ -179,7 +178,7 @@ export function initViewport(): () => void {
     }
   };
 
-  /** Deferred stale-viewport dismiss after composer pointerup (#1112). */
+  /** Deferred stale-viewport dismiss after composer pointerup (#1113). */
   let composerDismissTimer: ReturnType<typeof setTimeout> | undefined;
   const cancelComposerDismiss = () => {
     if (composerDismissTimer !== undefined) {
@@ -208,27 +207,15 @@ export function initViewport(): () => void {
     }
   };
 
-  const onSessionComposerPointerUp = () => {
-    sessionComposerPointerDown = false;
-    // iOS synthetic click fires after pointerup; defer blur/relayout so Send/Attach
-    // can land. Restore still runs when iOS omits a second window.resize (#1112).
-    cancelComposerDismiss();
-    composerDismissTimer = setTimeout(() => {
-      composerDismissTimer = undefined;
-      dismissPwaKeyboardWithStaleVisualViewport();
-    }, 0);
-  };
-
-  const dismissPwaKeyboardWithStaleVisualViewport = () => {
+  const dismissStaleVisualViewportAfterComposerGesture = () => {
+    const layoutHeight = window.innerHeight;
+    const visualHeight = vv.height;
     if (
       !keyboardOpen ||
       !layoutShrinksWithKeyboard ||
       sessionComposerPointerDown ||
-      !isLayoutExpandedBeyondStaleVisualViewport(
-        window.innerHeight,
-        vv.height,
-        KEYBOARD_CLOSE_DELTA_PX,
-      )
+      visualHeight < MIN_USABLE_HEIGHT_PX ||
+      layoutHeight - visualHeight <= KEYBOARD_CLOSE_DELTA_PX
     ) {
       return false;
     }
@@ -236,6 +223,17 @@ export function initViewport(): () => void {
     dismissKeyboardOpen();
     restoreGeometryAfterKeyboardDismiss();
     return true;
+  };
+
+  const onSessionComposerPointerUp = () => {
+    sessionComposerPointerDown = false;
+    // iOS synthetic click fires after pointerup; defer blur/relayout so Send/Attach
+    // can land (#1113).
+    cancelComposerDismiss();
+    composerDismissTimer = setTimeout(() => {
+      composerDismissTimer = undefined;
+      dismissStaleVisualViewportAfterComposerGesture();
+    }, 0);
   };
 
   const isFormControlFocused = () => {
@@ -246,8 +244,6 @@ export function initViewport(): () => void {
   };
 
   const onViewportResize = () => {
-    if (dismissPwaKeyboardWithStaleVisualViewport()) return;
-
     const current = vv.height;
     const currentWidth = window.innerWidth;
 
@@ -384,7 +380,6 @@ export function initViewport(): () => void {
 
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
-  window.addEventListener("resize", onViewportResize);
   document.addEventListener("pointerdown", onSessionComposerPointerDown, true);
   document.addEventListener("pointerup", onSessionComposerPointerUp, true);
   document.addEventListener("pointercancel", onSessionComposerPointerUp, true);
@@ -405,7 +400,6 @@ export function initViewport(): () => void {
     cancelComposerDismiss();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
-    window.removeEventListener("resize", onViewportResize);
     document.removeEventListener("pointerdown", onSessionComposerPointerDown, true);
     document.removeEventListener("pointerup", onSessionComposerPointerUp, true);
     document.removeEventListener("pointercancel", onSessionComposerPointerUp, true);

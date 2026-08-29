@@ -93,22 +93,4 @@ describe("useMobileKeyboard", () => {
     expect(result.current.keyboardOpen).toBe(false);
     expect(result.current.keyboardHeight).toBe(0);
   });
-
-  it("clears keyboard latch when PWA innerHeight restores without visualViewport resize (#1106)", async () => {
-    const { result } = renderHook(() => useMobileKeyboard());
-    innerHeight = 520;
-    vvHeight = 520;
-    vi.stubGlobal("innerHeight", innerHeight);
-    act(() => dispatchVV("resize"));
-    expect(result.current.keyboardOpen).toBe(true);
-    expect(result.current.keyboardHeight).toBe(0);
-
-    innerHeight = 800;
-    vi.stubGlobal("innerHeight", innerHeight);
-    act(() => window.dispatchEvent(new Event("resize")));
-
-    expect(vvHeight).toBe(520);
-    expect(result.current.keyboardOpen).toBe(false);
-    expect(result.current.keyboardHeight).toBe(0);
-  });
 });

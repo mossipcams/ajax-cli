@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  isLayoutExpandedBeyondStaleVisualViewport,
   isSessionKeyboardOpen,
-  layoutViewportShrinksWithKeyboard,
   sessionKeyboardPadding,
 } from "@/shared/lib/sessionViewport";
 
@@ -67,8 +65,6 @@ export function useMobileKeyboard() {
   const fullHeightRef = useRef(0);
   /** ponytail: tap-dismiss often leaves vv shrunk with no resize; ignore until refocus. */
   const ignoreShrinkRef = useRef(false);
-  /** True when this keyboard session shrunk innerHeight with vv (PWA / iOS 26). */
-  const layoutShrinksWithKeyboardRef = useRef(false);
   const lastReportedVvHRef = useRef(0);
 
   useEffect(() => {
@@ -120,20 +116,6 @@ export function useMobileKeyboard() {
             visualViewportHeight: currentVvH,
             innerHeight,
           });
-        } else if (
-          layoutShrinksWithKeyboardRef.current &&
-          isLayoutExpandedBeyondStaleVisualViewport(innerHeight, currentVvH)
-        ) {
-          layoutShrinksWithKeyboardRef.current = false;
-          ignoreShrinkRef.current = false;
-          fullHeightRef.current = Math.max(fullHeightRef.current, innerHeight, currentVvH);
-          lastReportedVvHRef.current = currentVvH;
-          store.update({
-            keyboardOpen: false,
-            keyboardHeight: 0,
-            visualViewportHeight: currentVvH,
-            innerHeight,
-          });
         }
         return fullHeightRef.current - currentVvH;
       }
@@ -141,36 +123,6 @@ export function useMobileKeyboard() {
       const open = isSessionKeyboardOpen(fullHeightRef.current, currentVvH);
       const safeBottom = readSafeBottomPx();
       const padding = sessionKeyboardPadding(innerHeight, currentVvH, open, safeBottom);
-
-      if (
-        open &&
-        layoutViewportShrinksWithKeyboard(innerHeight, currentVvH)
-      ) {
-        layoutShrinksWithKeyboardRef.current = true;
-      } else if (!open) {
-        layoutShrinksWithKeyboardRef.current = false;
-      }
-
-      if (
-        open &&
-        layoutShrinksWithKeyboardRef.current &&
-        isLayoutExpandedBeyondStaleVisualViewport(innerHeight, currentVvH)
-      ) {
-        layoutShrinksWithKeyboardRef.current = false;
-        ignoreShrinkRef.current = true;
-        lastOpen = false;
-        lastPadding = 0;
-        stableCountRef.current = 0;
-        lastReportedVvHRef.current = currentVvH;
-        fullHeightRef.current = Math.max(fullHeightRef.current, innerHeight);
-        store.update({
-          keyboardOpen: false,
-          keyboardHeight: 0,
-          visualViewportHeight: currentVvH,
-          innerHeight,
-        });
-        return fullHeightRef.current - currentVvH;
-      }
 
       if (open !== lastOpen || padding !== lastPadding) {
         lastOpen = open;
@@ -219,7 +171,6 @@ export function useMobileKeyboard() {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
         ignoreShrinkRef.current = false;
-        layoutShrinksWithKeyboardRef.current = false;
         startPolling();
       }
     };
@@ -228,10 +179,6 @@ export function useMobileKeyboard() {
       requestAnimationFrame(() => {
         if (isFormControlFocused()) return;
         ignoreShrinkRef.current = true;
-        layoutShrinksWithKeyboardRef.current = layoutViewportShrinksWithKeyboard(
-          window.innerHeight,
-          vv.height,
-        );
         lastOpen = false;
         lastPadding = 0;
         lastReportedVvHRef.current = vv.height;
@@ -258,7 +205,6 @@ export function useMobileKeyboard() {
     lastReportedVvHRef.current = vv.height;
     vv.addEventListener("resize", handleViewportChange);
     vv.addEventListener("scroll", handleViewportChange);
-    window.addEventListener("resize", handleViewportChange);
     document.addEventListener("focusin", handleFocusIn);
     document.addEventListener("focusout", handleFocusOut);
     window.addEventListener("orientationchange", handleOrientationChange);
@@ -267,7 +213,6 @@ export function useMobileKeyboard() {
       if (orientTimer) clearTimeout(orientTimer);
       vv.removeEventListener("resize", handleViewportChange);
       vv.removeEventListener("scroll", handleViewportChange);
-      window.removeEventListener("resize", handleViewportChange);
       document.removeEventListener("focusin", handleFocusIn);
       document.removeEventListener("focusout", handleFocusOut);
       window.removeEventListener("orientationchange", handleOrientationChange);

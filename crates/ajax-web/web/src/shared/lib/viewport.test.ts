@@ -195,37 +195,9 @@ describe("initViewport", () => {
     document.documentElement.removeAttribute("data-session-viewport");
   });
 
-  it("clears keyboard-open when PWA innerHeight restores without visualViewport resize (#1106)", () => {
-    vi.stubGlobal("innerHeight", 800);
-    document.documentElement.setAttribute("data-session-viewport", "owned");
-    const composer = document.createElement("textarea");
-    document.body.appendChild(composer);
-    start();
-
-    composer.focus();
-    vvHeight = 520;
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      get: () => 520,
-    });
-    dispatchVV("resize");
-    expect(isKeyboardOpen()).toBe(true);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
-
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      get: () => 800,
-    });
-    window.dispatchEvent(new Event("resize"));
-
-    expect(isKeyboardOpen()).toBe(false);
-    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
-    composer.remove();
-  });
-
-  // #1112: iOS PWA fires window.resize (innerHeight restored, vv still short) during
-  // Send/Attach pointerdown; stale-visualViewport dismiss must not blur mid-gesture.
-  it("defers PWA stale-viewport dismiss while pointer is down inside session composer (#1112)", () => {
+  // #1113: iOS PWA may restore innerHeight while vv stays short during Send/Attach;
+  // stale-visualViewport dismiss must not blur mid-gesture.
+  it("defers PWA stale-viewport dismiss while pointer is down inside session composer (#1113)", () => {
     vi.stubGlobal("innerHeight", 800);
     document.documentElement.setAttribute("data-session-viewport", "owned");
     const composer = document.createElement("textarea");
@@ -278,7 +250,38 @@ describe("initViewport", () => {
     shell.remove();
   });
 
-  it("still restores on window.resize after composer pointerup when stale (#1112)", () => {
+  it("leaves keyboard-open after Safari composer pointerup when innerHeight never shrank (#1113)", () => {
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    const composer = document.createElement("textarea");
+    const shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    const send = document.createElement("button");
+    send.type = "button";
+    shell.appendChild(send);
+    document.body.appendChild(shell);
+
+    start();
+    composer.focus();
+    vvHeight = 520;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+
+    send.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    send.dispatchEvent(new Event("pointerup", { bubbles: true }));
+
+    expect(isKeyboardOpen()).toBe(true);
+    vi.advanceTimersByTime(0);
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("520px");
+    expect(composer).toHaveFocus();
+
+    shell.remove();
+  });
+
+  it("restores after composer pointerup when visualViewport stays stale (#1113)", () => {
     vi.stubGlobal("innerHeight", 800);
     document.documentElement.setAttribute("data-session-viewport", "owned");
     const composer = document.createElement("textarea");
@@ -313,9 +316,6 @@ describe("initViewport", () => {
     expect(composer).toHaveFocus();
 
     vi.advanceTimersByTime(0);
-    expect(isKeyboardOpen()).toBe(false);
-
-    window.dispatchEvent(new Event("resize"));
     expect(isKeyboardOpen()).toBe(false);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
 
