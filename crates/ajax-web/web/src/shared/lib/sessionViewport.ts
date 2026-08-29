@@ -161,21 +161,6 @@ export function layoutViewportShrinksWithKeyboard(
   return innerHeight - visualViewportHeight < 50;
 }
 
-/**
- * iOS Home Screen PWA / iOS 26: layout viewport restored while visualViewport
- * stayed keyboard-short (tap-dismiss often skips a vv resize). Safe only when
- * the keyboard had shrunk innerHeight together with vv — not iOS Safari where
- * innerHeight stays full while the keyboard is up.
- */
-export function isLayoutExpandedBeyondStaleVisualViewport(
-  innerHeight: number,
-  visualViewportHeight: number,
-  threshold = SESSION_KEYBOARD_OPEN_PX,
-): boolean {
-  if (visualViewportHeight < MIN_USABLE_VIEWPORT_PX) return false;
-  return innerHeight - visualViewportHeight > threshold;
-}
-
 /** True when visualViewport occlusion looks like a soft keyboard, not URL-bar drift. */
 export function isSessionKeyboardOpen(
   fullHeight: number,
