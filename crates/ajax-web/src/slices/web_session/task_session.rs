@@ -6,7 +6,8 @@ use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{
-        drain_acp_events, normalize_session_events, PromptTerminal, PromptTerminalOutcome,
+        drain_acp_events_with_prompt_cancel, normalize_session_events, PromptTerminal,
+        PromptTerminalOutcome,
     },
     acp_usage::UsageDeduper,
     apply_cancel_to_queue, prompt_content, QueuedPrompt, ReportSessionActivity, SessionActivity,
@@ -140,6 +141,7 @@ pub(super) struct ActivePrompt {
     pub(super) client_message_id: Option<String>,
     pub(super) terminal: Option<PromptTerminal>,
     pub(super) persist_error_reported: bool,
+    pub(super) cancel_requested: bool,
 }
 
 impl ActivePrompt {
@@ -149,7 +151,16 @@ impl ActivePrompt {
             client_message_id,
             terminal: None,
             persist_error_reported: false,
+            cancel_requested: false,
         }
+    }
+
+    pub(super) fn mark_cancel_requested(&mut self) {
+        self.cancel_requested = true;
+    }
+
+    pub(super) fn drain_cancel_context(&self) -> (u64, bool) {
+        (self.request_id, self.cancel_requested)
     }
 
     pub(super) fn capture_terminal(&mut self, terminal: PromptTerminal) -> bool {
@@ -317,8 +328,14 @@ impl TaskSessionState {
 
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
+        let prompt_cancel = self
+            .active_prompt
+            .as_ref()
+            .map(ActivePrompt::drain_cancel_context);
         let outcome = match self.client.as_mut() {
-            Some(client) => drain_acp_events(client, &mut self.usage_deduper),
+            Some(client) => {
+                drain_acp_events_with_prompt_cancel(client, &mut self.usage_deduper, prompt_cancel)
+            }
             None => return,
         };
         if let Some(model) = outcome.applied_model {
@@ -457,6 +474,9 @@ pub(crate) fn spawn_task_session(
         if let Some(mut client) = state.client.take() {
             state.suppress_exit_evidence = true;
             if !client.host_exited() {
+                if let Some(active) = state.active_prompt.as_mut() {
+                    active.mark_cancel_requested();
+                }
                 let _ = client.cancel();
             }
             let message = if close_on_exit {
@@ -794,6 +814,9 @@ fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), String> 
         return Err("session slot missing".to_string());
     };
     let cancelled = client.cancel()?;
+    if let Some(active) = state.active_prompt.as_mut() {
+        active.mark_cancel_requested();
+    }
     let mut resolved = Vec::new();
     for request_id in cancelled.permissions {
         resolved.push(SessionServerEvent::PermissionResolved {

@@ -734,6 +734,14 @@ describe("explainAcpError", () => {
     expect(explainAcpError(raw)).not.toContain("RetriableError");
     expect(explainAcpError(raw)).not.toContain("http/2");
   });
+
+  it("maps Error-prefixed RetriableError replay dumps without leaking raw text", () => {
+    const raw =
+      "Error: RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)";
+    expect(explainAcpError(raw)).toMatch(/connection was interrupted/i);
+    expect(explainAcpError(raw)).not.toContain("RetriableError");
+    expect(explainAcpError(raw)).not.toContain("http/2");
+  });
 });
 
 describe("explainOpenFailure", () => {

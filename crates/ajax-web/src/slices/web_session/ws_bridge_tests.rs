@@ -154,13 +154,15 @@ fn apply_client_message_set_config_option_persists_after_in_band_apply() {
             crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
                 .acp_session_id;
         assert_eq!(session_after, session_before);
-        directory.pump(handle);
-        let (events, _) = directory.read_from(handle, 0);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            SessionServerEvent::Message { text, .. }
-                if text.contains("model:session/set_config_option:composer-2.5")
-        )));
+        super::test_support::pump_until(&directory, handle, Duration::from_secs(5), |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    SessionServerEvent::Message { text, .. }
+                        if text.contains("model:session/set_config_option:composer-2.5")
+                )
+            })
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);
