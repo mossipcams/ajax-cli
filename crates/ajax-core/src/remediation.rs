@@ -2,20 +2,15 @@
 
 use crate::{
     adapters::{CommandOutput, CommandRunner, TmuxAdapter},
-    commands::CommandContext,
+    commands::context::CommandContext,
     models::{LiveStatusKind, SideFlag, Task},
     registry::Registry,
 };
 
+pub use crate::output::RemediationOption;
+
 pub const FIX_CI: &str = "fix-ci";
 pub const RESOLVE_MERGE_CONFLICTS: &str = "resolve-merge-conflicts";
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct RemediationOption {
-    pub id: String,
-    pub label: String,
-    pub skill_name: String,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemediationError {
