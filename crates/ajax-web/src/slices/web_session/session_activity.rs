@@ -12,13 +12,17 @@
 //! actionable wait; this slice only supplies the evidence for tasks the pane
 //! classifier cannot see.
 
+use super::{ReportSessionActivity, SessionError};
 use ajax_core::{
+    agent_status::{provider_lifecycle_observation, ActivityKind, PRIMARY_RUN_ID},
     commands::CommandContext,
     live,
-    models::{LiveObservation, LiveStatusKind, TaskId},
+    models::TaskId,
     registry::Registry,
 };
 use std::time::SystemTime;
+
+pub(crate) const ACTIVITY_REPORT_MAX_ATTEMPTS: usize = 3;
 
 /// What the ACP session just became. One variant per transition the host can
 /// observe first-hand; nothing here is inferred from a timer.
@@ -35,16 +39,12 @@ pub enum SessionActivity {
 }
 
 impl SessionActivity {
-    fn observation(self) -> LiveObservation {
+    fn activity_kind(self) -> ActivityKind {
         match self {
-            Self::TurnStarted => {
-                LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working")
-            }
-            Self::AwaitingOperator => {
-                LiveObservation::new(LiveStatusKind::WaitingForApproval, "Waiting for approval")
-            }
-            Self::TurnEnded => LiveObservation::new(LiveStatusKind::Done, "Response ready"),
-            Self::TurnFailed => LiveObservation::new(LiveStatusKind::Blocked, "Agent stopped"),
+            Self::TurnStarted => ActivityKind::Working,
+            Self::AwaitingOperator => ActivityKind::WaitingApproval,
+            Self::TurnEnded => ActivityKind::Done,
+            Self::TurnFailed => ActivityKind::Failed,
         }
     }
 }
@@ -59,7 +59,7 @@ pub fn record_session_activity<R: Registry>(
     qualified_handle: &str,
     activity: SessionActivity,
     now: SystemTime,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     let task_id: TaskId = context
         .registry
         .list_tasks()
@@ -67,17 +67,44 @@ pub fn record_session_activity<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .filter(|task| task.skip_interactive_agent())
         .map(|task| task.id.clone())
-        .ok_or_else(|| format!("no ACP-capable task for {qualified_handle}"))?;
+        .ok_or_else(|| {
+            SessionError::protocol(format!("no ACP-capable task for {qualified_handle}"))
+        })?;
 
     let task = context
         .registry
         .get_task_mut(&task_id)
-        .ok_or_else(|| format!("task disappeared: {qualified_handle}"))?;
+        .ok_or_else(|| SessionError::protocol(format!("task disappeared: {qualified_handle}")))?;
 
-    // Authoritative: the host owns the ACP child, so this is first-hand
-    // process evidence, not a guess reconciled from screen scraping.
-    live::apply_authoritative_observation_at(task, activity.observation(), now);
+    // ProviderLifecycle → reduce_agent_status → authoritative apply. Never
+    // `apply_trusted_observation` — TurnEnded → Done would mark Reviewable
+    // between turns of the same launch episode.
+    let observation = provider_lifecycle_observation(activity.activity_kind(), PRIMARY_RUN_ID, now);
+    live::apply_provider_lifecycle_observation_at(task, observation, now);
     Ok(())
+}
+
+/// Bounded inline retries without blocking the session loop thread.
+pub(crate) fn try_report_session_activity(
+    report: &Option<ReportSessionActivity>,
+    qualified_handle: &str,
+    activity: SessionActivity,
+) -> Result<(), SessionError> {
+    let Some(report) = report else {
+        return Ok(());
+    };
+    for _ in 0..ACTIVITY_REPORT_MAX_ATTEMPTS {
+        if report(qualified_handle, activity) {
+            return Ok(());
+        }
+    }
+    Err(SessionError::persist(format!(
+        "task activity report failed after {ACTIVITY_REPORT_MAX_ATTEMPTS} attempts ({activity:?})"
+    )))
+}
+
+pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
+    format!("task activity report failed: {error}")
 }
 
 /// Which transitions on session events are evidence about the agent.
@@ -162,6 +189,7 @@ mod tests {
     use super::*;
     use crate::slices::web_session::SessionServerEvent;
     use crate::test_support;
+    use ajax_core::models::AgentRuntimeStatus;
     use ajax_core::ui_state::{derive_operator_status, TaskStatus};
 
     fn provisioned_context(
@@ -186,6 +214,49 @@ mod tests {
     // Without this the dashboard, task page, TUI and `ajax status` read a
     // pane-derived Waiting through an entire ACP turn: the pane classifier
     // cannot see a provisioned task's agent, and nothing else reported it.
+    #[test]
+    fn turn_ended_keeps_launch_attempt_open() {
+        let mut context = provisioned_context();
+        let task_id = TaskId::new("web/fix-login");
+        {
+            let task = context.registry.get_task_mut(&task_id).unwrap();
+            task.agent_attempts
+                .push(ajax_core::models::AgentAttempt::new(
+                    task.selected_agent,
+                    task.worktree_path.display().to_string(),
+                ));
+        }
+
+        record_session_activity(
+            &mut context,
+            "web/fix-login",
+            SessionActivity::TurnStarted,
+            SystemTime::now(),
+        )
+        .expect("started");
+        record_session_activity(
+            &mut context,
+            "web/fix-login",
+            SessionActivity::TurnEnded,
+            SystemTime::now(),
+        )
+        .expect("ended");
+
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert!(
+            task.agent_attempts
+                .iter()
+                .any(|attempt| attempt.is_open() && attempt.status == AgentRuntimeStatus::Running),
+            "TurnEnded must not close the launch episode"
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.summary.as_str()),
+            Some("done"),
+            "ACP host facts use reducer summaries, not a parallel mapper"
+        );
+    }
+
     #[test]
     fn a_turn_in_flight_makes_the_task_read_as_running() {
         let mut context = provisioned_context();
@@ -297,7 +368,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("no ACP-capable task"), "{error}");
+        assert!(error.to_string().contains("no ACP-capable task"), "{error}");
     }
 
     fn reporter() -> SessionActivityReporter {
@@ -366,5 +437,17 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn failed_activity_report_returns_typed_persist_error() {
+        use super::ReportSessionActivity;
+        let report = Some(std::sync::Arc::new(
+            |_qualified_handle: &str, _activity: SessionActivity| false,
+        ) as ReportSessionActivity);
+        let error =
+            try_report_session_activity(&report, "web/fix-login", SessionActivity::TurnStarted)
+                .unwrap_err();
+        assert!(matches!(error, SessionError::Persist(_)), "{error}");
     }
 }

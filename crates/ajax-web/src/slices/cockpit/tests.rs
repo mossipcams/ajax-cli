@@ -590,6 +590,54 @@ fn web_cockpit_fixture_preserves_operator_visible_task_contract() {
     }
 }
 
+/// GitHub #1096 — browser Attempts row contradicts Runtime `NotStarted` until
+/// Wave 1 closes the open launch episode.
+#[test]
+fn wave1_issue_1096_browser_detail_shows_running_attempt_while_agent_not_started() {
+    use ajax_core::{
+        commands::{
+            mark_new_task_provisioning_step_completed, record_new_task, CommandContext,
+            NewTaskRequest, StartProvisioningStep,
+        },
+        models::LifecycleStatus,
+    };
+
+    let config = crate::test_support::config_with(&["web"]);
+    let mut registry = InMemoryRegistry::default();
+    let mut context = CommandContext::new(config.clone(), InMemoryRegistry::default());
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "cursor".to_string(),
+        skip_interactive_agent: true,
+        model: None,
+    };
+    let task = record_new_task(&mut context, &request).unwrap();
+    mark_new_task_provisioning_step_completed(
+        &mut context,
+        &task.id,
+        StartProvisioningStep::AgentCommandSent,
+    )
+    .unwrap();
+    let stored = context.registry.get_task(&task.id).unwrap().clone();
+    registry.create_task(stored).unwrap();
+    let context = CommandContext::new(config, registry);
+
+    let detail = super::browser_task_detail_view(&context, "web/fix-login").expect("detail");
+    assert_eq!(detail.agent_status, "NotStarted");
+    assert_eq!(detail.lifecycle, format!("{:?}", LifecycleStatus::Active));
+    assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Unknown);
+    assert_eq!(detail.agent_attempts.len(), 1);
+    assert_ne!(
+        detail.agent_attempts[0].outcome, "Running",
+        "Attempts must not read in-progress when runtime is NotStarted (#1096)"
+    );
+    assert!(
+        detail.agent_attempts[0].completed_unix_secs.is_some(),
+        "completed_unix_secs must be set when the launch ends without a turn (#1096)"
+    );
+}
+
 #[test]
 fn web_task_detail_fixture_preserves_operator_visible_task_contract() {
     let context = browser_contract_context();
