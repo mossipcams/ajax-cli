@@ -17,13 +17,13 @@ use crate::execution_dispatch::start_plan_observation;
 #[cfg(test)]
 use crate::render::render_execution_outputs;
 use crate::{
-    cockpit_snapshot::build_cockpit_snapshot,
+    cockpit_backend::build_cockpit_snapshot,
     command_error,
     dispatch::execute_observed_drop,
     execution_dispatch::{
         execute_new_task_plan_with_task_session_and_checkpoint, ExecuteNewTaskWithSession,
     },
-    tmux_task_session::{
+    task_session::{
         execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
     },
     CliError,

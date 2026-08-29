@@ -28,7 +28,7 @@ use crate::{
         mobile_web_port_for_command, refresh_live_context, render_interactive_cockpit_command,
         render_live_cockpit_command,
     },
-    tmux_task_session::{
+    task_session::{
         execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
     },
 };

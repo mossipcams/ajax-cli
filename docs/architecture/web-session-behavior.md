@@ -161,10 +161,9 @@ existing paths.
   catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
   handshake ids reconstruct to exploded catalog ids before argv, never passing
   `|` or `[` on the spawn command line
-  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Live model
-  changes use WebSocket `set_config_option` only; spawn/handshake maps operator
-  pins through `desired_pin_to_apply_steps` ([#1010](https://github.com/mossipcams/ajax-cli/issues/1010)).
-  JSONL meta stores pipe-form, not bare handshake
+  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Legacy WebSocket
+  `set_model` persists desired `session_model` first, then applies in-band; keep
+  process, `sessionId`, and JSONL. JSONL meta stores pipe-form, not bare handshake
   `currentValue`. Respawn (`session/new`, no resume) only when the child is dead or no
   model control is advertised. In-band refusal is a typed error; the child keeps
   running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
@@ -185,7 +184,8 @@ existing paths.
 - Changing the model while connected applies the advertised option first, then
   persists pipe-form `session_model` from the confirmed descriptors. A refused
   pick does not persist. A persistence failure keeps the live change and reports
-  that restart may restore the prior pin. Cross-harness
+  that restart may restore the prior pin. Legacy WebSocket `set_model` still
+  persists desired state then maps through the spawn pin path. Cross-harness
   Switch resets backend context on the same public Ajax session: cancel any
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
@@ -201,7 +201,9 @@ existing paths.
   replaces the complete `configOptions` list from the successful response, publishes
   the replacement snapshot, and persists pipe-form `session_model` only after ACP
   success. Refusal leaves confirmed browser state unchanged and does not persist.
-  Post-apply persistence failure keeps the live change and emits a warning.
+  Post-apply persistence failure keeps the live change and emits a warning. Legacy
+  `set_model` remains for compatibility; it persists desired state then maps through
+  the spawn pin path rather than forwarding a single advertised descriptor.
 - Moving a task to another harness is refused unless it was launched over ACP.
   Cross-harness Switch resets backend context on the live slot when present, or
   clears the stored resume id when idle, so the next attach spawns the new harness
@@ -235,13 +237,6 @@ existing paths.
   become **interrupted**: the host emits one typed `error` event and does not
   automatically retry the prompt.
 - Ledger persist failure rejects the submit before acknowledgement or ACP dispatch.
-- The live `TaskSession` Tokio command loop dispatches operator commands and
-  drains ACP on a poll tick. Its mutable state is split by owner inside the
-  slice: `AcpSlot` (stdio child, operator/applied model pin, advertised config,
-  commands, capabilities, `acp_alive`), `PromptQueue` (sidecar ledger, active
-  prompt, FIFO queue, exit-interruption retry), and `SessionEvidence`
-  (`SessionActivityReporter`, pending activity reports, transcript durability
-  faults). Wire protocol and public snapshot fields are unchanged.
 - The live `TaskSession` actor owns prompt terminal transitions and FIFO
   advancement. Only the `session/prompt` command result (success,
   cancellation-shaped abort, or terminal RPC error) may finalize the active
@@ -405,9 +400,9 @@ existing paths.
 
 ## Model switching on the live ACP session
 
-- Connected `set_config_option` persists pipe-form `session_model` after ACP
-  success, applying one advertised `{ configId, value }` on the live session
-  when a slot exists. The ACP process, `sessionId`, and JSONL
+- `set_model` persists the desired model on the task, then applies it in-band on
+  the live ACP session via `session/set_config_option` when a slot exists and the
+  harness advertises a model control. The ACP process, `sessionId`, and JSONL
   transcript stay put; `snapshot.model` updates from the harness-reported applied
   id. In-band apply that is unadvertised or refused is a typed error; the child
   keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
@@ -635,49 +630,24 @@ has nothing true to say about it: without this the dashboard, task page, TUI and
 only the chat live head knew a turn was in flight.
 
 - The ACP host is the observer of its own child, so it reports run state on the
-  same contract the supervisor uses: host facts become
-  `ObservationSource::ProviderLifecycle` rows, pass through
-  `reduce_agent_status`, and apply via `apply_authoritative_observation_at`.
+  same contract the supervisor uses: a `LiveObservation` applied to the task.
   Status derivation (`ui_state::derive_task_status`) is unchanged — this supplies
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
 - Transitions are derived from the same session events the host appends to the
-  JSONL transcript: `prompt_accepted` and a resolved ask report working-class
-  activity (`AgentRunning` after reduction); `permission_request` /
-  `elicitation_request` report waiting-for-approval; `turn_end` reports done, or
-  failed when the turn errored. Detail inside a turn (messages, tool calls,
-  usage) reports nothing. The host applies each transition as task evidence at
-  transcript-append time — not from the browser WebSocket flush — so dashboard,
-  TUI, and `ajax status` stay aligned when the operator leaves chat mid-turn and
-  the chat head cannot disagree with task truth.
+  JSONL transcript: `prompt_accepted` and a resolved ask report `AgentRunning`;
+  `permission_request` / `elicitation_request` report `WaitingForApproval`;
+  `turn_end` reports `Done`, or `Blocked` when the turn errored. Detail inside a
+  turn (messages, tool calls, usage) reports nothing. The host applies each
+  transition as task evidence at transcript-append time — not from the browser
+  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
+  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.
-- Reporting uses bounded inline retries (no session-loop sleep). A failed persist
-  returns `SessionError::Persist`, leaves the activity uncommitted on the
-  reporter (so the registry cannot read `TurnStarted` when the report never
-  landed), records `activity_report_fault`, and may surface on the next outbound
-  snapshot as `transcriptError`. Activity-report failures do **not** set
-  `transcript_durability_fault` and do **not** block `submit_prompt` or
-  queued dispatch — only JSONL append failure latches durability and blocks
-  prompting. A later successful retry clears `activity_report_fault`. A lost
-  race with another writer is dropped without interrupting the turn.
-
-### Session error taxonomy (slice boundary)
-
-Command-loop replies and internal spawn/answers paths use `SessionError`:
-
-| Variant | Meaning |
-| --- | --- |
-| `Spawn` | ACP child could not start or handshake failed (except typed restore unavailable). |
-| `Persist` | Transcript, prompt ledger, or task activity report could not be written. |
-| `Protocol` | Slot/client/state mismatch, RPC failure, or malformed operator input. |
-| `Operator` | Refused prompt (queue full, interrupted id, context blocked). |
-| `RestoreUnavailable` | Stored session id could not resume/load; context enters unavailable. |
-
-Public directory methods still return `String` for WS callers; the enum is preserved
-on the session task channel. Spawn-class auth errors dedupe by generation id
-(`g{N}:spawn:auth`, `#1040`) so reconnect does not append duplicate transcript rows.
+- Reporting is best-effort and off the turn's critical path: a lost race with
+  another writer is dropped, never surfaced to the operator or allowed to
+  interrupt the turn it described.
 - A runtime refresh must not overwrite this evidence with a shell reading; the
   provisioned task keeps its ACP-reported state.
 
@@ -791,10 +761,6 @@ dividers for cancellations, reconnects, harness switches and context resets.
 
 ## Task actions from Ajax chat
 
-- Operator actions from the browser shell POST to `/api/operations`. The web
-  runtime also exposes `/api/actions` as a duplicate alias to the same
-  `axum_action` handler (`ajax-web::runtime`); both paths are public until usage
-  proves one can be retired.
 - Drop and other destructive actions live in the task details sheet, not the
   session head ActionBar (destructive actions are filtered there).
 - Arming Drop confirm closes the details sheet so the shell ResultPanel

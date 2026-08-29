@@ -6,9 +6,8 @@ use crate::{
     config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
-        sync_open_attempts, AgentAttempt, AgentClient, GitStatus, LifecycleStatus,
-        RuntimeObservationSource, SideFlag, Task, TaskId, TaskOperationKind, TaskWindowStatus,
-        TmuxStatus,
+        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, SideFlag,
+        Task, TaskId, TaskOperationKind, TaskWindowStatus, TmuxStatus,
     },
     registry::{Registry, RegistryError},
 };
@@ -399,7 +398,6 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
             if !task.skip_interactive_agent() {
                 task.add_side_flag(SideFlag::AgentRunning);
             }
-            sync_open_attempts(task, std::time::SystemTime::now());
         }
     }
 
@@ -599,7 +597,5 @@ fn validate_managed_repo_name(repo: &str) -> Result<(), CommandError> {
     Ok(())
 }
 
-#[cfg(test)]
-mod provisioning_attempts;
 #[cfg(test)]
 mod tests;

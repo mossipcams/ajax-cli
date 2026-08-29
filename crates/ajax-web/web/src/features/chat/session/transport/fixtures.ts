@@ -41,11 +41,7 @@ export const FIXTURE_COMMANDS = {
   prompt: { type: "prompt", text: "Ship it", clientMessageId: "c1" },
   cancel: { type: "cancel" },
   cancelKeepQueue: { type: "cancel", keepQueue: true },
-  setConfigOption: {
-    type: "set_config_option",
-    configId: "model",
-    value: "composer-2.5",
-  },
+  setModel: { type: "set_model", model: "composer-2.5" },
   permission: { type: "permission", requestId: "p1", approved: true },
 } as const;
 

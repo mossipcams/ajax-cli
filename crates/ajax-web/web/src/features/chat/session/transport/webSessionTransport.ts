@@ -168,6 +168,10 @@ export function connectWebSessionTransport(
       }
       sendJson(keepQueue ? { type: "cancel", keepQueue: true } : { type: "cancel" });
     },
+    setModel(nextModel) {
+      const trimmed = nextModel.trim() || "auto";
+      sendJson({ type: "set_model", model: trimmed });
+    },
     setConfigOption(configId, value) {
       sendJson({
         type: "set_config_option",

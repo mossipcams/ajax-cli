@@ -46,28 +46,6 @@ describe("navigate swipe", () => {
     expect(navigateSwipeEnd(state)).toBe("right");
   });
 
-  it("caps right commit when the list route is already underneath (#1064)", () => {
-    const state = navigateSwipeMove(
-      navigateSwipeStart(),
-      NAVIGATE_SWIPE_TRIGGER + 1,
-      2,
-      PAGE_WIDTH,
-      { capRightCommit: true },
-    );
-    expect(state.engaged).toBe(false);
-    expect(navigateSwipeEnd(state, { capRightCommit: true })).toBe("none");
-
-    let engaged = navigateSwipeMove(navigateSwipeStart(), -(NAVIGATE_SWIPE_TRIGGER + 1), 0, PAGE_WIDTH, {
-      capRightCommit: true,
-    });
-    expect(navigateSwipeEnd(engaged, { capRightCommit: true })).toBe("left");
-    engaged = navigateSwipeMove(engaged, NAVIGATE_SWIPE_TRIGGER + 20, 0, PAGE_WIDTH, {
-      capRightCommit: true,
-    });
-    expect(engaged.direction).toBe("none");
-    expect(navigateSwipeEnd(engaged, { capRightCommit: true })).toBe("none");
-  });
-
   it("stays none before the trigger even when engaged", () => {
     const state = navigateSwipeMove(navigateSwipeStart(), -(NAVIGATE_SWIPE_TRIGGER - 1), 0, PAGE_WIDTH);
     expect(state.engaged).toBe(true);
