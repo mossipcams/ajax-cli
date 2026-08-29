@@ -13,6 +13,7 @@ function mockTransport(
   const transport: webSessionTransport.WebSessionTransport = {
     sendPrompt: vi.fn(() => "prompt-1"),
     sendCancel: vi.fn(),
+    setModel: vi.fn(),
     setConfigOption: vi.fn(),
     respondPermission: vi.fn(),
     respondElicitation: vi.fn(),
@@ -235,9 +236,9 @@ describe("useChatSession", () => {
     );
     expect(result.current.sessionModel).toBe("cursor-grok-4.6-high");
 
-    act(() => result.current.applyConfigOption("model", "cursor-grok-4.6-xhigh"));
+    act(() => result.current.applyModel("cursor-grok-4.6-xhigh"));
     expect(result.current.sessionModel).toBe("cursor-grok-4.6-high");
-    expect(transport.setConfigOption).toHaveBeenCalledWith("model", "cursor-grok-4.6-xhigh");
+    expect(transport.setModel).toHaveBeenCalledWith("cursor-grok-4.6-xhigh");
 
     act(() =>
       callbacks[0]?.onSnapshot({

@@ -46,20 +46,6 @@ pub(crate) struct AgentEventIdentity {
     pub events_dir: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AgentEventOutcome {
-    NoIdentity,
-    Ignored,
-    RejectedByRuntime,
-    Appended,
-}
-
-#[derive(Debug)]
-pub(crate) enum AgentEventError {
-    Runtime(CliError),
-    Io(io::Error),
-}
-
 pub(crate) fn run_agent_event_command(matches: &ArgMatches) -> Result<String, CliError> {
     let client = matches
         .get_one::<String>("client")
@@ -71,19 +57,7 @@ pub(crate) fn run_agent_event_command(matches: &ArgMatches) -> Result<String, Cl
         .unwrap_or("");
     let payload = read_stdin_payload();
     let identity = resolve_agent_event_identity(client, &payload);
-    match run_agent_event(identity.as_ref(), client, event, &payload) {
-        Ok(AgentEventOutcome::NoIdentity) | Ok(AgentEventOutcome::Ignored) => {}
-        Ok(AgentEventOutcome::RejectedByRuntime) => {}
-        Ok(AgentEventOutcome::Appended) => {}
-        Err(AgentEventError::Runtime(error)) => {
-            return Err(error);
-        }
-        Err(AgentEventError::Io(error)) => {
-            return Err(CliError::CommandFailed(format!(
-                "agent event write failed: {error}"
-            )));
-        }
-    }
+    let _ = run_agent_event(identity.as_ref(), client, event, &payload);
     if client == "cursor" && event == "sessionStart" {
         if let Some(identity) = identity {
             return Ok(session_start_env_stdout(&identity));
@@ -97,21 +71,21 @@ pub(crate) fn run_agent_event(
     client: &str,
     event: &str,
     payload: &serde_json::Value,
-) -> Result<AgentEventOutcome, AgentEventError> {
+) -> Result<(), ()> {
     let Some(identity) = identity else {
-        return Ok(AgentEventOutcome::NoIdentity);
+        return Ok(());
     };
     let Some(canonical) = translate_native_event(client, event, payload) else {
-        return Ok(AgentEventOutcome::Ignored);
+        return Ok(());
     };
-    let observed_at = agent_runtime::now_millis().map_err(AgentEventError::Runtime)?;
+    let observed_at = agent_runtime::now_millis().map_err(|_| ())?;
     if !agent_runtime::runtime_hooks_accepted(
         &identity.events_dir,
         &identity.task_id,
         &canonical.kind,
         observed_at,
     ) {
-        return Ok(AgentEventOutcome::RejectedByRuntime);
+        return Ok(());
     }
     append_agent_event_jsonl(
         identity,
@@ -121,8 +95,8 @@ pub(crate) fn run_agent_event(
         observed_at,
         observed_at,
     )
-    .map_err(AgentEventError::Io)?;
-    Ok(AgentEventOutcome::Appended)
+    .map_err(|_| ())?;
+    Ok(())
 }
 
 pub(crate) fn translate_native_event(

@@ -123,57 +123,6 @@ impl AgentAttempt {
             status: AgentRuntimeStatus::Running,
         }
     }
-
-    pub fn is_open(&self) -> bool {
-        self.finished_at.is_none()
-    }
-
-    /// Close this launch-episode row with a terminal status and timestamp.
-    pub fn close(&mut self, status: AgentRuntimeStatus, at: SystemTime) {
-        if self.finished_at.is_some() {
-            return;
-        }
-        self.status = status;
-        self.finished_at = Some(at);
-    }
-}
-
-/// Keep open launch-episode attempts aligned with `Task.agent_status`.
-///
-/// Close only when the launch ended: `NotStarted` (never started / spawn-auth
-/// fail, and not interactive tmux `AgentRunning`), or `Dead` / Drop. Never close
-/// on `Waiting`, `Blocked`, `Done`, or `Unknown`. Reopen the last attempt when
-/// `Running` follows a provisional `NotStarted` close (ACP turn start after
-/// `AgentCommandSent`).
-pub fn sync_open_attempts(task: &mut super::Task, at: SystemTime) {
-    match task.agent_status {
-        AgentRuntimeStatus::Dead => close_open_attempts(task, AgentRuntimeStatus::Dead, at),
-        AgentRuntimeStatus::NotStarted if !task.has_side_flag(SideFlag::AgentRunning) => {
-            close_open_attempts(task, AgentRuntimeStatus::NotStarted, at);
-        }
-        AgentRuntimeStatus::Running => reopen_last_launch_attempt_if_closed_before_start(task),
-        _ => {}
-    }
-}
-
-fn close_open_attempts(task: &mut super::Task, status: AgentRuntimeStatus, at: SystemTime) {
-    for attempt in &mut task.agent_attempts {
-        if attempt.is_open() {
-            attempt.close(status, at);
-        }
-    }
-}
-
-fn reopen_last_launch_attempt_if_closed_before_start(task: &mut super::Task) {
-    let Some(last) = task.agent_attempts.last_mut() else {
-        return;
-    };
-    if last.finished_at.is_some() && last.status == AgentRuntimeStatus::NotStarted {
-        last.finished_at = None;
-        last.status = AgentRuntimeStatus::Running;
-    } else if last.is_open() {
-        last.status = AgentRuntimeStatus::Running;
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

@@ -16,14 +16,11 @@ mod tests {
     // operator_dispatch are shared/composition plumbing and are not operator slices.
     const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
 
-    const KERNEL_MODULES: [&str; 11] = [
+    const KERNEL_MODULES: [&str; 8] = [
         "models",
         "lifecycle",
         "live",
         "live_application",
-        "agent_status",
-        "ui_state",
-        "attention",
         "policy",
         "output",
         "ghost_task",
@@ -165,19 +162,6 @@ mod tests {
             &forbidden,
             "mechanism module",
             "adapters",
-        );
-    }
-
-    #[test]
-    fn models_module_does_not_homonym_top_level_events() {
-        let source = std::fs::read_to_string("src/models/mod.rs").unwrap();
-        assert!(
-            !source.contains("pub mod events;"),
-            "models must not declare pub mod events; that homonym creates an import cycle with crate::events"
-        );
-        assert!(
-            !PathBuf::from("src/models/events.rs").exists(),
-            "models/events.rs must stay renamed (step_receipts.rs) to avoid homonym with src/events.rs"
         );
     }
 

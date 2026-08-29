@@ -174,15 +174,11 @@
   }
 
   html.terminal-expanded .task-detail .detail-header .detail-header-controls {
-    position: relative;
-    z-index: 47;
     pointer-events: auto;
   }
 
-  /* Match terminal-copy-overlay; stack above .terminal-corner-actions (#1095). */
+  /* Match terminal-copy-overlay so Details stays visible on the dark xterm. */
   html.terminal-expanded .task-detail .detail-header .session-head-details {
-    position: relative;
-    z-index: 48;
     min-width: 44px;
     min-height: 44px;
     padding: 6px 14px;
@@ -190,7 +186,6 @@
     border-radius: 999px;
     background: var(--paper-raised);
     color: var(--ink);
-    pointer-events: auto;
   }
 
   html.keyboard-open .cockpit-chrome,

@@ -129,6 +129,8 @@ export interface WebSessionTransportCallbacks {
 export interface WebSessionTransport {
   sendPrompt(text: string, contentBlocks?: PromptContentBlockWire[]): string;
   sendCancel(keepQueue?: boolean): void;
+  /** @deprecated Use setConfigOption for live picks. */
+  setModel(model: string): void;
   setConfigOption(configId: string, value: string | boolean): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
   respondElicitation(

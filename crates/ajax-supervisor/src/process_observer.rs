@@ -6,17 +6,23 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ajax_core::events::{MonitorEvent, ProcessEvent};
+use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
     sync::{mpsc, watch},
 };
 
-use crate::{
-    process_protocol::{ProcessProtocol, StdoutParser},
-    SupervisorError,
-};
+use crate::SupervisorError;
+
+pub type StdoutParser = Arc<dyn Fn(&str) -> Option<AgentEvent> + Send + Sync>;
+
+pub trait ProcessProtocol {
+    fn process_name(&self) -> &str;
+    fn program(&self) -> &str;
+    fn args(&self, prompt: &str) -> Vec<String>;
+    fn stdout_parser(&self) -> StdoutParser;
+}
 
 #[derive(Clone, Debug)]
 pub struct HangDetector {
@@ -267,58 +273,7 @@ mod tests {
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::mpsc;
 
-    use crate::{
-        process_observer::supervise_process,
-        process_protocol::{ProcessProtocol, StdoutParser},
-        SupervisorError,
-    };
-
-    #[derive(Clone)]
-    struct ScriptProcessAdapter {
-        program: String,
-    }
-
-    impl ScriptProcessAdapter {
-        fn new(program: impl Into<String>) -> Self {
-            Self {
-                program: program.into(),
-            }
-        }
-    }
-
-    impl ProcessProtocol for ScriptProcessAdapter {
-        fn process_name(&self) -> &str {
-            "codex"
-        }
-
-        fn program(&self) -> &str {
-            &self.program
-        }
-
-        fn args(&self, _prompt: &str) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn stdout_parser(&self) -> StdoutParser {
-            Arc::new(parse_test_codex_json_line)
-        }
-    }
-
-    fn parse_test_codex_json_line(line: &str) -> Option<AgentEvent> {
-        let value: serde_json::Value = serde_json::from_str(line).ok()?;
-        match value.get("type")?.as_str()? {
-            "started" => Some(AgentEvent::Started {
-                agent: "codex".to_string(),
-            }),
-            "approval_request" => Some(AgentEvent::WaitingForApproval {
-                command: value
-                    .get("command")
-                    .and_then(|command| command.as_str())
-                    .map(str::to_string),
-            }),
-            _ => None,
-        }
-    }
+    use crate::{agent::codex::CodexAdapter, process_observer::supervise_process};
 
     #[tokio::test]
     async fn process_observer_streams_stdout_stderr_and_exit() {
@@ -333,7 +288,7 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).unwrap();
 
-        let adapter = ScriptProcessAdapter::new(script.display().to_string());
+        let adapter = CodexAdapter::new(script.display().to_string());
         let (tx, mut rx) = mpsc::channel(8);
 
         let status = supervise_process(&adapter, "ignored", tx, None)
@@ -386,7 +341,7 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).unwrap();
 
-        let adapter = ScriptProcessAdapter::new(script.display().to_string());
+        let adapter = CodexAdapter::new(script.display().to_string());
         let (tx, mut rx) = mpsc::channel(8);
 
         let error = supervise_process(&adapter, "ignored", tx, None)
@@ -423,7 +378,7 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).unwrap();
 
-        let adapter = ScriptProcessAdapter::new(script.display().to_string());
+        let adapter = CodexAdapter::new(script.display().to_string());
         let (tx, mut rx) = mpsc::channel(8);
 
         let supervise = tokio::spawn(async move {
@@ -456,7 +411,7 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).unwrap();
 
-        let adapter = ScriptProcessAdapter::new(script.display().to_string());
+        let adapter = CodexAdapter::new(script.display().to_string());
         let (tx, mut rx) = mpsc::channel(8);
 
         let status = supervise_process(&adapter, "ignored", tx, Some(Duration::ZERO))
@@ -508,4 +463,6 @@ mod tests {
         assert!(!detector.is_hung(start + Duration::from_secs(60)));
         assert!(detector.is_hung(start + Duration::from_secs(70)));
     }
+
+    use crate::SupervisorError;
 }

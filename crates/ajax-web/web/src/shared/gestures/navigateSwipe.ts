@@ -47,19 +47,12 @@ export function crossSlideLeavingTarget(
   return direction === "left" ? -pageWidth : pageWidth;
 }
 
-export interface NavigateSwipeMoveOptions {
-  /** When true, ignore rightward travel — list route is already underneath (#1064). */
-  capRightCommit?: boolean;
-}
-
 export function navigateSwipeMove(
   state: NavigateSwipeState,
   dx: number,
   dy: number,
   pageWidth: number,
-  options: NavigateSwipeMoveOptions = {},
 ): NavigateSwipeState {
-  const capRightCommit = options.capRightCommit ?? false;
   let engaged = state.engaged;
   let engageDx = state.engageDx;
   if (!engaged) {
@@ -67,29 +60,22 @@ export function navigateSwipeMove(
     if (Math.abs(dx) <= Math.abs(dy) * LOCK_RATIO) {
       return navigateSwipeStart();
     }
-    if (capRightCommit && dx > 0) return state;
     engaged = true;
     engageDx = dx;
   }
   const max = Math.max(pageWidth, NAVIGATE_SWIPE_TRIGGER);
-  const travelDx = capRightCommit ? Math.min(dx, 0) : dx;
-  const clamped = Math.max(-max, Math.min(max, travelDx));
-  if (travelDx <= -NAVIGATE_SWIPE_TRIGGER) {
+  const clamped = Math.max(-max, Math.min(max, dx));
+  if (dx <= -NAVIGATE_SWIPE_TRIGGER) {
     return { engaged, direction: "left", dx: clamped, engageDx };
   }
-  if (!capRightCommit && travelDx >= NAVIGATE_SWIPE_TRIGGER) {
+  if (dx >= NAVIGATE_SWIPE_TRIGGER) {
     return { engaged, direction: "right", dx: clamped, engageDx };
   }
   return { engaged, direction: "none", dx: clamped, engageDx };
 }
 
-export function navigateSwipeEnd(
-  state: NavigateSwipeState,
-  options: NavigateSwipeMoveOptions = {},
-): NavigateSwipeDirection {
-  if (!state.engaged) return "none";
-  if (options.capRightCommit && state.direction === "right") return "none";
-  return state.direction;
+export function navigateSwipeEnd(state: NavigateSwipeState): NavigateSwipeDirection {
+  return state.engaged ? state.direction : "none";
 }
 
 /** Visual translate for left-open / right-back feedback while dragging. */

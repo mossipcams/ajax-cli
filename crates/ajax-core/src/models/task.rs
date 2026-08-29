@@ -184,7 +184,6 @@ impl Task {
         if flag.is_missing_substrate() {
             self.agent_status = AgentRuntimeStatus::Dead;
             self.remove_side_flag(SideFlag::AgentRunning);
-            super::observations::sync_open_attempts(self, SystemTime::now());
         }
     }
 
