@@ -132,10 +132,12 @@
 .task-row-reveal {
   position: absolute;
   inset: 0 0 0 auto;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   padding-right: var(--space-2);
+  pointer-events: auto;
 }
 
 .task-row-reveal .action {
@@ -169,6 +171,12 @@
 
 .task-row:active {
   background: var(--paper-high);
+}
+
+/* #1038: full-row button sits above the reveal layer; when open, let Drop/actions
+   receive taps and close the reveal by tapping the exposed row chrome. */
+.task-row.is-revealed {
+  pointer-events: none;
 }
 
 .task-row-main {

@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
@@ -71,8 +80,31 @@ const TaskRow = memo(function TaskRow({
     .filter(Boolean)
     .join(" ");
 
+  const closeRevealUnlessAction = (event: MouseEvent<HTMLDivElement>) => {
+    if (offset <= 0) return;
+    if ((event.target as Element).closest(".task-row-reveal")) return;
+    onOffset(card.qualified_handle, 0);
+  };
+
+  const closeRevealOnKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    closeRevealUnlessAction(event as unknown as MouseEvent<HTMLDivElement>);
+  };
+
+  const wrapRevealDismiss =
+    offset > 0
+      ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-label": "Close revealed actions",
+          onClick: closeRevealUnlessAction,
+          onKeyDown: closeRevealOnKeyDown,
+        }
+      : {};
+
   return (
-    <div className="task-row-wrap" data-handle={card.qualified_handle}>
+    <div className="task-row-wrap" data-handle={card.qualified_handle} {...wrapRevealDismiss}>
       {revealAction ? (
         <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
           <ActionBar

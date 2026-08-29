@@ -22,9 +22,9 @@ import type { ChatModelState, ChatSessionAction, ChatSessionView } from "./model
 import {
   connectionStateAllowsSend,
   initialConnectionState,
-  useSessionConnection,
   type ConnectionState,
-} from "./connection/public";
+} from "./connection/connectionState";
+import { useSessionConnection } from "./connection/useSessionConnection";
 
 interface Options {
   handle: string | null;
@@ -174,10 +174,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef.current?.setConfigOption(configId, value);
   }, []);
 
-  const applyModel = useCallback((catalogId: string) => {
-    transportRef.current?.setModel(catalogId);
-  }, []);
-
   const retryRestore = useCallback(() => {
     transportRef.current?.retryRestore();
   }, []);
@@ -230,7 +226,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     sendCancel,
     markStopped,
     applyConfigOption,
-    applyModel,
     retryRestore,
     startNewContext,
     respondPermission,
