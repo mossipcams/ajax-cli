@@ -403,6 +403,20 @@ test("prepare-prompt stop-after minutes match computeAgentBudget exploration win
   }
 });
 
+test("run-agent.sh feeds prompt via stdin instead of oversized CLI argument", () => {
+  const script = readFileSync(join(root, "scripts/exploratory/run-agent.sh"), "utf8");
+  assert.doesNotMatch(
+    script,
+    /\$\(cat\s+"?\$PROMPT_FILE"?\)/,
+    "prompt must not be expanded into a positional CLI argument",
+  );
+  assert.match(
+    script,
+    /<\s*"\$PROMPT_FILE"/,
+    "prompt file must be redirected into agent stdin",
+  );
+});
+
 test("run-agent.sh applies finalization reserve to hard timeout", () => {
   const script = readFileSync(join(root, "scripts/exploratory/run-agent.sh"), "utf8");
   assert.match(script, /FINALIZATION_RESERVE_MINUTES/);
