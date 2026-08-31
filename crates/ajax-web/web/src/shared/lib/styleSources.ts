@@ -35,9 +35,9 @@ export const BASELINE = {
    * Re-measured after the turn-disclosure comment in conversation.css grew to
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged). */
-  sourceStylesCssBytes: 108_606,
-  builtAppCssBytes: 94_038,
-  builtAppCssGzipBytes: 16_496,
+  sourceStylesCssBytes: 108_716,
+  builtAppCssBytes: 94_116,
+  builtAppCssGzipBytes: 16_515,
   classSelectorLines: 606,
   hasSelectors: 18,
 } as const;
