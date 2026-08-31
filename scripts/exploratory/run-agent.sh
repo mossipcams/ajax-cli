@@ -139,8 +139,8 @@ timeout --signal=TERM --kill-after=60s "${AGENT_TIMEOUT_SECONDS}s" \
   --model "$MODEL" \
   --output-format text \
   --workspace "$ROOT" \
-  "$(cat "$PROMPT_FILE")" \
-  >>"$AGENT_LOG" 2>&1
+  >>"$AGENT_LOG" 2>&1 \
+  < "$PROMPT_FILE"
 EXIT_CODE=$?
 set -e
 
