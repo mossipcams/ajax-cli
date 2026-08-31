@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   normalizeDistBlankLines,
+  reconcileDistContents,
   shouldNormalizeDistAsset,
 } from "./web-build-check.mjs";
 
@@ -28,9 +29,25 @@ test("normalizeDistBlankLines preserves trailing spaces on content lines", () =>
   );
 });
 
-test("shouldNormalizeDistAsset applies only to dist JS and CSS bundles", () => {
+test("shouldNormalizeDistAsset applies to all tracked dist shell assets", () => {
   assert.equal(shouldNormalizeDistAsset("app.js"), true);
   assert.equal(shouldNormalizeDistAsset("app.css"), true);
-  assert.equal(shouldNormalizeDistAsset("index.html"), false);
-  assert.equal(shouldNormalizeDistAsset("terminal.js"), false);
+  assert.equal(shouldNormalizeDistAsset("index.html"), true);
+  assert.equal(shouldNormalizeDistAsset("terminal.js"), true);
+  assert.equal(shouldNormalizeDistAsset("ghostty-vt.wasm"), false);
+});
+
+test("reconcileDistContents restores HEAD bytes when only blank-line whitespace differs", () => {
+  const head = "a\n   \nb";
+  const rebuilt = "a\n\nb";
+
+  assert.equal(reconcileDistContents(rebuilt, head), head);
+});
+
+test("reconcileDistContents keeps a real content diff as normalized rebuild", () => {
+  const head = "version-one\n   \n";
+  const rebuilt = "version-two\n\n";
+
+  assert.equal(reconcileDistContents(rebuilt, head), "version-two\n\n");
+  assert.notEqual(reconcileDistContents(rebuilt, head), head);
 });

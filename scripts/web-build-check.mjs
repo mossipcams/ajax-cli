@@ -21,7 +21,34 @@ export function normalizeDistBlankLines(contents) {
 }
 
 export function shouldNormalizeDistAsset(name) {
-  return name === "app.js" || name === "app.css";
+  return (
+    name === "app.js" ||
+    name === "app.css" ||
+    name === "index.html" ||
+    name === "terminal.js"
+  );
+}
+
+/** When rebuild differs from HEAD only on blank-line whitespace, keep HEAD bytes. */
+export function reconcileDistContents(rebuilt, head) {
+  const normalizedRebuilt = normalizeDistBlankLines(rebuilt);
+  const normalizedHead = normalizeDistBlankLines(head);
+  if (normalizedRebuilt === normalizedHead) {
+    return head;
+  }
+  return normalizedRebuilt;
+}
+
+function readHeadDistAsset(name) {
+  const gitPath = `crates/ajax-web/web/dist/${name}`;
+  try {
+    return execFileSync("git", ["show", `HEAD:${gitPath}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+  } catch {
+    return null;
+  }
 }
 
 function check(condition, message) {
@@ -35,9 +62,11 @@ for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
   const assetPath = join(distDir, name);
   if (!existsSync(assetPath)) continue;
   if (!shouldNormalizeDistAsset(name)) continue;
-  const contents = readFileSync(assetPath, "utf8");
-  const normalized = normalizeDistBlankLines(contents);
-  if (contents !== normalized) writeFileSync(assetPath, normalized);
+  const rebuilt = readFileSync(assetPath, "utf8");
+  const head = readHeadDistAsset(name);
+  if (head === null) continue;
+  const reconciled = reconcileDistContents(rebuilt, head);
+  if (rebuilt !== reconciled) writeFileSync(assetPath, reconciled);
 }
 
 for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
