@@ -65,6 +65,18 @@ host promotes them on attach. A per-task browser preference
 session-capable tasks until cleared from task details. Diff Review
 Back returns to the mode the workspace selected.
 
+**Pointer policy (workspace composition):** hit-testing for dashboard row
+reveals, task-header Details, and workspace swipe-back belongs to
+`features/task-workspace` and `features/task`, not Chat or Terminal session
+code. Task-list swipe reveals keep `useSwipeReveal` but the revealed
+`ActionBar` sits above the full-row opener (`pointer-events` on
+`.task-row.is-revealed` / `.task-row-reveal`). Terminal-expanded Details stays
+in `.detail-header-controls` with explicit `pointer-events` and z-index above
+`.terminal-expand-corner`. Workspace swipe-right back is capped when the hash
+is already `#/` or `#/p/...` so a settling task surface cannot navigate past
+the dashboard; Chat keeps transcript-selection ignore only
+(`ChatSurface.tsx`).
+
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **on** (`ajax.web.session.orchestrationChat` in
