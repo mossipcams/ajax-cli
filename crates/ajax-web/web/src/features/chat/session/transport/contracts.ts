@@ -12,7 +12,13 @@ export const SESSION_PROTOCOL_VERSION = 2;
 export const MAX_QUEUED_PROMPTS = 8;
 
 /** Match the host's per-frame ceiling (`ws_bridge::MAX_SESSION_FRAME_BYTES`). */
-export const MAX_FRAME_BYTES = 256 * 1024;
+export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+
+/** Maximum inline image blocks per prompt (mirrors host `prompt_content::MAX_IMAGE_BLOCKS`). */
+export const MAX_IMAGE_BLOCKS = 8;
+
+/** Headroom reserved for JSON framing outside base64 image payloads. */
+export const PROMPT_FRAME_HEADROOM_BYTES = 4096;
 
 export const PROMPT_TOO_LONG = "That message is too long to send. Shorten it and try again.";
 export const OPEN_FAILURE = "Session WebSocket failed to open";

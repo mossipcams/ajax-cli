@@ -3,6 +3,7 @@ import {
   clearComposerDraft,
   clearComposerPresentationState,
   clearComposerQueue,
+  queueHasAttachmentBytes,
   readComposerDraft,
   readComposerQueue,
   writeComposerDraft,
@@ -43,7 +44,7 @@ describe("draftStorage", () => {
     expect(readComposerDraft("web/fix-login")).toBe("");
   });
 
-  it("round-trips one queued follow-up per handle", () => {
+  it("round-trips one text-only queued follow-up per handle", () => {
     writeComposerQueue("web/fix-login", { status: "idle" });
     writeComposerQueue("web/fix-login", {
       status: "queued",
@@ -55,7 +56,7 @@ describe("draftStorage", () => {
     });
   });
 
-  it("restores stopping as queued", () => {
+  it("restores stopping as queued text only", () => {
     writeComposerQueue("web/fix-login", {
       status: "stopping",
       text: "stop and send this",
@@ -66,18 +67,44 @@ describe("draftStorage", () => {
     });
   });
 
-  it("persists serializable queued content blocks", () => {
+  it("does not persist attachment-bearing queued rows to localStorage", () => {
     const blocks = [{ type: "image" as const, data: "abc", mimeType: "image/jpeg" }];
+    expect(queueHasAttachmentBytes(blocks)).toBe(true);
     writeComposerQueue("web/x", {
       status: "queued",
       text: "with image",
       contentBlocks: blocks,
     });
-    expect(readComposerQueue("web/x")).toEqual({
+    expect(localStorage.getItem("ajax.web.session.composer.queue.web%2Fx")).toBeNull();
+    expect(readComposerQueue("web/x")).toEqual({ status: "idle" });
+  });
+
+  it("does not persist attachment-only queued follow-ups", () => {
+    const blocks = [{ type: "image" as const, data: "abc", mimeType: "image/jpeg" }];
+    writeComposerQueue("web/x", {
       status: "queued",
-      text: "with image",
+      text: "",
       contentBlocks: blocks,
     });
+    expect(localStorage.getItem("ajax.web.session.composer.queue.web%2Fx")).toBeNull();
+    expect(readComposerQueue("web/x")).toEqual({ status: "idle" });
+  });
+
+  it("does not restore attachment-only stopping as a text-only queue", () => {
+    const blocks = [{ type: "image" as const, data: "abc", mimeType: "image/jpeg" }];
+    writeComposerQueue("web/x", {
+      status: "stopping",
+      text: "",
+      contentBlocks: blocks,
+    });
+    expect(readComposerQueue("web/x")).toEqual({ status: "idle" });
+  });
+
+  it("clears stored queue when text and attachments are empty", () => {
+    writeComposerQueue("web/x", { status: "queued", text: "queued" });
+    writeComposerQueue("web/x", { status: "queued", text: "", contentBlocks: [] });
+    expect(readComposerQueue("web/x")).toEqual({ status: "idle" });
+    expect(localStorage.length).toBe(0);
   });
 
   it("clearComposerPresentationState removes draft and queue keys", () => {

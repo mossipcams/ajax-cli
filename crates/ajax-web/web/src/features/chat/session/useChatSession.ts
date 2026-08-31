@@ -12,6 +12,7 @@ import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
+import { hasPromptContent } from "@/shared/lib/promptContent";
 import {
   modelLiveOption,
   readLiveSelectCurrent,
@@ -146,7 +147,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   const sendPrompt = useCallback(
     (text: string, contentBlocks: PromptContentBlockWire[] = []): boolean => {
       const trimmed = text.trim();
-      if (!trimmed || !connected) return false;
+      if (!hasPromptContent(trimmed, contentBlocks) || !connected) return false;
       if (!transportRef.current?.sendPrompt(trimmed, contentBlocks)) return false;
       if (!view.turn.busy) markActivity();
       dispatch({ type: "prompt", text: trimmed });

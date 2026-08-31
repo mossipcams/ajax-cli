@@ -175,7 +175,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!connected || (!draft.trim() && queued === null)}
+          disabled={!connected || (!draft.trim() && attachments.length === 0 && queued === null)}
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg

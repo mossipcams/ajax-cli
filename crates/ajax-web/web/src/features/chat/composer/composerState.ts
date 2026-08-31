@@ -60,9 +60,13 @@ export function restoreQueuedDraft(state: ComposerState): {
   };
 }
 
-/** stopping cannot exist without queued text — enforced by the union shape. */
+/** stopping cannot exist without queued text or attachments — enforced by the union shape. */
 export function assertComposerState(state: ComposerState): void {
-  if (state.status === "stopping" && !state.text.trim()) {
-    throw new Error("ComposerState stopping requires queued text");
+  if (
+    state.status === "stopping" &&
+    !state.text.trim() &&
+    !state.contentBlocks?.length
+  ) {
+    throw new Error("ComposerState stopping requires queued text or attachments");
   }
 }

@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+
+vi.mock("./contracts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./contracts")>();
+  return {
+    ...actual,
+    MAX_FRAME_BYTES: 8192,
+  };
+});
+
 import { snapshotJson, eventJson } from "./fixtures";
 import {
   connectWebSessionTransport,
@@ -268,7 +277,6 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
-  // #929: ordinary pastes above the old 4096-byte ceiling must send.
   it("accepts a prompt larger than the former 4096-byte frame limit", () => {
     const socket = fakeSocket();
     const cbs = callbacks();
@@ -283,6 +291,30 @@ describe("connectWebSessionTransport", () => {
     expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
       expect.objectContaining({ type: "prompt", text: "x".repeat(5000) }),
     );
+    transport.dispose();
+  });
+
+  it("sends image-only prompts with empty text and contentBlocks on the wire", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+
+    const id = transport.sendPrompt("", blocks);
+    expect(id).not.toBe("");
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "", contentBlocks: blocks }),
+    );
+    transport.dispose();
+  });
+
+  it("rejects truly empty prompts", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    expect(transport.sendPrompt("   ")).toBe("");
+    expect(transport.sendPrompt("", [])).toBe("");
     transport.dispose();
   });
 

@@ -262,11 +262,14 @@ not synthesize `resource_link` stubs for local files. `resource_link` remains
 valid on the host wire for real URIs supplied by agents or other surfaces.
 Submitting still requires typed text and sends
 `{ type: "prompt", text, clientMessageId, contentBlocks? }`; the browser
-downscales/compresses attached photos so the JSON frame fits the 256 KiB WebSocket
-cap with headroom for typed text before send. If compression cannot fit the frame,
-the composer keeps the attachment and surfaces a specific error (not the generic
-“shorten the message” prompt). The host forwards a full ACP `ContentBlock` array
-and keeps JSONL to text plus attachment names only.
+downscales/compresses attached photos so the JSON frame fits the 8 MiB WebSocket
+cap (with headroom for typed text and up to eight image blocks) before send. If
+compression cannot fit the frame, the composer keeps the attachment and surfaces a
+specific error (not the generic “shorten the message” prompt). The host
+revalidates frame size, base64, image MIME/format, block count, and advertised
+capabilities before mapping to ACP. Queued attachment bytes stay in memory only
+and are not written to `localStorage`. The host forwards a full ACP
+`ContentBlock` array and keeps JSONL to text plus attachment names only.
 
 **Non-text output (ACP).** Agent/user/thought message updates and tool-call content may
 carry `image`, `resource_link`, or embedded `resource` blocks. The host maps them into

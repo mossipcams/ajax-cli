@@ -272,10 +272,13 @@ existing paths.
   operator has already typed, and never resent automatically. The prompt is read
   back from the transcript, so attachments are not restored with it.
 - The browser's one editable queued follow-up is also kept in `localStorage`
-  per task handle (`ajax.web.session.composer.queue.<handle>`). Queue → leave
-  task → return restores the queued text (and JSON-serializable content blocks
-  when present). A stored `stopping` state is restored as `queued`. Removing the
-  queue, dispatching it, or a committed Drop clears the stored queue entry.
+  per task handle (`ajax.web.session.composer.queue.<handle>`), but only as
+  text. Attachment-bearing queued rows (images or embedded blobs) remain in the
+  tab's in-memory composer state until drain, removal, or teardown; they are not
+  persisted and are not degraded into text-only sends after reload. Queue → leave
+  task → return restores queued text when present. A stored `stopping` state is
+  restored as `queued`. Removing the queue, dispatching it, or a committed Drop
+  clears the stored queue entry.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. Dedupe
   and queue ownership are enforced by the sidecar prompt ledger, not by scanning

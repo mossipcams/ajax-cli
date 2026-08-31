@@ -143,7 +143,7 @@ export function connectWebSessionTransport(
   return {
     sendPrompt(text, contentBlocks = []) {
       const trimmed = text.trim();
-      if (!trimmed) return "";
+      if (!trimmed && !contentBlocks.length) return "";
       const prompt: PendingPrompt = {
         text: trimmed,
         clientMessageId: newPromptId(),
