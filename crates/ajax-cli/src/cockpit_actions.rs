@@ -23,7 +23,7 @@ use crate::{
     execution_dispatch::{
         execute_new_task_plan_with_task_session_and_checkpoint, ExecuteNewTaskWithSession,
     },
-    task_session::{
+    tmux_task_session::{
         execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
     },
     CliError,

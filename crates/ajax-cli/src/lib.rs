@@ -13,7 +13,7 @@ mod execution_dispatch;
 mod render;
 mod snapshot_dispatch;
 mod supervise;
-mod task_session;
+mod tmux_task_session;
 mod web_backend;
 
 #[cfg(test)]
