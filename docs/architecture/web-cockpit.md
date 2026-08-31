@@ -59,11 +59,12 @@ under `styles/chat/`; task-details sheet CSS lives under
 **Mobile keyboard band (Ajax Chat):** while session chat is mounted,
 `features/chat/scrolling` sets `html[data-session-viewport="owned"]` so global
 CSS skips the `position: fixed` visual-viewport pin on `.app-viewport` that task
-and terminal surfaces use. With the keyboard open, `html` / `body` / `#app` are
-constrained to `var(--app-height, 100dvh)` and `.app-viewport` fills that band
-at `height: 100%`; the session surface does **not** add `paddingBottom` on top
-([#1122](https://github.com/mossipcams/ajax-cli/issues/1122),
-[#877](https://github.com/mossipcams/ajax-cli/issues/877)). With the keyboard
+and terminal surfaces use. With the keyboard open on iOS regular Safari (layout
+viewport stays full height while `visualViewport` shrinks),
+`sessionSurfaceStyle` reserves the keyboard inset as `paddingBottom` on
+`.session-chat-surface`; PWA / Android paths where `innerHeight` already
+shrinks with the keyboard omit that padding
+([#877](https://github.com/mossipcams/ajax-cli/issues/877)). With the keyboard
 closed, the session overflow chain uses `100lvh` minus
 `env(safe-area-inset-bottom)`, not `100dvh`. Transcript stick-to-live-edge vs
 history restore on keyboard open/close stays in `useChatViewport` /

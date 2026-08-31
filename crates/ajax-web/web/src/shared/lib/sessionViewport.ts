@@ -200,13 +200,16 @@ export function sessionVisibleHeight(
  * only on iOS regular Safari; returns undefined elsewhere so dvh/flex owns it.
  */
 export function sessionSurfaceStyle(
-  _innerHeight: number,
-  _visualViewportHeight: number,
+  innerHeight: number,
+  visualViewportHeight: number,
   keyboardOpen: boolean,
-  _safeBottomPx = 0,
+  safeBottomPx = 0,
 ): { paddingBottom: number } | undefined {
-  if (!keyboardOpen) return undefined;
-  // Keyboard-open session band is constrained on html/body/#app via --app-height
-  // (shell-layout.css). paddingBottom here double-reserves against that chain (#1122).
-  return undefined;
+  const paddingBottom = sessionKeyboardPadding(
+    innerHeight,
+    visualViewportHeight,
+    keyboardOpen,
+    safeBottomPx,
+  );
+  return paddingBottom > 0 ? { paddingBottom } : undefined;
 }

@@ -18,9 +18,9 @@ describe("session viewport helpers", () => {
     expect(document.documentElement.hasAttribute(SESSION_VIEWPORT_ATTR)).toBe(false);
   });
 
-  it("returns undefined surface style when keyboard is open (#1122 CSS chain owns band)", () => {
+  it("returns paddingBottom style only for iOS Safari keyboard band", () => {
     expect(sessionSurfaceStyle(800, 800, false)).toBeUndefined();
-    expect(sessionSurfaceStyle(800, 500, true)).toBeUndefined();
+    expect(sessionSurfaceStyle(800, 500, true)).toEqual({ paddingBottom: 300 });
     expect(sessionSurfaceStyle(500, 480, true)).toBeUndefined();
   });
 });

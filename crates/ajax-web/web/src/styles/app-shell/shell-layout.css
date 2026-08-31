@@ -44,22 +44,15 @@ html.keyboard-open .app-viewport {
   z-index: 30;
 }
 
-/* Session chat owns its keyboard band via --app-height on the overflow chain;
-   skip the global fixed pin so geometry is not double-owned (#877, #1122). */
-html[data-session-viewport="owned"].keyboard-open,
-html[data-session-viewport="owned"].keyboard-open body,
-html[data-session-viewport="owned"].keyboard-open #app {
-  height: var(--app-height, 100dvh);
-  max-height: var(--app-height, 100dvh);
-}
-
+/* Session chat owns its band via session-chat-surface padding; skip the global
+   fixed pin so geometry is not double-owned (#877). */
 html[data-session-viewport="owned"].keyboard-open .app-viewport {
   position: static;
   top: auto;
   left: auto;
   right: auto;
-  height: 100%;
-  max-height: 100%;
+  height: auto;
+  max-height: none;
 }
 
 /* Closed keyboard: stretch the overflow chain to large viewport minus home
