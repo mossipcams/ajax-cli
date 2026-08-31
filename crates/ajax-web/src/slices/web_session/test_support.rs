@@ -106,6 +106,16 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.generation(handle))
     }
 
+    pub fn collect_outbound(
+        &self,
+        handle: &str,
+        cursor: usize,
+        generation: u64,
+    ) -> super::task_session::OutboundBatch {
+        self.rt
+            .block_on(self.inner.collect_outbound(handle, cursor, generation))
+    }
+
     pub fn eviction_snapshot(&self, handle: &str) -> Option<super::task_session::EvictionSnapshot> {
         self.rt.block_on(self.inner.eviction_snapshot(handle))
     }

@@ -2,6 +2,7 @@
 
 mod acp_drain;
 mod acp_map;
+mod acp_slot;
 pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
@@ -10,10 +11,13 @@ mod normalize;
 mod output_content;
 mod prepare_session;
 mod prompt_content;
+mod prompt_queue;
 mod protocol;
 mod replay;
 mod session_activity;
 mod session_cleanup;
+mod session_error;
+mod session_evidence;
 mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
@@ -36,6 +40,7 @@ pub(crate) use session_activity::{
     record_session_activity, SessionActivity, SessionActivityReporter,
 };
 pub(crate) use session_cleanup::owned_session_handles;
+pub(crate) use session_error::SessionError;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
@@ -67,8 +72,6 @@ pub enum SessionClientMessage {
         #[serde(default, rename = "keepQueue")]
         keep_queue: bool,
     },
-    #[serde(rename = "set_model")]
-    SetModel { model: String },
     #[serde(rename = "set_config_option")]
     SetConfigOption {
         #[serde(rename = "configId")]

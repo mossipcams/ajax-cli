@@ -134,12 +134,12 @@ existing paths.
   catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
   handshake ids reconstruct to exploded catalog ids before argv, never passing
   `|` or `[` on the spawn command line
-  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Legacy WebSocket
-  `set_model` persists desired `session_model` first, then applies in-band; keep
-  process, `sessionId`, and JSONL. JSONL meta stores pipe-form, not bare handshake
-  `currentValue`. Respawn (`session/new`, no resume) only when the child is dead or no
-  model control is advertised. In-band refusal is a typed error; the child keeps
-  running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
+  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Live model pins
+  use only WebSocket `set_config_option` → ACP `session/set_config_option`; the
+  browser sends the exact advertised descriptor value, never an Ajax catalog id.
+  JSONL meta stores pipe-form, not bare handshake `currentValue`. A dead child is
+  respawned before applying the pin; in-band refusal is a typed error and a live
+  child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
   `sessionConfigOptions`. New Task before a session exists uses
   `GET /api/session/models`. Deprecated `models.availableModels` is not authority.
@@ -157,8 +157,7 @@ existing paths.
 - Changing the model while connected applies the advertised option first, then
   persists pipe-form `session_model` from the confirmed descriptors. A refused
   pick does not persist. A persistence failure keeps the live change and reports
-  that restart may restore the prior pin. Legacy WebSocket `set_model` still
-  persists desired state then maps through the spawn pin path. Cross-harness
+  that restart may restore the prior pin. Cross-harness
   Switch resets backend context on the same public Ajax session: cancel any
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
@@ -174,9 +173,7 @@ existing paths.
   replaces the complete `configOptions` list from the successful response, publishes
   the replacement snapshot, and persists pipe-form `session_model` only after ACP
   success. Refusal leaves confirmed browser state unchanged and does not persist.
-  Post-apply persistence failure keeps the live change and emits a warning. Legacy
-  `set_model` remains for compatibility; it persists desired state then maps through
-  the spawn pin path rather than forwarding a single advertised descriptor.
+  Post-apply persistence failure keeps the live change and emits a warning.
 - Moving a task to another harness is refused unless it was launched over ACP.
   Cross-harness Switch resets backend context on the live slot when present, or
   clears the stored resume id when idle, so the next attach spawns the new harness
@@ -194,6 +191,15 @@ existing paths.
   `AllowOnce`; otherwise cancelled with a warning).
 
 ## Queue and cancellation across WebSocket reconnect
+
+The per-task host has one `handle_command` dispatcher and one periodic `pump`.
+`AcpSlot` owns the child and advertised live capabilities, `PromptQueue` owns
+prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
+fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
+Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
+bounded without sleeping on the session loop; a failed report is exposed on a
+snapshot as `transcriptError`. Spawn-error dedupe keys on child generation and
+error kind, so reconnect cannot append the same authentication error repeatedly.
 
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order
@@ -376,9 +382,9 @@ existing paths.
 
 ## Model switching on the live ACP session
 
-- `set_model` persists the desired model on the task, then applies it in-band on
-  the live ACP session via `session/set_config_option` when a slot exists and the
-  harness advertises a model control. The ACP process, `sessionId`, and JSONL
+- `set_config_option` applies an exact advertised model/config value in-band via
+  ACP `session/set_config_option`, then persists the confirmed pipe-form model.
+  The ACP process, `sessionId`, and JSONL
   transcript stay put; `snapshot.model` updates from the harness-reported applied
   id. In-band apply that is unadvertised or refused is a typed error; the child
   keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
