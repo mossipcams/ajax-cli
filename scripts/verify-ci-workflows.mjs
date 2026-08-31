@@ -230,9 +230,14 @@ function verifyCi(ci, fail, root) {
 
   const webUnit = jobs["web-unit"] ?? {};
   const webUnitSteps = JSON.stringify(webUnit.steps ?? []);
+  if (!webUnitSteps.includes("web:build:check")) {
+    fail(
+      "ci.yml web-unit job must normalize dist via npm run web:build:check before comparing committed dist.",
+    );
+  }
   if (!webUnitSteps.includes("git diff --exit-code crates/ajax-web/web/dist")) {
     fail(
-      "ci.yml web-unit job must fail when crates/ajax-web/web/dist is stale after web:build.",
+      "ci.yml web-unit job must fail when crates/ajax-web/web/dist is stale after web:build:check.",
     );
   }
   for (const command of ["web:check", "web:lint", "web:sg", "web:test"]) {

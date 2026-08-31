@@ -9,6 +9,12 @@ use crate::adapters::web_session_acp::{
 };
 use agent_client_protocol::schema::v1::PromptCapabilities;
 use ajax_core::models::AgentClient;
+use base64::Engine;
+
+fn tiny_png_base64() -> String {
+    base64::engine::general_purpose::STANDARD
+        .encode([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+}
 
 #[test]
 fn attach_snapshot_includes_initialize_prompt_capabilities() {
@@ -77,6 +83,8 @@ fn rich_prompt_records_attachment_summary_without_base64() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
+    let png_data = tiny_png_base64();
+
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--prompt-capabilities"], || {
             directory
@@ -99,7 +107,7 @@ fn rich_prompt_records_attachment_summary_without_base64() {
                             description: None,
                         },
                         PromptContentBlockWire::Image {
-                            data: "aGVsbG8=".to_string(),
+                            data: png_data.clone(),
                             mime_type: "image/png".to_string(),
                         },
                     ],
@@ -116,7 +124,7 @@ fn rich_prompt_records_attachment_summary_without_base64() {
                 SessionServerEvent::Message { role, text, .. }
                     if role == "user"
                         && text.contains("[attached:")
-                        && !text.contains("aGVsbG8=")
+                        && !text.contains(&png_data)
             )));
         });
     });

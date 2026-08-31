@@ -11,9 +11,9 @@ import {
 } from "./composerState";
 
 describe("composerState", () => {
-  it("cannot represent stopping without queued text", () => {
+  it("cannot represent stopping without queued text or attachments", () => {
     expect(() => assertComposerState({ status: "stopping", text: "   " })).toThrow(
-      "ComposerState stopping requires queued text",
+      "ComposerState stopping requires queued text or attachments",
     );
   });
 

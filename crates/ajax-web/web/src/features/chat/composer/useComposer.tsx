@@ -269,6 +269,7 @@ export function ComposerProvider({
       busy,
       draft: draftRef.current,
       composerState,
+      contentBlocks,
     });
 
     if (result.action === "none") return;
