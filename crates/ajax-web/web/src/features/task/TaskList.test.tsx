@@ -248,6 +248,51 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
+  it("revealed Drop receives taps instead of the full-row opener (#1038)", () => {
+    const dropOnly: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/drop",
+          qualified_handle: "web/drop",
+          repo: "web",
+          title: "Drop me",
+          status: "idle",
+          last_activity_unix_secs: 0,
+          actions: [
+            {
+              action: "drop",
+              label: "Drop",
+              destructive: true,
+              confirmation_required: true,
+            },
+          ],
+        },
+      ],
+    };
+    const onOpenTask = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskList cockpit={dropOnly} onOpenTask={onOpenTask} onResult={onResult} />,
+    );
+    const row = screen.getByRole("button", { name: /web\/drop/ });
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    expect(row).toHaveClass("is-revealed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Drop" }));
+    expect(onResult).toHaveBeenCalledWith(
+      "Confirm Drop for web/drop?",
+      null,
+      false,
+      expect.objectContaining({
+        pendingConfirm: expect.objectContaining({ action: expect.objectContaining({ action: "drop" }) }),
+      }),
+    );
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -256,5 +301,17 @@ describe("TaskList", () => {
     expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
     expect(activePillRule).not.toMatch(/var\(--warn/);
     expect(pillBadgeRule).toMatch(/var\(--warn/);
+  });
+
+  it("keeps swipe reveal behind the row so status/time stay readable (#1122, #1038)", () => {
+    const revealRule =
+      stylesSource.match(/\.task-row-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
+    const rowRule = stylesSource.match(/\.task-row\s*\{([^}]*)\}/)?.[1] ?? "";
+    const revealedRule =
+      stylesSource.match(/\.task-row\.is-revealed\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(revealRule).toMatch(/z-index:\s*0/);
+    expect(rowRule).toMatch(/z-index:\s*1/);
+    expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
 });
