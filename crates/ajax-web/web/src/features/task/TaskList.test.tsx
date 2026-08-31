@@ -303,15 +303,33 @@ describe("TaskList", () => {
     expect(pillBadgeRule).toMatch(/var\(--warn/);
   });
 
-  it("keeps swipe reveal behind the row so status/time stay readable (#1122, #1038)", () => {
+  it("Fix CI is tappable without swipe when the reveal strip is reserved (#1122)", () => {
+    const onOpenTask = vi.fn();
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByRole("button", { name: "Fix CI" }));
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
+  it("marks rows with a reserved reveal strip (#1122)", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByRole("button", { name: /web\/a/ }).closest(".task-row-wrap");
+    expect(wrap).toHaveClass("has-reveal");
+    expect(wrap).toHaveStyle({ "--task-row-reveal-width": "158px" });
+    const idleWrap = screen.getByRole("button", { name: /api\/c/ }).closest(".task-row-wrap");
+    expect(idleWrap).not.toHaveClass("has-reveal");
+  });
+
+  it("reserves reveal width and keeps revealed row taps on the action (#1122, #1038)", () => {
+    const wrapRule =
+      stylesSource.match(/\.task-row-wrap\.has-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
     const revealRule =
-      stylesSource.match(/\.task-row-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
-    const rowRule = stylesSource.match(/\.task-row\s*\{([^}]*)\}/)?.[1] ?? "";
+      stylesSource.match(/\.task-row-wrap\.has-reveal \.task-row-reveal\s*\{([^}]*)\}/)?.[1] ??
+      "";
     const revealedRule =
       stylesSource.match(/\.task-row\.is-revealed\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(revealRule).toMatch(/z-index:\s*0/);
-    expect(rowRule).toMatch(/z-index:\s*1/);
+    expect(wrapRule).toMatch(/grid-template-columns:[^;]*var\(--task-row-reveal-width/);
+    expect(revealRule).toMatch(/z-index:\s*2/);
     expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
 });

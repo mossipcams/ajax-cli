@@ -7,13 +7,14 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type CSSProperties,
 } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
-import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
+import { SWIPE_REVEAL_WIDTH, SWIPE_REVEAL_WIDTH_VAR } from "@/shared/gestures/swipeReveal";
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -103,10 +104,19 @@ const TaskRow = memo(function TaskRow({
         }
       : {};
 
+  const wrapStyle = revealAction
+    ? ({ [SWIPE_REVEAL_WIDTH_VAR]: `${SWIPE_REVEAL_WIDTH}px` } as CSSProperties)
+    : undefined;
+
   return (
-    <div className="task-row-wrap" data-handle={card.qualified_handle} {...wrapRevealDismiss}>
+    <div
+      className={["task-row-wrap", revealAction ? "has-reveal" : ""].filter(Boolean).join(" ")}
+      data-handle={card.qualified_handle}
+      style={wrapStyle}
+      {...wrapRevealDismiss}
+    >
       {revealAction ? (
-        <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
+        <div className="task-row-reveal">
           <ActionBar
             actions={[revealAction]}
             handle={card.qualified_handle}

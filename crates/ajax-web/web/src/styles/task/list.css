@@ -129,12 +129,14 @@
   border-top: none;
 }
 
+/* #1122: reserve a fixed strip for the primary action so ERROR/IDLE + time stay
+   left of Fix CI/Drop/Repair and the chip stays visible and tappable. */
+.task-row-wrap.has-reveal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--task-row-reveal-width, 158px);
+}
+
 .task-row-reveal {
-  position: absolute;
-  inset: 0 0 0 auto;
-  /* #1122: stay behind the row so status/time stay readable; #1038 taps pass
-     through .task-row.is-revealed to the action buttons below. */
-  z-index: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -142,10 +144,22 @@
   pointer-events: auto;
 }
 
+.task-row-wrap.has-reveal .task-row-reveal {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 2;
+}
+
 .task-row-reveal .action {
   min-height: 36px;
   padding: 6px 12px;
   white-space: nowrap;
+}
+
+.task-row-wrap.has-reveal .task-row {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
 }
 
 .task-row {
