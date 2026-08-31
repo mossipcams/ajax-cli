@@ -343,7 +343,7 @@ jobs:
 
       - name: Verify committed web dist matches build output
         run: |
-          npm run web:build
+          npm run web:build:check
           git diff --exit-code crates/ajax-web/web/dist
 
   web-e2e:
