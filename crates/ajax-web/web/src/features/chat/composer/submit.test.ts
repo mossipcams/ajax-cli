@@ -49,6 +49,44 @@ describe("flushQueuedFollowUp", () => {
 });
 
 describe("submitComposerDraft", () => {
+  const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+
+  it("sends image-only drafts when idle", () => {
+    expect(
+      submitComposerDraft({
+        connected: true,
+        busy: false,
+        draft: "",
+        composerState: { status: "idle" },
+        contentBlocks: blocks,
+      }),
+    ).toEqual({ action: "send", text: "", clearDraft: true });
+  });
+
+  it("queues image-only drafts while busy", () => {
+    expect(
+      submitComposerDraft({
+        connected: true,
+        busy: true,
+        draft: "",
+        composerState: { status: "idle" },
+        contentBlocks: blocks,
+      }),
+    ).toEqual({ action: "queue", text: "", clearDraft: true });
+  });
+
+  it("rejects truly empty drafts", () => {
+    expect(
+      submitComposerDraft({
+        connected: true,
+        busy: false,
+        draft: "   ",
+        composerState: { status: "idle" },
+        contentBlocks: [],
+      }),
+    ).toEqual({ action: "none" });
+  });
+
   it("queues while busy and stop-and-sends on a second Enter", () => {
     expect(
       submitComposerDraft({
@@ -81,6 +119,19 @@ describe("submitComposerDraft", () => {
         composerState: queued,
       }),
     ).toEqual({ action: "update_queue", text: "B", clearDraft: true });
+  });
+
+  it("updates the queued follow-up with attachment-only drafts while busy", () => {
+    const queued = queueFollowUp({ status: "idle" }, "A");
+    expect(
+      submitComposerDraft({
+        connected: true,
+        busy: true,
+        draft: "",
+        composerState: queued,
+        contentBlocks: blocks,
+      }),
+    ).toEqual({ action: "update_queue", text: "", clearDraft: true });
   });
 });
 
@@ -141,5 +192,17 @@ describe("applySubmitResult", () => {
     );
 
     expect(next).toEqual(queueFollowUp({ status: "idle" }, "B", blocks));
+  });
+
+  it("replaces queued follow-up with attachment-only drafts (#1081)", () => {
+    const newBlocks = [{ type: "image" as const, data: "d29ybGQ=", mimeType: "image/jpeg" }];
+    const queued = queueFollowUp({ status: "idle" }, "A");
+    const next = applySubmitResult(
+      { action: "update_queue", text: "", clearDraft: true },
+      queued,
+      baseArgs({ composerState: queued, contentBlocks: newBlocks }),
+    );
+
+    expect(next).toEqual(queueFollowUp({ status: "idle" }, "", newBlocks));
   });
 });

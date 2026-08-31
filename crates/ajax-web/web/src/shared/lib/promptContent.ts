@@ -29,12 +29,19 @@ export type ComposerAttachment = {
 };
 
 /** Match host `ws_bridge::MAX_SESSION_FRAME_BYTES`. */
-export const MAX_PROMPT_FRAME_BYTES = 256 * 1024;
+export const MAX_PROMPT_FRAME_BYTES = 8 * 1024 * 1024;
+
+/** Maximum inline image blocks per prompt (mirrors host `prompt_content::MAX_IMAGE_BLOCKS`). */
+export const MAX_IMAGE_BLOCKS = 8;
 
 export const ATTACHMENT_TOO_LARGE =
   "That attachment is too large to send even after compression. Remove it or choose a smaller file.";
 
+/** Headroom reserved for JSON framing outside base64 image payloads. */
 const PROMPT_FRAME_HEADROOM_BYTES = 4096;
+
+/** Longest edge before downscaling during browser-side recompression. */
+const MAX_IMAGE_DIMENSION = 4096;
 const PLACEHOLDER_CLIENT_MESSAGE_ID = "00000000-0000-4000-8000-000000000000";
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -109,6 +116,13 @@ export function promptFrameFits(text: string, contentBlocks: PromptContentBlockW
   return estimatePromptFrameBytes(text, contentBlocks) <= MAX_PROMPT_FRAME_BYTES;
 }
 
+export function hasPromptContent(
+  text: string,
+  contentBlocks: PromptContentBlockWire[] = [],
+): boolean {
+  return text.trim().length > 0 || contentBlocks.length > 0;
+}
+
 export function canAttachFiles(caps: LivePromptCapabilities | undefined): boolean {
   return Boolean(caps?.image || caps?.embeddedContext);
 }
@@ -134,8 +148,12 @@ async function compressImageElement(
   let height = img.naturalHeight || img.height;
   if (!width || !height) return null;
 
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(width, height));
+  width = Math.max(1, Math.floor(width * scale));
+  height = Math.max(1, Math.floor(height * scale));
+
   let quality = 0.92;
-  for (let attempt = 0; attempt < 16; attempt += 1) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     canvas.width = width;
     canvas.height = height;
     ctx.drawImage(img, 0, 0, width, height);
@@ -164,7 +182,8 @@ async function recompressImageBlock(
   const blob = new Blob([bytes], { type: block.mimeType || "image/jpeg" });
   const url = URL.createObjectURL(blob);
   try {
-    const img = await loadImage(url);
+    const img = await loadImage(url).catch(() => null);
+    if (!img) return null;
     const compressed = await compressImageElement(img, maxBase64Chars);
     if (!compressed) return null;
     return { type: "image", data: compressed.data, mimeType: compressed.mimeType };
@@ -186,6 +205,10 @@ export async function fitPromptContentBlocks(
   text: string,
   blocks: PromptContentBlockWire[],
 ): Promise<{ blocks: PromptContentBlockWire[]; error?: string }> {
+  const imageCount = blocks.filter((block) => block.type === "image").length;
+  if (imageCount > MAX_IMAGE_BLOCKS) {
+    return { blocks, error: ATTACHMENT_TOO_LARGE };
+  }
   if (promptFrameFits(text, blocks)) return { blocks };
 
   const maxDataLen = maxImageDataLength(text, blocks);

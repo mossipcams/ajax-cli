@@ -11,20 +11,7 @@ function queueKey(handle: string): string {
 
 type StoredComposerQueue = {
   text: string;
-  contentBlocks?: PromptContentBlockWire[];
 };
-
-function serializableContentBlocks(
-  blocks?: PromptContentBlockWire[],
-): PromptContentBlockWire[] | undefined {
-  if (!blocks?.length) return undefined;
-  try {
-    const json = JSON.stringify(blocks);
-    return JSON.parse(json) as PromptContentBlockWire[];
-  } catch {
-    return undefined;
-  }
-}
 
 export function readComposerDraft(handle: string): string {
   try {
@@ -54,12 +41,11 @@ export function readComposerQueue(handle: string): ComposerState {
     const raw = localStorage.getItem(queueKey(handle));
     if (!raw) return { status: "idle" };
     const parsed = JSON.parse(raw) as StoredComposerQueue;
-    if (typeof parsed.text !== "string" || !parsed.text.trim()) return { status: "idle" };
-    const contentBlocks = serializableContentBlocks(parsed.contentBlocks);
+    const text = typeof parsed.text === "string" ? parsed.text : "";
+    if (!text.trim()) return { status: "idle" };
     return {
       status: "queued",
-      text: parsed.text,
-      ...(contentBlocks?.length ? { contentBlocks } : {}),
+      text,
     };
   } catch {
     return { status: "idle" };
@@ -73,15 +59,18 @@ export function writeComposerQueue(handle: string, state: ComposerState): void {
       return;
     }
     const text = state.text.trim();
-    if (!text) {
+    const hasText = text.length > 0;
+    const hasBlocks = Boolean(state.contentBlocks?.length);
+    if (!hasText && !hasBlocks) {
       localStorage.removeItem(queueKey(handle));
       return;
     }
-    const contentBlocks = serializableContentBlocks(state.contentBlocks);
-    const payload: StoredComposerQueue = {
-      text,
-      ...(contentBlocks?.length ? { contentBlocks } : {}),
-    };
+    if (hasBlocks) {
+      // Attachment-bearing queues stay in memory for this tab; never persist text-only shadows.
+      localStorage.removeItem(queueKey(handle));
+      return;
+    }
+    const payload: StoredComposerQueue = { text: state.text };
     localStorage.setItem(queueKey(handle), JSON.stringify(payload));
   } catch {
     // Quota / private mode: queue still works in-memory for this tab.
@@ -96,4 +85,16 @@ export function clearComposerQueue(handle: string): void {
 export function clearComposerPresentationState(handle: string): void {
   clearComposerDraft(handle);
   clearComposerQueue(handle);
+}
+
+/** Test-only helper: detect attachment bytes that must not touch localStorage. */
+export function queueHasAttachmentBytes(
+  contentBlocks?: PromptContentBlockWire[],
+): boolean {
+  if (!contentBlocks?.length) return false;
+  return contentBlocks.some(
+    (block) =>
+      block.type === "image" ||
+      (block.type === "resource" && typeof block.blob === "string" && block.blob.length > 0),
+  );
 }
