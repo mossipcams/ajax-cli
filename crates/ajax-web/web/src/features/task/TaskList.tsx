@@ -112,6 +112,7 @@ const TaskRow = memo(function TaskRow({
     <div
       className={["task-row-wrap", revealAction ? "has-reveal" : ""].filter(Boolean).join(" ")}
       data-handle={card.qualified_handle}
+      data-testid={`task-row-wrap-${card.qualified_handle}`}
       style={wrapStyle}
       {...wrapRevealDismiss}
     >

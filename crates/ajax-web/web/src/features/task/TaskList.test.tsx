@@ -312,11 +312,10 @@ describe("TaskList", () => {
 
   it("marks rows with a reserved reveal strip (#1122)", () => {
     render(<TaskList cockpit={cockpit} />);
-    const wrap = screen.getByRole("button", { name: /web\/a/ }).closest(".task-row-wrap");
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
     expect(wrap).toHaveClass("has-reveal");
     expect(wrap).toHaveStyle({ "--task-row-reveal-width": "158px" });
-    const idleWrap = screen.getByRole("button", { name: /api\/c/ }).closest(".task-row-wrap");
-    expect(idleWrap).not.toHaveClass("has-reveal");
+    expect(screen.getByTestId("task-row-wrap-api/c")).not.toHaveClass("has-reveal");
   });
 
   it("reserves reveal width and keeps revealed row taps on the action (#1122, #1038)", () => {
