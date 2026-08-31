@@ -66,23 +66,23 @@ Error generating stack: `+u.message+`
     margin-right: `).concat(d,"px ").concat(s,`;
     `),n==="padding"&&"padding-right: ".concat(d,"px ").concat(s,";")].filter(Boolean).join(""),`
   }
-  
+
   .`).concat(Kd,` {
     right: `).concat(d,"px ").concat(s,`;
   }
-  
+
   .`).concat(Xd,` {
     margin-right: `).concat(d,"px ").concat(s,`;
   }
-  
+
   .`).concat(Kd," .").concat(Kd,` {
     right: 0 `).concat(s,`;
   }
-  
+
   .`).concat(Xd," .").concat(Xd,` {
     margin-right: 0 `).concat(s,`;
   }
-  
+
   body[`).concat(wo,`] {
     `).concat(tz,": ").concat(d,`px;
   }
