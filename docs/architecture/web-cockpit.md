@@ -56,6 +56,21 @@ terminal header Details wiring in `features/task-workspace`; terminal footer
 under `styles/chat/`; task-details sheet CSS lives under
 `styles/task-workspace/`. Both ship through the single `styles.css` manifest.
 
+**Mobile keyboard band (Ajax Chat):** while session chat is mounted,
+`features/chat/scrolling` sets `html[data-session-viewport="owned"]` so global
+CSS skips the `position: fixed` visual-viewport pin on `.app-viewport` that task
+and terminal surfaces use. With the keyboard open, `html` / `body` / `#app` are
+constrained to `var(--app-height, 100dvh)` and `.app-viewport` fills that band
+at `height: 100%`; the session surface does **not** add `paddingBottom` on top
+([#1122](https://github.com/mossipcams/ajax-cli/issues/1122),
+[#877](https://github.com/mossipcams/ajax-cli/issues/877)). With the keyboard
+closed, the session overflow chain uses `100lvh` minus
+`env(safe-area-inset-bottom)`, not `100dvh`. Transcript stick-to-live-edge vs
+history restore on keyboard open/close stays in `useChatViewport` /
+`sessionViewport.ts`. Falsifiable layout rules live in
+`styles/app-shell/shell-layout.css` and `keyboardBandPin.test.ts`; scroll
+restore behavior in `useChatViewport.test.tsx` and `sessionViewport.test.ts`.
+
 Interactive tasks whose tmux pane is still running the harness agent, and tasks
 whose projection is not `session_capable` with no ACP entry point, open
 Terminal (`#/t/<handle>`) instead of Chat. ACP-capable tasks whose agent has

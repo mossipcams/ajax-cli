@@ -133,8 +133,30 @@ describe("keyboard band height pin contract", () => {
       )?.[1] ?? "";
     const body = stripCssComments(rule);
     expect(body).toMatch(/position:\s*static/);
-    expect(body).toMatch(/height:\s*auto/);
+    expect(body).toMatch(/height:\s*100%/);
     expect(body).not.toMatch(/position:\s*fixed/);
+    expect(body).not.toMatch(/height:\s*auto/);
+  });
+
+  it("keyboard-open session constrains overflow chain to visualViewport height (#1122)", () => {
+    const css = stripCssComments(stylesSource);
+    const chainRule =
+      css.match(
+        /html\[data-session-viewport="owned"\]\.keyboard-open,\s*html\[data-session-viewport="owned"\]\.keyboard-open body,\s*html\[data-session-viewport="owned"\]\.keyboard-open #app\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(chainRule).toMatch(
+      /height:\s*var\(--app-height,\s*100dvh\)/,
+    );
+    expect(chainRule).toMatch(
+      /max-height:\s*var\(--app-height,\s*100dvh\)/,
+    );
+
+    const appViewportRule =
+      css.match(
+        /html\[data-session-viewport="owned"\]\.keyboard-open \.app-viewport\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(appViewportRule).toMatch(/height:\s*100%/);
+    expect(appViewportRule).toMatch(/max-height:\s*100%/);
   });
 
   it("closed-keyboard session lock stretches overflow chain to lvh minus home inset (#1034)", () => {

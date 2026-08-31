@@ -5,6 +5,7 @@ import {
   pinTranscriptToLiveEdge,
   restoreTranscriptGeometry,
   sessionKeyboardPadding,
+  sessionSurfaceStyle,
   sessionVisibleHeight,
   transcriptAtBottom,
   transcriptAtLiveEdge,
@@ -38,6 +39,11 @@ describe("sessionViewport", () => {
 
   it("clears padding when keyboard is closed", () => {
     expect(sessionKeyboardPadding(800, 500, false)).toBe(0);
+  });
+
+  it("sessionSurfaceStyle defers keyboard-open band to CSS --app-height chain (#1122)", () => {
+    expect(sessionSurfaceStyle(800, 800, false)).toBeUndefined();
+    expect(sessionSurfaceStyle(800, 500, true)).toBeUndefined();
   });
 
   it("uses visualViewport height as the visible band when usable", () => {

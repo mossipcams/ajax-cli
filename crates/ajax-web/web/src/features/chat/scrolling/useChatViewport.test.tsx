@@ -251,14 +251,14 @@ describe("useChatViewport", () => {
     expect(thread.scrollTop).toBe(6685);
   });
 
-  it("applies surface paddingBottom on iOS Safari keyboard band", () => {
+  it("does not apply surface paddingBottom while keyboard band is CSS-owned (#1122)", () => {
     const { view } = mountHook();
     keyboardState.keyboardOpen = true;
     keyboardState.keyboardHeight = 300;
     keyboardState.innerHeight = 800;
     keyboardState.visualViewportHeight = 500;
     view.rerender();
-    expect(view.result.current.surfaceStyle).toEqual({ paddingBottom: 300 });
+    expect(view.result.current.surfaceStyle).toBeUndefined();
   });
 
   it("calls onRestoreLiveEdge after keyboard close restores live bottom", () => {
