@@ -831,10 +831,7 @@ fn clear_stale_agent_running<R: Registry>(
         return;
     };
     let previous = task.clone();
-    task.remove_side_flag(crate::models::SideFlag::AgentRunning);
-    if task.agent_status == AgentRuntimeStatus::Running {
-        task.agent_status = AgentRuntimeStatus::Unknown;
-    }
+    live::retract_stale_agent_running_at(task, SystemTime::now());
     refresh_cached_annotations(task);
     *changed |= *task != previous;
 }
