@@ -813,3 +813,80 @@ fn product_flow_create_live_switch_reload_and_cross_harness() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn apply_client_message_clear_resets_context_and_keeps_transcript() {
+    let dir = scratch_dir("clear-context");
+    let handle = "web/clear-context";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let child_before = directory.child_id(handle);
+        let mut generation = directory.generation(handle);
+        let generation_before = generation;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let nonce = "before-clear-nonce";
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::Prompt {
+                text: nonce.to_string(),
+                content_blocks: vec![],
+                client_message_id: "prompt-before-clear".to_string(),
+            },
+            &mut generation,
+            None,
+        ))
+        .expect("prompt before clear");
+        directory.pump(handle);
+
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::Clear,
+            &mut generation,
+            None,
+        ))
+        .expect("clear");
+        directory.pump(handle);
+
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(events_contain_text(&events, nonce));
+        assert!(events_contain_text(&events, "Context cleared."));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Message { role, text, .. }
+                if role == "user" && text == "/clear"
+        )));
+        assert_ne!(directory.child_id(handle), child_before);
+        assert!(generation > generation_before);
+
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            SessionClientMessage::Prompt {
+                text: format!("{nonce}-after-clear"),
+                content_blocks: vec![],
+                client_message_id: "prompt-after-clear".to_string(),
+            },
+            &mut generation,
+            None,
+        ))
+        .expect("prompt after clear");
+        directory.pump(handle);
+        let (after_prompt, _) = directory.read_from(handle, 0);
+        assert!(events_contain_text(
+            &after_prompt,
+            &format!("{nonce}-after-clear")
+        ));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

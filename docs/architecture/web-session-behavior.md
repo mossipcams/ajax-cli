@@ -81,8 +81,14 @@ existing paths.
   optional `inputHint`). Replace the list; do not merge. Updates are live session
   capability state, not JSONL transcript rows. The chat composer completes
   advertised `/name` tokens (keyboard Tab/Enter and tappable rows on iOS Safari)
-  and sends the operator's text unchanged on `session/prompt`; Ajax does not
-  implement local slash handlers.
+  and sends the operator's text unchanged on `session/prompt`. Ajax also owns
+  one built-in slash command, `/clear`: the browser sends WebSocket
+  `{ type: "clear" }` (never `session/prompt`), and the host cancels any active
+  turn and queued prompts, clears the stored ACP resume id, spawns
+  `session/new` with the same harness and model, appends a host note
+  (`Context cleared.`), and keeps the TaskSession slot, JSONL transcript, and
+  WebSocket identity. Prior transcript rows remain visible after the reset
+  snapshot and replay.
 - Live prompt content capabilities come from ACP `initialize` `agentCapabilities.promptCapabilities`
   (`image`, `embeddedContext`; never `audio`). The host stores the handshake values and
   exposes them on the snapshot as `promptCapabilities`. Replace on handshake; do not

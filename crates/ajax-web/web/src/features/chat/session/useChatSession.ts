@@ -160,6 +160,10 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef.current?.sendCancel();
   }, []);
 
+  const sendClear = useCallback(() => {
+    transportRef.current?.sendClear();
+  }, []);
+
   const markStopped = useCallback(() => {
     dispatch({ type: "event", event: { type: "system_message", text: "Stopped" } });
   }, []);
@@ -210,6 +214,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     sendCancel,
+    sendClear,
     markStopped,
     applyConfigOption,
     respondPermission,

@@ -168,6 +168,11 @@ export function connectWebSessionTransport(
       }
       sendJson(keepQueue ? { type: "cancel", keepQueue: true } : { type: "cancel" });
     },
+    sendClear() {
+      pendingPrompts.splice(0, pendingPrompts.length);
+      writeOutbox(handle, pendingPrompts);
+      sendJson({ type: "clear" });
+    },
     setModel(nextModel) {
       const trimmed = nextModel.trim() || "auto";
       sendJson({ type: "set_config_option", configId: "model", value: trimmed });

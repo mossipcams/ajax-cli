@@ -24,6 +24,7 @@ export const transport = {
   // "" when it refuses to send; the composer keys off that.
   sendPrompt: vi.fn(() => "cmid-1"),
   sendCancel: vi.fn(),
+  sendClear: vi.fn(),
   setModel: vi.fn(),
   setConfigOption: vi.fn(),
   respondPermission: vi.fn(),
@@ -201,6 +202,8 @@ export function prepareChatSurface() {
   });
   vi.stubGlobal("cancelAnimationFrame", () => {});
   transport.sendPrompt.mockClear();
+  transport.sendCancel.mockClear();
+  transport.sendClear.mockClear();
   transport.setModel.mockClear();
   transport.setConfigOption.mockClear();
   transport.respondPermission.mockClear();

@@ -687,6 +687,12 @@ fn cancel_message_keep_queue_true() {
     assert_eq!(msg, SessionClientMessage::Cancel { keep_queue: true });
 }
 
+#[test]
+fn clear_message_parses() {
+    let msg: SessionClientMessage = serde_json::from_str(r#"{"type":"clear"}"#).expect("clear");
+    assert_eq!(msg, SessionClientMessage::Clear);
+}
+
 fn queued_prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
         client_message_id: String::new(),

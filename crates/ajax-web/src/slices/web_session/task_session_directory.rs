@@ -380,6 +380,22 @@ impl TaskSessionDirectory {
         }
     }
 
+    pub async fn clear_context(&self, handle: &str, worktree_path: &Path) -> Result<u64, String> {
+        if self.has_live_entry(handle) {
+            let tx = self.command_tx(handle)?;
+            let worktree_path = worktree_path.to_path_buf();
+            send_command(&tx, |reply| TaskSessionCommand::ClearContext {
+                worktree_path,
+                reply,
+            })
+            .await?
+            .map_err(Into::into)
+        } else {
+            web_session_store::clear_acp_session_id(&self.state_dir, handle);
+            Ok(0)
+        }
+    }
+
     pub async fn attach_snapshot(
         &self,
         handle: &str,
@@ -542,7 +558,7 @@ pub(crate) enum ApplyClientMessageOutcome {
 pub(crate) async fn apply_client_message(
     directory: &TaskSessionDirectory,
     handle: &str,
-    _worktree_path: &Path,
+    worktree_path: &Path,
     message: SessionClientMessage,
     generation: &mut u64,
     persist_session_model: Option<PersistSessionModel>,
@@ -563,6 +579,10 @@ pub(crate) async fn apply_client_message(
         }
         SessionClientMessage::Cancel { keep_queue } => {
             directory.cancel(handle, keep_queue).await?;
+            Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::Clear => {
+            *generation = directory.clear_context(handle, worktree_path).await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
         SessionClientMessage::SetConfigOption { config_id, value } => {

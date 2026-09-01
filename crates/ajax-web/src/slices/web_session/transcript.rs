@@ -166,6 +166,16 @@ pub(crate) fn harness_switch_note(item_id: String) -> SessionServerEvent {
     }
 }
 
+pub(crate) fn context_cleared_note(item_id: String) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "note".to_string(),
+        text: "Context cleared.".to_string(),
+        content_blocks: Vec::new(),
+        item_id,
+        message_id: None,
+    }
+}
+
 pub(crate) fn context_reset_needed(resumed: bool, log: &TranscriptLog) -> bool {
     !resumed && !log.events.is_empty()
 }

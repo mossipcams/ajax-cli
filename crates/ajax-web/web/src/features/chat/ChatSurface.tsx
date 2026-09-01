@@ -73,6 +73,7 @@ function ChatSessionBody({
   activityAgeMs,
   sendPrompt,
   sendCancel,
+  sendClear,
   markStopped,
   applyConfigOption,
   respondPermission,
@@ -95,6 +96,7 @@ function ChatSessionBody({
   activityAgeMs: number;
   sendPrompt: ReturnType<typeof useChatSession>["sendPrompt"];
   sendCancel: ReturnType<typeof useChatSession>["sendCancel"];
+  sendClear: ReturnType<typeof useChatSession>["sendClear"];
   markStopped: ReturnType<typeof useChatSession>["markStopped"];
   applyConfigOption: ReturnType<typeof useChatSession>["applyConfigOption"];
   respondPermission: ReturnType<typeof useChatSession>["respondPermission"];
@@ -157,6 +159,7 @@ function ChatSessionBody({
           scrollToLatest={scrollToLatest}
           sendPrompt={sendPrompt}
           sendCancel={sendCancel}
+          sendClear={sendClear}
           markStopped={markStopped}
         >
           <ChatScrollThread>
@@ -253,6 +256,7 @@ export default function ChatSurface({
     sessionConfigOptions,
     sendPrompt,
     sendCancel,
+    sendClear,
     markStopped,
     applyConfigOption,
     respondPermission,
@@ -293,6 +297,7 @@ export default function ChatSurface({
         activityAgeMs={activityAgeMs}
         sendPrompt={sendPrompt}
         sendCancel={sendCancel}
+        sendClear={sendClear}
         markStopped={markStopped}
         applyConfigOption={applyConfigOption}
         respondPermission={respondPermission}
