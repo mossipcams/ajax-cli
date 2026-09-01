@@ -35,10 +35,11 @@ export const BASELINE = {
    * Re-measured after the turn-disclosure comment in conversation.css grew to
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged).
-   * Re-measured after task-row reserved reveal strip grid (#1122). */
-  sourceStylesCssBytes: 109_260,
-  builtAppCssBytes: 94_303,
-  builtAppCssGzipBytes: 16_550,
+   * Re-measured after task-row reserved reveal strip grid (#1122).
+   * Re-measured after workspace layout CSS included in combined stylesheet. */
+  sourceStylesCssBytes: 109_370,
+  builtAppCssBytes: 94_381,
+  builtAppCssGzipBytes: 16_574,
   classSelectorLines: 610,
   hasSelectors: 18,
 } as const;

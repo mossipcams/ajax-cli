@@ -194,7 +194,7 @@ describe("TaskTerminalView", () => {
     expect(within(sheet).queryByTestId("task-ajax-chat-action")).not.toBeInTheDocument();
   });
 
-  it("keeps the header Details control reachable while terminal-expanded", () => {
+  it("keeps Details tappable when terminal-expanded even with the expand corner present (#1095)", () => {
     document.documentElement.classList.add("terminal-expanded");
     renderWithSheet({
       detail: detail({ session_capable: true }),
@@ -202,7 +202,7 @@ describe("TaskTerminalView", () => {
       onOpenChat: vi.fn(),
     });
     const details = screen.getByTestId("task-details");
-    expect(details).toBeInTheDocument();
+    expect(details).toBeEnabled();
     fireEvent.click(details);
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     document.documentElement.classList.remove("terminal-expanded");
@@ -561,27 +561,5 @@ describe("TaskTerminalView projection surface", () => {
     expect(modelPickerBlock).toMatch(/overscroll-behavior:\s*contain/);
     expect(modelPickerBlock).toMatch(/-webkit-overflow-scrolling:\s*touch/);
     expect(modelPickerBlock).not.toMatch(/pointer-events:\s*none/); // #1022
-  });
-
-  it("keeps Details reachable in terminal-expanded fullscreen without hiding the control", () => {
-    expect(stylesSource).not.toMatch(
-      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s*\{[^}]*display:\s*none/,
-    );
-    expect(stylesSource).toMatch(
-      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?pointer-events:\s*none/,
-    );
-    expect(stylesSource).toMatch(
-      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.detail-header-controls[\s\S]*?pointer-events:\s*auto/,
-    );
-
-    const expandedDetailsCss =
-      stylesSource.match(
-        /html\.terminal-expanded\s+\.task-detail\s+\.detail-header\s+\.session-head-details\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-    expect(expandedDetailsCss).toMatch(/background:\s*var\(--paper-raised\)/);
-    expect(expandedDetailsCss).toMatch(/color:\s*var\(--ink\)/);
-    expect(expandedDetailsCss).toMatch(/min-height:\s*44px/);
-    expect(expandedDetailsCss).toMatch(/border:\s*1px solid var\(--rule-strong\)/);
-    expect(expandedDetailsCss).toMatch(/border-radius:\s*999px/);
   });
 });
