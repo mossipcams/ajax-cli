@@ -129,19 +129,37 @@
   border-top: none;
 }
 
+/* #1122: reserve a fixed strip for the primary action so ERROR/IDLE + time stay
+   left of Fix CI/Drop/Repair and the chip stays visible and tappable. */
+.task-row-wrap.has-reveal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--task-row-reveal-width, 158px);
+}
+
 .task-row-reveal {
-  position: absolute;
-  inset: 0 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   padding-right: var(--space-2);
+  pointer-events: auto;
+}
+
+.task-row-wrap.has-reveal .task-row-reveal {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 2;
 }
 
 .task-row-reveal .action {
   min-height: 36px;
   padding: 6px 12px;
   white-space: nowrap;
+}
+
+.task-row-wrap.has-reveal .task-row {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
 }
 
 .task-row {
@@ -169,6 +187,12 @@
 
 .task-row:active {
   background: var(--paper-high);
+}
+
+/* #1038: full-row button sits above the reveal layer; when open, let Drop/actions
+   receive taps and close the reveal by tapping the exposed row chrome. */
+.task-row.is-revealed {
+  pointer-events: none;
 }
 
 .task-row-main {

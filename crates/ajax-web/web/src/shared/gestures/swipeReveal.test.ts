@@ -4,6 +4,7 @@ import {
   swipeMove,
   swipeEnd,
   SWIPE_REVEAL_WIDTH,
+  SWIPE_REVEAL_WIDTH_VAR,
   SWIPE_TRIGGER,
 } from "./swipeReveal";
 
@@ -39,5 +40,9 @@ describe("swipe-to-reveal gesture", () => {
   it("reserves enough width for the confirming Drop label", () => {
     // "Tap to confirm" + button padding + reveal padding-right must fit without clip.
     expect(SWIPE_REVEAL_WIDTH).toBeGreaterThanOrEqual(148);
+  });
+
+  it("exports a CSS variable name synced to dashboard row grid width", () => {
+    expect(SWIPE_REVEAL_WIDTH_VAR).toBe("--task-row-reveal-width");
   });
 });
