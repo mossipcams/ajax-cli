@@ -9,18 +9,23 @@ pub(super) fn attach_snapshot(
     client_cursor: Option<usize>,
 ) -> AttachSnapshot {
     state.pump();
-    let (snapshot, replayed) = build_attach(
+    let (mut snapshot, replayed) = build_attach(
         &state.log,
-        state.applied_model.clone(),
+        state.acp.applied_model.clone(),
         state.busy(),
         client_cursor,
         SessionChrome {
-            session_config_options: state.session_config_options.clone(),
-            available_commands: state.session_available_commands.clone(),
-            prompt_capabilities: state.session_prompt_capabilities.clone(),
-            session_title: state.session_title.clone(),
+            session_config_options: state.acp.session_config_options.clone(),
+            available_commands: state.acp.session_available_commands.clone(),
+            prompt_capabilities: state.acp.session_prompt_capabilities.clone(),
+            session_title: state.acp.session_title.clone(),
         },
     );
+    snapshot.transcript_error = state
+        .evidence
+        .transcript_durability_fault
+        .clone()
+        .or_else(|| state.evidence.activity_report_fault.clone());
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -41,21 +46,37 @@ pub(super) fn collect_outbound(
         cursor
     };
     let snapshot = if generation_changed {
-        Some(snapshot(state, state.applied_model.clone(), true, None))
-    } else if let Some(model) = state.pending_model_snapshot.take() {
-        let config = state.pending_config_snapshot.take();
-        let _ = state.pending_commands_snapshot.take();
-        let _ = state.pending_capabilities_snapshot.take();
-        state.pending_title_snapshot = false;
+        Some(snapshot(state, state.acp.applied_model.clone(), true, None))
+    } else if let Some(model) = state.acp.pending_model_snapshot.take() {
+        let config = state.acp.pending_config_snapshot.take();
+        let _ = state.acp.pending_commands_snapshot.take();
+        let _ = state.acp.pending_capabilities_snapshot.take();
+        state.acp.pending_title_snapshot = false;
         Some(snapshot(state, model, false, config))
-    } else if state.pending_title_snapshot
-        || state.pending_commands_snapshot.is_some()
-        || state.pending_capabilities_snapshot.is_some()
+    } else if state.evidence.pending_transcript_error_snapshot
+        || state.evidence.pending_activity_report_error_snapshot
     {
-        let _ = state.pending_commands_snapshot.take();
-        let _ = state.pending_capabilities_snapshot.take();
-        state.pending_title_snapshot = false;
-        Some(snapshot(state, state.applied_model.clone(), false, None))
+        state.evidence.pending_transcript_error_snapshot = false;
+        state.evidence.pending_activity_report_error_snapshot = false;
+        Some(snapshot(
+            state,
+            state.acp.applied_model.clone(),
+            false,
+            None,
+        ))
+    } else if state.acp.pending_title_snapshot
+        || state.acp.pending_commands_snapshot.is_some()
+        || state.acp.pending_capabilities_snapshot.is_some()
+    {
+        let _ = state.acp.pending_commands_snapshot.take();
+        let _ = state.acp.pending_capabilities_snapshot.take();
+        state.acp.pending_title_snapshot = false;
+        Some(snapshot(
+            state,
+            state.acp.applied_model.clone(),
+            false,
+            None,
+        ))
     } else {
         None
     };
@@ -83,11 +104,18 @@ fn snapshot(
         pending_permission(&state.log),
         pending_elicitation(&state.log),
         SessionChrome {
-            session_config_options: config.or_else(|| state.session_config_options.clone()),
-            available_commands: state.session_available_commands.clone(),
-            prompt_capabilities: state.session_prompt_capabilities.clone(),
-            session_title: state.session_title.clone(),
+            session_config_options: config.or_else(|| state.acp.session_config_options.clone()),
+            available_commands: state.acp.session_available_commands.clone(),
+            prompt_capabilities: state.acp.session_prompt_capabilities.clone(),
+            session_title: state.acp.session_title.clone(),
         },
+    )
+    .with_transcript_error(
+        state
+            .evidence
+            .transcript_durability_fault
+            .clone()
+            .or_else(|| state.evidence.activity_report_fault.clone()),
     )
 }
 

@@ -61,7 +61,8 @@ Operator slices              ajax-core::task_operations::{start,resume,review,
         ↓
 Plan helpers                 ajax-core::commands/*  (not kernel)
         ↓
-Shared kernel                models, lifecycle, live, policy, output,
+Shared kernel                models, lifecycle, live, live_application,
+                             agent_status, ui_state, attention, policy, output,
                              registry traits, typed events, ghost_task,
                              validity, and other cross-slice task-truth
         ↓

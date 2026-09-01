@@ -9,20 +9,22 @@ use super::task_session_replacement::{
     meta_model_from_config_options,
 };
 use super::transcript::{harness_switch_note, slot_must_replace};
-use super::{apply_cancel_to_queue, SessionServerEvent};
+use super::{apply_cancel_to_queue, SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
     AcpStdioClient, SpawnReport,
 };
 use crate::adapters::web_session_store::{self, StoredSession};
+use agent_client_protocol::schema::v1::SessionConfigOptionValue;
+use ajax_core::adapters::{parse_model_selection, ModelSelection};
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
     if let Some(options) = report.config_options.as_deref() {
-        state.session_config_options = Some(config_option_descriptors(options));
+        state.acp.session_config_options = Some(config_option_descriptors(options));
     }
-    state.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
+    state.acp.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
 }
 
 pub(super) async fn acquire(
@@ -30,18 +32,18 @@ pub(super) async fn acquire(
     worktree_path: &Path,
     model: &str,
     agent: AgentClient,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     state.worktree_path = Some(worktree_path.to_path_buf());
     state.agent = agent;
 
-    if let Some(client) = state.client.as_mut() {
+    if let Some(client) = state.acp.client.as_mut() {
         let host_exited = client.host_exited();
-        if !slot_must_replace(state.acp_alive, &state.model, model, host_exited) {
+        if !slot_must_replace(state.acp.acp_alive, &state.acp.model, model, host_exited) {
             state.acquire_holder();
             return Ok(());
         }
         let resume_id = replace_resume_id(
-            &state.model,
+            &state.acp.model,
             model,
             &state.state_dir,
             &state.qualified_handle,
@@ -59,72 +61,23 @@ pub(super) async fn acquire(
     let resume_id = stored.acp_session_id.clone();
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
 
-    state.client = Some(client);
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
+    state.acp.client = Some(client);
+    state.acp.model = model.to_string();
+    state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
     state.generation = 0;
     state.last_released = None;
-    state.acp_alive = false;
+    state.acp.acp_alive = false;
     match recover_prompt_ledger(state) {
         Ok(()) => finish_first_acquire(state, &report, model),
         Err(error) => {
-            if let Some(client) = state.client.take() {
+            if let Some(client) = state.acp.client.take() {
                 discard_staged_client(client);
             }
-            state.acp_alive = false;
+            state.acp.acp_alive = false;
             Err(error)
         }
-    }
-}
-
-pub(super) async fn apply_model(
-    state: &mut TaskSessionState,
-    worktree_path: &Path,
-    model: &str,
-) -> Result<u64, String> {
-    let Some(client) = state.client.as_mut() else {
-        state.model = model.to_string();
-        return Ok(state.generation);
-    };
-
-    if client.host_exited() {
-        return respawn(state, worktree_path, model, true).await;
-    }
-
-    let generation_before = state.generation;
-    let apply_result = tokio::task::block_in_place(|| client.apply_model_pin(model));
-    match apply_result {
-        Ok(outcome) if outcome.error.is_none() => {
-            state.model = model.to_string();
-            state.applied_model = outcome.applied_model.clone();
-            if let Some(options) = outcome.config_options.as_deref() {
-                state.session_config_options = Some(config_option_descriptors(options));
-            }
-            web_session_store::save_meta(
-                &state.state_dir,
-                &state.qualified_handle,
-                Some(client.session_id()),
-                &meta_model_from_config_options(outcome.config_options.as_deref(), model),
-            );
-            state.pending_model_snapshot = Some(outcome.applied_model);
-            state.pending_config_snapshot = state.session_config_options.clone();
-            Ok(generation_before)
-        }
-        Ok(outcome) => {
-            let message = outcome.error.unwrap_or_else(|| {
-                format!(
-                    "session model {model} was refused — harness is running {}",
-                    outcome.applied_model
-                )
-            });
-            state.append_to_log(vec![SessionServerEvent::Error {
-                message: message.clone(),
-            }]);
-            Err(message)
-        }
-        Err(error) => Err(error),
     }
 }
 
@@ -139,33 +92,48 @@ pub(crate) struct ApplyConfigOptionResult {
 pub(super) async fn apply_config_option(
     state: &mut TaskSessionState,
     config_id: &str,
-    value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
-) -> Result<ApplyConfigOptionResult, String> {
-    let Some(client) = state.client.as_mut() else {
-        return Err("session slot missing".to_string());
+    value: SessionConfigOptionValue,
+) -> Result<ApplyConfigOptionResult, SessionError> {
+    let Some(client) = state.acp.client.as_mut() else {
+        return Err(SessionError::protocol("session slot missing"));
     };
 
     if client.host_exited() {
-        return Err("ACP process exited — reconnect to change config".to_string());
+        let worktree_path = state
+            .worktree_path
+            .clone()
+            .ok_or_else(|| SessionError::protocol("worktree path missing"))?;
+        merge_config_into_desired_pin(state, config_id, &value);
+        let model = state.acp.model.clone();
+        let generation = respawn(state, &worktree_path, &model, true).await?;
+        return Ok(ApplyConfigOptionResult {
+            generation,
+            persist_model: Some(model),
+            persist_warning: None,
+        });
     }
 
     let generation_before = state.generation;
     let apply_result = tokio::task::block_in_place(|| client.apply_config_option(config_id, value));
     match apply_result {
         Ok(outcome) if outcome.error.is_none() => {
-            state.applied_model = outcome.applied_model.clone();
+            state.acp.applied_model = outcome.applied_model.clone();
             if let Some(options) = outcome.config_options.as_deref() {
-                state.session_config_options = Some(config_option_descriptors(options));
+                state.acp.session_config_options = Some(config_option_descriptors(options));
             }
             web_session_store::save_meta(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
-                &meta_model_from_config_options(outcome.config_options.as_deref(), &state.model),
+                &meta_model_from_config_options(
+                    outcome.config_options.as_deref(),
+                    &state.acp.model,
+                ),
             );
-            state.pending_model_snapshot = Some(outcome.applied_model);
-            state.pending_config_snapshot = state.session_config_options.clone();
-            let (persist_model, persist_warning) = match outcome.config_options.as_deref() {
+            let persist_warning = None;
+            state.acp.pending_model_snapshot = Some(outcome.applied_model);
+            state.acp.pending_config_snapshot = state.acp.session_config_options.clone();
+            let (persist_model, model_warning) = match outcome.config_options.as_deref() {
                 Some(options) if option_triggers_model_persist(options, config_id) => {
                     match applied_model_id_for_persist(options) {
                         Ok(model) => (Some(model), None),
@@ -182,7 +150,7 @@ pub(super) async fn apply_config_option(
             Ok(ApplyConfigOptionResult {
                 generation: generation_before,
                 persist_model,
-                persist_warning,
+                persist_warning: persist_warning.or(model_warning),
             })
         }
         Ok(outcome) => {
@@ -192,12 +160,12 @@ pub(super) async fn apply_config_option(
                     outcome.applied_model
                 )
             });
-            state.append_to_log(vec![SessionServerEvent::Error {
+            let _ = state.append_to_log(vec![SessionServerEvent::Error {
                 message: message.clone(),
             }]);
-            Err(message)
+            Err(SessionError::protocol(message))
         }
-        Err(error) => Err(error),
+        Err(error) => Err(SessionError::protocol(error)),
     }
 }
 
@@ -206,20 +174,21 @@ pub(super) async fn respawn(
     worktree_path: &Path,
     model: &str,
     force: bool,
-) -> Result<u64, String> {
-    if state.client.is_none() {
-        return Err("session slot missing".to_string());
+) -> Result<u64, SessionError> {
+    if state.acp.client.is_none() {
+        return Err(SessionError::protocol("session slot missing"));
     }
     let host_exited = state
+        .acp
         .client
         .as_mut()
         .map(|client| client.host_exited())
         .unwrap_or(true);
-    if !force && !slot_must_replace(state.acp_alive, &state.model, model, host_exited) {
+    if !force && !slot_must_replace(state.acp.acp_alive, &state.acp.model, model, host_exited) {
         return Ok(state.generation);
     }
     let resume_id = replace_resume_id(
-        &state.model,
+        &state.acp.model,
         model,
         &state.state_dir,
         &state.qualified_handle,
@@ -236,14 +205,14 @@ pub(super) async fn reset_harness_context(
     worktree_path: &Path,
     model: &str,
     agent: AgentClient,
-) -> Result<u64, String> {
+) -> Result<u64, SessionError> {
     release_live_client(state, true)?;
-    apply_cancel_to_queue(&mut state.queued, false);
-    state.prompt_ledger.remove_queued();
+    apply_cancel_to_queue(&mut state.prompts.queued, false);
+    state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
         &state.state_dir,
         &state.qualified_handle,
-        &state.prompt_ledger,
+        &state.prompts.prompt_ledger,
     );
 
     web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
@@ -251,7 +220,7 @@ pub(super) async fn reset_harness_context(
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
 
     let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note]);
+    state.append_to_log(vec![note])?;
 
     web_session_store::save_meta(
         &state.state_dir,
@@ -259,17 +228,17 @@ pub(super) async fn reset_harness_context(
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, model),
     );
-    state.client = Some(new_client);
-    state.model = model.to_string();
-    state.applied_model = report.applied_model.clone();
+    state.acp.client = Some(new_client);
+    state.acp.model = model.to_string();
+    state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
-    state.acp_alive = true;
+    state.acp.acp_alive = true;
     state.stream_normalizer = super::normalize::StreamNormalizer::default();
-    state.usage_deduper = super::acp_usage::UsageDeduper::default();
+    state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
-        state.append_to_log(vec![SessionServerEvent::Error {
+        let _ = state.append_to_log(vec![SessionServerEvent::Error {
             message: error.clone(),
         }]);
     }
@@ -277,28 +246,32 @@ pub(super) async fn reset_harness_context(
 }
 
 /// Cancel and drop the live ACP child so the next spawn owns stdio alone.
-fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Result<(), String> {
+fn release_live_client(
+    state: &mut TaskSessionState,
+    close_session: bool,
+) -> Result<(), SessionError> {
     retry_pending_exit_interruption(state);
-    if state.pending_exit_interruption.is_some() {
-        return Err("prompt ownership recovery pending".to_string());
+    if state.prompts.pending_exit_interruption.is_some() {
+        return Err(SessionError::persist("prompt ownership recovery pending"));
     }
-    state.suppress_exit_evidence = true;
+    state.prompts.suppress_exit_evidence = true;
     let result = (|| {
-        if let Some(active) = state.active_prompt.as_mut() {
+        if let Some(active) = state.prompts.active_prompt.as_mut() {
             active.mark_cancel_requested();
         }
         let awaiting_cancel_terminal = state
+            .prompts
             .active_prompt
             .as_ref()
             .is_some_and(|active| active.terminal.is_none());
         if !awaiting_cancel_terminal {
             interrupt_active_prompt(state)?;
         }
-        let Some(client) = state.client.as_mut() else {
+        let Some(client) = state.acp.client.as_mut() else {
             return Ok(());
         };
         if !client.host_exited() {
-            let cancelled = client.cancel()?;
+            let cancelled = client.cancel().map_err(SessionError::protocol)?;
             let mut resolved = Vec::new();
             for request_id in cancelled.permissions {
                 resolved.push(SessionServerEvent::PermissionResolved {
@@ -312,15 +285,15 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
                     action: "cancel".to_string(),
                 });
             }
-            state.append_to_log(resolved);
+            let _ = state.append_to_log(resolved);
         }
         if awaiting_cancel_terminal {
             state.pump();
-            if state.active_prompt.is_some() {
+            if state.prompts.active_prompt.is_some() {
                 interrupt_active_prompt(state)?;
             }
         }
-        let Some(mut client) = state.client.take() else {
+        let Some(mut client) = state.acp.client.take() else {
             return Ok(());
         };
         let message = if close_session {
@@ -329,14 +302,14 @@ fn release_live_client(state: &mut TaskSessionState, close_session: bool) -> Res
             client.detach()
         };
         if let Some(message) = message {
-            state.append_to_log(vec![SessionServerEvent::Error { message }]);
+            let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
         }
         Ok(())
     })();
-    state.suppress_exit_evidence = false;
+    state.prompts.suppress_exit_evidence = false;
     if result.is_ok() {
-        state.child_exit_reconciled = true;
-        state.acp_alive = false;
+        state.prompts.child_exit_reconciled = true;
+        state.acp.acp_alive = false;
     }
     result
 }
@@ -359,7 +332,7 @@ async fn spawn_acp(
     worktree_path: &Path,
     model: &str,
     resume_id: Option<&str>,
-) -> Result<(AcpStdioClient, SpawnReport), String> {
+) -> Result<(AcpStdioClient, SpawnReport), SessionError> {
     // Spawn on the session task thread so test ACP overrides (thread-local) and
     // the child's dedicated owner stay aligned. One task per session, so this
     // does not block the directory or other sessions.
@@ -367,5 +340,40 @@ async fn spawn_acp(
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
         AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
+            .map_err(|error| SessionError::classify_spawn(&error))
     })
+}
+
+fn merge_config_into_desired_pin(
+    state: &mut TaskSessionState,
+    config_id: &str,
+    value: &SessionConfigOptionValue,
+) {
+    let wire = match value {
+        SessionConfigOptionValue::ValueId { value } => value.0.to_string(),
+        SessionConfigOptionValue::Boolean { value } => value.to_string(),
+        _ => return,
+    };
+    if let Some(mut selection) = parse_model_selection(state.acp.model.trim()) {
+        if config_id == "model" {
+            selection.model = wire;
+        } else if let Some(pair) = selection
+            .options
+            .iter_mut()
+            .find(|(key, _)| key == config_id)
+        {
+            pair.1 = wire;
+        } else {
+            selection.options.push((config_id.to_string(), wire));
+        }
+        state.acp.model = selection.encode();
+    } else if config_id == "model" {
+        state.acp.model = wire;
+    } else {
+        state.acp.model = ModelSelection {
+            model: state.acp.model.trim().to_string(),
+            options: vec![(config_id.to_string(), wire)],
+        }
+        .encode();
+    }
 }

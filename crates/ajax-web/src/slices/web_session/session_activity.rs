@@ -12,7 +12,9 @@
 //! actionable wait; this slice only supplies the evidence for tasks the pane
 //! classifier cannot see.
 
+use super::{ReportSessionActivity, SessionError};
 use ajax_core::{
+    adapters::acp_launch_for_agent,
     commands::CommandContext,
     live,
     models::{LiveObservation, LiveStatusKind, TaskId},
@@ -59,25 +61,54 @@ pub fn record_session_activity<R: Registry>(
     qualified_handle: &str,
     activity: SessionActivity,
     now: SystemTime,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     let task_id: TaskId = context
         .registry
         .list_tasks()
         .into_iter()
         .find(|task| task.qualified_handle() == qualified_handle)
-        .filter(|task| task.skip_interactive_agent())
+        .filter(|task| {
+            task.skip_interactive_agent() && acp_launch_for_agent(task.selected_agent).is_some()
+        })
         .map(|task| task.id.clone())
-        .ok_or_else(|| format!("no ACP-capable task for {qualified_handle}"))?;
+        .ok_or_else(|| {
+            SessionError::protocol(format!("no ACP-capable task for {qualified_handle}"))
+        })?;
 
     let task = context
         .registry
         .get_task_mut(&task_id)
-        .ok_or_else(|| format!("task disappeared: {qualified_handle}"))?;
+        .ok_or_else(|| SessionError::protocol(format!("task disappeared: {qualified_handle}")))?;
 
     // Authoritative: the host owns the ACP child, so this is first-hand
     // process evidence, not a guess reconciled from screen scraping.
     live::apply_authoritative_observation_at(task, activity.observation(), now);
     Ok(())
+}
+
+pub(crate) const ACTIVITY_REPORT_MAX_ATTEMPTS: usize = 3;
+
+/// Bounded retries without sleeping on the per-session command loop.
+pub(crate) fn try_report_session_activity(
+    report: &Option<ReportSessionActivity>,
+    qualified_handle: &str,
+    activity: SessionActivity,
+) -> Result<(), SessionError> {
+    let Some(report) = report else {
+        return Ok(());
+    };
+    for _ in 0..ACTIVITY_REPORT_MAX_ATTEMPTS {
+        if report(qualified_handle, activity) {
+            return Ok(());
+        }
+    }
+    Err(SessionError::persist(format!(
+        "task activity report failed after {ACTIVITY_REPORT_MAX_ATTEMPTS} attempts ({activity:?})"
+    )))
+}
+
+pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
+    format!("task activity report failed: {error}")
 }
 
 /// Which transitions on session events are evidence about the agent.
@@ -297,7 +328,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("no ACP-capable task"), "{error}");
+        assert!(error.to_string().contains("no ACP-capable task"), "{error}");
     }
 
     fn reporter() -> SessionActivityReporter {

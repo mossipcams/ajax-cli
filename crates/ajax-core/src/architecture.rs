@@ -16,11 +16,14 @@ mod tests {
     // operator_dispatch are shared/composition plumbing and are not operator slices.
     const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
 
-    const KERNEL_MODULES: [&str; 8] = [
+    const KERNEL_MODULES: [&str; 11] = [
         "models",
         "lifecycle",
         "live",
         "live_application",
+        "agent_status",
+        "ui_state",
+        "attention",
         "policy",
         "output",
         "ghost_task",
