@@ -8,7 +8,7 @@ use super::task_session_replacement::{
     discard_staged_client, finish_first_acquire, install_replaced_client, meta_model_for_persist,
     meta_model_from_config_options,
 };
-use super::transcript::{harness_switch_note, slot_must_replace};
+use super::transcript::{context_cleared_note, harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
@@ -233,6 +233,49 @@ pub(super) async fn reset_harness_context(
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.agent = agent;
+    state.generation = state.generation.saturating_add(1);
+    state.acp.acp_alive = true;
+    state.stream_normalizer = super::normalize::StreamNormalizer::default();
+    state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
+    if let Some(error) = &report.model_apply_error {
+        let _ = state.append_to_log(vec![SessionServerEvent::Error {
+            message: error.clone(),
+        }]);
+    }
+    Ok(state.generation)
+}
+
+pub(super) async fn clear_session_context(
+    state: &mut TaskSessionState,
+    worktree_path: &Path,
+) -> Result<u64, SessionError> {
+    let model = state.acp.model.clone();
+    let agent = state.agent;
+    release_live_client(state, true)?;
+    apply_cancel_to_queue(&mut state.prompts.queued, false);
+    state.prompts.prompt_ledger.remove_queued();
+    let _ = web_session_store::prompt_ledger::persist(
+        &state.state_dir,
+        &state.qualified_handle,
+        &state.prompts.prompt_ledger,
+    );
+
+    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
+
+    let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
+
+    let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
+    state.append_to_log(vec![note])?;
+
+    web_session_store::save_meta(
+        &state.state_dir,
+        &state.qualified_handle,
+        Some(new_client.session_id()),
+        &meta_model_for_persist(&report, &model),
+    );
+    state.acp.client = Some(new_client);
+    state.acp.applied_model = report.applied_model.clone();
+    apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
     state.acp.acp_alive = true;
     state.stream_normalizer = super::normalize::StreamNormalizer::default();

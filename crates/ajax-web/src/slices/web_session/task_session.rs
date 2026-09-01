@@ -79,6 +79,10 @@ pub(crate) enum TaskSessionCommand {
         agent: AgentClient,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
+    ClearContext {
+        worktree_path: PathBuf,
+        reply: oneshot::Sender<Result<u64, SessionError>>,
+    },
     AttachSnapshot {
         model: String,
         client_cursor: Option<usize>,
@@ -449,6 +453,13 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let result =
                 task_session_spawn::reset_harness_context(state, &worktree_path, &model, agent)
                     .await;
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::ClearContext {
+            worktree_path,
+            reply,
+        } => {
+            let result = task_session_spawn::clear_session_context(state, &worktree_path).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {

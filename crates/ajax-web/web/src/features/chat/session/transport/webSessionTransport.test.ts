@@ -222,6 +222,35 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
+  it("sendClear() sends clear on the wire", () => {
+    const socket = fakeSocket();
+    socket.readyState = OPEN_READY_STATE;
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    transport.sendClear();
+    expect(socket.sent).toContainEqual(JSON.stringify({ type: "clear" }));
+    transport.dispose();
+  });
+
+  it("sendClear() drops pending prompts before the socket opens", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    transport.sendPrompt("Queued");
+    transport.sendClear();
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(
+      socket.sent.some((payload) => {
+        try {
+          return JSON.parse(payload).type === "prompt";
+        } catch {
+          return false;
+        }
+      }),
+    ).toBe(false);
+    transport.dispose();
+  });
+
   it("calls onClosed once when error is followed by close", () => {
     const socket = fakeSocket();
     const cbs = callbacks();

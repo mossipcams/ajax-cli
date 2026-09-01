@@ -261,6 +261,25 @@ describe("ChatComposer", () => {
     expect(transport.sendPrompt).toHaveBeenCalledWith("/web query", []);
   });
 
+  it("sends /clear through the clear wire command instead of session/prompt", () => {
+    mountChat();
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "/clear" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(transport.sendClear).toHaveBeenCalledOnce();
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("session-message-user")).not.toBeInTheDocument();
+  });
+
+  it("offers /clear in slash completion without advertised commands", () => {
+    mountChat();
+    const input = screen.getByLabelText("Message");
+    fireEvent.change(input, { target: { value: "/cl" } });
+    expect(screen.getByTestId("session-composer-slash-menu")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /\/clear/ })).toBeInTheDocument();
+  });
+
   it("shows advertised slash matches and inserts on Tab without submitting", () => {
     mountChat();
     act(() => {

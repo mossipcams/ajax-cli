@@ -13,6 +13,7 @@ function mockTransport(
   const transport: webSessionTransport.WebSessionTransport = {
     sendPrompt: vi.fn(() => "prompt-1"),
     sendCancel: vi.fn(),
+    sendClear: vi.fn(),
     setModel: vi.fn(),
     setConfigOption: vi.fn(),
     respondPermission: vi.fn(),

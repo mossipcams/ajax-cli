@@ -94,6 +94,8 @@ pub enum SessionClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<serde_json::Value>,
     },
+    #[serde(rename = "clear")]
+    Clear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

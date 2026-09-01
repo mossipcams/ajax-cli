@@ -52,12 +52,17 @@ import {
   insertSlashCommand,
   parseSlashPrefix,
 } from "./slashCompletion";
+import {
+  isBuiltInClearCommand,
+  mergeSlashCommands,
+} from "./builtInCommands";
 import { failedTurnPromptToRestore } from "../session/public";
 import type { ConversationItem } from "../session/public";
 
 export type ComposerCommands = {
   sendPrompt: (text: string, contentBlocks?: PromptContentBlockWire[]) => boolean;
   sendCancel: () => void;
+  sendClear: () => void;
   markStopped: () => void;
 };
 
@@ -130,6 +135,7 @@ export function ComposerProvider({
   scrollToLatest,
   sendPrompt,
   sendCancel,
+  sendClear,
   markStopped,
   children,
 }: ComposerProviderProps) {
@@ -154,9 +160,13 @@ export function ComposerProvider({
   busyRef.current = busy;
 
   const slashPrefix = useMemo(() => parseSlashPrefix(draft), [draft]);
+  const slashCommandSource = useMemo(
+    () => mergeSlashCommands(availableCommands),
+    [availableCommands],
+  );
   const slashMatches = useMemo(
-    () => filterAdvertisedCommands(availableCommands, slashPrefix?.prefix ?? ""),
-    [availableCommands, slashPrefix],
+    () => filterAdvertisedCommands(slashCommandSource, slashPrefix?.prefix ?? ""),
+    [slashCommandSource, slashPrefix],
   );
   const slashMenuOpen = slashPrefix !== null && slashMatches.length > 0;
 
@@ -264,6 +274,15 @@ export function ComposerProvider({
   const sendDraft = useCallback(() => {
     if (!connected) return;
 
+    if (isBuiltInClearCommand(draftRef.current)) {
+      sendClear();
+      clearDraftText();
+      clearDraftAttachments();
+      setComposerState(clearQueue(composerStateRef.current));
+      scrollToLatest();
+      return;
+    }
+
     const result = submitComposerDraft({
       connected,
       busy,
@@ -335,6 +354,7 @@ export function ComposerProvider({
     deliverPrompt,
     scrollToLatest,
     sendCancel,
+    sendClear,
   ]);
 
   useEffect(() => {
@@ -483,6 +503,13 @@ export function ComposerProvider({
 
   const onComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        if (isBuiltInClearCommand(draftRef.current)) {
+          sendDraft();
+          return;
+        }
+      }
       if (slashMenuOpen) {
         if (event.key === "Tab" || event.key === "Enter") {
           event.preventDefault();
