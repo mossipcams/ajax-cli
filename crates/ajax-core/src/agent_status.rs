@@ -60,8 +60,6 @@ pub enum ObservationSource {
     /// Weak visible-pane wait hint. Admissible only where the agent capability
     /// profile reports `Unavailable` or `Unverified` for the wait fact.
     PaneEvidence,
-    /// Process liveness — informational, never selects activity.
-    ProcessLiveness,
 }
 
 impl ObservationSource {
@@ -70,10 +68,6 @@ impl ObservationSource {
             Self::ProcessExit => 0,
             Self::ProviderLifecycle => 1,
             Self::PaneEvidence => 2,
-            // Dead variant: constructed nowhere. Liveness reaches the reducer as
-            // the separate `ProcessLiveness` input, never as a `StatusObservation`.
-            // Ranked below `PaneEvidence` so no two variants share a rank.
-            Self::ProcessLiveness => 3,
         }
     }
 }
