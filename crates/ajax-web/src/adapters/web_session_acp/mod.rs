@@ -39,8 +39,8 @@ mod config_options_tests;
 mod spawn_tests;
 
 pub use apply_model::{
-    apply_config_option, apply_model_pin, operator_pin_satisfied, read_applied_model,
-    ApplyModelOutcome,
+    apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,
+    read_applied_model, ApplyModelOutcome,
 };
 pub use catalog::{read_agent_model_catalog, read_cursor_acp_model_labels, AgentModelCatalog};
 pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};

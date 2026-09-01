@@ -56,6 +56,22 @@ terminal header Details wiring in `features/task-workspace`; terminal footer
 under `styles/chat/`; task-details sheet CSS lives under
 `styles/task-workspace/`. Both ship through the single `styles.css` manifest.
 
+**Mobile keyboard band (Ajax Chat):** while session chat is mounted,
+`features/chat/scrolling` sets `html[data-session-viewport="owned"]` so global
+CSS skips the `position: fixed` visual-viewport pin on `.app-viewport` that task
+and terminal surfaces use. With the keyboard open on iOS regular Safari (layout
+viewport stays full height while `visualViewport` shrinks),
+`sessionSurfaceStyle` reserves the keyboard inset as `paddingBottom` on
+`.session-chat-surface`; PWA / Android paths where `innerHeight` already
+shrinks with the keyboard omit that padding
+([#877](https://github.com/mossipcams/ajax-cli/issues/877)). With the keyboard
+closed, the session overflow chain uses `100lvh` minus
+`env(safe-area-inset-bottom)`, not `100dvh`. Transcript stick-to-live-edge vs
+history restore on keyboard open/close stays in `useChatViewport` /
+`sessionViewport.ts`. Falsifiable layout rules live in
+`styles/app-shell/shell-layout.css` and `keyboardBandPin.test.ts`; scroll
+restore behavior in `useChatViewport.test.tsx` and `sessionViewport.test.ts`.
+
 Interactive tasks whose tmux pane is still running the harness agent, and tasks
 whose projection is not `session_capable` with no ACP entry point, open
 Terminal (`#/t/<handle>`) instead of Chat. ACP-capable tasks whose agent has
@@ -321,7 +337,7 @@ reports a warning. New Task and idle catalog selection still use only
 **Harness Switch (MVP).** Cross-harness Switch in task details sends only the target
 harness (no model picker). It clears the prior harness model pin, resets ACP
 context, and keeps the transcript. Same-harness model changes use the connected
-composer controls or legacy `set_model`, not Switch.
+composer controls (`set_config_option`), not Switch.
 
 Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
 (`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. Prompt
@@ -354,6 +370,9 @@ excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
 | `acp_map` | ACP update → `SessionServerEvent` |
 | `normalize` | host stream normalization / item ids |
 | `acp_usage` | usage dedupe |
+| `acp_slot` | live ACP child and advertised session capabilities |
+| `prompt_queue` | active/queued prompt and durable ledger ownership |
+| `session_evidence` / `session_error` | activity/fault evidence and typed failures |
 | `replay` | cursor replay planning |
 | `transcript` | in-memory cursor and permission filter |
 | `ws_bridge` | socket forward to directory |
@@ -373,7 +392,7 @@ into the store, ACP client, command loop, or runtime route layer).
 Each attach sends one protocol v2 `snapshot` frame
 (`protocolVersion`, `cursor`, `model`, `turnState`, `reset`, optional
 `pendingPermission`, optional `sessionConfigOptions`, optional `availableCommands`, optional
-`promptCapabilities`, optional `sessionTitle`) followed by cursor-bearing
+`promptCapabilities`, optional `sessionTitle`, optional `transcriptError`) followed by cursor-bearing
 `event` envelopes whose
 `payload` is the existing typed session event union. The `model` field is the
 harness-reported applied id after handshake apply, not the task desired pin
@@ -398,10 +417,10 @@ queue empties, or idle retention evicts the slot.
 
 Reconnects do not send the browser `ajax.web.session.model` preference on the
 session WebSocket URL; task metadata remains authoritative
-([#910](https://github.com/mossipcams/ajax-cli/issues/910)). `set_model` persists
-on the task through a core-owned operation, then applies the pin in-band on the
-live ACP session when a slot exists (`session/set_config_option` with the mapped
-advertised ACP id). Cross-harness Switch resets backend context on the live slot
+([#910](https://github.com/mossipcams/ajax-cli/issues/910)). Connected model
+controls send only `set_config_option` with the exact advertised pair; the host
+applies ACP `session/set_config_option` and persists the confirmed pipe-form pin
+through a core-owned operation. Cross-harness Switch resets backend context on the live slot
 instead of dropping it.
 Incoming ACP v1 notifications remain typed through the per-task command loop.
 Stable message, thought, tool, plan, mode, configuration, session-info, and usage
