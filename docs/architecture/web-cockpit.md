@@ -768,8 +768,9 @@ before accepting the browser-session cookie. Cloudflare Access narrows the
 supported external exposure model; it does not make direct origin bypass safe,
 so operators must still protect the origin with Cloudflare Tunnel, firewalling,
 or equivalent origin access controls. Live-control API routes such as
-`/api/cockpit`, `/api/version`, `/api/server/restart`, `/api/operations`,
-`/api/tasks`, and the task terminal WebSocket route require the server-issued,
+`/api/cockpit`, `/api/version`, `/api/server/restart`, `/api/operations`
+(alias of `/api/actions`; same handler), `/api/tasks`, and the task terminal
+WebSocket route require the server-issued,
 HttpOnly, Secure, same-origin browser-session cookie. The HTML shell sets the
 cookie on normal loads, and `POST /api/session` exists only to renew or
 bootstrap that same cookie when a live browser shell receives a `401` from a
@@ -1143,7 +1144,13 @@ rejected.
 
 ### `ajax-web::slices::operate`
 
-Owns browser-submitted operator actions. It accepts browser action requests,
+Owns browser-submitted operator actions. `POST /api/operations` and
+`POST /api/actions` are duplicate public aliases registered in
+`ajax-web::runtime` to the same `axum_action` handler; the browser shell posts
+to `/api/operations` while legacy tests and CLI web-backend fixtures may still
+use `/api/actions`. Both paths must remain until usage is proven zero.
+
+It accepts browser action requests,
 checks browser capability limits, delegates valid work to the existing core task
 operations, and returns the refreshed Cockpit projection. Unsupported
 capabilities return typed adapter capability outcomes rather than duplicated
