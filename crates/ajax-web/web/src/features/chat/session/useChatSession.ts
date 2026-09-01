@@ -168,10 +168,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef.current?.setConfigOption(configId, value);
   }, []);
 
-  const applyModel = useCallback((catalogId: string) => {
-    transportRef.current?.setModel(catalogId);
-  }, []);
-
   const respondPermission = useCallback(
     (approved: boolean) => {
       const decision = view.permission.decision;
@@ -216,7 +212,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     sendCancel,
     markStopped,
     applyConfigOption,
-    applyModel,
     respondPermission,
     respondElicitation,
     onMutated: handleMutated,
