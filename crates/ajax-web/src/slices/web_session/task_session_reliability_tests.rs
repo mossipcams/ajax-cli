@@ -3,6 +3,7 @@ use super::SessionServerEvent;
 use super::{
     acp_drain::{PromptTerminal, PromptTerminalOutcome},
     task_session::ActivePrompt,
+    SessionActivity,
 };
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use crate::adapters::web_session_store;
@@ -10,6 +11,7 @@ use crate::adapters::web_session_store::prompt_ledger::{
     self, ForcePersistFailGuard, PromptLedger, PromptPhase,
 };
 use ajax_core::models::AgentClient;
+use std::sync::Arc;
 use std::{thread, time::Duration};
 
 fn ledger_phase(state_dir: &std::path::Path, handle: &str, id: &str) -> Option<PromptPhase> {
@@ -215,3 +217,56 @@ fn first_acquire_recover_failure_leaves_no_durable_spawn_side_effects() {
 
 const CONTEXT_RESET_NOTE: &str =
     "Model context reset after restart. Prior turns are still visible here.";
+
+#[test]
+fn activity_report_failure_does_not_block_prompt_submit_or_dispatch() {
+    let dir = scratch_dir("activity-report-fault");
+    let handle = "web/activity-report-fault";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    directory.inner().set_report_session_activity(Arc::new(
+        |_qualified_handle: &str, _activity: SessionActivity| false,
+    ));
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".into(), "hold".into())
+                .expect("first submit must succeed before activity fault");
+
+            directory.record(
+                handle,
+                SessionServerEvent::TurnEnd {
+                    stop_reason: Some("end_turn".to_string()),
+                },
+            );
+
+            let generation = directory.generation(handle);
+            let (_, cursor) = directory.read_from(handle, 0);
+            let batch = directory.collect_outbound(handle, cursor, generation);
+            let snapshot = batch
+                .snapshot
+                .expect("activity report failure must push outbound snapshot");
+            assert!(
+                snapshot
+                    .transcript_error
+                    .as_deref()
+                    .is_some_and(|msg| msg.contains("task activity report failed")),
+                "activity fault surfaces on outbound snapshot: {:?}",
+                snapshot.transcript_error
+            );
+
+            let result =
+                directory.submit_prompt_with_id(handle, "next-1".into(), "after-fault".into());
+            assert!(
+                result.is_ok(),
+                "activity report failure must not latch transcript durability: {result:?}"
+            );
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}

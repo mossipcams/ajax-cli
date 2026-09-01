@@ -1,7 +1,6 @@
 //! Process-wide map of qualified handles to per-task session command loops.
 
 use super::{
-    normalize_session_model,
     protocol::SessionChrome,
     task_session::{
         spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch, TaskSessionCommand,
@@ -9,19 +8,20 @@ use super::{
     },
     task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
-    PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionServerEvent,
+    PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionError,
+    SessionServerEvent,
 };
 
 async fn send_command<T>(
     tx: &TaskSessionSender,
     build: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> TaskSessionCommand,
-) -> Result<T, String> {
+) -> Result<T, SessionError> {
     let (reply, rx) = tokio::sync::oneshot::channel();
     tx.send(build(reply))
         .await
-        .map_err(|_| "session task stopped".to_string())?;
+        .map_err(|_| SessionError::protocol("session task stopped"))?;
     rx.await
-        .map_err(|_| "session task dropped reply".to_string())
+        .map_err(|_| SessionError::protocol("session task dropped reply"))
 }
 use crate::adapters::web_session_acp::wire_value_to_session_value;
 use crate::adapters::web_session_store;
@@ -216,6 +216,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
+        .map_err(Into::into)
     }
 
     pub async fn release(&self, handle: &str) {
@@ -288,6 +289,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
+        .map_err(Into::into)
     }
 
     pub async fn cancel(&self, handle: &str, keep_queue: bool) -> Result<(), String> {
@@ -297,6 +299,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
+        .map_err(Into::into)
     }
 
     pub async fn answer_permission(
@@ -314,6 +317,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
+        .map_err(Into::into)
     }
 
     pub async fn answer_elicitation(
@@ -331,26 +335,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
-    }
-
-    pub async fn apply_model(
-        &self,
-        handle: &str,
-        worktree_path: &Path,
-        model: &str,
-    ) -> Result<u64, String> {
-        let tx = match self.command_tx(handle) {
-            Ok(tx) => tx,
-            Err(_) => return Ok(0),
-        };
-        let worktree_path = worktree_path.to_path_buf();
-        let model = model.to_string();
-        send_command(&tx, |reply| TaskSessionCommand::ApplyModel {
-            worktree_path,
-            model,
-            reply,
-        })
-        .await?
+        .map_err(Into::into)
     }
 
     pub async fn apply_config_option(
@@ -367,6 +352,7 @@ impl TaskSessionDirectory {
             reply,
         })
         .await?
+        .map_err(Into::into)
     }
 
     pub async fn reset_harness_context(
@@ -539,7 +525,9 @@ impl TaskSessionDirectory {
 }
 
 async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, String> {
-    send_command(tx, |reply| TaskSessionCommand::EvictionSnapshot { reply }).await
+    send_command(tx, |reply| TaskSessionCommand::EvictionSnapshot { reply })
+        .await
+        .map_err(Into::into)
 }
 
 #[derive(Debug, PartialEq)]
@@ -554,7 +542,7 @@ pub(crate) enum ApplyClientMessageOutcome {
 pub(crate) async fn apply_client_message(
     directory: &TaskSessionDirectory,
     handle: &str,
-    worktree_path: &Path,
+    _worktree_path: &Path,
     message: SessionClientMessage,
     generation: &mut u64,
     persist_session_model: Option<PersistSessionModel>,
@@ -576,20 +564,6 @@ pub(crate) async fn apply_client_message(
         SessionClientMessage::Cancel { keep_queue } => {
             directory.cancel(handle, keep_queue).await?;
             Ok(ApplyClientMessageOutcome::Applied)
-        }
-        SessionClientMessage::SetModel { model } => {
-            let model = normalize_session_model(&model)?;
-            if let Some(persist) = persist_session_model {
-                persist(&model)?;
-            }
-            if !directory.has_live_entry(handle) {
-                return Err("session slot missing".to_string());
-            }
-            let next_generation = directory.apply_model(handle, worktree_path, &model).await?;
-            *generation = next_generation;
-            Ok(ApplyClientMessageOutcome::ModelChanged {
-                persist_warning: None,
-            })
         }
         SessionClientMessage::SetConfigOption { config_id, value } => {
             let config_id = config_id.trim().to_string();
