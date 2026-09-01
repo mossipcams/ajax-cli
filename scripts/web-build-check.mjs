@@ -9,24 +9,64 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(repoRoot, "crates/ajax-web/web/dist");
 const failures = [];
 
+/** Blank lines with only spaces/tabs normalize to empty lines (macOS vs CI vite). */
+export function normalizeDistBlankLines(contents) {
+  return contents.replace(/^[ \t]+$/gm, "");
+}
+
+export function shouldNormalizeDistAsset(name) {
+  return (
+    name === "app.js" ||
+    name === "app.css" ||
+    name === "index.html" ||
+    name === "terminal.js"
+  );
+}
+
+/** When rebuild differs from HEAD only on blank-line whitespace, keep HEAD bytes. */
+export function reconcileDistContents(rebuilt, head) {
+  const normalizedRebuilt = normalizeDistBlankLines(rebuilt);
+  const normalizedHead = normalizeDistBlankLines(head);
+  if (normalizedRebuilt === normalizedHead) {
+    return head;
+  }
+  return normalizedRebuilt;
+}
+
+function readHeadDistAsset(name) {
+  const gitPath = `crates/ajax-web/web/dist/${name}`;
+  try {
+    return execFileSync("git", ["show", `HEAD:${gitPath}`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+  } catch {
+    return null;
+  }
+}
+
 function check(condition, message) {
   if (!condition) failures.push(message);
 }
 
+function runWebBuildCheck() {
 execFileSync("npm", ["run", "web:build"], { cwd: repoRoot, stdio: "inherit" });
 
 for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
   const assetPath = join(distDir, name);
   if (!existsSync(assetPath)) continue;
-  const contents = readFileSync(assetPath, "utf8");
-  const normalized = contents.replace(/[ \t]+$/gm, "");
-  if (contents !== normalized) writeFileSync(assetPath, normalized);
+  if (!shouldNormalizeDistAsset(name)) continue;
+  const rebuilt = readFileSync(assetPath, "utf8");
+  const head = readHeadDistAsset(name);
+  if (head === null) continue;
+  const reconciled = reconcileDistContents(rebuilt, head);
+  if (rebuilt !== reconciled) writeFileSync(assetPath, reconciled);
 }
 
 for (const name of ["index.html", "app.js", "app.css", "terminal.js"]) {
@@ -73,3 +113,13 @@ if (failures.length) {
   process.exit(1);
 }
 console.log("web build check passed: deterministic shell with version placeholder.");
+}
+
+const isMain =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href &&
+  !process.env.NODE_TEST_CONTEXT;
+
+if (isMain) {
+  runWebBuildCheck();
+}
