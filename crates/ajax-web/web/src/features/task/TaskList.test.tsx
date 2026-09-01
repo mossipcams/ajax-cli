@@ -248,6 +248,51 @@ describe("TaskList", () => {
     expect(within(rowB).getByText("web/b")).toHaveClass("task-row-handle");
   });
 
+  it("revealed Drop receives taps instead of the full-row opener (#1038)", () => {
+    const dropOnly: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/drop",
+          qualified_handle: "web/drop",
+          repo: "web",
+          title: "Drop me",
+          status: "idle",
+          last_activity_unix_secs: 0,
+          actions: [
+            {
+              action: "drop",
+              label: "Drop",
+              destructive: true,
+              confirmation_required: true,
+            },
+          ],
+        },
+      ],
+    };
+    const onOpenTask = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskList cockpit={dropOnly} onOpenTask={onOpenTask} onResult={onResult} />,
+    );
+    const row = screen.getByRole("button", { name: /web\/drop/ });
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    expect(row).toHaveClass("is-revealed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Drop" }));
+    expect(onResult).toHaveBeenCalledWith(
+      "Confirm Drop for web/drop?",
+      null,
+      false,
+      expect.objectContaining({
+        pendingConfirm: expect.objectContaining({ action: expect.objectContaining({ action: "drop" }) }),
+      }),
+    );
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
   it("uses accent for the active project pill and warn for attention badges", () => {
     const activePillRule =
       stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -256,5 +301,34 @@ describe("TaskList", () => {
     expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
     expect(activePillRule).not.toMatch(/var\(--warn/);
     expect(pillBadgeRule).toMatch(/var\(--warn/);
+  });
+
+  it("Fix CI is tappable without swipe when the reveal strip is reserved (#1122)", () => {
+    const onOpenTask = vi.fn();
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByRole("button", { name: "Fix CI" }));
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
+  it("marks rows with a reserved reveal strip (#1122)", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    expect(wrap).toHaveClass("has-reveal");
+    expect(wrap).toHaveStyle({ "--task-row-reveal-width": "158px" });
+    expect(screen.getByTestId("task-row-wrap-api/c")).not.toHaveClass("has-reveal");
+  });
+
+  it("reserves reveal width and keeps revealed row taps on the action (#1122, #1038)", () => {
+    const wrapRule =
+      stylesSource.match(/\.task-row-wrap\.has-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
+    const revealRule =
+      stylesSource.match(/\.task-row-wrap\.has-reveal \.task-row-reveal\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const revealedRule =
+      stylesSource.match(/\.task-row\.is-revealed\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(wrapRule).toMatch(/grid-template-columns:[^;]*var\(--task-row-reveal-width/);
+    expect(revealRule).toMatch(/z-index:\s*2/);
+    expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
 });

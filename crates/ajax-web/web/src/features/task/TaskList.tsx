@@ -1,10 +1,20 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type CSSProperties,
+} from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
-import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
+import { SWIPE_REVEAL_WIDTH, SWIPE_REVEAL_WIDTH_VAR } from "@/shared/gestures/swipeReveal";
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -71,10 +81,43 @@ const TaskRow = memo(function TaskRow({
     .filter(Boolean)
     .join(" ");
 
+  const closeRevealUnlessAction = (event: MouseEvent<HTMLDivElement>) => {
+    if (offset <= 0) return;
+    if ((event.target as Element).closest(".task-row-reveal")) return;
+    onOffset(card.qualified_handle, 0);
+  };
+
+  const closeRevealOnKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    closeRevealUnlessAction(event as unknown as MouseEvent<HTMLDivElement>);
+  };
+
+  const wrapRevealDismiss =
+    offset > 0
+      ? {
+          role: "button" as const,
+          tabIndex: 0,
+          "aria-label": "Close revealed actions",
+          onClick: closeRevealUnlessAction,
+          onKeyDown: closeRevealOnKeyDown,
+        }
+      : {};
+
+  const wrapStyle = revealAction
+    ? ({ [SWIPE_REVEAL_WIDTH_VAR]: `${SWIPE_REVEAL_WIDTH}px` } as CSSProperties)
+    : undefined;
+
   return (
-    <div className="task-row-wrap" data-handle={card.qualified_handle}>
+    <div
+      className={["task-row-wrap", revealAction ? "has-reveal" : ""].filter(Boolean).join(" ")}
+      data-handle={card.qualified_handle}
+      data-testid={`task-row-wrap-${card.qualified_handle}`}
+      style={wrapStyle}
+      {...wrapRevealDismiss}
+    >
       {revealAction ? (
-        <div className="task-row-reveal" style={{ width: SWIPE_REVEAL_WIDTH }}>
+        <div className="task-row-reveal">
           <ActionBar
             actions={[revealAction]}
             handle={card.qualified_handle}
