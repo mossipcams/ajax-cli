@@ -170,7 +170,7 @@ export function connectWebSessionTransport(
     },
     setModel(nextModel) {
       const trimmed = nextModel.trim() || "auto";
-      sendJson({ type: "set_model", model: trimmed });
+      sendJson({ type: "set_config_option", configId: "model", value: trimmed });
     },
     setConfigOption(configId, value) {
       sendJson({

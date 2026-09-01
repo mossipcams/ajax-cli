@@ -5,6 +5,7 @@ import {
   pinTranscriptToLiveEdge,
   restoreTranscriptGeometry,
   sessionKeyboardPadding,
+  sessionSurfaceStyle,
   sessionVisibleHeight,
   transcriptAtBottom,
   transcriptAtLiveEdge,
@@ -38,6 +39,12 @@ describe("sessionViewport", () => {
 
   it("clears padding when keyboard is closed", () => {
     expect(sessionKeyboardPadding(800, 500, false)).toBe(0);
+  });
+
+  it("sessionSurfaceStyle reserves keyboard inset on iOS Safari via paddingBottom", () => {
+    expect(sessionSurfaceStyle(800, 800, false)).toBeUndefined();
+    expect(sessionSurfaceStyle(800, 500, true)).toEqual({ paddingBottom: 300 });
+    expect(sessionSurfaceStyle(500, 480, true)).toBeUndefined();
   });
 
   it("uses visualViewport height as the visible band when usable", () => {
