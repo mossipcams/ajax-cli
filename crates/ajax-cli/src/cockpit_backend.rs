@@ -24,7 +24,7 @@ use crate::{
     },
     context::{load_context, save_context_with_state, state_file_mtime},
     render::render_response,
-    task_session::PtyTaskSessionRunner,
+    tmux_task_session::PtyTaskSessionRunner,
     CliContextPaths, CliError, RenderedCommand,
 };
 
