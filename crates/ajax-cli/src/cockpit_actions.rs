@@ -17,7 +17,7 @@ use crate::execution_dispatch::start_plan_observation;
 #[cfg(test)]
 use crate::render::render_execution_outputs;
 use crate::{
-    cockpit_backend::build_cockpit_snapshot,
+    cockpit_snapshot::build_cockpit_snapshot,
     command_error,
     dispatch::execute_observed_drop,
     execution_dispatch::{
