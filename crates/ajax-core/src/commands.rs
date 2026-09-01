@@ -58,17 +58,14 @@ use crate::{
     analysis::git_evidence::interpret_git_status,
     config::Config,
     models::{GitStatus, LifecycleStatus, SideFlag, Task},
-    output::{
-        CockpitProjection, CockpitResponse, CockpitView, InboxResponse, InspectResponse,
-        NextResponse, RepoSummary, ReposResponse, TasksResponse,
-    },
     registry::Registry,
 };
 use lookup::find_task;
 use projection::{
     cockpit_projection as build_cockpit_projection, cockpit_summary, count_active_tasks,
     count_attention_items, count_lifecycle, inbox_from_cards, is_cockpit_menu_task,
-    is_visible_task, task_card, task_summary,
+    is_visible_task, task_card, task_summary, CockpitProjection, CockpitResponse, CockpitView,
+    InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
 };
 use std::{collections::BTreeSet, path::Path, time::Duration, time::SystemTime};
 
