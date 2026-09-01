@@ -95,8 +95,12 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
   await expect(row).toBeVisible({ timeout: 10_000 });
 
   const revealWidth = await page
-    .locator(`.task-row-wrap[data-handle="${TARGET_HANDLE}"] .task-row-reveal`)
-    .evaluate((el) => parseInt((el as HTMLElement).style.width, 10));
+    .locator(`.task-row-wrap[data-handle="${TARGET_HANDLE}"]`)
+    .evaluate((el) => {
+      const raw = (el as HTMLElement).style.getPropertyValue("--task-row-reveal-width");
+      const parsed = parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : 158;
+    });
 
   // Swipe past the 56px snap trigger so the action settles open at the reveal cap.
   await touchDragRowLeft(page, row, revealWidth + 20);

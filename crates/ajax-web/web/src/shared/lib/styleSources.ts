@@ -34,11 +34,12 @@ export const BASELINE = {
    * Re-measured after chronological chat scroll and Load earlier CSS (#1088).
    * Re-measured after the turn-disclosure comment in conversation.css grew to
    * describe collapsed settled/live tool rows (comment text only; built CSS
-   * is unchanged). */
-  sourceStylesCssBytes: 108_606,
-  builtAppCssBytes: 94_038,
-  builtAppCssGzipBytes: 16_496,
-  classSelectorLines: 606,
+   * is unchanged).
+   * Re-measured after task-row reserved reveal strip grid (#1122). */
+  sourceStylesCssBytes: 109_260,
+  builtAppCssBytes: 94_303,
+  builtAppCssGzipBytes: 16_550,
+  classSelectorLines: 610,
   hasSelectors: 18,
 } as const;
 
