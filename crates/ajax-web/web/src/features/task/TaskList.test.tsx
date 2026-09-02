@@ -119,12 +119,29 @@ describe("TaskList", () => {
     expect(screen.getByText("CI failed")).toBeInTheDocument();
   });
 
-  it("reveals the first non-resume action behind a row via swipe", () => {
+  it("hides the first non-resume action on the resting row", () => {
     render(<TaskList cockpit={cockpit} />);
-    // web/a: resume is filtered, so Fix CI is the reveal; Drop stays on detail.
-    expect(screen.getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    // web/a: resume is filtered; Fix CI sits in the reveal layer until swipe.
+    expect(wrap).not.toHaveClass("is-revealed-wrap");
+    expect(wrap.querySelector(".task-row-reveal")).toHaveAttribute("aria-hidden", "true");
+    expect(within(row).queryByRole("button", { name: "Fix CI" })).toBeNull();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+  });
+
+  it("exposes the first non-resume action after a left swipe", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    expect(wrap).toHaveClass("is-revealed-wrap");
+    expect(row).toHaveClass("is-revealed");
+    expect(wrap.querySelector(".task-row-reveal")).not.toHaveAttribute("aria-hidden", "true");
+    expect(within(wrap).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
   });
 
   it("places running/error tasks in Active and idle tasks in the disclosure", () => {
@@ -215,8 +232,10 @@ describe("TaskList", () => {
       ],
     };
     render(<TaskList cockpit={withAction} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/b");
     const webBRow = screen.getByRole("button", { name: /web\/b/ });
-    expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
+    expect(wrap).not.toHaveClass("is-revealed-wrap");
+    expect(within(webBRow).queryByRole("button", { name: "Review" })).toBeNull();
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 
@@ -303,14 +322,19 @@ describe("TaskList", () => {
     expect(pillBadgeRule).toMatch(/var\(--warn/);
   });
 
-  it("Fix CI is tappable without swipe when the reveal strip is reserved (#1122)", () => {
-    const onOpenTask = vi.fn();
-    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
-    fireEvent.click(screen.getByRole("button", { name: "Fix CI" }));
-    expect(onOpenTask).not.toHaveBeenCalled();
+  it("does not mark the resting row as revealed", () => {
+    render(<TaskList cockpit={cockpit} />);
+    expect(screen.getByTestId("task-row-wrap-web/a")).not.toHaveClass("is-revealed-wrap");
   });
 
-  it("marks rows with a reserved reveal strip (#1122)", () => {
+  it("opens the task when the resting row is tapped instead of surfacing actions", () => {
+    const onOpenTask = vi.fn();
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(screen.getByRole("button", { name: /web\/a/ }));
+    expect(onOpenTask).toHaveBeenCalledWith("web/a");
+  });
+
+  it("marks rows with swipe reveal and sets the reveal width CSS var", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");
     expect(wrap).toHaveClass("has-reveal");
@@ -318,17 +342,23 @@ describe("TaskList", () => {
     expect(screen.getByTestId("task-row-wrap-api/c")).not.toHaveClass("has-reveal");
   });
 
-  it("reserves reveal width and keeps revealed row taps on the action (#1122, #1038)", () => {
-    const wrapRule =
-      stylesSource.match(/\.task-row-wrap\.has-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
+  it("positions reveal behind the row and keeps revealed row taps on the action (#1038)", () => {
     const revealRule =
-      stylesSource.match(/\.task-row-wrap\.has-reveal \.task-row-reveal\s*\{([^}]*)\}/)?.[1] ??
-      "";
+      stylesSource.match(/\.task-row-reveal\s*\{([^}]*)\}/)?.[1] ?? "";
+    const restingRevealRule =
+      stylesSource.match(
+        /\.task-row-wrap\.has-reveal:not\(\.is-revealed-wrap\) \.task-row-reveal\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
     const revealedRule =
       stylesSource.match(/\.task-row\.is-revealed\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(wrapRule).toMatch(/grid-template-columns:[^;]*var\(--task-row-reveal-width/);
-    expect(revealRule).toMatch(/z-index:\s*2/);
+    expect(revealRule).toMatch(/position:\s*absolute/);
+    expect(revealRule).toMatch(/width:\s*var\(--task-row-reveal-width/);
+    expect(restingRevealRule).toMatch(/visibility:\s*hidden/);
+    expect(restingRevealRule).toMatch(/pointer-events:\s*none/);
+    expect(stylesSource).not.toMatch(
+      /\.task-row-wrap\.has-reveal\s*\{[^}]*grid-template-columns/,
+    );
     expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
 });

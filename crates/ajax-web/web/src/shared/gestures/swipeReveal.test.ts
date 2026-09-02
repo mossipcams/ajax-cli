@@ -42,7 +42,7 @@ describe("swipe-to-reveal gesture", () => {
     expect(SWIPE_REVEAL_WIDTH).toBeGreaterThanOrEqual(148);
   });
 
-  it("exports a CSS variable name synced to dashboard row grid width", () => {
+  it("exports a CSS variable name synced to dashboard row reveal width", () => {
     expect(SWIPE_REVEAL_WIDTH_VAR).toBe("--task-row-reveal-width");
   });
 });

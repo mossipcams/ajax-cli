@@ -3,7 +3,7 @@
 // transform. Vertical-dominant drags are ignored so the list keeps scrolling.
 
 export const SWIPE_REVEAL_WIDTH = 158; // px the revealed action occupies
-/** Synced to `.task-row-wrap.has-reveal` grid column width in `styles/task/list.css`. */
+/** Synced to `.task-row-reveal` width in `styles/task/list.css`. */
 export const SWIPE_REVEAL_WIDTH_VAR = "--task-row-reveal-width";
 export const SWIPE_TRIGGER = 56; // px past which release snaps open
 const ENGAGE_MIN = 8; // px of horizontal travel before deciding intent

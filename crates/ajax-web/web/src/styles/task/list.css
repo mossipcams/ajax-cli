@@ -129,37 +129,31 @@
   border-top: none;
 }
 
-/* #1122: reserve a fixed strip for the primary action so ERROR/IDLE + time stay
-   left of Fix CI/Drop/Repair and the chip stays visible and tappable. */
-.task-row-wrap.has-reveal {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--task-row-reveal-width, 158px);
-}
-
+/* Mail-style reveal: the action sits behind the full-width row; swipe left to expose. */
 .task-row-reveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--task-row-reveal-width, 158px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding-right: var(--space-2);
   pointer-events: auto;
+  z-index: 0;
 }
 
-.task-row-wrap.has-reveal .task-row-reveal {
-  grid-column: 2;
-  grid-row: 1;
-  z-index: 2;
+/* Resting row: action stays in DOM for swipe math but is not shown or tappable. */
+.task-row-wrap.has-reveal:not(.is-revealed-wrap) .task-row-reveal {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .task-row-reveal .action {
-  min-height: 36px;
+  min-height: 44px;
   padding: 6px 12px;
   white-space: nowrap;
-}
-
-.task-row-wrap.has-reveal .task-row {
-  grid-column: 1;
-  grid-row: 1;
-  width: 100%;
 }
 
 .task-row {

@@ -1156,11 +1156,12 @@ values may remain detail diagnostics, but browser JavaScript must not derive or
 override headline status from them. The browser may style the first returned
 action as prominent; it does not receive or invent a separate `primary_action`
 contract. Dashboard task rows (`features/task/TaskList.tsx`,
-`styles/task/list.css`) reserve a fixed right strip (`--task-row-reveal-width`,
-158px) for the first non-resume action so ERROR/IDLE labels and relative time
-stay left of Fix CI/Drop/Repair while the chip remains visible and tappable;
-left swipe still slides the row for `#1038` confirm taps via
-`.task-row.is-revealed { pointer-events: none }`. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
+`styles/task/list.css`) keep the first non-resume action behind the full-width
+row; left swipe exposes it at `--task-row-reveal-width` (158px) via
+`useSwipeReveal`. The resting row shows status, attention, and relative time
+only — not Fix CI/Drop/Repair chips. Confirmation taps use
+`.task-row.is-revealed { pointer-events: none }` so the revealed `ActionBar`
+receives the hit. Drop and other actions remain on task details/workspace. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
 expose the exact expected/observed branch pair from core; the browser retains
 that payload between activations and resubmits it unchanged. Core alone
 revalidates the pair and mutates task truth; stale or altered evidence is

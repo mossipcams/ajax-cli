@@ -110,14 +110,16 @@ const TaskRow = memo(function TaskRow({
 
   return (
     <div
-      className={["task-row-wrap", revealAction ? "has-reveal" : ""].filter(Boolean).join(" ")}
+      className={["task-row-wrap", revealAction ? "has-reveal" : "", offset > 0 ? "is-revealed-wrap" : ""]
+        .filter(Boolean)
+        .join(" ")}
       data-handle={card.qualified_handle}
       data-testid={`task-row-wrap-${card.qualified_handle}`}
       style={wrapStyle}
       {...wrapRevealDismiss}
     >
       {revealAction ? (
-        <div className="task-row-reveal">
+        <div className="task-row-reveal" aria-hidden={offset <= 0}>
           <ActionBar
             actions={[revealAction]}
             handle={card.qualified_handle}
