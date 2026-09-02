@@ -5,6 +5,10 @@ import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 export interface SwipeOptions {
   onOffset?: (offset: number) => void;
   onOpenChange?: (open: boolean) => void;
+  /** Current reveal offset when a touch begins (close-from-open tracking). */
+  getInitialOffset?: () => number;
+  /** Ignore touches that start inside this selector (e.g. revealed ActionBar). */
+  ignoreSelector?: string;
 }
 
 function readTouch(event: Event): { x: number; y: number } | null {
@@ -44,11 +48,19 @@ export function useSwipeReveal(
     };
 
     const onStart = (event: Event) => {
+      const ignoreSelector = optsRef.current.ignoreSelector;
+      if (
+        ignoreSelector &&
+        event.target instanceof Element &&
+        event.target.closest(ignoreSelector)
+      ) {
+        return;
+      }
       const point = readTouch(event);
       if (!point) return;
       startX = point.x;
       startY = point.y;
-      state = swipeStart();
+      state = swipeStart(optsRef.current.getInitialOffset?.() ?? 0);
       holdTouch();
     };
 

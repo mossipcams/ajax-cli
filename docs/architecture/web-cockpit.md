@@ -84,9 +84,11 @@ Back returns to the mode the workspace selected.
 **Pointer policy (workspace composition):** hit-testing for dashboard row
 reveals, task-header Details, and workspace swipe-back belongs to
 `features/task-workspace` and `features/task`, not Chat or Terminal session
-code. Task-list swipe reveals keep `useSwipeReveal` but the revealed
-`ActionBar` sits above the full-row opener (`pointer-events` on
-`.task-row.is-revealed` / `.task-row-reveal`). Terminal-expanded Details stays
+code. Task-list swipe reveals bind `useSwipeReveal` on `.task-row-wrap`
+(bubbled touches from the closed row still engage; swipe-right close hits the
+wrap while `.task-row.is-revealed` is `pointer-events: none`) and ignore
+touchstart inside `.task-row-reveal` so the revealed `ActionBar` stays
+tappable. Terminal-expanded Details stays
 in `.detail-header-controls` with explicit `pointer-events` and z-index above
 `.terminal-expand-corner`. Workspace swipe-right back is capped when the hash
 is already `#/` or `#/p/...` so a settling task surface cannot navigate past
@@ -1158,10 +1160,15 @@ action as prominent; it does not receive or invent a separate `primary_action`
 contract. Dashboard task rows (`features/task/TaskList.tsx`,
 `styles/task/list.css`) keep the first non-resume action behind the full-width
 row; left swipe exposes it at `--task-row-reveal-width` (158px) via
-`useSwipeReveal`. The resting row shows status, attention, and relative time
-only — not Fix CI/Drop/Repair chips. Confirmation taps use
-`.task-row.is-revealed { pointer-events: none }` so the revealed `ActionBar`
-receives the hit. Drop and other actions remain on task details/workspace. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
+`useSwipeReveal` on `.task-row-wrap` (touchstart inside `.task-row-reveal` is
+ignored). Swipe right on the wrap closes a revealed row (offset returns to 0);
+only one row may be revealed at a time; a settled reveal auto-hides after 10s
+unless that row has a pending confirmation (Drop confirm). The resting row shows
+status, attention, and relative time only — not Fix CI/Drop/Repair chips.
+Confirmation taps use `.task-row.is-revealed { pointer-events: none }` so the
+revealed `ActionBar` receives the hit. Close animations honor
+`prefers-reduced-motion` via the global motion stylesheet. Drop and other
+actions remain on task details/workspace. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
 expose the exact expected/observed branch pair from core; the browser retains
 that payload between activations and resubmits it unchanged. Core alone
 revalidates the pair and mutates task truth; stale or altered evidence is
