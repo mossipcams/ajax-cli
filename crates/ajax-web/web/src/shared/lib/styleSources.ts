@@ -36,9 +36,10 @@ export const BASELINE = {
    * describe collapsed settled/live tool rows (comment text only; built CSS
    * is unchanged).
    * Re-measured after task-row swipe reveal sits behind the full-width row.
-   * Re-measured after workspace layout CSS included in combined stylesheet. */
+   * Re-measured after workspace layout CSS included in combined stylesheet.
+   * Built app.css bytes re-measured after swipe-reveal dashboard layout CSS. */
   sourceStylesCssBytes: 109_314,
-  builtAppCssBytes: 94_381,
+  builtAppCssBytes: 94_339,
   builtAppCssGzipBytes: 16_574,
   classSelectorLines: 608,
   hasSelectors: 18,
