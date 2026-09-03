@@ -62,6 +62,11 @@ impl SessionEvidence {
         }
     }
 
+    /// Retry a deferred activity report without waiting for another transcript append ([#1132]).
+    pub(super) fn retry_pending_activity_report(&mut self, qualified_handle: &str) {
+        self.flush_pending_activity_report(qualified_handle);
+    }
+
     pub(super) fn report_activity_for_event(
         &mut self,
         qualified_handle: &str,

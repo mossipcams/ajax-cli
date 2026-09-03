@@ -634,8 +634,9 @@ only the chat live head knew a turn was in flight.
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.
 - Reporting is best-effort and off the turn's critical path: a lost race with
-  another writer is dropped, never surfaced to the operator or allowed to
-  interrupt the turn it described.
+  another writer defers the transition and retries on the session poll tick and
+  on outbound collect without blocking the session loop or waiting for another
+  transcript append; failures never interrupt the turn it described.
 - A runtime refresh must not overwrite this evidence with a shell reading; the
   provisioned task keeps its ACP-reported state.
 
