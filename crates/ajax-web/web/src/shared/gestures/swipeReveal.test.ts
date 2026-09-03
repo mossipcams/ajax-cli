@@ -6,6 +6,7 @@ import {
   SWIPE_REVEAL_WIDTH,
   SWIPE_REVEAL_WIDTH_VAR,
   SWIPE_TRIGGER,
+  REVEAL_AUTO_HIDE_MS,
 } from "./swipeReveal";
 
 describe("swipe-to-reveal gesture", () => {
@@ -25,8 +26,21 @@ describe("swipe-to-reveal gesture", () => {
     expect(swipeMove(swipeStart(), -500, 0).offset).toBe(SWIPE_REVEAL_WIDTH);
   });
 
-  it("does not reveal on a rightward swipe", () => {
+  it("does not reveal on a rightward swipe from closed", () => {
     expect(swipeMove(swipeStart(), 80, 0).offset).toBe(0);
+  });
+
+  it("closes from an open offset on a rightward swipe", () => {
+    const mid = swipeMove(swipeStart(SWIPE_REVEAL_WIDTH), 80, 0);
+    expect(mid.engaged).toBe(true);
+    expect(mid.offset).toBe(SWIPE_REVEAL_WIDTH - 80);
+
+    const closed = swipeEnd(swipeMove(swipeStart(SWIPE_REVEAL_WIDTH), SWIPE_REVEAL_WIDTH, 0));
+    expect(closed).toEqual({ open: false, offset: 0 });
+  });
+
+  it("exports the auto-hide duration for settled reveals", () => {
+    expect(REVEAL_AUTO_HIDE_MS).toBe(10_000);
   });
 
   it("snaps open past the trigger and closed before it on release", () => {
@@ -42,7 +56,7 @@ describe("swipe-to-reveal gesture", () => {
     expect(SWIPE_REVEAL_WIDTH).toBeGreaterThanOrEqual(148);
   });
 
-  it("exports a CSS variable name synced to dashboard row grid width", () => {
+  it("exports a CSS variable name synced to dashboard row reveal width", () => {
     expect(SWIPE_REVEAL_WIDTH_VAR).toBe("--task-row-reveal-width");
   });
 });

@@ -13,8 +13,13 @@ import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
+import type { PendingConfirmRequest } from "./ActionBar";
 import { useSwipeReveal } from "@/shared/hooks/useSwipeReveal";
-import { SWIPE_REVEAL_WIDTH, SWIPE_REVEAL_WIDTH_VAR } from "@/shared/gestures/swipeReveal";
+import {
+  REVEAL_AUTO_HIDE_MS,
+  SWIPE_REVEAL_WIDTH,
+  SWIPE_REVEAL_WIDTH_VAR,
+} from "@/shared/gestures/swipeReveal";
 
 interface Props {
   cockpit: BrowserCockpitView;
@@ -22,7 +27,16 @@ interface Props {
   onSelectProject?: (project: string | null) => void;
   onOpenTask?: (handle: string) => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
-  onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
+  onResult?: (
+    message: string,
+    output: string | null | undefined,
+    isError: boolean,
+    options?: {
+      onUndo?: () => void;
+      onCommit?: () => void;
+      pendingConfirm?: PendingConfirmRequest;
+    },
+  ) => void;
   onMutated?: () => void;
   pendingConfirmAction?: string | null;
   onCancelPendingConfirm?: () => void;
@@ -30,7 +44,16 @@ interface Props {
 
 interface ActionProps {
   onCockpit?: (cockpit: BrowserCockpitView) => void;
-  onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
+  onResult?: (
+    message: string,
+    output: string | null | undefined,
+    isError: boolean,
+    options?: {
+      onUndo?: () => void;
+      onCommit?: () => void;
+      pendingConfirm?: PendingConfirmRequest;
+    },
+  ) => void;
   onMutated?: () => void;
   pendingConfirmAction?: string | null;
   onCancelPendingConfirm?: () => void;
@@ -41,6 +64,7 @@ interface TaskRowProps extends ActionProps {
   nowSecs: number;
   offset: number;
   onOffset: (handle: string, offset: number) => void;
+  onRevealSettled: (handle: string, open: boolean) => void;
   onOpenTask?: (handle: string) => void;
 }
 
@@ -49,6 +73,7 @@ const TaskRow = memo(function TaskRow({
   nowSecs,
   offset,
   onOffset,
+  onRevealSettled,
   onOpenTask,
   onCockpit,
   onResult,
@@ -57,15 +82,17 @@ const TaskRow = memo(function TaskRow({
   onCancelPendingConfirm,
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
-  const rowRef = useRef<HTMLButtonElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   // The primary action rides behind the row as a swipe reveal; tapping the row
   // opens the task detail where every action lives. One gesture, one surface.
   const revealAction = visibleTaskActions(card.actions)[0];
 
-  useSwipeReveal(rowRef, revealAction
+  useSwipeReveal(wrapRef, revealAction
     ? {
+        getInitialOffset: () => offset,
         onOffset: (next) => onOffset(card.qualified_handle, next),
-        onOpenChange: () => {},
+        onOpenChange: (open) => onRevealSettled(card.qualified_handle, open),
+        ignoreSelector: ".task-row-reveal",
       }
     : {});
 
@@ -110,14 +137,17 @@ const TaskRow = memo(function TaskRow({
 
   return (
     <div
-      className={["task-row-wrap", revealAction ? "has-reveal" : ""].filter(Boolean).join(" ")}
+      ref={wrapRef}
+      className={["task-row-wrap", revealAction ? "has-reveal" : "", offset > 0 ? "is-revealed-wrap" : ""]
+        .filter(Boolean)
+        .join(" ")}
       data-handle={card.qualified_handle}
       data-testid={`task-row-wrap-${card.qualified_handle}`}
       style={wrapStyle}
       {...wrapRevealDismiss}
     >
       {revealAction ? (
-        <div className="task-row-reveal">
+        <div className="task-row-reveal" aria-hidden={offset <= 0}>
           <ActionBar
             actions={[revealAction]}
             handle={card.qualified_handle}
@@ -130,7 +160,6 @@ const TaskRow = memo(function TaskRow({
         </div>
       ) : null}
       <button
-        ref={rowRef}
         type="button"
         className={className}
         data-ph-no-autocapture=""
@@ -173,8 +202,30 @@ export default function TaskList({
   onCancelPendingConfirm,
 }: Props) {
   const [offsets, setOffsets] = useState<Record<string, number>>({});
+  const [pendingConfirmHandle, setPendingConfirmHandle] = useState<string | null>(null);
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
   const [stableOrder, setStableOrder] = useState<string[]>([]);
+  const autoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealedHandleRef = useRef<string | null>(null);
+
+  const clearAutoHide = useCallback(() => {
+    if (autoHideTimerRef.current !== null) {
+      clearTimeout(autoHideTimerRef.current);
+      autoHideTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearAutoHide(), [clearAutoHide]);
+
+  useEffect(() => {
+    if (pendingConfirmAction === null) setPendingConfirmHandle(null);
+  }, [pendingConfirmAction]);
+
+  useEffect(() => {
+    if (pendingConfirmHandle === null) return;
+    if ((offsets[pendingConfirmHandle] ?? 0) < SWIPE_REVEAL_WIDTH) return;
+    clearAutoHide();
+  }, [pendingConfirmHandle, offsets, clearAutoHide]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -206,9 +257,82 @@ export default function TaskList({
     };
   }, []);
 
-  const setOffset = useCallback((handle: string, offset: number) => {
-    setOffsets((prev) => ({ ...prev, [handle]: offset }));
-  }, []);
+  const scheduleAutoHide = useCallback(
+    (handle: string) => {
+      clearAutoHide();
+      revealedHandleRef.current = handle;
+      if (pendingConfirmHandle === handle) return;
+      autoHideTimerRef.current = setTimeout(() => {
+        autoHideTimerRef.current = null;
+        revealedHandleRef.current = null;
+        setOffsets((prev) => {
+          if ((prev[handle] ?? 0) <= 0) return prev;
+          return { ...prev, [handle]: 0 };
+        });
+      }, REVEAL_AUTO_HIDE_MS);
+    },
+    [clearAutoHide, pendingConfirmHandle],
+  );
+
+  useEffect(() => {
+    const handle = revealedHandleRef.current;
+    if (!handle || pendingConfirmHandle !== null) return;
+    if ((offsets[handle] ?? 0) < SWIPE_REVEAL_WIDTH) return;
+    scheduleAutoHide(handle);
+  }, [pendingConfirmHandle, offsets, scheduleAutoHide]);
+
+  const setOffset = useCallback(
+    (handle: string, offset: number) => {
+      if (offset <= 0) {
+        if (revealedHandleRef.current === handle) {
+          clearAutoHide();
+          revealedHandleRef.current = null;
+        }
+        setOffsets((prev) => ({ ...prev, [handle]: 0 }));
+        return;
+      }
+      if (revealedHandleRef.current !== handle) clearAutoHide();
+      setOffsets((prev) => {
+        const next: Record<string, number> = {};
+        for (const key of Object.keys(prev)) next[key] = 0;
+        next[handle] = offset;
+        return next;
+      });
+    },
+    [clearAutoHide],
+  );
+
+  const onRevealSettled = useCallback(
+    (handle: string, open: boolean) => {
+      if (open) scheduleAutoHide(handle);
+      else if (revealedHandleRef.current === handle) {
+        clearAutoHide();
+        revealedHandleRef.current = null;
+      }
+    },
+    [clearAutoHide, scheduleAutoHide],
+  );
+
+  const handleResult = useCallback(
+    (
+      message: string,
+      output: string | null | undefined,
+      isError: boolean,
+      options?: {
+        onUndo?: () => void;
+        onCommit?: () => void;
+        pendingConfirm?: PendingConfirmRequest;
+      },
+    ) => {
+      if (options?.pendingConfirm) {
+        setPendingConfirmHandle(options.pendingConfirm.handle);
+      } else {
+        setPendingConfirmHandle(null);
+      }
+      onResult?.(message, output, isError, options);
+    },
+    [onResult],
+  );
 
   const projects = useMemo(
     () =>
@@ -252,9 +376,10 @@ export default function TaskList({
   const rowProps = {
     nowSecs,
     onOffset: setOffset,
+    onRevealSettled,
     onOpenTask,
     onCockpit,
-    onResult,
+    onResult: handleResult,
     onMutated,
     pendingConfirmAction,
     onCancelPendingConfirm,
