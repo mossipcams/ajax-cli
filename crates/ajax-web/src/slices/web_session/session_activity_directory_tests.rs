@@ -6,10 +6,11 @@ use ajax_core::registry::Registry;
 use ajax_core::ui_state::{derive_operator_status, TaskStatus};
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::SystemTime,
+    thread,
+    time::{Duration, SystemTime},
 };
 
 fn provisioned_handle_context() -> (
@@ -108,18 +109,14 @@ fn issue_1069_append_path_clears_agent_working_without_websocket() {
 fn issue_1069_failed_report_retries_turn_end_on_next_append() {
     let (handle, context) = provisioned_handle_context();
     let directory = BlockingSessionDirectory::new(scratch_dir("issue-1069-retry"));
-    let turn_end_attempts = Arc::new(AtomicUsize::new(0));
+    let allow_turn_end = Arc::new(AtomicBool::new(false));
     let ctx = Arc::clone(&context);
-    let attempts = Arc::clone(&turn_end_attempts);
+    let allow = Arc::clone(&allow_turn_end);
     directory
         .inner()
         .set_report_session_activity(Arc::new(move |qualified_handle, activity| {
-            if activity == SessionActivity::TurnEnded {
-                // Fail the inline retry batch; succeed on the next append flush.
-                let n = attempts.fetch_add(1, Ordering::SeqCst);
-                if n < 3 {
-                    return false;
-                }
+            if activity == SessionActivity::TurnEnded && !allow.load(Ordering::SeqCst) {
+                return false;
             }
             record_session_activity(
                 &mut ctx.lock().expect("context lock"),
@@ -148,6 +145,7 @@ fn issue_1069_failed_report_retries_turn_end_on_next_append() {
         "first failed turn_end report must not commit reporter state"
     );
 
+    allow_turn_end.store(true, Ordering::SeqCst);
     directory.record(
         &handle,
         SessionServerEvent::Message {
@@ -159,13 +157,61 @@ fn issue_1069_failed_report_retries_turn_end_on_next_append() {
         },
     );
 
-    assert!(
-        turn_end_attempts.load(Ordering::SeqCst) >= 4,
-        "turn_end must be retried after the inline batch fails"
-    );
     assert_ne!(
         task_status(&context, &handle),
         TaskStatus::Running,
         "retried turn_end must clear Agent working"
+    );
+}
+
+/// #1132: when turn_end reporting is deferred (control lane busy / try_lock miss),
+/// the session poll tick must apply it without another transcript append.
+#[test]
+fn issue_1132_deferred_turn_end_retries_on_session_poll_without_later_append() {
+    let (handle, context) = provisioned_handle_context();
+    let directory = BlockingSessionDirectory::new(scratch_dir("issue-1132-poll-retry"));
+    let allow_turn_end = Arc::new(AtomicBool::new(false));
+    let ctx = Arc::clone(&context);
+    let allow = Arc::clone(&allow_turn_end);
+    directory
+        .inner()
+        .set_report_session_activity(Arc::new(move |qualified_handle, activity| {
+            if activity == SessionActivity::TurnEnded && !allow.load(Ordering::SeqCst) {
+                return false;
+            }
+            record_session_activity(
+                &mut ctx.lock().expect("context lock"),
+                qualified_handle,
+                activity,
+                SystemTime::now(),
+            )
+            .is_ok()
+        }));
+
+    directory.record(
+        &handle,
+        SessionServerEvent::PromptAccepted {
+            client_message_id: "c1".to_string(),
+        },
+    );
+    directory.record(
+        &handle,
+        SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".to_string()),
+        },
+    );
+    assert_eq!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "deferred turn_end must not commit reporter state yet"
+    );
+
+    allow_turn_end.store(true, Ordering::SeqCst);
+    thread::sleep(Duration::from_millis(150));
+
+    assert_ne!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "poll tick must apply deferred turn_end without a later append (#1132)"
     );
 }

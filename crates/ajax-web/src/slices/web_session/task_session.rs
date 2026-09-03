@@ -216,6 +216,8 @@ impl TaskSessionState {
 
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
+        self.evidence
+            .retry_pending_activity_report(&self.qualified_handle);
         let prompt_cancel = self
             .prompts
             .active_prompt
@@ -343,6 +345,9 @@ pub(crate) fn spawn_task_session(
                 }
                 _ = poll.tick() => {
                     retry_pending_exit_interruption(&mut state);
+                    state
+                        .evidence
+                        .retry_pending_activity_report(&state.qualified_handle);
                     if state.acp.client.is_some() {
                         state.pump();
                     }
