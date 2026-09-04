@@ -36,13 +36,14 @@ import {
 import {
   clearQueue,
   composerIsStopping,
+  composerQueuedContentBlocks,
   composerQueuedText,
   restoreQueuedDraft,
   type ComposerState,
 } from "./composerState";
 import {
   applySubmitResult,
-  composerStateAfterFlush,
+  composerQueuedClientMessageId,
   flushQueuedFollowUp,
   submitComposerDraft,
 } from "./submit";
@@ -60,7 +61,12 @@ import { failedTurnPromptToRestore } from "../session/public";
 import type { ConversationItem } from "../session/public";
 
 export type ComposerCommands = {
-  sendPrompt: (text: string, contentBlocks?: PromptContentBlockWire[]) => boolean;
+  sendPrompt: (
+    text: string,
+    contentBlocks?: PromptContentBlockWire[],
+    clientMessageId?: string,
+  ) => string;
+  withdrawQueuedPrompt: (clientMessageId: string) => void;
   sendCancel: () => void;
   sendClear: () => void;
   markStopped: () => void;
@@ -134,6 +140,7 @@ export function ComposerProvider({
   composerRef,
   scrollToLatest,
   sendPrompt,
+  withdrawQueuedPrompt,
   sendCancel,
   sendClear,
   markStopped,
@@ -262,14 +269,16 @@ export function ComposerProvider({
   const canAttach = useMemo(() => canAttachFiles(promptCapabilities), [promptCapabilities]);
 
   const deliverPrompt = useCallback(
-    (promptText: string, blocks: PromptContentBlockWire[]) => {
-      if (!sendPrompt(promptText, blocks)) return false;
+    (promptText: string, blocks: PromptContentBlockWire[], existingClientMessageId?: string) => {
+      const clientMessageId = sendPrompt(promptText, blocks, existingClientMessageId);
+      if (!clientMessageId) return "";
       clearDraft();
       scrollToLatest();
-      return true;
+      return clientMessageId;
     },
     [clearDraft, scrollToLatest, sendPrompt],
   );
+
 
   const sendDraft = useCallback(() => {
     if (!connected) return;
@@ -310,6 +319,54 @@ export function ComposerProvider({
         setAttachmentError(null);
         deliverPrompt(text, fitted.blocks);
       })();
+      return;
+    }
+
+    if (result.action === "queue" || result.action === "update_queue") {
+      const text = result.text;
+      const blocks =
+        result.action === "update_queue"
+          ? (contentBlocks.length
+              ? contentBlocks
+              : (composerQueuedContentBlocks(composerState) ?? []))
+          : contentBlocks;
+      const priorId =
+        result.action === "update_queue"
+          ? composerQueuedClientMessageId(composerState)
+          : undefined;
+      const applyQueued = (id: string) => {
+        if (!id) return;
+        setComposerState((current) =>
+          applySubmitResult(
+            result,
+            current,
+            {
+              connected,
+              busy,
+              draft: draftRef.current,
+              composerState: current,
+              contentBlocks: blocks,
+            },
+            id,
+          ),
+        );
+      };
+      if (promptFrameFits(text, blocks)) {
+        setAttachmentError(null);
+        applyQueued(deliverPrompt(text, blocks, priorId));
+        scrollToLatest();
+        return;
+      }
+      void (async () => {
+        const fitted = await fitPromptContentBlocks(text, blocks);
+        if (fitted.error) {
+          setAttachmentError(fitted.error);
+          return;
+        }
+        setAttachmentError(null);
+        applyQueued(deliverPrompt(text, fitted.blocks, priorId));
+      })();
+      scrollToLatest();
       return;
     }
 
@@ -358,12 +415,12 @@ export function ComposerProvider({
   ]);
 
   useEffect(() => {
-    const { intents } = flushQueuedFollowUp({
+    const { intents, state } = flushQueuedFollowUp({
       composerState: composerStateRef.current,
       busy,
       connected,
     });
-    if (intents.length === 0) return;
+    if (intents.length === 0 && state === composerStateRef.current) return;
 
     if (holdRestoredQueueRef.current) {
       if (!connected || !everOpened) return;
@@ -386,37 +443,17 @@ export function ComposerProvider({
       holdRestoredQueueRef.current = false;
     }
 
-    let sendSucceeded = false;
     for (const intent of intents) {
       if (intent.type === "mark_stopped") markStopped();
-      if (intent.type === "send_prompt") {
-        const blocks = intent.contentBlocks ?? [];
-        if (promptFrameFits(intent.text, blocks)) {
-          setAttachmentError(null);
-          sendSucceeded = sendPrompt(intent.text, blocks);
-          continue;
-        }
-        void (async () => {
-          const fitted = await fitPromptContentBlocks(intent.text, blocks);
-          if (fitted.error) {
-            setAttachmentError(fitted.error);
-            return;
-          }
-          setAttachmentError(null);
-          if (sendPrompt(intent.text, fitted.blocks)) {
-            setComposerState((current) => composerStateAfterFlush(current, true));
-          }
-        })();
-      }
     }
-    if (sendSucceeded) {
-      setComposerState((current) => composerStateAfterFlush(current, true));
-    }
-  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, sendPrompt]);
+    setComposerState(state);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck]);
 
   const editQueued = useCallback(() => {
+    const priorId = composerQueuedClientMessageId(composerState);
     const restored = restoreQueuedDraft(composerState);
     if (!restored) return;
+    if (priorId) withdrawQueuedPrompt(priorId);
     draftRef.current = restored.draft;
     persistDraft(restored.draft);
     setDraft(restored.draft);
@@ -428,11 +465,13 @@ export function ComposerProvider({
         : [],
     );
     composerRef.current?.focus();
-  }, [composerRef, composerState, persistDraft]);
+  }, [composerRef, composerState, persistDraft, withdrawQueuedPrompt]);
 
   const removeQueued = useCallback(() => {
+    const priorId = composerQueuedClientMessageId(composerState);
+    if (priorId) withdrawQueuedPrompt(priorId);
     setComposerState(clearQueue(composerState));
-  }, [composerState]);
+  }, [composerState, withdrawQueuedPrompt]);
 
   const submitComposer = useCallback(
     (event: FormEvent<HTMLFormElement>) => {

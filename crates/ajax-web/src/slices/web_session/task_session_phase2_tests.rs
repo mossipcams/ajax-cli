@@ -56,7 +56,7 @@ fn exit_during_prompt_interrupts_active_row_and_preserves_queue() {
                 Some(PromptPhase::Queued)
             );
             let (events, _) = directory.read_from(handle, 0);
-            assert!(!events.iter().any(|event| matches!(
+            assert!(events.iter().any(|event| matches!(
                 event,
                 SessionServerEvent::Message { role, text, .. }
                     if role == "user" && text == "queued"

@@ -127,7 +127,13 @@ export interface WebSessionTransportCallbacks {
 }
 
 export interface WebSessionTransport {
-  sendPrompt(text: string, contentBlocks?: PromptContentBlockWire[]): string;
+  sendPrompt(
+    text: string,
+    contentBlocks?: PromptContentBlockWire[],
+    clientMessageId?: string,
+  ): string;
+  /** Drop a staged host-queued prompt that never reached ACP dispatch. */
+  withdrawQueuedPrompt(clientMessageId: string): void;
   sendCancel(keepQueue?: boolean): void;
   sendClear(): void;
   /** @deprecated Use setConfigOption for live picks. */

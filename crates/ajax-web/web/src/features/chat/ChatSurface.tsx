@@ -72,6 +72,7 @@ function ChatSessionBody({
   everOpened,
   activityAgeMs,
   sendPrompt,
+  withdrawQueuedPrompt,
   sendCancel,
   sendClear,
   markStopped,
@@ -95,6 +96,7 @@ function ChatSessionBody({
   everOpened: boolean;
   activityAgeMs: number;
   sendPrompt: ReturnType<typeof useChatSession>["sendPrompt"];
+  withdrawQueuedPrompt: ReturnType<typeof useChatSession>["withdrawQueuedPrompt"];
   sendCancel: ReturnType<typeof useChatSession>["sendCancel"];
   sendClear: ReturnType<typeof useChatSession>["sendClear"];
   markStopped: ReturnType<typeof useChatSession>["markStopped"];
@@ -158,6 +160,7 @@ function ChatSessionBody({
           composerRef={composerRef}
           scrollToLatest={scrollToLatest}
           sendPrompt={sendPrompt}
+          withdrawQueuedPrompt={withdrawQueuedPrompt}
           sendCancel={sendCancel}
           sendClear={sendClear}
           markStopped={markStopped}
@@ -255,6 +258,7 @@ export default function ChatSurface({
     sessionModel,
     sessionConfigOptions,
     sendPrompt,
+    withdrawQueuedPrompt,
     sendCancel,
     sendClear,
     markStopped,
@@ -296,6 +300,7 @@ export default function ChatSurface({
         everOpened={everOpened}
         activityAgeMs={activityAgeMs}
         sendPrompt={sendPrompt}
+        withdrawQueuedPrompt={withdrawQueuedPrompt}
         sendCancel={sendCancel}
         sendClear={sendClear}
         markStopped={markStopped}

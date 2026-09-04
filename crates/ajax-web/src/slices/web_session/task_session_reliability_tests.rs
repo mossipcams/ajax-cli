@@ -1,4 +1,6 @@
-use super::test_support::{fake_acp_fixture, pump_until, scratch_dir, BlockingSessionDirectory};
+use super::test_support::{
+    agent_pong_count, fake_acp_fixture, pump_until, scratch_dir, BlockingSessionDirectory,
+};
 use super::SessionServerEvent;
 use super::{
     acp_drain::{PromptTerminal, PromptTerminalOutcome},
@@ -132,6 +134,17 @@ fn queued_dispatch_persist_failure_keeps_prompt_for_retry() {
         Vec::new(),
     );
     prompt_ledger::persist(&dir, handle, &ledger).expect("seed ledger");
+    web_session_store::append_events(
+        &dir,
+        handle,
+        &[SessionServerEvent::Message {
+            role: "user".to_string(),
+            text: "recovered".to_string(),
+            content_blocks: Vec::new(),
+            item_id: "u:queued-1".to_string(),
+            message_id: None,
+        }],
+    );
 
     with_test_acp_program(&script, || run_dispatch_persist_retry(&dir, handle));
     let _ = std::fs::remove_dir_all(dir);
@@ -150,19 +163,9 @@ fn run_dispatch_persist_retry(dir: &std::path::Path, handle: &str) {
         ledger_phase(dir, handle, "queued-1"),
         Some(PromptPhase::Queued)
     );
-    assert!(!events.iter().any(|event| matches!(
-        event,
-        SessionServerEvent::Message { role, text, .. }
-            if role == "user" && text == "recovered"
-    )));
+    assert_eq!(agent_pong_count(&events), 0);
     pump_until(&directory, handle, Duration::from_secs(5), |events| {
-        events.iter().any(|event| {
-            matches!(
-                event,
-                SessionServerEvent::Message { role, text, .. }
-                    if role == "user" && text == "recovered"
-            )
-        })
+        agent_pong_count(events) >= 1
     });
 }
 
@@ -268,5 +271,133 @@ fn activity_report_failure_does_not_block_prompt_submit_or_dispatch() {
             );
         });
     });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn queued_while_busy_user_message_is_in_log_before_turn_end() {
+    let dir = scratch_dir("queued-jsonl");
+    let handle = "web/queued-jsonl";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "second".to_string())
+                .expect("queued");
+
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(events.iter().any(|event| {
+                matches!(
+                    event,
+                    SessionServerEvent::Message { role, text, .. }
+                        if role == "user" && text == "second"
+                )
+            }));
+            assert!(!events
+                .iter()
+                .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. })));
+            assert_eq!(
+                ledger_phase(&dir, handle, "queued-1"),
+                Some(PromptPhase::Queued)
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn updating_queued_prompt_id_does_not_dispatch_twice() {
+    let dir = scratch_dir("queued-update");
+    let handle = "web/queued-update";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "draft".to_string())
+                .expect("queued");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "revised".to_string())
+                .expect("update");
+
+            directory.cancel(handle, true).expect("cancel");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { role, text, .. }
+                            if role == "user" && text == "revised"
+                    )
+                }) && events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { text, .. } if text == "pong"
+                    )
+                })
+            });
+            let (events, _) = directory.read_from(handle, 0);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        SessionServerEvent::Message { role, text, .. }
+                            if role == "user" && text == "revised"
+                    ))
+                    .count(),
+                1
+            );
+            assert_eq!(agent_pong_count(&events), 1);
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn empty_text_withdraw_removes_queued_ledger_row() {
+    let dir = scratch_dir("queued-withdraw");
+    let handle = "web/queued-withdraw";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "second".to_string())
+                .expect("queued");
+            assert_eq!(
+                ledger_phase(&dir, handle, "queued-1"),
+                Some(PromptPhase::Queued)
+            );
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), String::new())
+                .expect("withdraw");
+            assert_eq!(ledger_phase(&dir, handle, "queued-1"), None);
+        });
+    });
+
     let _ = std::fs::remove_dir_all(dir);
 }
