@@ -1,4 +1,9 @@
 /* Markdown inside agent prose --------------------------------------------- */
+.md {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .md > :first-child {
   margin-top: 0;
 }
@@ -9,7 +14,10 @@
 
 .md-para {
   margin: 0 0 12px;
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .md-heading {
@@ -43,6 +51,9 @@
   max-width: 100%;
   padding: 10px 12px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
   border-radius: var(--radius-sm);
   background: var(--paper-tint);
   border: 1px solid var(--rule);
@@ -50,6 +61,15 @@
   font-size: var(--text-label);
   line-height: 1.5;
   color: var(--ink-soft);
+}
+
+.md-block::-webkit-scrollbar {
+  height: 6px;
+}
+
+.md-block::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 3px;
 }
 
 .md-block code {
@@ -71,12 +91,27 @@
 }
 
 .md-table-wrap {
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
   margin: 8px 0;
 }
 
+.md-table-wrap::-webkit-scrollbar {
+  height: 6px;
+}
+
+.md-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 3px;
+}
+
 .md-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: var(--text-body);
 }
@@ -87,6 +122,7 @@
   border: 1px solid var(--rule-strong);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .md-table th {

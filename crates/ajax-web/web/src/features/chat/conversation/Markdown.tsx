@@ -81,7 +81,7 @@ export function parseBlocks(source: string): Block[] {
   let paragraph: string[] = [];
 
   const flush = () => {
-    const text = paragraph.join("\n").trim();
+    const text = paragraph.map((line) => line.trim()).join(" ").trim();
     if (text) blocks.push({ kind: "para", text });
     paragraph = [];
   };

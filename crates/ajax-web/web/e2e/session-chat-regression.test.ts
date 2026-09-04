@@ -393,6 +393,76 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
   );
 });
 
+test("hard-wrapped agent markdown prose stays inside the thread width", async ({ page }) => {
+  const LONG = "b".repeat(400);
+  let nextCursor = 0;
+
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    const send = (event: SessionServerEvent) =>
+      socket.send(sessionEventJson(nextCursor++, event));
+
+    socket.send(sessionSnapshotJson({ cursor: nextCursor, model: "auto", turnState: "idle" }));
+    socket.onMessage((message) => {
+      if (typeof message !== "string") return;
+      const event = JSON.parse(message) as { type?: string; text?: string };
+      if (event.type !== "prompt") return;
+      send({
+        type: "message",
+        role: "agent",
+        text: [
+          "SaySo agent turns often arrive hard-wrapped at eighty columns so the",
+          "source reads fine in a terminal but should flow as one chat paragraph.",
+          "",
+          "```txt",
+          LONG,
+          "```",
+          "",
+          "| Alpha | Beta |",
+          "| --- | --- |",
+          `| ${LONG} | two |`,
+        ].join("\n"),
+      });
+      send({ type: "turn_end", stopReason: "end_turn" });
+    });
+  });
+
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible();
+  await page.getByLabel("Message").fill("Show wrapped prose");
+  await page.getByLabel("Message").press("Enter");
+
+  const reply = page.getByTestId("session-message-agent").last();
+  await expect(reply).toContainText("flow as one chat paragraph");
+  await expect(reply.locator(".md-para")).toHaveCount(1);
+  await expect(reply.locator(".md-para").first()).toContainText(
+    "SaySo agent turns often arrive hard-wrapped at eighty columns so the source reads fine in a terminal but should flow as one chat paragraph.",
+  );
+
+  const overflow = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
+    const code = document.querySelector(".md-block") as HTMLElement;
+    const table = document.querySelector(".md-table-wrap") as HTMLElement;
+    return {
+      page: doc.scrollWidth - doc.clientWidth,
+      thread: thread.scrollWidth - thread.clientWidth,
+      codeScrollable: code ? code.scrollWidth > code.clientWidth : false,
+      tableScrollable: table ? table.scrollWidth > table.clientWidth : false,
+    };
+  });
+  expect(overflow.page).toBe(0);
+  expect(overflow.thread).toBe(0);
+  expect(overflow.codeScrollable).toBe(true);
+  expect(overflow.tableScrollable).toBe(true);
+});
+
 test("an error turn ends visibly with recovery guidance", async ({ page }) => {
   await mockFetch(page, {
     __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
