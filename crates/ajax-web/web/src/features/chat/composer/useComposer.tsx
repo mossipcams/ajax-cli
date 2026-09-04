@@ -67,7 +67,7 @@ export type ComposerCommands = {
     clientMessageId?: string,
   ) => string;
   withdrawQueuedPrompt: (clientMessageId: string) => void;
-  sendCancel: () => void;
+  sendCancel: (keepQueue?: boolean) => void;
   sendClear: () => void;
   markStopped: () => void;
 };
@@ -380,7 +380,7 @@ export function ComposerProvider({
       busy &&
       !composerIsStopping(composerStateRef.current)
     ) {
-      sendCancel();
+      sendCancel(true);
     }
 
     setComposerState((current) =>
@@ -393,12 +393,7 @@ export function ComposerProvider({
       }),
     );
 
-    if (
-      result.action === "scroll" ||
-      result.action === "queue" ||
-      result.action === "update_queue" ||
-      result.action === "stop_and_send"
-    ) {
+    if (result.action === "scroll" || result.action === "stop_and_send") {
       scrollToLatest();
     }
   }, [

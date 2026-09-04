@@ -144,14 +144,13 @@ pub(crate) fn is_stream_continuation(previous: &str, incoming: &str) -> bool {
     if incoming.starts_with(previous) {
         return true;
     }
-    if previous.ends_with('.') || previous.ends_with('!') || previous.ends_with('?') {
-        if incoming
+    if (previous.ends_with('.') || previous.ends_with('!') || previous.ends_with('?'))
+        && incoming
             .chars()
             .next()
             .is_some_and(|ch| ch.is_uppercase() || ch.is_ascii_digit())
-        {
-            return false;
-        }
+    {
+        return false;
     }
     true
 }

@@ -132,7 +132,8 @@ describe("ChatComposer", () => {
     typeComposer("Next");
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 
-    expect(transport.sendCancel).toHaveBeenCalledOnce();
+    expect(transport.sendCancel).toHaveBeenCalledTimes(1);
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
 
@@ -156,6 +157,7 @@ describe("ChatComposer", () => {
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 
     expect(transport.sendCancel).toHaveBeenCalledTimes(1);
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
   });

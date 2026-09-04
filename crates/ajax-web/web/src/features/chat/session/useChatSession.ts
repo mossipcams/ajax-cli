@@ -168,8 +168,8 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef.current?.withdrawQueuedPrompt(clientMessageId);
   }, [connected]);
 
-  const sendCancel = useCallback(() => {
-    transportRef.current?.sendCancel();
+  const sendCancel = useCallback((keepQueue = false) => {
+    transportRef.current?.sendCancel(keepQueue);
   }, []);
 
   const sendClear = useCallback(() => {
