@@ -66,6 +66,7 @@ import {
 } from "@/shared/lib/telemetry";
 import { checkHealth } from "@/shared/lib/api";
 import { reloadCockpitDocument } from "@/shared/lib/reloadCockpitDocument";
+import { setupScreenWakeLock } from "@/shared/lib/screenWakeLock";
 
 /** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
@@ -426,6 +427,9 @@ function AppContent() {
       scheduleShellResume();
     }
   });
+  // Keep the device screen awake while Cockpit is foreground-visible (iOS Safari).
+  useEffect(() => setupScreenWakeLock(), []);
+
   // Shell listeners — mount once; immediate cockpit on mount, debounced recovery on resume.
   useEffect(() => {
     const idleHandle = onShellMount();
