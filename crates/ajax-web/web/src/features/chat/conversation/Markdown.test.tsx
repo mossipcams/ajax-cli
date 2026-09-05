@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { render, screen, within } from "@testing-library/react";
 import Markdown, { parseBlocks } from "./Markdown";
+
+const markdownCss = readFileSync(
+  join(import.meta.dirname, "../../../styles/chat/markdown.css"),
+  "utf8",
+);
+const scrollingCss = readFileSync(
+  join(import.meta.dirname, "../../../styles/chat/scrolling.css"),
+  "utf8",
+);
 
 describe("parseBlocks", () => {
   it("keeps fenced code verbatim, including blank lines and markdown-looking text", () => {
@@ -42,8 +53,17 @@ describe("parseBlocks", () => {
 
   it("joins wrapped lines into one paragraph and splits on a blank line", () => {
     expect(parseBlocks("one\ntwo\n\nthree")).toEqual([
-      { kind: "para", text: "one\ntwo" },
+      { kind: "para", text: "one two" },
       { kind: "para", text: "three" },
+    ]);
+  });
+
+  it("joins hard-wrapped lines with a single space without collapsing inline spacing", () => {
+    expect(parseBlocks("SaySo trains   operators\non long turns.")).toEqual([
+      { kind: "para", text: "SaySo trains   operators on long turns." },
+    ]);
+    expect(parseBlocks("Run `cargo test    --all` for\nall tests.")).toEqual([
+      { kind: "para", text: "Run `cargo test    --all` for all tests." },
     ]);
   });
 });
@@ -106,5 +126,26 @@ describe("Markdown", () => {
     render(<Markdown source="[bad](javascript:alert(1))" />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByText(/\[bad\]/)).toBeInTheDocument();
+  });
+
+  it("renders hard-wrapped prose as one flowing paragraph", () => {
+    render(<Markdown source={"First line of prose\nsecond line of prose"} />);
+    expect(screen.getByText("First line of prose second line of prose")).toBeInTheDocument();
+    expect(screen.getAllByRole("paragraph")).toHaveLength(1);
+  });
+});
+
+describe("markdown layout css", () => {
+  it("constrains prose and scroll containers inside the session thread column", () => {
+    expect(markdownCss).toMatch(/\.md\s*\{[^}]*min-width:\s*0/);
+    expect(markdownCss).toMatch(/\.md-para\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(markdownCss).toMatch(/\.md-para\s*\{[^}]*white-space:\s*normal/);
+    expect(markdownCss).toMatch(/\.md-block\s*\{[^}]*overflow-x:\s*auto/);
+    expect(markdownCss).toMatch(/\.md-table-wrap\s*\{[^}]*overflow-x:\s*auto/);
+    expect(markdownCss).toMatch(/\.md-table th,\s*\.md-table td\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(markdownCss).not.toMatch(/\.md-table th,\s*\.md-table td\s*\{[^}]*white-space:\s*nowrap/);
+    expect(markdownCss).toMatch(/\.md-block\s*\{[^}]*scrollbar-width:\s*thin/);
+    expect(markdownCss).toMatch(/\.md-table-wrap\s*\{[^}]*scrollbar-width:\s*thin/);
+    expect(scrollingCss).toMatch(/\.session-thread-inner\s*\{[^}]*min-width:\s*0/);
   });
 });

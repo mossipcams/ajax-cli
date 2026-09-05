@@ -23,6 +23,7 @@
 .session-reply {
   align-self: stretch;
   min-width: 0;
+  max-width: 100%;
   padding: 2px 0 8px;
   color: var(--ink);
   font-size: var(--text-body);
