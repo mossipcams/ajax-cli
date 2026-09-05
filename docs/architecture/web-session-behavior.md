@@ -457,9 +457,10 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   compaction preserves absolute replay cursors. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values
   before persistence. Agent/thought stream lanes close when a user prompt is
-  recorded so the next reply cannot upsert into the previous bubble; distinct
-  non-continuation agent text (neither cumulative prefix nor delta of the open
-  lane) allocates a new `itemId` ([#1138](https://github.com/mossipcams/ajax-cli/issues/1138)).
+  recorded, on `turn_end`, or on non-message events so the next reply cannot
+  upsert into the previous bubble ([#1138](https://github.com/mossipcams/ajax-cli/issues/1138),
+  [#1141](https://github.com/mossipcams/ajax-cli/issues/1141)). Sentence-boundary
+  chunks without `messageId` stay on the open lane (cumulative prefix or delta).
   The browser `MessageBuffer` rAF-coalesces those updates to
   the latest full text per `itemId` during the turn instead of holding them until
   `turn_end`; boundary events still flush pending lanes first so ordering is
