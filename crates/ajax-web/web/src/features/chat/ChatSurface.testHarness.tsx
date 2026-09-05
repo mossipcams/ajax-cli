@@ -23,6 +23,7 @@ export const transport = {
   // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and
   // "" when it refuses to send; the composer keys off that.
   sendPrompt: vi.fn(() => "cmid-1"),
+  withdrawQueuedPrompt: vi.fn(),
   sendCancel: vi.fn(),
   sendClear: vi.fn(),
   setModel: vi.fn(),
@@ -202,6 +203,7 @@ export function prepareChatSurface() {
   });
   vi.stubGlobal("cancelAnimationFrame", () => {});
   transport.sendPrompt.mockClear();
+  transport.withdrawQueuedPrompt.mockClear();
   transport.sendCancel.mockClear();
   transport.sendClear.mockClear();
   transport.setModel.mockClear();

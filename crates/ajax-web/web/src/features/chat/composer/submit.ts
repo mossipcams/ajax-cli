@@ -27,9 +27,9 @@ export type SubmitComposerResult =
   | { action: "stop_and_send"; sendCancel: true; clearDraft: true }
   | { action: "scroll" };
 
-/** Enter with a turn in flight queues one follow-up; Enter again stops the
- * turn and sends it. The send itself waits for the cancelled prompt to
- * resolve — see the flush effect — so the two never run together. */
+/** Enter with a turn in flight stages one follow-up on the host FIFO; Enter again
+ * stops the turn. The host dispatches the staged prompt — the browser does not
+ * resend it at turn_end. */
 export function submitComposerDraft({
   connected,
   busy,
@@ -63,6 +63,7 @@ export function applySubmitResult(
   result: SubmitComposerResult,
   composerState: ComposerState,
   args: ApplySubmitStateArgs,
+  clientMessageId?: string,
 ): ComposerState {
   switch (result.action) {
     case "none":
@@ -74,14 +75,18 @@ export function applySubmitResult(
         composerState,
         result.text,
         args.contentBlocks?.length ? args.contentBlocks : undefined,
+        clientMessageId,
       );
     case "update_queue": {
       const preserved = composerQueuedContentBlocks(composerState);
       const blocks = args.contentBlocks?.length ? args.contentBlocks : preserved;
+      const priorId =
+        composerState.status !== "idle" ? composerState.clientMessageId : undefined;
       return queueFollowUp(
         composerState,
         result.text,
         blocks?.length ? blocks : undefined,
+        clientMessageId ?? priorId,
       );
     }
     case "stop_and_send":
@@ -105,18 +110,19 @@ export function removeQueuedFollowUp(state: ComposerState): ComposerState {
   return clearQueue(state);
 }
 
-export type FlushQueuedFollowUpIntent =
-  | { type: "mark_stopped" }
-  | { type: "send_prompt"; text: string; contentBlocks?: PromptContentBlockWire[] };
+export function composerQueuedClientMessageId(state: ComposerState): string | undefined {
+  if (state.status === "idle") return undefined;
+  return state.clientMessageId;
+}
+
+export type FlushQueuedFollowUpIntent = { type: "mark_stopped" };
 
 export type FlushQueuedFollowUpResult = {
   state: ComposerState;
   intents: FlushQueuedFollowUpIntent[];
 };
 
-/** The turn is over — either normally or because Stop & send cancelled it —
- * so the follow-up becomes the next prompt. Nothing dispatches while busy.
- * Side effects belong in intents; apply them once outside a setState updater. */
+/** The turn is over — clear stopping UI. Host-owned FIFO already holds staged prompts. */
 export function flushQueuedFollowUp(args: {
   composerState: ComposerState;
   busy: boolean;
@@ -131,18 +137,5 @@ export function flushQueuedFollowUp(args: {
   if (composerIsStopping(args.composerState)) {
     intents.push({ type: "mark_stopped" });
   }
-  const contentBlocks = composerQueuedContentBlocks(args.composerState);
-  intents.push({
-    type: "send_prompt",
-    text: queued,
-    ...(contentBlocks?.length ? { contentBlocks } : {}),
-  });
-  return { state: args.composerState, intents };
-}
-
-export function composerStateAfterFlush(
-  composerState: ComposerState,
-  sendSucceeded: boolean,
-): ComposerState {
-  return sendSucceeded ? clearQueue(composerState) : composerState;
+  return { state: clearQueue(args.composerState), intents };
 }

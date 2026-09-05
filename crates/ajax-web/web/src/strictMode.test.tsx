@@ -123,6 +123,6 @@ describe("StrictMode lifecycle safety", () => {
 
     expect(screen.getAllByTestId("session-note-info")).toHaveLength(1);
     expect(screen.getByTestId("session-note-info")).toHaveTextContent("Stopped");
-    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", []);
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
   });
 });

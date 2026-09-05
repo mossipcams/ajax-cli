@@ -145,19 +145,31 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   }, [view.turn.busy]);
 
   const sendPrompt = useCallback(
-    (text: string, contentBlocks: PromptContentBlockWire[] = []): boolean => {
+    (
+      text: string,
+      contentBlocks: PromptContentBlockWire[] = [],
+      clientMessageId?: string,
+    ): string => {
       const trimmed = text.trim();
-      if (!hasPromptContent(trimmed, contentBlocks) || !connected) return false;
-      if (!transportRef.current?.sendPrompt(trimmed, contentBlocks)) return false;
-      if (!view.turn.busy) markActivity();
-      dispatch({ type: "prompt", text: trimmed });
-      return true;
+      if (!hasPromptContent(trimmed, contentBlocks) || !connected) return "";
+      const id = transportRef.current?.sendPrompt(trimmed, contentBlocks, clientMessageId);
+      if (!id) return "";
+      if (!view.turn.busy) {
+        markActivity();
+        dispatch({ type: "prompt", text: trimmed });
+      }
+      return id;
     },
     [connected, markActivity, view.turn.busy],
   );
 
-  const sendCancel = useCallback(() => {
-    transportRef.current?.sendCancel();
+  const withdrawQueuedPrompt = useCallback((clientMessageId: string) => {
+    if (!clientMessageId || !connected) return;
+    transportRef.current?.withdrawQueuedPrompt(clientMessageId);
+  }, [connected]);
+
+  const sendCancel = useCallback((keepQueue = false) => {
+    transportRef.current?.sendCancel(keepQueue);
   }, []);
 
   const sendClear = useCallback(() => {
@@ -213,6 +225,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     sessionTitle: modelState.sessionTitle,
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
+    withdrawQueuedPrompt,
     sendCancel,
     sendClear,
     markStopped,

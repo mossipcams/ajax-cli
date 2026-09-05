@@ -141,12 +141,12 @@ export function connectWebSessionTransport(
   });
 
   return {
-    sendPrompt(text, contentBlocks = []) {
+    sendPrompt(text, contentBlocks = [], existingClientMessageId) {
       const trimmed = text.trim();
       if (!trimmed && !contentBlocks.length) return "";
       const prompt: PendingPrompt = {
         text: trimmed,
-        clientMessageId: newPromptId(),
+        clientMessageId: existingClientMessageId?.trim() || newPromptId(),
         ...(contentBlocks.length ? { contentBlocks } : {}),
       };
       if (!frameFits(prompt)) {
@@ -160,6 +160,17 @@ export function connectWebSessionTransport(
       writeOutbox(handle, pendingPrompts);
       if (ready) sendPromptNow(prompt);
       return prompt.clientMessageId;
+    },
+    withdrawQueuedPrompt(clientMessageId) {
+      if (!clientMessageId) return;
+      const index = pendingPrompts.findIndex(
+        (prompt) => prompt.clientMessageId === clientMessageId,
+      );
+      if (index >= 0) {
+        pendingPrompts.splice(index, 1);
+        writeOutbox(handle, pendingPrompts);
+      }
+      sendJson({ type: "prompt", text: "", clientMessageId, contentBlocks: [] });
     },
     sendCancel(keepQueue = false) {
       if (!keepQueue) {

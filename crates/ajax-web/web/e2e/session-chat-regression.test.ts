@@ -169,7 +169,23 @@ async function mockHeldTurn(page: Page) {
 
     socket.onMessage((message) => {
       if (typeof message !== "string") return;
-      const event = JSON.parse(message) as { type?: string; text?: string };
+      const event = JSON.parse(message) as {
+        type?: string;
+        text?: string;
+        clientMessageId?: string;
+      };
+      if (event.type === "prompt" && event.text) {
+        if (event.clientMessageId) {
+          send({ type: "prompt_accepted", clientMessageId: event.clientMessageId });
+        }
+        send({
+          type: "message",
+          role: "user",
+          text: event.text,
+          itemId: event.clientMessageId ? `u:${event.clientMessageId}` : `u${nextCursor}`,
+        });
+        return;
+      }
       // The prompt is accepted and then held: no agent output, no turn_end,
       // exactly like a long turn. Cancel is what ends it.
       if (event.type === "cancel") send({ type: "turn_end", stopReason: "cancelled" });
