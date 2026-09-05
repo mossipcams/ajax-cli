@@ -301,6 +301,26 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
+  it("withdrawQueuedPrompt removes the outbox row and sends an empty host withdraw", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/fix-login", callbacks(), platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    const id = transport.sendPrompt("Queued");
+    expect(id).not.toBe("");
+
+    transport.withdrawQueuedPrompt(id);
+
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "", clientMessageId: id }),
+    );
+    transport.sendPrompt("After withdraw");
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ type: "prompt", text: "After withdraw" }),
+    );
+    transport.dispose();
+  });
+
   it("accepts a prompt larger than the former 4096-byte frame limit", () => {
     const socket = fakeSocket();
     const cbs = callbacks();

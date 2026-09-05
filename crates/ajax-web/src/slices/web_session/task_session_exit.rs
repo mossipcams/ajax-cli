@@ -329,6 +329,9 @@ pub(super) fn submit_prompt(
     if let Some(reason) = &state.evidence.transcript_durability_fault {
         return Err(SessionError::persist(reason.clone()));
     }
+    if text.trim().is_empty() && content_blocks.is_empty() && !client_message_id.is_empty() {
+        return withdraw_queued_prompt(state, client_message_id);
+    }
     let caps = state
         .acp
         .session_prompt_capabilities
@@ -336,9 +339,9 @@ pub(super) fn submit_prompt(
         .unwrap_or_else(prompt_content::default_prompt_capabilities);
     let payload = prompt_content::build_prompt_payload(&text, &content_blocks, &caps)
         .map_err(SessionError::protocol)?;
-    let Some(client) = state.acp.client.as_ref() else {
+    if state.acp.client.is_none() {
         return Err(SessionError::protocol("session slot missing"));
-    };
+    }
     if !state.acp.acp_alive {
         return Err(SessionError::protocol(
             "ACP process exited — reconnect to send prompts",
@@ -352,7 +355,16 @@ pub(super) fn submit_prompt(
                         "prompt {client_message_id} was interrupted and was not executed"
                     )));
                 }
-                PromptPhase::Completed | PromptPhase::Queued | PromptPhase::Dispatching => {
+                PromptPhase::Queued => {
+                    return update_queued_prompt(
+                        state,
+                        client_message_id,
+                        text,
+                        content_blocks,
+                        payload,
+                    );
+                }
+                PromptPhase::Completed | PromptPhase::Dispatching => {
                     state.append_to_log(vec![SessionServerEvent::PromptAccepted {
                         client_message_id,
                     }])?;
@@ -361,14 +373,14 @@ pub(super) fn submit_prompt(
             }
         }
     }
-    let user_event = SessionServerEvent::Message {
-        role: "user".to_string(),
-        text: payload.transcript_text.clone(),
-        content_blocks: Vec::new(),
-        item_id: state.stream_normalizer.fresh_item_id(),
-        message_id: None,
-    };
-    let in_flight = state.prompts.active_prompt.is_some() || client.prompt_in_flight();
+    state.stream_normalizer.close_reply_lanes();
+    let in_flight = state.prompts.active_prompt.is_some()
+        || state
+            .acp
+            .client
+            .as_ref()
+            .is_some_and(|client| client.prompt_in_flight());
+    let user_event = user_prompt_event(&client_message_id, &payload.transcript_text, state);
     if in_flight {
         if state.prompts.queued.len() >= MAX_QUEUED_PROMPTS {
             return Err(SessionError::operator("prompt queue is full"));
@@ -390,6 +402,7 @@ pub(super) fn submit_prompt(
             wire_blocks: content_blocks,
             blocks: payload.blocks,
         });
+        state.append_to_log(vec![user_event])?;
         if !client_message_id.is_empty() {
             state.append_to_log(vec![SessionServerEvent::PromptAccepted {
                 client_message_id,
@@ -460,14 +473,7 @@ pub(super) fn dispatch_queued_prompt(
             ledger.mark_dispatching(&next.client_message_id);
         })?;
     }
-    let item_id = state.stream_normalizer.fresh_item_id();
-    state.append_to_log(vec![SessionServerEvent::Message {
-        role: "user".to_string(),
-        text: next.transcript_text.clone(),
-        content_blocks: Vec::new(),
-        item_id,
-        message_id: None,
-    }])?;
+    state.stream_normalizer.close_reply_lanes();
     let Some(client) = state.acp.client.as_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
@@ -512,6 +518,88 @@ fn wire_blocks_to_json(
         .iter()
         .filter_map(|block| serde_json::to_value(block).ok())
         .collect()
+}
+
+fn queued_user_item_id(client_message_id: &str, state: &mut TaskSessionState) -> String {
+    if client_message_id.is_empty() {
+        state.stream_normalizer.fresh_item_id()
+    } else {
+        format!("u:{client_message_id}")
+    }
+}
+
+fn user_prompt_event(
+    client_message_id: &str,
+    transcript_text: &str,
+    state: &mut TaskSessionState,
+) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "user".to_string(),
+        text: transcript_text.to_string(),
+        content_blocks: Vec::new(),
+        item_id: queued_user_item_id(client_message_id, state),
+        message_id: None,
+    }
+}
+
+fn update_queued_prompt(
+    state: &mut TaskSessionState,
+    client_message_id: String,
+    text: String,
+    content_blocks: Vec<prompt_content::PromptContentBlockWire>,
+    payload: prompt_content::PromptPayload,
+) -> Result<(), SessionError> {
+    persist_ledger_update(state, |ledger| {
+        ledger.upsert_queued(
+            client_message_id.clone(),
+            payload.transcript_text.clone(),
+            text.trim().to_string(),
+            wire_blocks_to_json(&content_blocks),
+        );
+    })?;
+    if let Some(queued) = state
+        .prompts
+        .queued
+        .iter_mut()
+        .find(|entry| entry.client_message_id == client_message_id)
+    {
+        queued.transcript_text = payload.transcript_text.clone();
+        queued.prompt_text = text.trim().to_string();
+        queued.wire_blocks = content_blocks;
+        queued.blocks = payload.blocks;
+    }
+    let transcript = payload.transcript_text.clone();
+    state.stream_normalizer.close_reply_lanes();
+    let user_event = user_prompt_event(&client_message_id, &transcript, state);
+    state.append_to_log(vec![
+        user_event,
+        SessionServerEvent::PromptAccepted { client_message_id },
+    ])?;
+    Ok(())
+}
+
+fn withdraw_queued_prompt(
+    state: &mut TaskSessionState,
+    client_message_id: String,
+) -> Result<(), SessionError> {
+    let Some(entry) = state.prompts.prompt_ledger.entry(&client_message_id) else {
+        return Ok(());
+    };
+    if entry.phase != PromptPhase::Queued {
+        state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+            client_message_id,
+        }])?;
+        return Ok(());
+    }
+    persist_ledger_update(state, |ledger| ledger.remove_entry(&client_message_id))?;
+    state
+        .prompts
+        .queued
+        .retain(|entry| entry.client_message_id != client_message_id);
+    state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+        client_message_id,
+    }])?;
+    Ok(())
 }
 
 pub(super) fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(), SessionError> {

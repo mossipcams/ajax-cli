@@ -209,7 +209,9 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order
-  (cap 8). When the cap is reached the host **rejects** the new submit with
+  (cap 8). The host appends the user `Message` row to JSONL when the prompt is
+  queued, not only when it is dispatched to ACP. When the cap is reached the host
+  **rejects** the new submit with
   `prompt queue is full`; it must not drop already-acknowledged queued work.
 - Prompt ownership lives in a versioned sidecar ledger
   (`web-session/<handle>.prompt-ledger.json`), separate from bounded transcript
@@ -314,16 +316,24 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   never races the in-flight turn.
 - The browser keeps an unacknowledged-prompt outbox for resend and at most **one**
   editable follow-up held in the composer; it does not maintain a second FIFO
-  queue. Submitting while a turn is in flight queues that follow-up in the
-  browser rather than dispatching a second `session/prompt`:
+  queue. Submitting while a turn is in flight **stages** that follow-up on the
+  host immediately — the browser calls `session/prompt` with a stable
+  `clientMessageId`, the host appends the user `Message` row to JSONL, and the
+  prompt ledger records **queued** before `prompt_accepted`. `localStorage`
+  queue text is presentation state for reload; it is not the only copy of a
+  staged follow-up ([#1139](https://github.com/mossipcams/ajax-cli/issues/1139)):
   - the queued message renders as a muted user message labelled `Queued`, and
-    stays editable and removable until it is dispatched;
-  - when the active turn resolves normally, the browser dispatches it as the next
-    prompt;
+    stays editable and removable until the host dispatches it;
+  - when the active turn resolves normally, the host dispatches the staged prompt
+    from its FIFO; the browser does **not** send the same follow-up again at
+    `turn_end`;
+  - editing or removing the follow-up withdraws the host row (`session/prompt`
+    with empty text and the same `clientMessageId`) so a stale FIFO entry cannot
+    linger;
   - a second submit while it is queued sends `session/cancel`, shows `Stopping…`,
     waits for the active prompt to resolve as cancelled, appends a `Stopped`
-    divider, and only then dispatches the queued prompt. The cancelled prompt and
-    the queued prompt are never in flight together.
+    divider, and only then lets the host dispatch the staged prompt. The cancelled
+    prompt and the staged prompt are never in flight together.
   Everything that reaches the host is still one prompt at a time; Stop owns
   cancellation.
 - Each live `TaskSession` Tokio task continues draining its ACP child and host
@@ -446,7 +456,11 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
   compaction preserves absolute replay cursors. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values
-  before persistence. The browser `MessageBuffer` rAF-coalesces those updates to
+  before persistence. Agent/thought stream lanes close when a user prompt is
+  recorded so the next reply cannot upsert into the previous bubble; distinct
+  non-continuation agent text (neither cumulative prefix nor delta of the open
+  lane) allocates a new `itemId` ([#1138](https://github.com/mossipcams/ajax-cli/issues/1138)).
+  The browser `MessageBuffer` rAF-coalesces those updates to
   the latest full text per `itemId` during the turn instead of holding them until
   `turn_end`; boundary events still flush pending lanes first so ordering is
   preserved.
