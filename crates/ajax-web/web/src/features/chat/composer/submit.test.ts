@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   applySubmitResult,
-  composerStateAfterFlush,
   flushQueuedFollowUp,
   submitComposerDraft,
 } from "./submit";
@@ -20,31 +19,22 @@ describe("flushQueuedFollowUp", () => {
     });
   });
 
-  it("plans mark_stopped and send_prompt when stopping after cancel", () => {
+  it("plans mark_stopped and clears queue when stopping after cancel", () => {
     const blocks = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
     const stopping = beginStopAndSend(queueFollowUp({ status: "idle" }, "Next", blocks));
     expect(flushQueuedFollowUp({ composerState: stopping, busy: false, connected: true })).toEqual({
-      state: stopping,
-      intents: [
-        { type: "mark_stopped" },
-        { type: "send_prompt", text: "Next", contentBlocks: blocks },
-      ],
+      state: clearQueue(stopping),
+      intents: [{ type: "mark_stopped" }],
     });
   });
 
-  it("plans only send_prompt when a queued follow-up outlives a normal turn end", () => {
+  it("clears the queue when a staged follow-up outlives a normal turn end", () => {
     const blocks = [{ type: "resource" as const, uri: "file:///notes.txt", text: "hello" }];
     const queued = queueFollowUp({ status: "idle" }, "Next", blocks);
     expect(flushQueuedFollowUp({ composerState: queued, busy: false, connected: true })).toEqual({
-      state: queued,
-      intents: [{ type: "send_prompt", text: "Next", contentBlocks: blocks }],
+      state: clearQueue(queued),
+      intents: [],
     });
-  });
-
-  it("clears the queue only after a successful send", () => {
-    const stopping = beginStopAndSend(queueFollowUp({ status: "idle" }, "Next"));
-    expect(composerStateAfterFlush(stopping, true)).toEqual(clearQueue(stopping));
-    expect(composerStateAfterFlush(stopping, false)).toBe(stopping);
   });
 });
 

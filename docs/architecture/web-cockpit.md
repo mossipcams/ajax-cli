@@ -457,6 +457,19 @@ Screen install. Web Cockpit does not ship classic PWA packaging — no
 Screen (Safari-native; safe `apple-mobile-web-app-*` metadata only) enables
 Declarative Web Push phone pings on capable browsers.
 
+**Screen wake lock (iOS auto-lock):** while the Cockpit tab is visible in the
+foreground, `App.tsx` mounts `setupScreenWakeLock()` from
+`shared/lib/screenWakeLock.ts`, which requests the Screen Wake Lock API
+(`navigator.wakeLock.request('screen')`) so the iPhone does not auto-lock
+during active operator use. The lock is released when
+`document.visibilityState` becomes `hidden` (tab backgrounded, device locked,
+or app switched) and re-acquired on `visibilitychange` when the page becomes
+visible again. If the API is unsupported, denied, or fails (for example low
+battery), Cockpit continues to work without the lock. Platforms that require a
+user gesture piggyback on normal Cockpit pointer/touch/keyboard interaction;
+there is no Settings toggle. Home Screen web apps support this from iOS 18.4+;
+regular Safari on the secure Cockpit origin is the primary target.
+
 Web Cockpit is host-native only. `ajax-cli web` is the live-control backend and
 runs with the same host authority as SQLite, configured repos, worktrees, tmux
 sessions, agent CLIs, and host process state. Docker is no longer part of the

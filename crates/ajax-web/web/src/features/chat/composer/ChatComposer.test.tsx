@@ -48,7 +48,7 @@ describe("ChatComposer", () => {
       target: { value: "Please fix the flaky test" },
     });
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
-    expect(transport.sendPrompt).toHaveBeenCalledWith("Please fix the flaky test", []);
+    expect(transport.sendPrompt).toHaveBeenCalledWith("Please fix the flaky test", [], undefined);
     expect(screen.getByTestId("session-message-user")).toHaveTextContent(
       "Please fix the flaky test",
     );
@@ -56,14 +56,14 @@ describe("ChatComposer", () => {
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
-  it("queues one editable follow-up instead of sending it into a live turn", () => {
+  it("queues one editable follow-up and stages it on the host while a turn is live", () => {
     mountChat();
 
     typeComposer("First");
     transport.sendPrompt.mockClear();
     typeComposer("Next");
 
-    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
     expect(transport.sendCancel).not.toHaveBeenCalled();
     const queued = screen.getByTestId("session-queued");
     expect(queued).toHaveTextContent("Queued");
@@ -72,21 +72,23 @@ describe("ChatComposer", () => {
     expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
   });
 
-  it("sends the queued follow-up by itself when the turn ends normally", () => {
+  it("does not resend a staged follow-up when the turn ends normally", () => {
     mountChat();
 
     typeComposer("First");
     transport.sendPrompt.mockClear();
     typeComposer("Next");
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
+    send({ type: "message", role: "user", text: "Next", itemId: "u:cmid-1" });
     send({ type: "turn_end", stopReason: "end_turn" });
 
-    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", []);
+    expect(transport.sendPrompt).toHaveBeenCalledTimes(1);
     expect(transport.sendCancel).not.toHaveBeenCalled();
     expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("session-message-user").at(-1)).toHaveTextContent("Next");
   });
 
-  it("sends the queued follow-up with attachments when the turn ends normally", async () => {
+  it("stages attachment-bearing follow-ups on the host while busy", async () => {
     mountChat();
     act(() => {
       chatH.snapshot?.({
@@ -118,10 +120,11 @@ describe("ChatComposer", () => {
     expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith(
       "Next",
       expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/jpeg" })]),
+      undefined,
     );
   });
 
-  it("stops the turn on a second Enter and only then sends the follow-up", () => {
+  it("stops the turn on a second Enter without resending the staged follow-up", () => {
     mountChat();
 
     typeComposer("First");
@@ -129,13 +132,14 @@ describe("ChatComposer", () => {
     typeComposer("Next");
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 
-    expect(transport.sendCancel).toHaveBeenCalledOnce();
-    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendCancel).toHaveBeenCalledTimes(1);
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
 
     send({ type: "turn_end", stopReason: "cancelled" });
 
-    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", []);
+    expect(transport.sendPrompt).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("session-note-info")).toHaveTextContent("Stopped");
   });
 
@@ -153,7 +157,8 @@ describe("ChatComposer", () => {
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
 
     expect(transport.sendCancel).toHaveBeenCalledTimes(1);
-    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendCancel).toHaveBeenCalledWith(true);
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("Next", [], undefined);
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
   });
 
@@ -166,31 +171,43 @@ describe("ChatComposer", () => {
     transport.sendCancel.mockClear();
     typeComposer("A");
     expect(screen.getByTestId("session-queued")).toHaveTextContent("A");
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("A", [], undefined);
     expect(transport.sendCancel).not.toHaveBeenCalled();
 
+    transport.sendPrompt.mockClear();
     typeComposer("B");
 
     expect(transport.sendCancel).not.toHaveBeenCalled();
-    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("B", [], "cmid-1");
     expect(screen.getByTestId("session-queued")).toHaveTextContent("B");
     expect(screen.getByLabelText("Message")).toHaveValue("");
   });
 
-  it("lets the operator edit or drop the queued follow-up", () => {
+  it("withdraws the host row when the operator edits a staged follow-up", () => {
     mountChat();
 
     typeComposer("First");
+    transport.sendPrompt.mockClear();
     typeComposer("Next");
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
     expect(screen.getByLabelText("Message")).toHaveValue("Next");
     expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
+  });
 
-    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+  it("withdraws the host row when the operator removes a staged follow-up", () => {
+    mountChat();
+
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+    typeComposer("Next");
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
     expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
 
     send({ type: "turn_end", stopReason: "end_turn" });
-    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("First", []);
+    expect(transport.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(transport.sendPrompt).toHaveBeenCalledWith("Next", [], undefined);
   });
 
   it("names what Enter will do next on the composer action", () => {
@@ -258,7 +275,7 @@ describe("ChatComposer", () => {
       target: { value: "/web query" },
     });
     fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
-    expect(transport.sendPrompt).toHaveBeenCalledWith("/web query", []);
+    expect(transport.sendPrompt).toHaveBeenCalledWith("/web query", [], undefined);
   });
 
   it("sends /clear through the clear wire command instead of session/prompt", () => {

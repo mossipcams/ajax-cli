@@ -1,10 +1,20 @@
 import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
 
-/** Browser composer queue: one editable follow-up, not a second host FIFO. */
+/** Browser composer queue: one editable follow-up mirrored on the host FIFO. */
 export type ComposerState =
   | { status: "idle" }
-  | { status: "queued"; text: string; contentBlocks?: PromptContentBlockWire[] }
-  | { status: "stopping"; text: string; contentBlocks?: PromptContentBlockWire[] };
+  | {
+      status: "queued";
+      text: string;
+      contentBlocks?: PromptContentBlockWire[];
+      clientMessageId?: string;
+    }
+  | {
+      status: "stopping";
+      text: string;
+      contentBlocks?: PromptContentBlockWire[];
+      clientMessageId?: string;
+    };
 
 export function composerQueuedText(state: ComposerState): string | null {
   if (state.status === "idle") return null;
@@ -26,11 +36,13 @@ export function queueFollowUp(
   _state: ComposerState,
   text: string,
   contentBlocks?: PromptContentBlockWire[],
+  clientMessageId?: string,
 ): ComposerState {
   return {
     status: "queued",
     text,
     ...(contentBlocks?.length ? { contentBlocks } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
   };
 }
 
@@ -40,6 +52,7 @@ export function beginStopAndSend(state: ComposerState): ComposerState {
     status: "stopping",
     text: state.text,
     ...(state.contentBlocks?.length ? { contentBlocks: state.contentBlocks } : {}),
+    ...(state.clientMessageId ? { clientMessageId: state.clientMessageId } : {}),
   };
 }
 
