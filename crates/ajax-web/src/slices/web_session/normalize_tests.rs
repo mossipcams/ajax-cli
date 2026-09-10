@@ -73,6 +73,87 @@ fn sentence_boundary_stream_chunks_without_message_id_stay_one_item() {
 }
 
 #[test]
+fn mid_stream_telemetry_does_not_split_the_open_reply() {
+    // Regression for #1143: usage/status updates arrive between token chunks and
+    // render outside the transcript, so they must not open a second bubble.
+    let mut normalizer = StreamNormalizer::default();
+    let events = normalizer.normalize_batch(vec![
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "A wake word listens ".to_string(),
+            content_blocks: Vec::new(),
+            item_id: String::new(),
+            message_id: None,
+        },
+        SessionServerEvent::Usage {
+            used: 100,
+            size: 200,
+        },
+        SessionServerEvent::Status {
+            state: "thinking".to_string(),
+            detail: None,
+        },
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "for its name.".to_string(),
+            content_blocks: Vec::new(),
+            item_id: String::new(),
+            message_id: None,
+        },
+    ]);
+    let messages: Vec<(&str, &str)> = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionServerEvent::Message { text, item_id, .. } => {
+                Some((item_id.as_str(), text.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].0, messages[1].0);
+    assert_eq!(messages[1].1, "A wake word listens for its name.");
+}
+
+#[test]
+fn tool_call_between_chunks_still_opens_a_new_reply_item() {
+    let mut normalizer = StreamNormalizer::default();
+    let events = normalizer.normalize_batch(vec![
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "Let me check.".to_string(),
+            content_blocks: Vec::new(),
+            item_id: String::new(),
+            message_id: None,
+        },
+        SessionServerEvent::ToolCall {
+            call_id: "c1".to_string(),
+            title: "read".to_string(),
+            kind: "read".to_string(),
+            status: "completed".to_string(),
+            locations: Vec::new(),
+            content: Vec::new(),
+        },
+        SessionServerEvent::Message {
+            role: "agent".to_string(),
+            text: "Found it.".to_string(),
+            content_blocks: Vec::new(),
+            item_id: String::new(),
+            message_id: None,
+        },
+    ]);
+    let ids: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionServerEvent::Message { item_id, .. } => Some(item_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+}
+
+#[test]
 fn user_prompt_closes_reply_lanes_so_next_turn_does_not_append() {
     let mut normalizer = StreamNormalizer::default();
     let events = normalizer.normalize_batch(vec![

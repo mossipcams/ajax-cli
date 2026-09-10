@@ -88,7 +88,9 @@ impl StreamNormalizer {
                 vec![event]
             }
             other => {
-                self.lanes.clear();
+                if !is_offscreen_telemetry(&other) {
+                    self.lanes.clear();
+                }
                 vec![other]
             }
         }
@@ -107,6 +109,24 @@ impl StreamNormalizer {
         self.next_id += 1;
         format!("i{}", self.next_id)
     }
+}
+
+/// Events the browser renders outside the transcript. Token counts and ACP
+/// status arrive between token chunks, so closing the open lane on them would
+/// cut a streaming reply into bubbles mid-sentence. Events that do occupy a
+/// transcript row (tool call, plan, permission, error) still close it, which is
+/// what keeps prose before and after them in chronological order.
+fn is_offscreen_telemetry(event: &SessionServerEvent) -> bool {
+    matches!(
+        event,
+        SessionServerEvent::Usage { .. }
+            | SessionServerEvent::TurnUsage { .. }
+            | SessionServerEvent::Status { .. }
+            | SessionServerEvent::Artifact { .. }
+            | SessionServerEvent::PromptAccepted { .. }
+            | SessionServerEvent::PermissionResolved { .. }
+            | SessionServerEvent::ElicitationResolved { .. }
+    )
 }
 
 fn lane_key(role: &str, message_id: &Option<String>) -> String {
