@@ -136,6 +136,13 @@ existing paths.
   even when the harness currentValue is exploded (`claude-opus-5-thinking-high`).
   Pin satisfaction
   is per-option `currentValue` match, not string equality on a synthetic id.
+- Bridge harnesses can expose reasoning and Fast controls only for the selected
+  model. When restoring a saved selection with additional settings onto a
+  different model, apply the advertised base model first, replace the controls
+  from its response, then validate and apply the remaining settings. This applies
+  after fresh creation and resume/load. Unsupported settings still produce a
+  typed refusal; report the confirmed base model even if a later setting fails
+  ([#1145](https://github.com/mossipcams/ajax-cli/issues/1145)).
 - Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
   catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
   handshake ids reconstruct to exploded catalog ids before argv, never passing
