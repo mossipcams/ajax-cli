@@ -74,6 +74,16 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.cancel(handle, keep_queue))
     }
 
+    pub fn apply_config_option(
+        &self,
+        handle: &str,
+        config_id: &str,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+    ) -> Result<super::task_session_spawn::ApplyConfigOptionResult, String> {
+        self.rt
+            .block_on(self.inner.apply_config_option(handle, config_id, value))
+    }
+
     pub fn cleanup_session(&self, handle: &str) {
         self.rt.block_on(self.inner.cleanup_session(handle));
     }

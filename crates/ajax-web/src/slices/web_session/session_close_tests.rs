@@ -196,6 +196,67 @@ fn advertised_close_skipped_on_detach_and_session_resumes() {
 }
 
 #[test]
+fn live_model_apply_reenter_resumes_without_session_close() {
+    // #1149: a live model-option apply re-pins the slot model to the persisted
+    // pipe form, so re-entering with that persisted form resumes the session
+    // instead of sending session/close and starting over.
+    let dir = scratch_dir("live-apply-reenter-resume");
+    let handle = "web/live-apply-reenter-resume";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+    let marker = close_marker_path(&dir);
+    let _ = std::fs::remove_file(&marker);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(
+            &["--session-close", "--cursor-parameterized-models"],
+            || {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire");
+                seed_user_turn(&directory, handle);
+
+                let result = directory
+                    .apply_config_option(
+                        handle,
+                        "model",
+                        agent_client_protocol::schema::v1::SessionConfigOptionValue::value_id(
+                            "grok-4.6",
+                        ),
+                    )
+                    .expect("live model apply");
+                let persisted = result
+                    .persist_model
+                    .expect("live model change must persist a model id");
+                assert!(
+                    persisted.starts_with("grok-4.6|"),
+                    "persisted model must be pipe form: {persisted}"
+                );
+
+                directory.release(handle);
+
+                // Re-entry hands the persisted pipe form back as the want model.
+                directory
+                    .acquire(handle, &dir, &persisted, AgentClient::Cursor)
+                    .expect("re-acquire");
+
+                assert!(
+                    !marker.exists(),
+                    "same-model re-enter after a live apply must not send session/close (#1149)"
+                );
+                let (events, _) = directory.read_from(handle, 0);
+                assert!(
+                    !has_message(&events, "note", CONTEXT_RESET_NOTE),
+                    "re-enter after a live model change must resume the stored session: {events:?}"
+                );
+            },
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn advertised_close_on_drop_session_prevents_resume() {
     // #1061: task Drop remains a terminal close.
     let dir = scratch_dir("close-prevents-resume");
