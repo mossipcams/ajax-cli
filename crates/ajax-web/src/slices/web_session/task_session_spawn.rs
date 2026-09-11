@@ -147,6 +147,14 @@ pub(super) async fn apply_config_option(
                 }
                 _ => (None, None),
             };
+            // Keep the slot pin and the registry pin as the same string. A later
+            // attach compares them to choose replace-versus-reuse, and the persisted
+            // pipe form is what `prepare_task_session` hands back as `want_model`.
+            // Leaving the slot on the old spelling reads a live apply as a model
+            // change on re-entry, closing the agent session and starting over (#1149).
+            if let Some(model) = persist_model.as_deref() {
+                state.acp.model = model.to_string();
+            }
             Ok(ApplyConfigOptionResult {
                 generation: generation_before,
                 persist_model,
