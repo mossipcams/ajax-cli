@@ -220,6 +220,7 @@
   max-height: 40vh;
   padding: 8px 10px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   /* --paper on --paper is no block at all: a command's output was reading as
@@ -323,6 +324,7 @@
   max-height: 40vh;
   padding: 6px 0;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   font-family: var(--mono);
   font-size: var(--text-label);
   line-height: 1.5;
