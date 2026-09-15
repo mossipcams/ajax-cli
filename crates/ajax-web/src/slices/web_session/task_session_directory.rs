@@ -245,6 +245,11 @@ impl TaskSessionDirectory {
                 .await;
             let _ = entry.join_handle.await;
         }
+        // Drop is a terminal close: the stored id must not survive it, or a
+        // later attach would fail closed on restoring a closed session instead
+        // of starting the documented fresh context
+        // ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+        web_session_store::clear_acp_session_id(&self.state_dir, handle);
     }
 
     /// Tear down the live child without ACP `session/close` so resume/load can succeed.

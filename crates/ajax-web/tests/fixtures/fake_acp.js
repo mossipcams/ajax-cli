@@ -5,6 +5,13 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const loadFail = process.argv.includes('--load-fail');
+const noLoadSession = process.argv.includes('--no-load-session');
+const loadDelayMs = (() => {
+  const flag = process.argv.find((arg) => arg.startsWith('--load-delay='));
+  if (!flag) return 0;
+  const parsed = Number.parseInt(flag.slice('--load-delay='.length), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+})();
 const holdPromptMode = process.argv.includes('--hold-prompt');
 const malformedMode = process.argv.includes('--malformed');
 const badInitialize = process.argv.includes('--bad-initialize');
@@ -130,6 +137,11 @@ function assertExclusiveSessionNew() {
 
 function spawnModelFromArgv() {
   if (ignoreSpawnModelOnce && firstSpawnAttempt) {
+    return null;
+  }
+  // #1151: unconditional variant so a later generation can simulate a
+  // restored session whose model differs from the spawn argv model.
+  if (process.argv.includes('--ignore-spawn-model')) {
     return null;
   }
   // #952: --model-refuse simulates a harness that keeps its own default and
@@ -364,7 +376,7 @@ function handleRequest(msg) {
       result: {
         protocolVersion,
         agentCapabilities: {
-          loadSession: true,
+          loadSession: !noLoadSession,
           sessionCapabilities: {
             ...(resumeMode ? { resume: {} } : {}),
             ...(sessionClose ? { close: {} } : {}),
@@ -380,6 +392,15 @@ function handleRequest(msg) {
   if (method === 'session/new') {
     assertExclusiveSessionNew();
     persistSession(sessionId);
+    // #1151: sidecar counter so tests can prove a spawn restored instead of
+    // silently creating a fresh session behind the stored id.
+    const counterPath = path.join(stateRoot, '.fake-acp-session-new-count');
+    let sessionNewCount = 0;
+    try {
+      sessionNewCount =
+        Number.parseInt(fs.readFileSync(counterPath, 'utf-8') || '0', 10) || 0;
+    } catch {}
+    fs.writeFileSync(counterPath, String(sessionNewCount + 1));
     send({
       jsonrpc: '2.0',
       id,
@@ -434,12 +455,19 @@ function handleRequest(msg) {
       return;
     }
     persistSession(requestedId);
-    replayUpdate('replayed');
-    send({
-      jsonrpc: '2.0',
-      id,
-      result: { configOptions: modelConfigOptions() },
-    });
+    const respond = () => {
+      replayUpdate('replayed');
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: { configOptions: modelConfigOptions() },
+      });
+    };
+    if (method === 'session/load' && loadDelayMs > 0) {
+      setTimeout(respond, loadDelayMs);
+      return;
+    }
+    respond();
     return;
   }
   // Model selection: echo what the client asked for so tests can assert the

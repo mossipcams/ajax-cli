@@ -415,6 +415,9 @@ mod tests;
 mod fake_acp_tests;
 
 #[cfg(test)]
+mod task_session_restore_tests;
+
+#[cfg(test)]
 mod task_session_tests;
 
 #[cfg(test)]

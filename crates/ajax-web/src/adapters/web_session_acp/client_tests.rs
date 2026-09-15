@@ -662,31 +662,6 @@ fn drop_without_close_still_resumes_when_close_advertised() {
 }
 
 #[test]
-fn shutdown_close_prevents_resume_when_advertised() {
-    let dir = scratch_dir("shutdown-close-no-resume");
-    let script = fake_acp_fixture();
-    let marker = dir.join(".fake-acp-session-close-called");
-
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--session-close"], || {
-            let (mut client, first_report) =
-                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("first spawn");
-            assert!(first_report.close_advertised);
-            let session_id = client.session_id().to_string();
-            assert!(client.shutdown().is_none());
-            assert!(marker.exists(), "shutdown must send session/close");
-
-            let (_client2, second_report) =
-                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id))
-                    .expect("spawn after close");
-            assert!(!second_report.resumed, "closed sessions must not load");
-        });
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
 fn failed_session_resume_falls_back_to_session_load() {
     let dir = scratch_dir("resume-falls-back-to-load");
     let script = fake_acp_fixture();
@@ -704,33 +679,6 @@ fn failed_session_resume_falls_back_to_session_load() {
             assert!(report.resumed, "session/load should follow a failed resume");
             assert_eq!(client.session_id(), session_id);
             assert!(client.poll_event().is_none(), "load replay must be drained");
-        });
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn fake_load_fail_falls_back_to_new_session() {
-    let dir = scratch_dir("load-fail");
-    let script = fake_acp_fixture();
-
-    with_test_acp_program(&script, || {
-        let (client, _first_report) =
-            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("first spawn");
-        let resume_id = client.session_id().to_string();
-        drop(client);
-
-        with_test_acp_extra_args(&["--load-fail"], || {
-            let (mut client2, report) =
-                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id))
-                    .expect("spawn after load fail");
-            assert!(!report.resumed);
-            assert!(!client2.session_id().is_empty());
-            client2
-                .begin_prompt(&prompt_blocks("after-fail"))
-                .expect("begin_prompt");
-            pump_until_pong_or_prompt_finished(&client2, Duration::from_secs(5));
         });
     });
 

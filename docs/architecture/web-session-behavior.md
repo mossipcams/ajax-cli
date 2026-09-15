@@ -447,9 +447,24 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 - UI transcript survives `ajax-web` restart via JSONL under `state_dir`.
 - On acquire after restart, the host restores the stored ACP session id with
   `session/resume` when advertised, otherwise `session/load`. If resume fails
-  and load is advertised, load is attempted before a new session is created.
-  Restart and idle eviction must not send `session/close` for that stored id
+  and load is advertised, load is attempted before giving up. Restart and idle
+  eviction must not send `session/close` for that stored id
   ([#1061](https://github.com/mossipcams/ajax-cli/issues/1061)).
+- A stored session id means restore, never a silent fresh session
+  ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)). When the
+  harness advertises neither `session/resume` nor `loadSession`, or both
+  restore attempts fail or time out, spawn fails with the typed
+  `ACP restore unavailable` error carrying the stored session id; the stored
+  id stays persisted so a later attach can retry. `session/resume` and
+  `session/load` run on a dedicated restore budget (default 5 minutes,
+  overridable via `AJAX_ACP_RESTORE_TIMEOUT_MS`) because bridges such as
+  pi-acp replay the whole transcript inside `session/load` before responding.
+- A restored session is never dropped to satisfy an operator model pin: the
+  pin apply runs in-band on the restored session and a refusal surfaces as the
+  typed model-apply error while the restored session keeps running. The
+  fresh-spawn pin-recovery retry
+  ([#989](https://github.com/mossipcams/ajax-cli/issues/989)) runs only when no
+  stored id was being restored.
 - Cursor may emit `session/update` replay notifications before the load result;
   the host suppresses transcript-shaped replay during `session/resume` and
   `session/load` until the live session is installed on the slot. Capability
@@ -457,9 +472,11 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   `session_info_update`) still flow during handshake. Transcript replay must not
   land in JSONL even when notifications arrive after spawn returns
   ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
-- If load is unsupported or fails, the JSONL transcript still reloads and exactly
-  one agent-visible note states that model context reset; the composer keeps
-  working.
+- If restore is unavailable, the JSONL transcript still reloads and the attach
+  surfaces the typed restore error; the composer keeps working and an explicit
+  `/clear` (or Drop) remains the operator's fresh-context path. The
+  context-reset note is appended only for deliberate fresh-context spawns
+  (Switch, `/clear`, re-entry after a terminal Drop), not for failed restores.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
   compaction preserves absolute replay cursors. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values
@@ -611,6 +628,9 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   cross-harness Switch (`reset_harness_context`). Same-model slot replacement
   that will resume/load the stored id, idle LRU eviction, process restart, and
   accidental `Drop` of the stdio client detach stdio without `session/close`.
+  A terminal Drop also clears the stored resume id, so the next attach starts
+  the documented fresh context instead of failing to restore the closed
+  session ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
 - When close is advertised on a terminal teardown, the host sends ACP
   `session/close` for the current session id and waits for the response (bounded
   timeout) before killing stdio. When close is not advertised, teardown still
