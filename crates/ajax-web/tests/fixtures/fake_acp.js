@@ -21,6 +21,13 @@ const permissionAllowAlways = process.argv.includes('--permission-allow-always')
 const permissionHold = process.argv.includes('--permission-hold');
 const resumeMode = process.argv.includes('--resume') || process.argv.includes('--resume-fail');
 const resumeFail = process.argv.includes('--resume-fail');
+const resumeTransportDie = process.argv.includes('--resume-transport-die');
+const resumeDelayMs = (() => {
+  const flag = process.argv.find((arg) => arg.startsWith('--resume-delay='));
+  if (!flag) return 0;
+  const parsed = Number.parseInt(flag.slice('--resume-delay='.length), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+})();
 const protocolVersion = process.argv.includes('--protocol-v2') ? 2 : 1;
 const cursorModels = process.argv.includes('--cursor-models');
 const cursorLiveModels = process.argv.includes('--cursor-live-models');
@@ -445,6 +452,9 @@ function handleRequest(msg) {
       send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'resume failed' } });
       return;
     }
+    if (method === 'session/resume' && resumeTransportDie) {
+      process.exit(0);
+    }
     const requestedId = params?.sessionId ?? sessionId;
     if (!sessionKnown(requestedId)) {
       send({
@@ -463,6 +473,10 @@ function handleRequest(msg) {
         result: { configOptions: modelConfigOptions() },
       });
     };
+    if (method === 'session/resume' && resumeDelayMs > 0) {
+      setTimeout(respond, resumeDelayMs);
+      return;
+    }
     if (method === 'session/load' && loadDelayMs > 0) {
       setTimeout(respond, loadDelayMs);
       return;

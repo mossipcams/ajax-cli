@@ -235,6 +235,26 @@
   overflow-wrap: anywhere;
 }
 
+.session-restore-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.session-restore-recovery p {
+  margin: 0;
+}
+
+.session-restore-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Block kinds: search, read dump, command output — three shapes, not three
    identical tinted boxes. Compound selectors beat the base rule above. */
 .session-tool-output.session-block-search {

@@ -56,6 +56,7 @@ pub(super) async fn acquire(
         return Ok(());
     }
 
+    state.acp.model = model.to_string();
     let stored: StoredSession<SessionServerEvent> =
         web_session_store::load(&state.state_dir, &state.qualified_handle);
     let resume_id = stored.acp_session_id.clone();
@@ -391,7 +392,7 @@ async fn spawn_acp(
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
         AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
-            .map_err(|error| SessionError::classify_spawn(&error))
+            .map_err(SessionError::classify_spawn)
     })
 }
 

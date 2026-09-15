@@ -96,6 +96,10 @@ pub enum SessionClientMessage {
     },
     #[serde(rename = "clear")]
     Clear,
+    #[serde(rename = "retry_restore")]
+    RetryRestore,
+    #[serde(rename = "start_fresh")]
+    StartFresh,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

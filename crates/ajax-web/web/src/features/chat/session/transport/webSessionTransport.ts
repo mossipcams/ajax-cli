@@ -184,6 +184,12 @@ export function connectWebSessionTransport(
       writeOutbox(handle, pendingPrompts);
       sendJson({ type: "clear" });
     },
+    retryRestore() {
+      sendJson({ type: "retry_restore" });
+    },
+    startFresh() {
+      sendJson({ type: "start_fresh" });
+    },
     setModel(nextModel) {
       const trimmed = nextModel.trim() || "auto";
       sendJson({ type: "set_config_option", configId: "model", value: trimmed });

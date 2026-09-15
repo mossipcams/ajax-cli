@@ -1,6 +1,6 @@
 //! Typed errors at the web-session slice boundary.
 
-use crate::adapters::web_session_acp::is_restore_unavailable;
+use crate::adapters::web_session_acp::{AcpSpawnError, RestoreFailure};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionError {
@@ -8,7 +8,7 @@ pub enum SessionError {
     Persist(String),
     Protocol(String),
     Operator(String),
-    RestoreUnavailable(String),
+    RestoreUnavailable(RestoreFailure),
 }
 
 impl SessionError {
@@ -28,15 +28,14 @@ impl SessionError {
         Self::Operator(message.into())
     }
 
-    pub fn restore_unavailable(message: impl Into<String>) -> Self {
-        Self::RestoreUnavailable(message.into())
+    pub fn restore_unavailable(error: RestoreFailure) -> Self {
+        Self::RestoreUnavailable(error)
     }
 
-    pub fn classify_spawn(message: &str) -> Self {
-        if is_restore_unavailable(message) {
-            Self::RestoreUnavailable(message.to_string())
-        } else {
-            Self::Spawn(message.to_string())
+    pub fn classify_spawn(error: AcpSpawnError) -> Self {
+        match error {
+            AcpSpawnError::Restore(error) => Self::RestoreUnavailable(error),
+            AcpSpawnError::Message(message) => Self::Spawn(message),
         }
     }
 
@@ -52,7 +51,7 @@ impl SessionError {
             "session_new"
         } else if message.contains("ACP startup timed out") {
             "startup_timeout"
-        } else if is_restore_unavailable(message) {
+        } else if message.starts_with("ACP restore unavailable") {
             "restore_unavailable"
         } else {
             return None;
@@ -68,7 +67,7 @@ impl std::fmt::Display for SessionError {
             Self::Persist(message) => write!(f, "{message}"),
             Self::Protocol(message) => write!(f, "{message}"),
             Self::Operator(message) => write!(f, "{message}"),
-            Self::RestoreUnavailable(message) => write!(f, "{message}"),
+            Self::RestoreUnavailable(error) => write!(f, "{error}"),
         }
     }
 }
@@ -98,7 +97,12 @@ mod tests {
 
     #[test]
     fn restore_unavailable_classifies_as_typed_variant() {
-        let msg = "ACP restore unavailable: session_id=s1: load failed";
-        assert!(SessionError::classify_spawn(msg).is_restore_unavailable());
+        assert!(
+            SessionError::classify_spawn(AcpSpawnError::Restore(RestoreFailure::TimedOut {
+                session_id: "s1".to_string(),
+                method: crate::adapters::web_session_acp::RestoreMethod::Load,
+            },))
+            .is_restore_unavailable()
+        );
     }
 }

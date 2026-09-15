@@ -3,7 +3,9 @@
 use super::apply_model::{
     apply_config_option, apply_model_pin, sync_live_model_config, ApplyModelOutcome,
 };
-use super::client::{AcpClientEvent, HANDSHAKE_TIMEOUT};
+use super::client::{
+    AcpClientEvent, AcpSpawnError, RestoreFailure, RestoreMethod, HANDSHAKE_TIMEOUT,
+};
 use super::config_options::{
     mode_option, read_model_applied, replace_config_options, select_value_advertised,
     sync_session_result_config_options,
@@ -42,7 +44,6 @@ use std::{
         mpsc::Sender,
         Arc, Mutex,
     },
-    time::Duration,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -138,7 +139,7 @@ pub(super) struct RunOptions {
     pub stdout: ChildStdout,
     pub commands: UnboundedReceiver<ClientCommand>,
     pub events: Sender<AcpClientEvent>,
-    pub ready: Sender<Result<ConnectionReady, String>>,
+    pub ready: Sender<Result<ConnectionReady, AcpSpawnError>>,
     pub busy: Arc<AtomicBool>,
     pub agent: AgentClient,
     pub cwd: PathBuf,
@@ -146,6 +147,8 @@ pub(super) struct RunOptions {
     pub apply_pin: Option<String>,
     pub resume_session_id: Option<String>,
     pub stderr_tail: Arc<Mutex<String>>,
+    pub handshake_deadline: std::time::Instant,
+    pub restore_timeout: Option<std::time::Duration>,
 }
 
 /// The host currently implements permission replies only. Keep filesystem and
@@ -176,9 +179,9 @@ pub(super) fn run(options: RunOptions) {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = options
-                .ready
-                .send(Err(format!("failed to start ACP runtime: {error}")));
+            let _ = options.ready.send(Err(AcpSpawnError::Message(format!(
+                "failed to start ACP runtime: {error}"
+            ))));
             return;
         }
     };
@@ -198,6 +201,8 @@ async fn run_async(options: RunOptions) {
         apply_pin,
         resume_session_id,
         stderr_tail,
+        handshake_deadline,
+        restore_timeout,
     } = options;
     let permissions: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
     let elicitations: PendingElicitations = Arc::new(Mutex::new(HashMap::new()));
@@ -319,6 +324,8 @@ async fn run_async(options: RunOptions) {
                 apply_pin.as_deref(),
                 resume_session_id.as_deref(),
                 Arc::clone(&runtime),
+                handshake_deadline,
+                restore_timeout,
             )
             .await;
             let connection_ready = match started {
@@ -392,6 +399,7 @@ fn traced_transport(
     Lines::new(outgoing, incoming)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn initialize_session(
     connection: &ConnectionTo<Agent>,
     agent: AgentClient,
@@ -399,12 +407,14 @@ async fn initialize_session(
     apply_pin: Option<&str>,
     resume_session_id: Option<&str>,
     runtime: SessionRuntimeHandle,
-) -> Result<ConnectionReady, String> {
+    handshake_deadline: std::time::Instant,
+    restore_timeout: Option<std::time::Duration>,
+) -> Result<ConnectionReady, AcpSpawnError> {
     let initialize = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(client_capabilities())
         .client_info(Implementation::new("ajax-web", env!("CARGO_PKG_VERSION")).title("Ajax Web"));
     let initialized = tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        handshake_deadline.saturating_duration_since(std::time::Instant::now()),
         connection.send_request(initialize).block_task(),
     )
     .await
@@ -414,7 +424,8 @@ async fn initialize_session(
         return Err(format!(
             "unsupported ACP protocol version: {:?}",
             initialized.protocol_version
-        ));
+        )
+        .into());
     }
 
     let load_session_advertised = initialized.agent_capabilities.load_session;
@@ -428,9 +439,13 @@ async fn initialize_session(
         .session_capabilities
         .resume
         .is_some();
+    let restore_deadline = restore_timeout
+        .map(|timeout| std::time::Instant::now() + timeout)
+        .unwrap_or(handshake_deadline);
     let mut resumed = false;
     let mut session_id = None;
     let mut config_options = None;
+    let mut resume_failure = None;
     if let Some(resume_id) = resume_session_id {
         runtime
             .suppress_handshake_transcript
@@ -439,21 +454,28 @@ async fn initialize_session(
             runtime
                 .suppress_handshake_transcript
                 .store(false, Ordering::Release);
-            return Err(super::client::restore_unavailable_error(
-                resume_id,
-                "harness does not advertise session/resume or loadSession",
-            ));
+            return Err(RestoreFailure::Unsupported {
+                session_id: resume_id.to_string(),
+            }
+            .into());
         }
         if resume_advertised {
-            if let Some(response) = send_resume(connection, resume_id, cwd).await {
-                resumed = true;
-                config_options = response.config_options;
+            match send_resume(connection, resume_id, cwd, restore_deadline).await {
+                Ok(response) => {
+                    resumed = true;
+                    config_options = response.config_options;
+                }
+                Err(error @ RestoreFailure::Rejected { .. }) => resume_failure = Some(error),
+                Err(error) => return Err(error.into()),
             }
         }
         if !resumed && load_session_advertised {
-            if let Some(response) = send_load(connection, resume_id, cwd).await {
-                resumed = true;
-                config_options = response.config_options;
+            match send_load(connection, resume_id, cwd, restore_deadline).await {
+                Ok(response) => {
+                    resumed = true;
+                    config_options = response.config_options;
+                }
+                Err(error) => return Err(error.into()),
             }
         }
         if resumed {
@@ -465,10 +487,13 @@ async fn initialize_session(
             // A stored session id means restore: never a silent `session/new`
             // behind the existing transcript
             // ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
-            return Err(super::client::restore_unavailable_error(
-                resume_id,
-                "session/resume and session/load failed",
-            ));
+            return Err(resume_failure
+                .unwrap_or_else(|| RestoreFailure::Rejected {
+                    session_id: resume_id.to_string(),
+                    method: RestoreMethod::Load,
+                    reason: "restore request was rejected".to_string(),
+                })
+                .into());
         }
     }
 
@@ -479,7 +504,7 @@ async fn initialize_session(
         }
         None => {
             let response = tokio::time::timeout(
-                HANDSHAKE_TIMEOUT,
+                handshake_deadline.saturating_duration_since(std::time::Instant::now()),
                 connection
                     .send_request(NewSessionRequest::new(cwd))
                     .block_task(),
@@ -536,9 +561,10 @@ async fn send_resume(
     connection: &ConnectionTo<Agent>,
     session_id: &str,
     cwd: &Path,
-) -> Option<agent_client_protocol::schema::v1::ResumeSessionResponse> {
+    deadline: std::time::Instant,
+) -> Result<agent_client_protocol::schema::v1::ResumeSessionResponse, RestoreFailure> {
     tokio::time::timeout(
-        restore_handshake_timeout(),
+        deadline.saturating_duration_since(std::time::Instant::now()),
         connection
             .send_request(ResumeSessionRequest::new(
                 session_id.to_string(),
@@ -547,17 +573,21 @@ async fn send_resume(
             .block_task(),
     )
     .await
-    .ok()?
-    .ok()
+    .map_err(|_| RestoreFailure::TimedOut {
+        session_id: session_id.to_string(),
+        method: RestoreMethod::Resume,
+    })?
+    .map_err(|error| restore_rpc_failure(session_id, RestoreMethod::Resume, error.to_string()))
 }
 
 async fn send_load(
     connection: &ConnectionTo<Agent>,
     session_id: &str,
     cwd: &Path,
-) -> Option<agent_client_protocol::schema::v1::LoadSessionResponse> {
+    deadline: std::time::Instant,
+) -> Result<agent_client_protocol::schema::v1::LoadSessionResponse, RestoreFailure> {
     tokio::time::timeout(
-        restore_handshake_timeout(),
+        deadline.saturating_duration_since(std::time::Instant::now()),
         connection
             .send_request(LoadSessionRequest::new(
                 session_id.to_string(),
@@ -566,30 +596,26 @@ async fn send_load(
             .block_task(),
     )
     .await
-    .ok()?
-    .ok()
+    .map_err(|_| RestoreFailure::TimedOut {
+        session_id: session_id.to_string(),
+        method: RestoreMethod::Load,
+    })?
+    .map_err(|error| restore_rpc_failure(session_id, RestoreMethod::Load, error.to_string()))
 }
 
-/// Restore budget for `session/resume` and `session/load`. Bridges such as
-/// pi-acp replay the whole transcript inside `session/load` before responding,
-/// so restore needs a larger budget than the fresh-session handshake
-/// ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
-const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
-
-fn restore_handshake_timeout() -> Duration {
-    #[cfg(test)]
-    if let Some(millis) = super::client::test_restore_timeout_override_ms() {
-        return Duration::from_millis(millis);
-    }
-    if let Some(millis) = std::env::var_os("AJAX_ACP_RESTORE_TIMEOUT_MS")
-        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
-    {
-        return Duration::from_millis(millis);
-    }
-    if cfg!(test) {
-        Duration::from_millis(500)
+fn restore_rpc_failure(session_id: &str, method: RestoreMethod, reason: String) -> RestoreFailure {
+    if reason.contains("closed") || reason.contains("EOF") || reason.contains("broken pipe") {
+        RestoreFailure::TransportLost {
+            session_id: session_id.to_string(),
+            method,
+            reason,
+        }
     } else {
-        RESTORE_HANDSHAKE_TIMEOUT
+        RestoreFailure::Rejected {
+            session_id: session_id.to_string(),
+            method,
+            reason,
+        }
     }
 }
 

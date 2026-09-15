@@ -359,7 +359,7 @@ fn fake_spawn_rejects_an_unsupported_protocol_version() {
                 Ok(_) => panic!("ACP v1 client must reject a v2 response"),
                 Err(error) => error,
             };
-            assert!(error.contains("protocol version"), "{error}");
+            assert!(error.to_string().contains("protocol version"), "{error}");
         });
     });
 
@@ -377,7 +377,10 @@ fn invalid_initialize_response_includes_the_agent_stderr_hint() {
                 Ok(_) => panic!("invalid initialize response must fail"),
                 Err(error) => error,
             };
-            assert!(error.contains("agent login required"), "{error}");
+            assert!(
+                error.to_string().contains("agent login required"),
+                "{error}"
+            );
         });
     });
 

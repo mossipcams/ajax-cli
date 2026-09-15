@@ -47,10 +47,12 @@ pub use apply_model::{
 };
 pub use catalog::{read_agent_model_catalog, read_cursor_acp_model_labels, AgentModelCatalog};
 pub use client::{
-    is_restore_unavailable, restore_unavailable_session_id, AcpClientEvent, AcpStdioClient,
-    SpawnReport,
+    AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
 pub(crate) use sdk_connection::CancelOutcome;
 
 #[cfg(test)]
-pub(crate) use client::{set_test_acp_command, with_test_acp_extra_args, with_test_acp_program};
+pub(crate) use client::{
+    set_test_acp_command, with_test_acp_extra_args, with_test_acp_program,
+    with_test_handshake_timeout,
+};

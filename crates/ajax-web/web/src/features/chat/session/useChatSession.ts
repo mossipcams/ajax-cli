@@ -48,6 +48,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   const [connectionState, setConnectionState] = useState<ConnectionState>(initialConnectionState());
   const [everOpened, setEverOpened] = useState(false);
   const [activityAgeMs, setActivityAgeMs] = useState(0);
+  const [restoreUnavailable, setRestoreUnavailable] = useState(false);
   const [modelState, setModelState] = useState<ChatModelState>({
     confirmedModel: DEFAULT_SESSION_MODEL,
   });
@@ -133,6 +134,8 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     onSessionTitle: applyHostSessionTitle,
     onSessionModelRejected: () => {},
     onConfigError: (message) => onConfigErrorRef.current?.(message),
+    onRestoreFailure: () => setRestoreUnavailable(true),
+    onRestoreResolved: () => setRestoreUnavailable(false),
   });
 
   useEffect(() => {
@@ -175,6 +178,9 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   const sendClear = useCallback(() => {
     transportRef.current?.sendClear();
   }, []);
+
+  const retryRestore = useCallback(() => transportRef.current?.retryRestore(), []);
+  const startFresh = useCallback(() => transportRef.current?.startFresh(), []);
 
   const markStopped = useCallback(() => {
     dispatch({ type: "event", event: { type: "system_message", text: "Stopped" } });
@@ -228,6 +234,9 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     withdrawQueuedPrompt,
     sendCancel,
     sendClear,
+    retryRestore,
+    startFresh,
+    restoreUnavailable,
     markStopped,
     applyConfigOption,
     respondPermission,

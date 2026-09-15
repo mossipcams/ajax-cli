@@ -3,10 +3,10 @@
 //! ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
 
 use super::client::{
-    is_restore_unavailable, restore_unavailable_session_id, AcpStdioClient, SpawnReport,
+    AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
     RESTORE_UNAVAILABLE_MARKER,
 };
-use super::{with_test_acp_extra_args, with_test_acp_program};
+use super::{with_test_acp_extra_args, with_test_acp_program, with_test_handshake_timeout};
 use ajax_core::models::AgentClient;
 use std::{
     fs,
@@ -42,7 +42,10 @@ fn session_new_count(dir: &std::path::Path) -> usize {
 
 /// `AcpStdioClient` is not `Debug`, so `expect_err` cannot be used on spawn
 /// results; this helper keeps the failure context.
-fn spawn_error(result: Result<(AcpStdioClient, SpawnReport), String>, context: &str) -> String {
+fn spawn_error(
+    result: Result<(AcpStdioClient, SpawnReport), AcpSpawnError>,
+    context: &str,
+) -> AcpSpawnError {
     match result {
         Ok(_) => panic!("{context}: spawn unexpectedly succeeded"),
         Err(error) => error,
@@ -68,14 +71,14 @@ fn shutdown_close_prevents_resume_when_advertised() {
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&session_id)),
                 "spawn after close must fail closed",
             );
-            assert!(
-                is_restore_unavailable(&error),
-                "a closed session must be a typed restore failure, got: {error}"
-            );
-            assert_eq!(
-                restore_unavailable_session_id(&error).as_deref(),
-                Some(session_id.as_str())
-            );
+            assert!(matches!(
+                error,
+                AcpSpawnError::Restore(RestoreFailure::Rejected {
+                    session_id: ref id,
+                    method: RestoreMethod::Load,
+                    ..
+                }) if id == &session_id
+            ));
         });
     });
 
@@ -102,15 +105,14 @@ fn fake_load_fail_errors_without_session_new_issue_1151() {
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id)),
                 "restore spawn must fail closed on session/load failure",
             );
-            assert!(
-                is_restore_unavailable(&error),
-                "expected typed restore failure, got: {error}"
-            );
-            assert_eq!(
-                restore_unavailable_session_id(&error).as_deref(),
-                Some(resume_id.as_str()),
-                "typed error must carry the stored session id"
-            );
+            assert!(matches!(
+                error,
+                AcpSpawnError::Restore(RestoreFailure::Rejected {
+                    session_id: ref id,
+                    method: RestoreMethod::Load,
+                    ..
+                }) if id == &resume_id
+            ));
         });
         assert_eq!(
             session_new_count(&dir),
@@ -142,6 +144,7 @@ fn restore_requires_resume_or_load_capability_issue_1151() {
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id)),
                 "spawn must fail closed without restore capabilities",
             );
+            let error = error.to_string();
             assert!(error.contains(RESTORE_UNAVAILABLE_MARKER));
             assert!(error.contains("does not advertise"));
         });
@@ -221,6 +224,119 @@ fn slow_session_load_still_restores_issue_1151() {
     let _ = fs::remove_dir_all(dir);
 }
 
+#[test]
+fn restore_can_outlive_initial_handshake_budget_without_session_new() {
+    let dir = scratch_dir("restore-after-handshake");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
+        let resume_id = client.session_id().to_string();
+        drop(client);
+
+        with_test_handshake_timeout(50, || {
+            super::client::with_test_restore_timeout(150, || {
+                with_test_acp_extra_args(&["--load-delay=100"], || {
+                    let (_client, report) =
+                        AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id))
+                            .expect("restore may exceed the initial handshake budget");
+                    assert!(report.resumed);
+                });
+            });
+        });
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resume_timeout_does_not_try_load_on_same_process() {
+    let dir = scratch_dir("resume-timeout");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
+        let resume_id = client.session_id().to_string();
+        drop(client);
+
+        super::client::with_test_restore_timeout(50, || {
+            with_test_acp_extra_args(&["--resume", "--resume-delay=200"], || {
+                let error = spawn_error(
+                    AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id)),
+                    "timed out resume must fail closed",
+                );
+                assert!(matches!(
+                    error,
+                    AcpSpawnError::Restore(RestoreFailure::TimedOut {
+                        session_id: ref id,
+                        method: RestoreMethod::Resume,
+                    }) if id == &resume_id
+                ));
+            });
+        });
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn explicit_resume_rejection_may_fall_back_to_load() {
+    let dir = scratch_dir("resume-rejected-load");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
+        let resume_id = client.session_id().to_string();
+        drop(client);
+
+        with_test_acp_extra_args(&["--resume-fail"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id))
+                    .expect("explicit resume rejection may use load");
+            assert!(report.resumed);
+        });
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resume_transport_loss_is_typed() {
+    let dir = scratch_dir("resume-transport-loss");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let (client, _report) =
+            AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
+        let resume_id = client.session_id().to_string();
+        drop(client);
+
+        with_test_acp_extra_args(&["--resume", "--resume-transport-die"], || {
+            let error = spawn_error(
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id)),
+                "transport loss must fail closed",
+            );
+            assert!(matches!(
+                error,
+                AcpSpawnError::Restore(RestoreFailure::TransportLost {
+                    session_id: ref id,
+                    method: RestoreMethod::Resume,
+                    ..
+                }) if id == &resume_id
+            ));
+        });
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // Regression #1151: exceeding the restore budget is the typed error — never
 // a silent fresh session.
 #[test]
@@ -240,10 +356,13 @@ fn restore_timeout_is_a_typed_error_issue_1151() {
                     AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id)),
                     "a load exceeding the restore budget must fail closed",
                 );
-                assert!(
-                    is_restore_unavailable(&error),
-                    "restore timeout must be a typed error, got: {error}"
-                );
+                assert!(matches!(
+                    error,
+                    AcpSpawnError::Restore(RestoreFailure::TimedOut {
+                        session_id: ref id,
+                        method: RestoreMethod::Load,
+                    }) if id == &resume_id
+                ));
             });
         });
         assert_eq!(session_new_count(&dir), 1);

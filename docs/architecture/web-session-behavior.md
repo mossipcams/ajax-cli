@@ -75,6 +75,21 @@ existing paths.
   (id, category, name, type, currentValue, choices). Replace the list; do not
   merge. `config_option_update` refreshes applied state; it is not a transcript
   artifact.
+- A stored ACP session id is restored fail-closed. The host gives the initial
+  ACP handshake its normal deadline and gives resume/load one shared 300-second
+  restore deadline; the WebSocket startup wait covers both budgets, so a slow
+  replay cannot be abandoned after 46 seconds. A successful `session/resume`
+  or `session/load` never sends `session/new`.
+- Restore fallback is limited to explicit RPC rejection: a rejected
+  `session/resume` may try `session/load`, but a resume timeout or transport
+  loss kills that ACP child and reports a typed
+  `RestoreFailure::{TimedOut, TransportLost}` instead of issuing another
+  restore request on the same process. Other typed variants are
+  `Unsupported` and `Rejected`.
+- When restore fails, Ajax Chat presents `Retry` and `Start fresh`. Retry keeps
+  the stored ACP session id and starts a clean child; Start fresh explicitly
+  clears it, performs one `session/new`, and appends `Context cleared.`. No
+  fresh session is created behind an existing transcript without that action.
 - Live slash commands follow ACP `available_commands_update`: after `session/new`
   and any later replacement, the host stores the complete advertised list and
   exposes it on the snapshot as `availableCommands` (`name`, `description`,
@@ -473,10 +488,11 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   land in JSONL even when notifications arrive after spawn returns
   ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
 - If restore is unavailable, the JSONL transcript still reloads and the attach
-  surfaces the typed restore error; the composer keeps working and an explicit
-  `/clear` (or Drop) remains the operator's fresh-context path. The
-  context-reset note is appended only for deliberate fresh-context spawns
-  (Switch, `/clear`, re-entry after a terminal Drop), not for failed restores.
+  surfaces the typed restore error while keeping the WebSocket open. Ajax Chat
+  offers explicit `Retry` and `Start fresh` actions: `Retry` retains the stored
+  id and repeats restore; `Start fresh` clears that id, creates a new session,
+  and appends the normal `Context cleared.` note. Failed restores never create
+  a fresh session or append that note.
 - Transcript events append to JSONL without a per-event full rewrite; bounded
   compaction preserves absolute replay cursors. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values

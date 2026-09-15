@@ -3,8 +3,9 @@
 //! ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
 
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
-use super::{SessionError, SessionServerEvent};
+use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
     thread,
@@ -13,6 +14,7 @@ use std::{
 
 const CONTEXT_RESET_NOTE: &str =
     "Model context reset after restart. Prior turns are still visible here.";
+const CONTEXT_CLEARED_NOTE: &str = "Context cleared.";
 
 fn log_contains_text(directory: &BlockingSessionDirectory, handle: &str, needle: &str) -> bool {
     let (events, _) = directory.read_from(handle, 0);
@@ -20,6 +22,13 @@ fn log_contains_text(directory: &BlockingSessionDirectory, handle: &str, needle:
         SessionServerEvent::Message { text, .. } => text.contains(needle),
         _ => false,
     })
+}
+
+fn session_new_count(dir: &std::path::Path) -> usize {
+    std::fs::read_to_string(dir.join(".fake-acp-session-new-count"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 fn pump_until_pong_or_turn_end(
@@ -105,10 +114,10 @@ fn g1_load_fail_fails_closed_and_keeps_stored_session_issue_1151() {
 
         with_test_acp_extra_args(&["--load-fail"], || {
             let error = directory
-                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .acquire_typed(handle, &dir, "auto", AgentClient::Cursor)
                 .expect_err("acquire must fail closed when restore fails");
             assert!(
-                SessionError::classify_spawn(&error).is_restore_unavailable(),
+                error.is_restore_unavailable(),
                 "expected typed restore failure, got: {error}"
             );
         });
@@ -120,6 +129,50 @@ fn g1_load_fail_fails_closed_and_keeps_stored_session_issue_1151() {
             .acquire(handle, &dir, "auto", AgentClient::Cursor)
             .expect("retry acquire must restore");
         assert!(!log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn start_fresh_after_restore_failure_is_explicit_and_single() {
+    let dir = scratch_dir("start-fresh-after-restore-failure");
+    let script = fake_acp_fixture();
+    let handle = "web/start-fresh-after-restore-failure";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        directory.kill_host_for_test(handle);
+
+        with_test_acp_extra_args(&["--load-fail"], || {
+            directory
+                .acquire_typed(handle, &dir, "auto", AgentClient::Cursor)
+                .expect_err("restore must fail");
+        });
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id)
+        );
+
+        directory.start_fresh(handle, &dir).expect("start fresh");
+
+        assert_eq!(session_new_count(&dir), 2);
+        assert!(log_contains_text(&directory, handle, CONTEXT_CLEARED_NOTE));
+        assert_eq!(
+            directory
+                .read_from(handle, 0)
+                .0
+                .iter()
+                .filter(|event| matches!(event, SessionServerEvent::Message { text, .. } if text == CONTEXT_CLEARED_NOTE))
+                .count(),
+            1
+        );
     });
 
     let _ = std::fs::remove_dir_all(dir);

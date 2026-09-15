@@ -204,9 +204,22 @@ impl TaskSessionDirectory {
         model: &str,
         agent: AgentClient,
     ) -> Result<(), String> {
+        self.acquire_typed(qualified_handle, worktree_path, model, agent)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn acquire_typed(
+        self: &Arc<Self>,
+        qualified_handle: &str,
+        worktree_path: &Path,
+        model: &str,
+        agent: AgentClient,
+    ) -> Result<(), SessionError> {
         let tx = Arc::clone(self)
             .ensure_entry_for_acquire(qualified_handle)
-            .await?;
+            .await
+            .map_err(SessionError::protocol)?;
         let worktree_path = worktree_path.to_path_buf();
         let model = model.to_string();
         send_command(&tx, |reply| TaskSessionCommand::Acquire {
@@ -215,8 +228,8 @@ impl TaskSessionDirectory {
             agent,
             reply,
         })
-        .await?
-        .map_err(Into::into)
+        .await??;
+        Ok(())
     }
 
     pub async fn release(&self, handle: &str) {
@@ -399,6 +412,10 @@ impl TaskSessionDirectory {
             web_session_store::clear_acp_session_id(&self.state_dir, handle);
             Ok(0)
         }
+    }
+
+    pub async fn start_fresh(&self, handle: &str, worktree_path: &Path) -> Result<(), String> {
+        self.clear_context(handle, worktree_path).await.map(|_| ())
     }
 
     pub async fn attach_snapshot(
@@ -634,6 +651,9 @@ pub(crate) async fn apply_client_message(
                 .answer_elicitation(handle, &request_id, &action, content)
                 .await?;
             Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::RetryRestore | SessionClientMessage::StartFresh => {
+            Err("restore recovery is only available before session attach".to_string())
         }
     }
 }

@@ -44,6 +44,23 @@ describe("ChatSurface smoke", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
+  it("offers explicit recovery after restore failure", () => {
+    mountChat();
+
+    act(() =>
+      chatH.emit?.({
+        type: "error",
+        message: "ACP restore unavailable: session_id=s1: method=Load rejected",
+      }),
+    );
+
+    expect(screen.getByText("Couldn’t restore the agent session.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start fresh" }));
+    expect(transport.retryRestore).toHaveBeenCalledOnce();
+    expect(transport.startFresh).toHaveBeenCalledOnce();
+  });
+
   it("docks the composer below the transcript scroller, not inside it", () => {
     mountChat();
     const chat = screen.getByTestId("session-chat");
