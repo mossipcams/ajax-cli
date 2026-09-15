@@ -43,8 +43,8 @@ export const BASELINE = {
    * Re-measured after explicit ACP restore recovery actions (#1152).
    * Re-measured after removing side-tab accents from activity cards. */
   sourceStylesCssBytes: 110_415,
-  builtAppCssBytes: 95_018,
-  builtAppCssGzipBytes: 16_679,
+  builtAppCssBytes: 95_285,
+  builtAppCssGzipBytes: 16_711,
   classSelectorLines: 616,
   hasSelectors: 18,
 } as const;
