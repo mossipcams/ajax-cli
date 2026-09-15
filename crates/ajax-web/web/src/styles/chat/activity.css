@@ -263,6 +263,7 @@
 
 .session-tool-output.session-block-read {
   border: 1px solid var(--rule);
+  border-left-width: 2px;
   border-radius: var(--radius-sm);
   background: var(--paper);
   padding-left: 8px;
