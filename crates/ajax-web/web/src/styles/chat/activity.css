@@ -208,7 +208,6 @@
 .session-toolcard-body.is-failure {
   padding: 8px 10px;
   border: 1px solid var(--danger);
-  border-left-width: 3px;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--danger) 12%, var(--paper));
 }
@@ -263,10 +262,9 @@
 }
 
 .session-tool-output.session-block-read {
-  border: none;
-  border-left: 2px solid var(--rule);
-  border-radius: 0;
-  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
   padding-left: 8px;
 }
 

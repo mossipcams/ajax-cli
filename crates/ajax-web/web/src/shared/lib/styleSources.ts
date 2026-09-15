@@ -40,8 +40,9 @@ export const BASELINE = {
    * Built app.css bytes re-measured after swipe-reveal dashboard layout CSS.
    * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose).
    * Re-measured after touch momentum scrolling for tool and diff bodies (#1153).
-   * Re-measured after explicit ACP restore recovery actions (#1152). */
-  sourceStylesCssBytes: 110_446,
+   * Re-measured after explicit ACP restore recovery actions (#1152).
+   * Re-measured after removing side-tab accents from activity cards. */
+  sourceStylesCssBytes: 110_415,
   builtAppCssBytes: 95_018,
   builtAppCssGzipBytes: 16_679,
   classSelectorLines: 616,
