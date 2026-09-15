@@ -38,10 +38,11 @@ export const BASELINE = {
    * Re-measured after task-row swipe reveal sits behind the full-width row.
    * Re-measured after workspace layout CSS included in combined stylesheet.
    * Built app.css bytes re-measured after swipe-reveal dashboard layout CSS.
-   * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose). */
-  sourceStylesCssBytes: 110_031,
-  builtAppCssBytes: 94_952,
-  builtAppCssGzipBytes: 16_673,
+   * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose).
+   * Re-measured after touch momentum scrolling for tool and diff bodies (#1153). */
+  sourceStylesCssBytes: 110_105,
+  builtAppCssBytes: 95_018,
+  builtAppCssGzipBytes: 16_679,
   classSelectorLines: 613,
   hasSelectors: 18,
 } as const;
