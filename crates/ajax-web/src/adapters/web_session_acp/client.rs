@@ -284,6 +284,7 @@ impl AcpStdioClient {
         let cwd = worktree_path.to_path_buf();
         let apply_pin = apply_pin.map(str::to_string);
         let resume_session_id = resume_session_id.map(str::to_string);
+        let connection_stderr_tail = Arc::clone(&stderr_tail);
         let connection = thread::spawn(move || {
             sdk_connection::run(RunOptions {
                 stdin,
@@ -296,6 +297,7 @@ impl AcpStdioClient {
                 cwd,
                 apply_pin,
                 resume_session_id,
+                stderr_tail: connection_stderr_tail,
             });
         });
         let ready = ready_rx
