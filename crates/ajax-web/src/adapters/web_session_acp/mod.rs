@@ -24,6 +24,9 @@ pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapa
 mod apply_model_tests;
 
 #[cfg(test)]
+mod client_restore_tests;
+
+#[cfg(test)]
 mod client_spawn_model_tests;
 
 #[cfg(test)]
@@ -43,7 +46,10 @@ pub use apply_model::{
     read_applied_model, ApplyModelOutcome,
 };
 pub use catalog::{read_agent_model_catalog, read_cursor_acp_model_labels, AgentModelCatalog};
-pub use client::{AcpClientEvent, AcpStdioClient, SpawnReport};
+pub use client::{
+    is_restore_unavailable, restore_unavailable_session_id, AcpClientEvent, AcpStdioClient,
+    SpawnReport,
+};
 pub(crate) use sdk_connection::CancelOutcome;
 
 #[cfg(test)]

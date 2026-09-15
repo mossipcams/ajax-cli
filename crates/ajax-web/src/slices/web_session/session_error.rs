@@ -1,8 +1,6 @@
 //! Typed errors at the web-session slice boundary.
 
-fn is_restore_unavailable(message: &str) -> bool {
-    message.contains("ACP restore unavailable")
-}
+use crate::adapters::web_session_acp::is_restore_unavailable;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionError {

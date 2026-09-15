@@ -18,6 +18,13 @@ fn fake_acp_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
 }
 
+fn session_new_count(dir: &std::path::Path) -> usize {
+    std::fs::read_to_string(dir.join(".fake-acp-session-new-count"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 fn scratch_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "ajax-web-acp-spawn-tests-{label}-{}-{}",
@@ -249,7 +256,9 @@ fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: resume with wrong applied model must recover like fresh attach.
+// Regression for #979, updated for #1151: a resumed session running the
+// wrong model must still satisfy the operator pin — recovered in-band on the
+// restored session, never by dropping it for a fresh session/new.
 #[test]
 fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let dir = scratch_dir("model-cursor-recover-resume-979");
@@ -258,44 +267,44 @@ fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let _mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
 
     with_test_acp_program(&script, || {
-        with_test_acp_extra_args(
-            &[
-                "--resume",
-                "--cli-default-model",
-                "--cursor-models",
-                "--ignore-spawn-model-once",
-                "--refuse-in-band-once",
-            ],
-            || {
-                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
-                    AgentClient::Cursor,
-                    &dir,
-                    catalog_id,
-                    Some("fake-sess-1"),
-                )
-                .expect("spawn");
-                assert!(
-                    report.model_apply_error.is_none(),
-                    "recovery must satisfy {catalog_id}, not Composer Fast: {:?}",
-                    report.model_apply_error
-                );
-                assert!(
-                    super::config_options::pin_satisfied(
-                        report.config_options.as_deref(),
+        // Seed a restorable session whose current model is the CLI default
+        // (Composer Fast), i.e. the wrong model for the pin.
+        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
+            let (client, first_report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
+            assert!(!first_report.resumed);
+            let resume_id = client.session_id().to_string();
+            drop(client);
+
+            with_test_acp_extra_args(
+                &[
+                    "--cli-default-model",
+                    "--cursor-models",
+                    "--ignore-spawn-model",
+                ],
+                || {
+                    let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
+                        AgentClient::Cursor,
+                        &dir,
                         catalog_id,
-                        true
-                    ),
-                    "recovery must satisfy {catalog_id}, applied {:?}",
-                    report.applied_model
-                );
-                assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
-                assert_ne!(report.applied_model, "composer-2.5");
-                assert!(
-                    !report.resumed,
-                    "recovery must respawn with session/new, not resume/load"
-                );
-            },
-        );
+                        Some(&resume_id),
+                    )
+                    .expect("spawn");
+                    assert!(
+                        report.resumed,
+                        "the restored session must be kept, not respawned (#1151)"
+                    );
+                    assert!(
+                        report.model_apply_error.is_none(),
+                        "recovery must satisfy {catalog_id} in-band, not error: {:?}",
+                        report.model_apply_error
+                    );
+                    assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
+                    assert_ne!(report.applied_model, "composer-2.5[fast=true]");
+                    assert_eq!(session_new_count(&dir), 1);
+                },
+            );
+        });
     });
 
     let _ = fs::remove_dir_all(dir);

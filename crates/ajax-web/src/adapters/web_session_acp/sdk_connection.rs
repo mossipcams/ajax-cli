@@ -42,6 +42,7 @@ use std::{
         mpsc::Sender,
         Arc, Mutex,
     },
+    time::Duration,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -434,6 +435,15 @@ async fn initialize_session(
         runtime
             .suppress_handshake_transcript
             .store(true, Ordering::Release);
+        if !resume_advertised && !load_session_advertised {
+            runtime
+                .suppress_handshake_transcript
+                .store(false, Ordering::Release);
+            return Err(super::client::restore_unavailable_error(
+                resume_id,
+                "harness does not advertise session/resume or loadSession",
+            ));
+        }
         if resume_advertised {
             if let Some(response) = send_resume(connection, resume_id, cwd).await {
                 resumed = true;
@@ -452,6 +462,13 @@ async fn initialize_session(
             runtime
                 .suppress_handshake_transcript
                 .store(false, Ordering::Release);
+            // A stored session id means restore: never a silent `session/new`
+            // behind the existing transcript
+            // ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+            return Err(super::client::restore_unavailable_error(
+                resume_id,
+                "session/resume and session/load failed",
+            ));
         }
     }
 
@@ -521,7 +538,7 @@ async fn send_resume(
     cwd: &Path,
 ) -> Option<agent_client_protocol::schema::v1::ResumeSessionResponse> {
     tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        restore_handshake_timeout(),
         connection
             .send_request(ResumeSessionRequest::new(
                 session_id.to_string(),
@@ -540,7 +557,7 @@ async fn send_load(
     cwd: &Path,
 ) -> Option<agent_client_protocol::schema::v1::LoadSessionResponse> {
     tokio::time::timeout(
-        HANDSHAKE_TIMEOUT,
+        restore_handshake_timeout(),
         connection
             .send_request(LoadSessionRequest::new(
                 session_id.to_string(),
@@ -551,6 +568,29 @@ async fn send_load(
     .await
     .ok()?
     .ok()
+}
+
+/// Restore budget for `session/resume` and `session/load`. Bridges such as
+/// pi-acp replay the whole transcript inside `session/load` before responding,
+/// so restore needs a larger budget than the fresh-session handshake
+/// ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
+
+fn restore_handshake_timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(millis) = super::client::test_restore_timeout_override_ms() {
+        return Duration::from_millis(millis);
+    }
+    if let Some(millis) = std::env::var_os("AJAX_ACP_RESTORE_TIMEOUT_MS")
+        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
+    {
+        return Duration::from_millis(millis);
+    }
+    if cfg!(test) {
+        Duration::from_millis(500)
+    } else {
+        RESTORE_HANDSHAKE_TIMEOUT
+    }
 }
 
 /// Documented full-access mode select values, in preferred apply order.

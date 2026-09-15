@@ -116,6 +116,43 @@ where
     })
 }
 
+/// Process-global restore-timeout override for tests, consulted by
+/// `sdk_connection::restore_handshake_timeout` so restore-budget behavior can
+/// be exercised without waiting out the real budget.
+#[cfg(test)]
+static TEST_RESTORE_TIMEOUT_MS: Mutex<Option<u64>> = Mutex::new(None);
+
+/// Run `f` with the ACP restore timeout pinned to `millis` ([#1151]).
+/// Nest inside `with_test_acp_program`, which already serializes fake-ACP
+/// tests through `TEST_ACP_LOCK`.
+#[cfg(test)]
+pub(crate) fn with_test_restore_timeout<F, R>(millis: u64, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    struct RestoreTimeoutGuard;
+    impl Drop for RestoreTimeoutGuard {
+        fn drop(&mut self) {
+            *TEST_RESTORE_TIMEOUT_MS
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+    *TEST_RESTORE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(millis);
+    let _guard = RestoreTimeoutGuard;
+    f()
+}
+
+/// Current test override for the restore budget, if any.
+#[cfg(test)]
+pub(super) fn test_restore_timeout_override_ms() -> Option<u64> {
+    *TEST_RESTORE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 /// Bound on the ACP handshake (initialize, session/new, config). Generous for a
 /// cold bridge, short enough that a stuck harness reports rather than hangs.
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(45);
@@ -182,6 +219,24 @@ pub struct SpawnReport {
     pub prompt_capabilities: super::PromptCapabilityDescriptor,
 }
 
+/// Prefix for typed restore failures returned from spawn when a stored session
+/// id cannot be resumed or loaded ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+pub const RESTORE_UNAVAILABLE_MARKER: &str = "ACP restore unavailable";
+
+pub fn restore_unavailable_error(session_id: &str, reason: &str) -> String {
+    format!("{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: {reason}")
+}
+
+pub fn is_restore_unavailable(error: &str) -> bool {
+    error.starts_with(RESTORE_UNAVAILABLE_MARKER)
+}
+
+pub fn restore_unavailable_session_id(error: &str) -> Option<String> {
+    let rest = error.strip_prefix(&format!("{RESTORE_UNAVAILABLE_MARKER}: session_id="))?;
+    let session_id = rest.split(':').next()?.trim();
+    (!session_id.is_empty()).then(|| session_id.to_string())
+}
+
 /// Bound on ACP `session/close` during child teardown.
 const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -235,6 +290,14 @@ impl AcpStdioClient {
         };
 
         let (client, report) = attempt(resume_session_id)?;
+        if report.resumed {
+            // A restored session is never dropped to satisfy a model pin: the
+            // pin apply already ran in-band on the restored session, and a
+            // fresh `session/new` would silently reset context behind the
+            // existing transcript ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+            // Any apply failure surfaces through `report.model_apply_error`.
+            return Ok((client, report));
+        }
         if Self::pin_report_acceptable(operator_pin, &report, model_pins_at_spawn) {
             return Ok((client, report));
         }
