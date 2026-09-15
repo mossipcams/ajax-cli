@@ -75,6 +75,9 @@ function ChatSessionBody({
   withdrawQueuedPrompt,
   sendCancel,
   sendClear,
+  retryRestore,
+  startFresh,
+  restoreUnavailable,
   markStopped,
   applyConfigOption,
   respondPermission,
@@ -99,6 +102,9 @@ function ChatSessionBody({
   withdrawQueuedPrompt: ReturnType<typeof useChatSession>["withdrawQueuedPrompt"];
   sendCancel: ReturnType<typeof useChatSession>["sendCancel"];
   sendClear: ReturnType<typeof useChatSession>["sendClear"];
+  retryRestore: ReturnType<typeof useChatSession>["retryRestore"];
+  startFresh: ReturnType<typeof useChatSession>["startFresh"];
+  restoreUnavailable: boolean;
   markStopped: ReturnType<typeof useChatSession>["markStopped"];
   applyConfigOption: ReturnType<typeof useChatSession>["applyConfigOption"];
   respondPermission: ReturnType<typeof useChatSession>["respondPermission"];
@@ -147,6 +153,16 @@ function ChatSessionBody({
           actions={headActions}
           onStop={sendCancel}
         />
+
+        {restoreUnavailable ? (
+          <div className="session-restore-recovery" role="alert">
+            <p>Couldn’t restore the agent session.</p>
+            <div className="session-restore-actions">
+              <button type="button" className="action" onClick={retryRestore}>Retry</button>
+              <button type="button" className="action" onClick={startFresh}>Start fresh</button>
+            </div>
+          </div>
+        ) : null}
 
         <ComposerProvider
           handle={handle}
@@ -261,6 +277,9 @@ export default function ChatSurface({
     withdrawQueuedPrompt,
     sendCancel,
     sendClear,
+    retryRestore,
+    startFresh,
+    restoreUnavailable,
     markStopped,
     applyConfigOption,
     respondPermission,
@@ -303,6 +322,9 @@ export default function ChatSurface({
         withdrawQueuedPrompt={withdrawQueuedPrompt}
         sendCancel={sendCancel}
         sendClear={sendClear}
+        retryRestore={retryRestore}
+        startFresh={startFresh}
+        restoreUnavailable={restoreUnavailable}
         markStopped={markStopped}
         applyConfigOption={applyConfigOption}
         respondPermission={respondPermission}

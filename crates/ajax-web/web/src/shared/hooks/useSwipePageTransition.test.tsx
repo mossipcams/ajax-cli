@@ -266,6 +266,30 @@ describe("useSwipePageTransition", () => {
     setTerminalDoubleTapPending(false);
   });
 
+  it.each(["session-tool-output", "session-diff-body"])(
+    "leaves touch scrolling to %s bodies (#1153)",
+    async (className) => {
+      const onLeft = vi.fn();
+      renderHarness({ onLeft });
+      const node = screen.getByTestId("swipe-target");
+      const body = document.createElement("pre");
+      body.className = className;
+      node.appendChild(body);
+
+      body.dispatchEvent(touch("touchstart", 200, 200, body));
+      const move = touch("touchmove", 80, 120, body);
+      body.dispatchEvent(move);
+      body.dispatchEvent(touch("touchend", 80, 120, body));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+      });
+
+      expect(move.defaultPrevented).toBe(false);
+      expect(onLeft).not.toHaveBeenCalled();
+      expect(node.style.transform).toBe("");
+    },
+  );
+
   it("settles and reattaches swipe listeners when animating flip is skipped (#1077)", async () => {
     // Same-module spyOn cannot intercept beginCommit's internal call; jsdom's
     // setTimeout(0) flip path would still run. Force the double-rAF branch with a

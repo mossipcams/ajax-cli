@@ -116,9 +116,98 @@ where
     })
 }
 
+/// Process-global restore-timeout override for tests, consulted by
+/// `sdk_connection::restore_handshake_timeout` so restore-budget behavior can
+/// be exercised without waiting out the real budget.
+#[cfg(test)]
+static TEST_RESTORE_TIMEOUT_MS: Mutex<Option<u64>> = Mutex::new(None);
+
+#[cfg(test)]
+static TEST_HANDSHAKE_TIMEOUT_MS: Mutex<Option<u64>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn with_test_handshake_timeout<F, R>(millis: u64, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    struct HandshakeTimeoutGuard;
+    impl Drop for HandshakeTimeoutGuard {
+        fn drop(&mut self) {
+            *TEST_HANDSHAKE_TIMEOUT_MS
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+    *TEST_HANDSHAKE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(millis);
+    let _guard = HandshakeTimeoutGuard;
+    f()
+}
+
+/// Run `f` with the ACP restore timeout pinned to `millis` ([#1151]).
+/// Nest inside `with_test_acp_program`, which already serializes fake-ACP
+/// tests through `TEST_ACP_LOCK`.
+#[cfg(test)]
+pub(crate) fn with_test_restore_timeout<F, R>(millis: u64, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    struct RestoreTimeoutGuard;
+    impl Drop for RestoreTimeoutGuard {
+        fn drop(&mut self) {
+            *TEST_RESTORE_TIMEOUT_MS
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+    *TEST_RESTORE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(millis);
+    let _guard = RestoreTimeoutGuard;
+    f()
+}
+
+/// Current test override for the restore budget, if any.
+#[cfg(test)]
+pub(super) fn test_restore_timeout_override_ms() -> Option<u64> {
+    *TEST_RESTORE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 /// Bound on the ACP handshake (initialize, session/new, config). Generous for a
 /// cold bridge, short enough that a stuck harness reports rather than hangs.
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(45);
+pub(super) const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
+
+pub(super) fn restore_handshake_timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(millis) = test_restore_timeout_override_ms() {
+        return Duration::from_millis(millis);
+    }
+    if let Some(millis) = std::env::var_os("AJAX_ACP_RESTORE_TIMEOUT_MS")
+        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
+    {
+        return Duration::from_millis(millis);
+    }
+    if cfg!(test) {
+        Duration::from_millis(500)
+    } else {
+        RESTORE_HANDSHAKE_TIMEOUT
+    }
+}
+
+fn handshake_timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(millis) = *TEST_HANDSHAKE_TIMEOUT_MS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+    {
+        return Duration::from_millis(millis);
+    }
+    HANDSHAKE_TIMEOUT
+}
 
 /// Keep only the last few KiB: enough to explain a failure, bounded for a
 /// long-lived session.
@@ -171,6 +260,83 @@ pub enum AcpClientEvent {
     Exited,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreMethod {
+    Resume,
+    Load,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreFailure {
+    Unsupported {
+        session_id: String,
+    },
+    Rejected {
+        session_id: String,
+        method: RestoreMethod,
+        reason: String,
+    },
+    TimedOut {
+        session_id: String,
+        method: RestoreMethod,
+    },
+    TransportLost {
+        session_id: String,
+        method: RestoreMethod,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcpSpawnError {
+    Restore(RestoreFailure),
+    Message(String),
+}
+
+impl std::fmt::Display for AcpSpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Restore(error) => error.fmt(f),
+            Self::Message(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for AcpSpawnError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<RestoreFailure> for AcpSpawnError {
+    fn from(error: RestoreFailure) -> Self {
+        Self::Restore(error)
+    }
+}
+
+impl std::fmt::Display for RestoreFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported { session_id } => write!(
+                f,
+                "{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: harness does not advertise session/resume or loadSession"
+            ),
+            Self::Rejected { session_id, method, reason } => write!(
+                f,
+                "{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: method={method:?} rejected: {reason}"
+            ),
+            Self::TimedOut { session_id, method } => write!(
+                f,
+                "{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: method={method:?} timed out"
+            ),
+            Self::TransportLost { session_id, method, reason } => write!(
+                f,
+                "{RESTORE_UNAVAILABLE_MARKER}: session_id={session_id}: method={method:?} transport lost: {reason}"
+            ),
+        }
+    }
+}
+
 pub struct SpawnReport {
     pub load_session_advertised: bool,
     pub close_advertised: bool,
@@ -181,6 +347,10 @@ pub struct SpawnReport {
     pub config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
     pub prompt_capabilities: super::PromptCapabilityDescriptor,
 }
+
+/// Prefix for typed restore failures returned from spawn when a stored session
+/// id cannot be resumed or loaded ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+pub const RESTORE_UNAVAILABLE_MARKER: &str = "ACP restore unavailable";
 
 /// Bound on ACP `session/close` during child teardown.
 const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -207,7 +377,7 @@ impl AcpStdioClient {
         worktree_path: &Path,
         model: Option<&str>,
         resume_session_id: Option<&str>,
-    ) -> Result<(Self, SpawnReport), String> {
+    ) -> Result<(Self, SpawnReport), AcpSpawnError> {
         Self::spawn_internal(agent, worktree_path, model, model, resume_session_id)
     }
 
@@ -217,7 +387,7 @@ impl AcpStdioClient {
         worktree_path: &Path,
         operator_pin: &str,
         resume_session_id: Option<&str>,
-    ) -> Result<(Self, SpawnReport), String> {
+    ) -> Result<(Self, SpawnReport), AcpSpawnError> {
         let launch = acp_launch_for_agent(agent);
         let spawn_model = launch
             .as_ref()
@@ -235,6 +405,14 @@ impl AcpStdioClient {
         };
 
         let (client, report) = attempt(resume_session_id)?;
+        if report.resumed {
+            // A restored session is never dropped to satisfy a model pin: the
+            // pin apply already ran in-band on the restored session, and a
+            // fresh `session/new` would silently reset context behind the
+            // existing transcript ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+            // Any apply failure surfaces through `report.model_apply_error`.
+            return Ok((client, report));
+        }
         if Self::pin_report_acceptable(operator_pin, &report, model_pins_at_spawn) {
             return Ok((client, report));
         }
@@ -261,16 +439,17 @@ impl AcpStdioClient {
         spawn_model: Option<&str>,
         apply_pin: Option<&str>,
         resume_session_id: Option<&str>,
-    ) -> Result<(Self, SpawnReport), String> {
-        let mut child = spawn_acp_process(agent, worktree_path, spawn_model)?;
+    ) -> Result<(Self, SpawnReport), AcpSpawnError> {
+        let mut child =
+            spawn_acp_process(agent, worktree_path, spawn_model).map_err(AcpSpawnError::Message)?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "acp process missing stdin".to_string())?;
+            .ok_or_else(|| AcpSpawnError::Message("acp process missing stdin".to_string()))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "acp process missing stdout".to_string())?;
+            .ok_or_else(|| AcpSpawnError::Message("acp process missing stdout".to_string()))?;
         let stderr_tail: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         if let Some(stderr) = child.stderr.take() {
             let sink = Arc::clone(&stderr_tail);
@@ -284,6 +463,11 @@ impl AcpStdioClient {
         let cwd = worktree_path.to_path_buf();
         let apply_pin = apply_pin.map(str::to_string);
         let resume_session_id = resume_session_id.map(str::to_string);
+        let handshake_deadline = Instant::now() + handshake_timeout();
+        let restore_timeout = resume_session_id
+            .as_deref()
+            .map(|_| restore_handshake_timeout());
+        let startup_deadline = handshake_deadline + restore_timeout.unwrap_or_default();
         let connection_stderr_tail = Arc::clone(&stderr_tail);
         let connection = thread::spawn(move || {
             sdk_connection::run(RunOptions {
@@ -298,12 +482,34 @@ impl AcpStdioClient {
                 apply_pin,
                 resume_session_id,
                 stderr_tail: connection_stderr_tail,
+                handshake_deadline,
+                restore_timeout,
             });
         });
-        let ready = ready_rx
-            .recv_timeout(HANDSHAKE_TIMEOUT + Duration::from_secs(1))
-            .map_err(|_| format!("ACP startup timed out{}", stderr_hint(&stderr_tail)))?
-            .map_err(|error| format!("{error}{}", stderr_hint(&stderr_tail)))?;
+        let ready = match ready_rx.recv_timeout(
+            startup_deadline.saturating_duration_since(Instant::now()) + Duration::from_secs(1),
+        ) {
+            Ok(Ok(ready)) => ready,
+            Ok(Err(error)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let stderr_hint = stderr_hint(&stderr_tail);
+                return Err(match error {
+                    AcpSpawnError::Restore(error) => AcpSpawnError::Restore(error),
+                    AcpSpawnError::Message(message) => {
+                        AcpSpawnError::Message(format!("{message}{stderr_hint}"))
+                    }
+                });
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(AcpSpawnError::Message(format!(
+                    "ACP startup timed out{}",
+                    stderr_hint(&stderr_tail)
+                )));
+            }
+        };
         let ConnectionReady {
             session_id,
             session_new_result,
