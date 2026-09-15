@@ -145,6 +145,7 @@ pub(super) struct RunOptions {
     /// Operator catalog pin used for in-band apply (may differ from spawn argv).
     pub apply_pin: Option<String>,
     pub resume_session_id: Option<String>,
+    pub stderr_tail: Arc<Mutex<String>>,
 }
 
 /// The host currently implements permission replies only. Keep filesystem and
@@ -196,7 +197,7 @@ async fn run_async(options: RunOptions) {
         cwd,
         apply_pin,
         resume_session_id,
-        ..
+        stderr_tail,
     } = options;
     let permissions: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
     let elicitations: PendingElicitations = Arc::new(Mutex::new(HashMap::new()));
@@ -355,6 +356,10 @@ async fn run_async(options: RunOptions) {
         let _ = events.send(AcpClientEvent::Error(format!(
             "ACP connection failed: {error}"
         )));
+    }
+    let stderr = stderr_tail.lock().unwrap().trim().to_string();
+    if !stderr.is_empty() {
+        let _ = events.send(AcpClientEvent::Error(format!("ACP stderr: {stderr}")));
     }
     let _ = events.send(AcpClientEvent::Exited);
 }
