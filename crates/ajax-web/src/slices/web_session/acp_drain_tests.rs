@@ -312,7 +312,7 @@ fn drain_maps_session_update_notifications() {
 
 #[test]
 fn typed_mapper_covers_stable_acp_updates() {
-    let notifications = vec![
+    let notifications = [
         SessionNotification::new(
             "sess",
             SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(

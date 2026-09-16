@@ -214,7 +214,7 @@ fn workspace_toolchain_and_lint_configs_are_pinned() {
     let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
     assert!(clippy.contains("doc-valid-idents"));
     assert!(rustfmt.contains("edition = \"2021\""));
-    assert!(toolchain.contains("channel = \"1.88.0\""));
+    assert!(toolchain.contains("channel = \"1.98.1\""));
 }
 #[test]
 fn tui_dependency_uses_audit_clean_ratatui_feature_set() {
@@ -246,7 +246,7 @@ fn tui_dependency_uses_audit_clean_ratatui_feature_set() {
         toolchain
             .lines()
             .find(|line| line.starts_with("channel = ")),
-        Some("channel = \"1.88.0\"")
+        Some("channel = \"1.98.1\"")
     );
 }
 #[test]
