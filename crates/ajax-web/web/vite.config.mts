@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 function renameAppHtml() {
   return {
     name: "ajax-rename-app-html",
-    closeBundle() {
+    writeBundle() {
       const from = join(root, "dist", "app.html");
       const to = join(root, "dist", "index.html");
       if (!existsSync(from)) {
@@ -68,6 +68,7 @@ export default defineConfig({
           ) {
             return "terminal.js";
           }
+          if (chunk.name === "rolldown-runtime") return "app.js";
           throw new Error(
             `ajax vite: unexpected chunk "${chunk.name}" — only app.js + terminal.js are allowed`,
           );
