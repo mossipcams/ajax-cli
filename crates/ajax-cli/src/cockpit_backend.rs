@@ -174,25 +174,16 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 if pending.action == OperatorAction::Drop.as_str() {
                     save_state.allow_empty_registry_once();
                 }
-                match save_cockpit_state_to_sqlite(
-                    paths,
-                    context,
-                    save_state,
-                    &mut last_loaded_mtime,
-                ) {
-                    Ok(()) => {}
-                    Err(error) => match recover_cockpit_save_error(
+                if let Err(error) =
+                    save_cockpit_state_to_sqlite(paths, context, save_state, &mut last_loaded_mtime)
+                {
+                    cockpit_flash = recover_cockpit_save_error(
                         paths,
                         context,
                         save_state,
                         &mut last_loaded_mtime,
                         error,
-                    ) {
-                        Ok(flash) => {
-                            cockpit_flash = flash;
-                        }
-                        Err(error) => return Err(error),
-                    },
+                    )?;
                 }
                 state_changed = false;
             }
