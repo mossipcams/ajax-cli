@@ -134,7 +134,6 @@ function verifyExploratory(workflow, fail) {
   const text = JSON.stringify(explore);
   for (const needle of [
     "CURSOR_API_KEY",
-    "actions/upload-artifact@v4",
     "always()",
     "scripts/exploratory/run-agent.sh",
     "scripts/exploratory/plan-mission.mjs",
@@ -148,6 +147,12 @@ function verifyExploratory(workflow, fail) {
     if (!text.includes(needle)) {
       fail(`exploratory explore job must include ${needle}.`);
     }
+  }
+
+  if (
+    !/actions\/upload-artifact@(?:v4|v7|[0-9a-f]{40})(?:["\s]|$)/.test(text)
+  ) {
+    fail("exploratory explore job must include actions/upload-artifact@v4 or @v7.");
   }
 
   if (
@@ -255,7 +260,12 @@ function verifyCi(ci, fail, root) {
   }
 
   const container = webE2e.container ?? {};
-  if (container.image !== "mcr.microsoft.com/playwright:v1.61.1-noble") {
+  if (
+    container.image !== "mcr.microsoft.com/playwright:v1.61.1-noble" &&
+    !/^mcr\.microsoft\.com\/playwright:v1\.61\.1-noble@sha256:[0-9a-f]{64}$/.test(
+      container.image ?? "",
+    )
+  ) {
     fail(
       "ci.yml web-e2e job must run in mcr.microsoft.com/playwright:v1.61.1-noble.",
     );

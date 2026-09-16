@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { renameSync, existsSync } from "node:fs";
+import { renameSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -13,11 +13,21 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 function renameAppHtml() {
   return {
     name: "ajax-rename-app-html",
-    closeBundle() {
+    writeBundle() {
       const from = join(root, "dist", "app.html");
       const to = join(root, "dist", "index.html");
       if (!existsSync(from)) {
         throw new Error(`ajax-rename-app-html: expected dist/app.html but it was not produced — the build may be incomplete`);
+      }
+      const appJs = join(root, "dist", "app.js");
+      if (existsSync(appJs)) {
+        writeFileSync(
+          appJs,
+          readFileSync(appJs, "utf8").replaceAll(
+            "import(`./terminal.js`)",
+            'import("./terminal.js")',
+          ),
+        );
       }
       renameSync(from, to);
     },
@@ -68,6 +78,7 @@ export default defineConfig({
           ) {
             return "terminal.js";
           }
+          if (chunk.name === "rolldown-runtime") return "app.js";
           throw new Error(
             `ajax vite: unexpected chunk "${chunk.name}" — only app.js + terminal.js are allowed`,
           );
