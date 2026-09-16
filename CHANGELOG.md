@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.58.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.0...ajax-cli-v0.58.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **deps:** update all non-major dependencies ([#1161](https://github.com/mossipcams/ajax-cli/issues/1161)) ([daa18f5](https://github.com/mossipcams/ajax-cli/commit/daa18f545817aedaa288daa27e5377c1f4e17c6e))
+
 ## [0.58.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.57.0...ajax-cli-v0.58.0) (2026-09-16)
 
 
