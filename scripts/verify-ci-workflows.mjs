@@ -134,7 +134,6 @@ function verifyExploratory(workflow, fail) {
   const text = JSON.stringify(explore);
   for (const needle of [
     "CURSOR_API_KEY",
-    "actions/upload-artifact@v4",
     "always()",
     "scripts/exploratory/run-agent.sh",
     "scripts/exploratory/plan-mission.mjs",
@@ -148,6 +147,12 @@ function verifyExploratory(workflow, fail) {
     if (!text.includes(needle)) {
       fail(`exploratory explore job must include ${needle}.`);
     }
+  }
+
+  if (
+    !/actions\/upload-artifact@(?:v4|v7|[0-9a-f]{40})(?:["\s]|$)/.test(text)
+  ) {
+    fail("exploratory explore job must include actions/upload-artifact@v4 or @v7.");
   }
 
   if (
