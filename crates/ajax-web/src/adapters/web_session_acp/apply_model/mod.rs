@@ -4,9 +4,9 @@
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
     apply_steps_needing_send, build_set_config_request, is_unspecified_model,
-    model_config_advertised, pin_satisfied, read_model_applied, replace_config_options,
-    step_matches_current, sync_session_result_config_options, validate_config_change,
-    ConfigApplyStep,
+    model_config_advertised, model_option, pin_satisfied, read_model_applied,
+    replace_config_options, step_matches_current, sync_session_result_config_options,
+    validate_config_change, ConfigApplyStep,
 };
 
 /// Build every advertised apply step for one desired pin.
@@ -249,6 +249,38 @@ pub async fn apply_model_pin(
                 "session model {raw} could not be verified — harness did not advertise model controls"
             )),
         };
+    }
+
+    // Bridge controls depend on the current model (#1145). Select the advertised
+    // base first, then validate the remaining pin against its returned controls.
+    if !model_pins_at_spawn {
+        if let (Some(selection), Some(model)) = (
+            ajax_core::adapters::parse_model_selection(raw),
+            model_option(stored.as_deref().unwrap_or(&[])),
+        ) {
+            if !selection.options.is_empty() && applied != selection.model {
+                let outcome = apply_config_option(
+                    connection,
+                    session_id,
+                    model.id.0.as_ref(),
+                    SessionConfigOptionValue::value_id(selection.model.clone()),
+                    stored.as_deref(),
+                )
+                .await;
+                applied = outcome.applied_model;
+                stored = outcome.config_options;
+                if outcome.error.is_some() || applied != selection.model {
+                    let error = outcome
+                        .error
+                        .unwrap_or_else(|| format!("harness is running {applied}"));
+                    return ApplyModelOutcome {
+                        applied_model: applied,
+                        config_options: stored,
+                        error: Some(format!("session model {raw} was refused — {error}")),
+                    };
+                }
+            }
+        }
     }
 
     let options = stored.as_deref().unwrap_or(&[]);

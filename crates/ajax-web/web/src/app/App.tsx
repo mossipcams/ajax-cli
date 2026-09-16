@@ -159,15 +159,6 @@ function AppContent() {
     if (route.kind === "task" || route.kind === "diff" || route.kind === "session") {
       return route.handle ?? null;
     }
-    if (
-      crossSlideActive &&
-      leavingRoute &&
-      (leavingRoute.kind === "task" ||
-        leavingRoute.kind === "diff" ||
-        leavingRoute.kind === "session")
-    ) {
-      return leavingRoute.handle ?? null;
-    }
     return null;
   })();
   const { detail, reload } = useTaskDetailResource(taskOpenHandle, {

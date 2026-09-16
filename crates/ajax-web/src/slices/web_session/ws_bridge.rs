@@ -2,7 +2,8 @@
 
 use super::{
     apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, SessionAttachPlan,
-    SessionClientMessage, SessionEventEnvelope, SessionSnapshot, TaskSessionDirectory,
+    SessionClientMessage, SessionError, SessionEventEnvelope, SessionSnapshot,
+    TaskSessionDirectory,
 };
 use axum::extract::ws::{Message, WebSocket};
 use std::{
@@ -34,11 +35,63 @@ pub(crate) async fn bridge_task_session_socket(
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
     if let Err(error) = directory
-        .acquire(&handle, &plan.worktree_path, &model, plan.agent)
+        .acquire_typed(&handle, &plan.worktree_path, &model, plan.agent)
         .await
     {
-        let _ = send_error(&mut socket, &error).await;
-        return;
+        if !error.is_restore_unavailable() {
+            let _ = send_error(&mut socket, &error.to_string()).await;
+            return;
+        }
+        if !send_error(&mut socket, &error.to_string()).await {
+            return;
+        }
+        loop {
+            let Some(message) = socket.recv().await else {
+                return;
+            };
+            let Ok(message) = message else { return };
+            let Message::Text(text) = message else {
+                if let Message::Ping(payload) = message {
+                    if socket.send(Message::Pong(payload)).await.is_err() {
+                        return;
+                    }
+                } else if matches!(message, Message::Close(_)) {
+                    return;
+                }
+                continue;
+            };
+            let Ok(message) = serde_json::from_str::<SessionClientMessage>(&text) else {
+                let _ = send_error(&mut socket, "invalid session recovery message").await;
+                continue;
+            };
+            let result = match message {
+                SessionClientMessage::RetryRestore => {
+                    directory
+                        .acquire_typed(&handle, &plan.worktree_path, &model, plan.agent)
+                        .await
+                }
+                SessionClientMessage::StartFresh => directory
+                    .start_fresh(&handle, &plan.worktree_path)
+                    .await
+                    .map_err(SessionError::protocol),
+                _ => {
+                    let _ = send_error(
+                        &mut socket,
+                        "restore recovery requires Retry or Start fresh",
+                    )
+                    .await;
+                    continue;
+                }
+            };
+            match result {
+                Ok(()) => break,
+                Err(error) => {
+                    if !send_error(&mut socket, &error.to_string()).await {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     let attach = directory

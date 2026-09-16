@@ -56,6 +56,7 @@ pub(super) async fn acquire(
         return Ok(());
     }
 
+    state.acp.model = model.to_string();
     let stored: StoredSession<SessionServerEvent> =
         web_session_store::load(&state.state_dir, &state.qualified_handle);
     let resume_id = stored.acp_session_id.clone();
@@ -147,6 +148,14 @@ pub(super) async fn apply_config_option(
                 }
                 _ => (None, None),
             };
+            // Keep the slot pin and the registry pin as the same string. A later
+            // attach compares them to choose replace-versus-reuse, and the persisted
+            // pipe form is what `prepare_task_session` hands back as `want_model`.
+            // Leaving the slot on the old spelling reads a live apply as a model
+            // change on re-entry, closing the agent session and starting over (#1149).
+            if let Some(model) = persist_model.as_deref() {
+                state.acp.model = model.to_string();
+            }
             Ok(ApplyConfigOptionResult {
                 generation: generation_before,
                 persist_model,
@@ -383,7 +392,7 @@ async fn spawn_acp(
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
         AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
-            .map_err(|error| SessionError::classify_spawn(&error))
+            .map_err(SessionError::classify_spawn)
     })
 }
 

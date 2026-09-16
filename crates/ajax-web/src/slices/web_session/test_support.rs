@@ -1,6 +1,7 @@
 //! Blocking test helpers over the async task-session directory.
 
 use super::task_session_directory::TaskSessionDirectory;
+use super::SessionError;
 use ajax_core::models::AgentClient;
 use std::{path::Path, sync::Arc};
 use tokio::runtime::Runtime;
@@ -36,8 +37,23 @@ impl BlockingSessionDirectory {
             .block_on(self.inner.acquire(handle, worktree, model, agent))
     }
 
+    pub fn acquire_typed(
+        &self,
+        handle: &str,
+        worktree: &Path,
+        model: &str,
+        agent: AgentClient,
+    ) -> Result<(), SessionError> {
+        self.rt
+            .block_on(self.inner.acquire_typed(handle, worktree, model, agent))
+    }
+
     pub fn release(&self, handle: &str) {
         self.rt.block_on(self.inner.release(handle));
+    }
+
+    pub fn start_fresh(&self, handle: &str, worktree: &Path) -> Result<(), String> {
+        self.rt.block_on(self.inner.start_fresh(handle, worktree))
     }
 
     pub fn drop_session(&self, handle: &str) {
@@ -72,6 +88,16 @@ impl BlockingSessionDirectory {
 
     pub fn cancel(&self, handle: &str, keep_queue: bool) -> Result<(), String> {
         self.rt.block_on(self.inner.cancel(handle, keep_queue))
+    }
+
+    pub fn apply_config_option(
+        &self,
+        handle: &str,
+        config_id: &str,
+        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+    ) -> Result<super::task_session_spawn::ApplyConfigOptionResult, String> {
+        self.rt
+            .block_on(self.inner.apply_config_option(handle, config_id, value))
     }
 
     pub fn cleanup_session(&self, handle: &str) {

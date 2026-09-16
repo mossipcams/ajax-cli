@@ -26,6 +26,8 @@ export const transport = {
   withdrawQueuedPrompt: vi.fn(),
   sendCancel: vi.fn(),
   sendClear: vi.fn(),
+  retryRestore: vi.fn(),
+  startFresh: vi.fn(),
   setModel: vi.fn(),
   setConfigOption: vi.fn(),
   respondPermission: vi.fn(),

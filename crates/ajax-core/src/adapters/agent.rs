@@ -372,8 +372,8 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             native_program: Some("pi"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
-            acp_package: Some("pi-acp"),
-            install_hint: "npm install -g pi-acp",
+            acp_package: Some("pi-acp@0.0.33"),
+            install_hint: "npm install -g pi-acp@0.0.33",
         }),
         AgentClient::Other => None,
     }

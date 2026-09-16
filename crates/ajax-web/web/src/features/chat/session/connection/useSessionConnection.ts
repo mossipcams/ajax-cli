@@ -54,6 +54,8 @@ interface Options {
   onSessionModelRejected?: () => void;
   /** Surface config-option apply failures as dismissable notices. */
   onConfigError?: (message: string) => void;
+  onRestoreFailure?: () => void;
+  onRestoreResolved?: () => void;
 }
 
 /** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
@@ -75,6 +77,8 @@ export function useSessionConnection({
   onSessionTitle,
   onSessionModelRejected,
   onConfigError,
+  onRestoreFailure,
+  onRestoreResolved,
 }: Options): void {
   useEffect(() => {
     if (!handle) return;
@@ -145,10 +149,14 @@ export function useSessionConnection({
             setEverOpened(true);
             reconnecting = false;
             onSessionModel?.(nextModel);
+            onRestoreResolved?.();
             setState("connected");
           },
           onEvent: (event) => {
             onActivity();
+            if (event.type === "error" && /ACP restore unavailable/i.test(event.message)) {
+              onRestoreFailure?.();
+            }
             if (event.type === "error" && isSessionModelChangeFailure(event.message)) {
               onSessionModelRejected?.();
             }

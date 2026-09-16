@@ -136,6 +136,8 @@ export interface WebSessionTransport {
   withdrawQueuedPrompt(clientMessageId: string): void;
   sendCancel(keepQueue?: boolean): void;
   sendClear(): void;
+  retryRestore(): void;
+  startFresh(): void;
   /** @deprecated Use setConfigOption for live picks. */
   setModel(model: string): void;
   setConfigOption(configId: string, value: string | boolean): void;

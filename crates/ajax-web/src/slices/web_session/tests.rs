@@ -693,6 +693,20 @@ fn clear_message_parses() {
     assert_eq!(msg, SessionClientMessage::Clear);
 }
 
+#[test]
+fn restore_recovery_messages_parse() {
+    assert_eq!(
+        serde_json::from_str::<SessionClientMessage>(r#"{"type":"retry_restore"}"#)
+            .expect("retry restore"),
+        SessionClientMessage::RetryRestore
+    );
+    assert_eq!(
+        serde_json::from_str::<SessionClientMessage>(r#"{"type":"start_fresh"}"#)
+            .expect("start fresh"),
+        SessionClientMessage::StartFresh
+    );
+}
+
 fn queued_prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
         client_message_id: String::new(),

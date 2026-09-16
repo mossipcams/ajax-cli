@@ -6,8 +6,20 @@
       {
         "rule": "design-system-color",
         "value": "rgba(0, 0, 0, 0.28)",
-        "reason": "Chrome lift shadow opacity",
-        "createdAt": "2026-07-17T03:13:41.600Z"
+        "createdAt": "2026-07-17T03:13:41.600Z",
+        "reason": "Chrome lift shadow opacity"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-left-width: 3px",
+        "createdAt": "2026-09-15T18:30:48.566Z",
+        "reason": "Existing Ajax failure-state treatment documented inline; unrelated to issue #1153 touch scrolling"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-left: 2px solid var(--rule)",
+        "createdAt": "2026-09-15T18:30:48.603Z",
+        "reason": "Existing domain-appropriate read-output quote treatment documented inline; unrelated to issue #1153 touch scrolling"
       }
     ]
   }

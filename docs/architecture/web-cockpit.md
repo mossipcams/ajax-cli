@@ -93,7 +93,10 @@ in `.detail-header-controls` with explicit `pointer-events` and z-index above
 `.terminal-expand-corner`. Workspace swipe-right back is capped when the hash
 is already `#/` or `#/p/...` so a settling task surface cannot navigate past
 the dashboard; Chat keeps transcript-selection ignore only
-(`ChatSurface.tsx`).
+(`ChatSurface.tsx`). Touches started in overflowing `.session-tool-output`,
+`.session-diff-body`, `.md-block`, and `.md-table-wrap` blocks belong to those
+inner scrollers and never arm the workspace page swipe; markdown blocks retain
+native horizontal scrolling.
 
 An optional flag-gated **Cursor ACP orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The

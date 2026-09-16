@@ -38,11 +38,14 @@ export const BASELINE = {
    * Re-measured after task-row swipe reveal sits behind the full-width row.
    * Re-measured after workspace layout CSS included in combined stylesheet.
    * Built app.css bytes re-measured after swipe-reveal dashboard layout CSS.
-   * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose). */
-  sourceStylesCssBytes: 110_031,
-  builtAppCssBytes: 94_952,
-  builtAppCssGzipBytes: 16_673,
-  classSelectorLines: 613,
+   * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose).
+   * Re-measured after touch momentum scrolling for tool and diff bodies (#1153).
+   * Re-measured after explicit ACP restore recovery actions (#1152).
+   * Re-measured after removing side-tab accents from activity cards. */
+  sourceStylesCssBytes: 110_441,
+  builtAppCssBytes: 95_307,
+  builtAppCssGzipBytes: 16_714,
+  classSelectorLines: 616,
   hasSelectors: 18,
 } as const;
 
