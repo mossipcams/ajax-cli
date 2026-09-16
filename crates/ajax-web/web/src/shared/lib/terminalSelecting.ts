@@ -4,7 +4,8 @@ const TERMINAL_DOUBLE_TAP_PENDING_DATASET = "ajaxTerminalDoubleTapPending";
 
 /** Surfaces that own double-tap / long-press terminal selection. */
 const TERMINAL_TOUCH_SELECTOR = ".terminal-host, .terminal-interaction-wrap, .xterm";
-const PAGE_SWIPE_EXCLUSION_SELECTOR = ".session-tool-output, .session-diff-body";
+const PAGE_SWIPE_EXCLUSION_SELECTOR =
+  ".session-tool-output, .session-diff-body, .md-block, .md-table-wrap";
 
 export function setTerminalSelecting(active: boolean): void {
   if (active) {

@@ -39,6 +39,11 @@ test.beforeEach(async ({ page }, testInfo) => {
         status: "completed",
         content: [{ type: "diff", path: "src/config.ts", oldText: lines, newText: lines.replaceAll("line", "changed") }],
       });
+      const markdownLine = "x".repeat(180);
+      send(socket, {
+        type: "message", role: "agent",
+        text: ["```ts", ...Array.from({ length: 12 }, (_, index) => `${markdownLine} ${index}`), "```"].join("\n"),
+      });
       send(socket, { type: "turn_end", stopReason: "end_turn" });
     });
   });
@@ -80,6 +85,17 @@ test("long tool and diff bodies keep touch scrolling local", async ({ page }) =>
     expect(await body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
   }
+});
+
+test("markdown code blocks keep horizontal touch scrolling local", async ({ page }) => {
+  await openTurn(page);
+  const body = page.locator(".md-block");
+  await expect(body).toBeVisible();
+  expect(await body.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  expect(await diagonalTouch(body)).toBe(false);
+  await body.evaluate((element) => { element.scrollLeft = 120; });
+  expect(await body.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
 });
 
 test("page swipe outside bodies still opens Diff", async ({ page }) => {
