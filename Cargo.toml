@@ -25,7 +25,7 @@ portable-pty = "0.9"
 clap = "4.5"
 crossterm = "0.29"
 getrandom = "0.4"
-jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
 notify = "8"
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal", "term"] }
 proptest = "1.11.0"
@@ -43,7 +43,7 @@ tower = "0.5"
 tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "std", "ansi"] }
-toml = "0.9"
+toml = "1.0"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
