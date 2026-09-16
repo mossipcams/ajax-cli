@@ -48,7 +48,7 @@ fn generate_identity() -> Result<TlsIdentity, WebError> {
     })?;
     Ok(TlsIdentity {
         cert_pem: certified.cert.pem(),
-        key_pem: certified.key_pair.serialize_pem(),
+        key_pem: certified.signing_key.serialize_pem(),
     })
 }
 

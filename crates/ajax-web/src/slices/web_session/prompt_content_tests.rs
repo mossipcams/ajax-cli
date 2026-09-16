@@ -73,7 +73,9 @@ fn image_requires_advertised_capability() {
         data: tiny_png_base64(),
         mime_type: "image/png".to_string(),
     };
-    assert!(reject_disallowed_wire_blocks(&[block.clone()], &caps(false, false)).is_err());
+    assert!(
+        reject_disallowed_wire_blocks(std::slice::from_ref(&block), &caps(false, false)).is_err()
+    );
     let payload = build_prompt_payload("photo", &[block], &caps(true, false)).unwrap();
     assert!(matches!(&payload.blocks[1], ContentBlock::Image(_)));
 }
@@ -86,7 +88,9 @@ fn embedded_resource_requires_advertised_capability() {
         text: Some("hello".to_string()),
         blob: None,
     };
-    assert!(reject_disallowed_wire_blocks(&[block.clone()], &caps(false, false)).is_err());
+    assert!(
+        reject_disallowed_wire_blocks(std::slice::from_ref(&block), &caps(false, false)).is_err()
+    );
     let payload = build_prompt_payload("context", &[block], &caps(false, true)).unwrap();
     assert!(matches!(&payload.blocks[1], ContentBlock::Resource(_)));
 }

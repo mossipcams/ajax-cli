@@ -20,9 +20,10 @@ pub const DEV_PORT: u16 = 8788;
 
 const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DevDeployPhase {
+    #[default]
     ReadyToDeploy,
     Building,
     Restarting,
@@ -126,12 +127,6 @@ pub struct DevDeploySlot {
     phase: DevDeployPhase,
     error: Option<String>,
     occupant: Option<DevSlotOccupant>,
-}
-
-impl Default for DevDeployPhase {
-    fn default() -> Self {
-        Self::ReadyToDeploy
-    }
 }
 
 impl DevDeploySlot {
