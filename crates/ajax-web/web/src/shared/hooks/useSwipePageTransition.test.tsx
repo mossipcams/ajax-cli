@@ -266,7 +266,7 @@ describe("useSwipePageTransition", () => {
     setTerminalDoubleTapPending(false);
   });
 
-  it.each(["session-tool-output", "session-diff-body"])(
+  it.each(["session-tool-output", "session-diff-body", "md-block", "md-table-wrap"])(
     "leaves touch scrolling to %s bodies (#1153)",
     async (className) => {
       const onLeft = vi.fn();
