@@ -18,7 +18,7 @@ use std::{
     ffi::CString,
     fs::File,
     io::{self, Read, Write},
-    os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
     os::raw::c_char,
     os::unix::ffi::OsStrExt,
     sync::atomic::{AtomicBool, Ordering},
@@ -261,10 +261,10 @@ impl Drop for TaskScreenGuard {
 }
 
 pub(super) fn duplicate_task_terminal_fd(fd: i32, context: &'static str) -> Result<File, CliError> {
-    let duplicate = dup(fd).map_err(tty_error(context))?;
-    // SAFETY: dup returns a fresh owned file descriptor. File takes ownership
-    // and closes it when dropped.
-    Ok(unsafe { File::from_raw_fd(duplicate) })
+    // SAFETY: callers pass a live terminal fd for the duration of this call.
+    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+    let duplicate = dup(borrowed).map_err(tty_error(context))?;
+    Ok(File::from(duplicate))
 }
 
 pub(super) fn pump_task_pty(

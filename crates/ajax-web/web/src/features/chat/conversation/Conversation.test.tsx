@@ -215,7 +215,7 @@ describe("Conversation — transcript event order", () => {
 });
 
 describe("Conversation — activity disclosure live gating", () => {
-  it("keeps in-flight tool rows visible when agent prose follows work on a busy turn", () => {
+  it("#1180: keeps in-flight tool rows behind the summary when agent prose follows work on a busy turn", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       {
@@ -249,8 +249,10 @@ describe("Conversation — activity disclosure live gating", () => {
     const work = screen.getByTestId("session-turn-work");
     expect(work).toHaveAttribute("data-live", "true");
     expect(work).toHaveAttribute("data-expanded", "false");
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
-    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
+    expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
+      "Read 1 file · ran 1 command",
+    );
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
   });
 });
 

@@ -71,13 +71,12 @@ pub(crate) fn pending_permission(log: &TranscriptLog) -> Option<PendingPermissio
                     detail: detail.clone(),
                 });
             }
-            SessionServerEvent::PermissionResolved { request_id, .. } => {
+            SessionServerEvent::PermissionResolved { request_id, .. }
                 if open
                     .as_ref()
-                    .is_some_and(|pending| pending.request_id == *request_id)
-                {
-                    open = None;
-                }
+                    .is_some_and(|pending| pending.request_id == *request_id) =>
+            {
+                open = None;
             }
             _ => {}
         }
@@ -100,13 +99,12 @@ pub(crate) fn pending_elicitation(log: &TranscriptLog) -> Option<PendingElicitat
                     schema: schema.clone(),
                 });
             }
-            SessionServerEvent::ElicitationResolved { request_id, .. } => {
+            SessionServerEvent::ElicitationResolved { request_id, .. }
                 if open
                     .as_ref()
-                    .is_some_and(|pending| pending.request_id == *request_id)
-                {
-                    open = None;
-                }
+                    .is_some_and(|pending| pending.request_id == *request_id) =>
+            {
+                open = None;
             }
             _ => {}
         }

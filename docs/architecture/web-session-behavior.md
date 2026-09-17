@@ -774,21 +774,20 @@ dividers for cancellations, reconnects, harness switches and context resets.
   projection boundary, so every reader — approval control and transcript marker
   alike — shows the command as it will run.
 - The activity disclosure carries thoughts, plans, tool calls, command output and
-  diffs. Tool call rows follow the disclosure: collapsed settled turns show the
-  summary only; collapsed live turns add in-flight tool rows; expanded turns
-  show the full work log. Bodies stay collapsed by default for completed calls
-  and open only when a call is running or failed with content. The row target is
-  the first explicit location when present; otherwise the host derives one from
-  `rawInput` path, then query/pattern/glob, then tool name, then command, then
-  a diff path in tool content; the label strips generic tool titles (`Read
-  File`, `Edit File`, `MCP: tool`, …) until a real target arrives. Thoughts,
-  plans and permission markers stay behind the disclosure until expanded.
-  Collapsed, the summary row shows a counted line while the turn runs once at
-  least one tool row is present (`Read 6 files · edited 2 files · searched 3
-  queries · ran 4 commands · used 2 tools · 38s`); if the agent is only
-  thinking or planning, the summary shows the current operation instead so the
-  turn is not silent. Once the turn settles, the summary is always the counted
-  line.
+  diffs. Tool call rows follow the disclosure: collapsed settled and live turns
+  show the summary only (#1180); expanded turns show the full work log. Bodies
+  stay collapsed by default for completed calls and open only when a call is
+  running or failed with content. The row target is the first explicit location
+  when present; otherwise the host derives one from `rawInput` path, then
+  query/pattern/glob, then tool name, then command, then a diff path in tool
+  content; the label strips generic tool titles (`Read File`, `Edit File`,
+  `MCP: tool`, …) until a real target arrives. Thoughts, plans and permission
+  markers stay behind the disclosure until expanded. Collapsed, the summary row
+  shows a counted line while the turn runs once at least one tool row is present
+  (`Read 6 files · edited 2 files · searched 3 queries · ran 4 commands · used
+  2 tools · 38s`); if the agent is only thinking or planning, the summary shows
+  the current operation instead so the turn is not silent. Once the turn
+  settles, the summary is always the counted line.
 - It expands itself for failed, blocked and approval-required activity; a manual
   open or close by the operator wins from then on.
 - Reasoning is a row on the activity grid inside that disclosure, never an italic
