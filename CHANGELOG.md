@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.58.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.1...ajax-cli-v0.58.2) (2026-09-17)
+
+
+### Bug Fixes
+
+* **web:** hide in-flight Ajax Chat tool rows until the summary expands ([#1182](https://github.com/mossipcams/ajax-cli/issues/1182)) ([8c5f9e9](https://github.com/mossipcams/ajax-cli/commit/8c5f9e9ee4e637100563642946498ee112c0e847))
+* **web:** keep Ajax Chat ACP context across reconnect ([#1184](https://github.com/mossipcams/ajax-cli/issues/1184)) ([be8d7a3](https://github.com/mossipcams/ajax-cli/commit/be8d7a3310cb43b80b60e7c417901e121a30a803))
+
 ## [0.58.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.0...ajax-cli-v0.58.1) (2026-09-16)
 
 
