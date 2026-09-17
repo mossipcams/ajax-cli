@@ -143,9 +143,12 @@ replay; cold load omits it for full replay.
 
 The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
 framing, request correlation, and typed ACP messages. It initializes with stable
-protocol v1 and rejects a peer that selects another version. Session restore
-prefers `session/resume` when advertised, falls back to `session/load`, then
-creates a new session. Trusted local orchestration auto-approves every ACP
+protocol v1 and rejects a peer that selects another version. Session restore is
+fail-closed when a stored ACP session id exists: the host tries `session/resume`
+when advertised, then `session/load` on rejection. Restore failure surfaces the
+typed `ACP restore unavailable` error (`Retry` / `Start fresh`); `session/new`
+runs only with no stored id or an explicit Drop/Switch/clear/Start fresh. Trusted
+local orchestration auto-approves every ACP
 `session/request_permission` on the host by selecting an advertised allow option
 (`AllowAlways` when present, otherwise `AllowOnce`; otherwise the standard
 cancelled outcome). Auto-answered requests are not surfaced to the browser.
@@ -261,10 +264,17 @@ interactively, because that task's agent is live in its tmux pane and the regist
 must not name a harness that is not the running process.
 
 When spawn argv or resume/load leave a model that does not match the operator pin
-(for example Cursor CLI default Composer Fast while Grok High was chosen), the
-session host respawns only when the ACP child is dead or the harness advertises no
-model control: drop the child, `session/new` (no resume), then apply the pin
-in-band again ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
+(for example Cursor CLI default Composer Fast while Grok High was chosen), a live
+healthy child keeps running and the pin is applied in-band. When the child is
+dead and a stored resume id exists, the host restores that id and applies the pin
+in-band on the restored session — never silent `session/new` behind the
+transcript ([#979](https://github.com/mossipcams/ajax-cli/issues/979),
+[#1151](https://github.com/mossipcams/ajax-cli/issues/1151),
+[#1179](https://github.com/mossipcams/ajax-cli/issues/1179)). Fresh
+`session/new` without resume runs only when no stored id exists or the operator
+explicitly starts fresh (Drop, cross-harness Switch, `/clear`, Start fresh).
+Missing model control on a restored or live session is a typed pin-apply error,
+not a license for `session/new`.
 When in-band apply fails because a requested value is not advertised, the host
 emits a typed error, keeps the child running, and leaves `session_model` as the
 operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
@@ -320,12 +330,15 @@ rename the task in Core or replace the Ajax handle.
 
 **Session close (ACP).** When the agent advertises `sessionCapabilities.close`, the
 host sends `session/close` only on terminal ends: task Drop and cross-harness Switch.
-Idle eviction, `ajax-web` restart, and same-session respawn detach stdio without
-close so `session/resume` / `session/load` can restore the stored id
-([#1061](https://github.com/mossipcams/ajax-cli/issues/1061)). Close ends the
-ACP session on the child only; Ajax task truth, JSONL transcripts, and tmux
-terminals are unchanged. Close failure or timeout still tears down the child and
-surfaces a session error event.
+Restore-safe idle eviction (persisted ACP session id plus advertised
+`session/resume` or `loadSession`), `ajax-web` restart, and child-death respawn
+detach stdio without close so `session/resume` / `session/load` can restore the
+stored id ([#1061](https://github.com/mossipcams/ajax-cli/issues/1061),
+[#1181](https://github.com/mossipcams/ajax-cli/issues/1181)). Harnesses that never
+advertised restore are not idle-evicted; host-caused restore failure is a defect.
+Close ends the ACP session on the child only; Ajax task truth, JSONL transcripts,
+and tmux terminals are unchanged. Close failure or timeout still tears down the
+child and surfaces a session error event.
 
 **Connected model controls (MVP).** When `snapshot.sessionConfigOptions` advertises
 model, effort/thought-level, and/or Fast options, the chat composer hotbar exposes

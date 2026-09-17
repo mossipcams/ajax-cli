@@ -316,6 +316,24 @@ fn fake_spawn_reports_load_session_advertised() {
         let (_client, report) =
             AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn fake acp");
         assert!(report.load_session_advertised);
+        assert!(report.restore_advertised);
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fake_spawn_without_restore_capability_reports_not_restore_advertised() {
+    let dir = scratch_dir("spawn-no-restore");
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--no-load-session"], || {
+            let (_client, report) =
+                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
+            assert!(!report.load_session_advertised);
+            assert!(!report.restore_advertised);
+        });
     });
 
     let _ = fs::remove_dir_all(dir);

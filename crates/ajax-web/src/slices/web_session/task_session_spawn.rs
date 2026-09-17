@@ -21,6 +21,7 @@ use ajax_core::models::AgentClient;
 use std::path::Path;
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
+    state.acp.restore_advertised = report.restore_advertised;
     if let Some(options) = report.config_options.as_deref() {
         state.acp.session_config_options = Some(config_option_descriptors(options));
     }
@@ -38,16 +39,11 @@ pub(super) async fn acquire(
 
     if let Some(client) = state.acp.client.as_mut() {
         let host_exited = client.host_exited();
-        if !slot_must_replace(state.acp.acp_alive, &state.acp.model, model, host_exited) {
+        if !slot_must_replace(state.acp.acp_alive, host_exited) {
             state.acquire_holder();
             return Ok(());
         }
-        let resume_id = replace_resume_id(
-            &state.acp.model,
-            model,
-            &state.state_dir,
-            &state.qualified_handle,
-        );
+        let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle);
         release_live_client(state, resume_id.is_none())?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
@@ -148,11 +144,10 @@ pub(super) async fn apply_config_option(
                 }
                 _ => (None, None),
             };
-            // Keep the slot pin and the registry pin as the same string. A later
-            // attach compares them to choose replace-versus-reuse, and the persisted
-            // pipe form is what `prepare_task_session` hands back as `want_model`.
-            // Leaving the slot on the old spelling reads a live apply as a model
-            // change on re-entry, closing the agent session and starting over (#1149).
+            // Keep the slot pin and the registry pin as the same string. The
+            // persisted pipe form is what `prepare_task_session` hands back as
+            // `want_model`; leaving the slot on the old spelling desyncs restart
+            // metadata from the live apply (#1149).
             if let Some(model) = persist_model.as_deref() {
                 state.acp.model = model.to_string();
             }
@@ -193,15 +188,10 @@ pub(super) async fn respawn(
         .as_mut()
         .map(|client| client.host_exited())
         .unwrap_or(true);
-    if !force && !slot_must_replace(state.acp.acp_alive, &state.acp.model, model, host_exited) {
+    if !force && !slot_must_replace(state.acp.acp_alive, host_exited) {
         return Ok(state.generation);
     }
-    let resume_id = replace_resume_id(
-        &state.acp.model,
-        model,
-        &state.state_dir,
-        &state.qualified_handle,
-    );
+    let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle);
     let agent = state.agent;
     release_live_client(state, resume_id.is_none())?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
@@ -366,17 +356,11 @@ fn release_live_client(
     result
 }
 
-fn replace_resume_id(
-    slot_model: &str,
-    want_model: &str,
-    state_dir: &Path,
-    handle: &str,
-) -> Option<String> {
-    if slot_model == want_model {
-        web_session_store::load::<SessionServerEvent>(state_dir, handle).acp_session_id
-    } else {
-        None
-    }
+fn replace_resume_id(state_dir: &Path, handle: &str) -> Option<String> {
+    // A stored ACP session id always means restore on slot replacement — never
+    // a silent `session/new` behind the existing transcript, even when the
+    // desired pin differs from the slot pin ([#1179]).
+    web_session_store::load::<SessionServerEvent>(state_dir, handle).acp_session_id
 }
 
 async fn spawn_acp(

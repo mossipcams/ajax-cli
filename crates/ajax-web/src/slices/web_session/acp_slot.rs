@@ -13,6 +13,8 @@ pub(super) struct AcpSlot {
     /// Harness-reported model id for protocol snapshots ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     pub applied_model: String,
     pub acp_alive: bool,
+    /// Harness advertised `session/resume` or `loadSession` at spawn ([#1181]).
+    pub restore_advertised: bool,
     /// Live advertised config options for connected picker binding.
     pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
     pub pending_config_snapshot: Option<Vec<ConfigOptionDescriptor>>,
