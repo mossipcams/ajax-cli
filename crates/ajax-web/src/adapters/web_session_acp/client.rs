@@ -339,6 +339,8 @@ impl std::fmt::Display for RestoreFailure {
 
 pub struct SpawnReport {
     pub load_session_advertised: bool,
+    /// Harness advertised `session/resume` or `loadSession` during initialize.
+    pub restore_advertised: bool,
     pub close_advertised: bool,
     pub resumed: bool,
     /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
@@ -517,6 +519,7 @@ impl AcpStdioClient {
             prompt_capabilities,
             close_advertised,
             load_session_advertised,
+            restore_advertised,
             resumed,
             applied_model,
             model_apply_error,
@@ -539,6 +542,7 @@ impl AcpStdioClient {
         };
         let report = SpawnReport {
             load_session_advertised,
+            restore_advertised,
             close_advertised,
             resumed,
             applied_model,

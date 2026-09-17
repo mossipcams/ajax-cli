@@ -186,11 +186,8 @@ pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> b
     log.events.last() == Some(note)
 }
 
-pub(crate) fn slot_must_replace(
-    acp_alive: bool,
-    slot_model: &str,
-    want_model: &str,
-    host_exited: bool,
-) -> bool {
-    !acp_alive || host_exited || slot_model != want_model
+/// True when the live ACP child is gone and the slot must spawn or restore.
+/// Model pin mismatch does not replace a healthy child ([#1179]).
+pub(crate) fn slot_must_replace(acp_alive: bool, host_exited: bool) -> bool {
+    !acp_alive || host_exited
 }

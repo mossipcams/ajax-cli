@@ -288,6 +288,7 @@ pub(crate) fn spawn_task_session(
                 model: String::new(),
                 applied_model: String::new(),
                 acp_alive: false,
+                restore_advertised: false,
                 session_config_options: None,
                 pending_config_snapshot: None,
                 session_available_commands: None,
@@ -510,8 +511,17 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         #[cfg(test)]
         TaskSessionCommand::Pump => state.pump(),
         TaskSessionCommand::EvictionSnapshot { reply } => {
+            let persisted_session_id = web_session_store::load::<SessionServerEvent>(
+                &state.state_dir,
+                &state.qualified_handle,
+            )
+            .acp_session_id
+            .is_some();
             let _ = reply.send(EvictionSnapshot {
-                evictable: state.is_idle() && !state.busy(),
+                evictable: state.is_idle()
+                    && !state.busy()
+                    && state.acp.restore_advertised
+                    && persisted_session_id,
                 holders: state.holders.0,
             });
         }

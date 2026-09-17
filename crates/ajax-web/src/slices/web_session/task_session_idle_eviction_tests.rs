@@ -5,11 +5,23 @@ use super::test_support::{
 use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
     thread,
     time::{Duration, Instant},
 };
+
+const CONTEXT_RESET_NOTE: &str =
+    "Model context reset after restart. Prior turns are still visible here.";
+
+fn log_contains_text(directory: &BlockingSessionDirectory, handle: &str, needle: &str) -> bool {
+    let (events, _) = directory.read_from(handle, 0);
+    events.iter().any(|event| match event {
+        SessionServerEvent::Message { text, .. } => text.contains(needle),
+        _ => false,
+    })
+}
 
 fn count_acp_process_exited_errors(events: &[SessionServerEvent]) -> usize {
     events
@@ -361,6 +373,68 @@ fn idle_disconnected_slot_pumps_host_exit_without_holder() {
                 child_before, child_after,
                 "re-acquire must respawn after poll observes host exit"
             );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression #1181: idle LRU must not detach a slot whose harness never
+// advertised restore — evicting it would make a later restore impossible.
+#[test]
+fn issue_1181_non_restore_harness_survives_idle_cap_pressure() {
+    let dir = scratch_dir("issue-1181-no-restore-evict");
+    let handle_a = "web/issue-1181-no-restore-a";
+    let handle_trigger = "web/issue-1181-no-restore-trigger";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            with_test_acp_extra_args(&["--no-load-session"], || {
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire a");
+                directory.release(handle_a);
+            });
+
+            pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| !snapshot.evictable)
+            });
+
+            let child_before = directory.child_id(handle_a).expect("child before");
+            assert!(
+                web_session_store::load::<SessionServerEvent>(&dir, handle_a)
+                    .acp_session_id
+                    .is_some(),
+                "session id must be persisted even without restore advertisement"
+            );
+
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/issue-1181-no-restore-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            let child_after = directory.child_id(handle_a).expect("child after");
+            assert_eq!(
+                child_before,
+                child_after,
+                "non-restore harness child must survive idle-cap pressure"
+            );
+            assert!(!log_contains_text(&directory, handle_a, CONTEXT_RESET_NOTE));
         });
     });
 

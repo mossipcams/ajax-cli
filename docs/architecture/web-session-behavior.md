@@ -402,17 +402,20 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   cleanup (live ACP slot plus transcript) before the qualified handle can be
   reused. Ownership is derived from registry task handles only, not browser
   routes, `localStorage`, or ACP slot state.
-- Idle LRU eviction sends `Shutdown` only to slots with zero subscribers, no
-  in-flight turn, and an empty host queue; evictable slots must not hold pending
-  work.
+- Idle LRU eviction sends `Shutdown { close: false }` only to **restore-safe**
+  slots: zero subscribers, no in-flight turn, empty host queue, a persisted ACP
+  session id, and a harness that advertised `session/resume` or `loadSession` at
+  spawn ([#1181](https://github.com/mossipcams/ajax-cli/issues/1181)). Slots
+  that cannot be restored stay leased under cap pressure; host-caused restore
+  failure is a defect, not an operator recovery path.
 - After WebSocket detach, finished disconnected slots stay out of the idle-LRU
   pool for **15 minutes** (`IDLE_RELEASE_GRACE`). During that grace window the
   live ACP child is kept and the poll loop keeps draining it so a backgrounded
   PWA or Safari tab can reconnect without paying a full spawn handshake. Once
-  grace expires, the slot becomes an ordinary idle-LRU candidate (oldest
-  released first) and the idle cap can reclaim it. Reattach clears the release
-  marker; in-flight turns, queued prompts, and held slots are never evicted
-  regardless of grace.
+  grace expires, a restore-safe slot becomes an ordinary idle-LRU candidate
+  (oldest released first) and the idle cap can reclaim it. Reattach clears the
+  release marker; in-flight turns, queued prompts, held slots, and non-restore
+  harnesses are never evicted regardless of grace.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
@@ -426,8 +429,11 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   transcript stay put; `snapshot.model` updates from the harness-reported applied
   id. In-band apply that is unadvertised or refused is a typed error; the child
   keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
-  [#997](https://github.com/mossipcams/ajax-cli/issues/997)). Respawn (`session/new`,
-  no resume) runs only when the child is dead or no model control is advertised.
+  [#997](https://github.com/mossipcams/ajax-cli/issues/997)). When the child is
+  dead and a stored resume id exists, restore that id and apply the pin in-band.
+  `session/new` without resume runs only when no stored id exists or the operator
+  explicitly starts fresh. Missing model control on a restored or live session
+  surfaces as the typed pin-apply error; it does not authorize `session/new`.
 - The UI transcript on disk and in replay is unchanged except for host-emitted
   status/note events and typed model-change errors.
 - A live `ready` event on an established socket must not reset browser reducer
@@ -456,6 +462,33 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   picker value ([#942](https://github.com/mossipcams/ajax-cli/issues/942)). The
   picker binds to `snapshot.model` (applied state), not task metadata
   ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+
+## ACP conversation continuity
+
+A stored ACP session id, or a live child for that handle, **is the same
+conversation** until Drop, cross-harness Switch, `/clear`, or explicit Start
+fresh ([#1179](https://github.com/mossipcams/ajax-cli/issues/1179)).
+
+- **Lease:** WebSocket drop, reconnect, and internet blip reattach a live
+  healthy child. The host does not replace, resume, `session/close`, or
+  `session/new` because `want_model` differs from the slot pin. Model is desired
+  config, applied in-band on the leased child.
+- **Restore:** When the child is gone (restore-safe idle eviction after grace,
+  `ajax-web` restart, unexpected death), the host restores the stored id with
+  `session/resume` / `session/load`, then applies the operator pin in-band on
+  that session. A stored id never falls through to silent `session/new` behind
+  the transcript ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
+  Idle LRU evicts only after a **restore-safe detach** (persisted id, restore
+  advertised, detach without `session/close`). If restore is impossible, the host
+  keeps the live child ([#1181](https://github.com/mossipcams/ajax-cli/issues/1181)).
+  Host-caused restore failure is a defect; there is no automatic retry of
+  `TimedOut` / `TransportLost` restore errors.
+- **Explicit fresh:** Drop, cross-harness Switch, `/clear`, and Start fresh
+  clear the stored resume id and perform one documented `session/new` with the
+  appropriate host note.
+
+Model pin spelling is not conversation identity and must not drive slot
+replacement while the child is healthy.
 
 ## Restart and transcript recovery
 
@@ -641,9 +674,10 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   and stores whether `session/close` is advertised on the live stdio client.
 - `session/close` is terminal. The host sends it only when the Ajax session is
   ending for good: task Drop (`drop_session` / `cleanup_session`) and
-  cross-harness Switch (`reset_harness_context`). Same-model slot replacement
-  that will resume/load the stored id, idle LRU eviction, process restart, and
+  cross-harness Switch (`reset_harness_context`). Slot replacement that will
+  resume/load the stored id (child death, idle eviction, process restart), and
   accidental `Drop` of the stdio client detach stdio without `session/close`.
+  Pin mismatch on a live healthy child does not close or replace the session.
   A terminal Drop also clears the stored resume id, so the next attach starts
   the documented fresh context instead of failing to restore the closed
   session ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).

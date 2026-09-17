@@ -29,6 +29,7 @@ pub(super) fn meta_model_from_config_options(
 }
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
+    state.acp.restore_advertised = report.restore_advertised;
     if let Some(options) = report.config_options.as_deref() {
         state.acp.session_config_options = Some(config_option_descriptors(options));
     }

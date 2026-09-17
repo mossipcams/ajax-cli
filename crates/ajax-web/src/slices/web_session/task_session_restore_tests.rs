@@ -276,3 +276,167 @@ fn g1_successful_load_drains_replay_from_transcript() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// Regression #1179: ajax-web restart must restore the stored ACP session id
+// instead of appending the context-reset note behind the existing transcript.
+#[test]
+fn issue_1179_ajax_web_restart_restores_without_context_reset_note() {
+    let dir = scratch_dir("issue-1179-restart");
+    let script = fake_acp_fixture();
+    let handle = "web/issue-1179-restart";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: "seed".to_string(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".to_string(),
+                message_id: None,
+            },
+        );
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        directory.detach_session(handle);
+
+        let restarted = BlockingSessionDirectory::new(dir.clone());
+        restarted
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire after ajax-web restart");
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id)
+        );
+        assert!(!log_contains_text(&restarted, handle, CONTEXT_RESET_NOTE));
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression #1179: Cockpit reconnect must restore the stored session id when
+// the live child died during the disconnect lease.
+#[test]
+fn issue_1179_reconnect_after_child_death_restores_without_context_reset_note() {
+    let dir = scratch_dir("issue-1179-reconnect");
+    let script = fake_acp_fixture();
+    let handle = "web/issue-1179-reconnect";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: "seed".to_string(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".to_string(),
+                message_id: None,
+            },
+        );
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        directory.release(handle);
+        directory.kill_host_for_test(handle);
+
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("reconnect acquire");
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id)
+        );
+        assert!(!log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression #1179: a live healthy child is leased on reconnect even when
+// `want_model` differs from the slot pin — no replace, no context-reset note.
+#[test]
+fn issue_1179_live_child_model_mismatch_leases_without_context_reset_note() {
+    let dir = scratch_dir("issue-1179-live-lease");
+    let script = fake_acp_fixture();
+    let handle = "web/issue-1179-live-lease";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "composer-2.5", AgentClient::Cursor)
+            .expect("first acquire");
+        let pid1 = directory.child_id(handle).expect("pid1");
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        directory.release(handle);
+
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("reconnect with mismatched want model");
+        let pid2 = directory.child_id(handle).expect("pid2");
+        assert_eq!(pid1, pid2, "live child must be leased, not replaced");
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id)
+        );
+        assert!(!log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// Regression #1179: a stored resume id must win over a slot/want model mismatch
+// on reconnect — restore first, never silent session/new behind the transcript.
+#[test]
+fn issue_1179_reconnect_model_mismatch_still_restores_without_context_reset_note() {
+    let dir = scratch_dir("issue-1179-model-mismatch");
+    let script = fake_acp_fixture();
+    let handle = "web/issue-1179-model-mismatch";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "composer-2.5", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".to_string(),
+                text: "seed".to_string(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".to_string(),
+                message_id: None,
+            },
+        );
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        directory.release(handle);
+        directory.kill_host_for_test(handle);
+
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("reconnect with mismatched want model");
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id)
+        );
+        assert!(!log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
+        assert_eq!(session_new_count(&dir), 1);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

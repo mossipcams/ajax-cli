@@ -30,11 +30,10 @@ fn the_context_reset_note_is_host_commentary_and_is_written_once() {
 }
 
 #[test]
-fn slot_must_replace_when_host_is_dead_or_model_changes() {
-    assert!(!slot_must_replace(true, "auto", "auto", false));
-    assert!(slot_must_replace(false, "auto", "auto", false));
-    assert!(slot_must_replace(true, "auto", "auto", true));
-    assert!(slot_must_replace(true, "auto", "composer-2.5", false));
+fn slot_must_replace_only_when_child_is_unhealthy() {
+    assert!(!slot_must_replace(true, false), "healthy child is leased");
+    assert!(slot_must_replace(false, false), "dead child must replace");
+    assert!(slot_must_replace(true, true), "exited host must replace");
 }
 
 #[test]
