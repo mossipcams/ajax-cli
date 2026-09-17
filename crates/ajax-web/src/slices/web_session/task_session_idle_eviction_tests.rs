@@ -430,8 +430,7 @@ fn issue_1181_non_restore_harness_survives_idle_cap_pressure() {
                 .expect("re-acquire a");
             let child_after = directory.child_id(handle_a).expect("child after");
             assert_eq!(
-                child_before,
-                child_after,
+                child_before, child_after,
                 "non-restore harness child must survive idle-cap pressure"
             );
             assert!(!log_contains_text(&directory, handle_a, CONTEXT_RESET_NOTE));
