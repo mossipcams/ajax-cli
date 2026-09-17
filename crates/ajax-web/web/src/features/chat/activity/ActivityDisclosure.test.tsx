@@ -65,7 +65,7 @@ describe("ActivityDisclosure", () => {
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Fixed.");
   });
 
-  it("shows in-flight tool rows when agent prose follows work on a busy turn", () => {
+  it("#1180: hides in-flight tool rows when agent prose follows work on a busy turn", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       tool("e1", { kind: "read", status: "completed", locations: ["/repo/a.ts"] }),
@@ -82,12 +82,11 @@ describe("ActivityDisclosure", () => {
     expect(screen.getByTestId("session-turn-work-summary")).toHaveTextContent(
       "Read 1 file · ran 1 command",
     );
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
-    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-live", "true");
   });
 
-  it("shows the counted summary and only in-flight tool rows while the turn runs", () => {
+  it("#1180: shows the counted summary without tool rows while the turn runs", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix it"),
       tool("e1", { kind: "read", status: "completed", locations: ["/repo/src/config.ts"] }),
@@ -103,8 +102,7 @@ describe("ActivityDisclosure", () => {
     const summary = screen.getByTestId("session-turn-work-summary");
     expect(summary).toHaveTextContent("Read 1 file · ran 1 command");
     expect(summary).not.toHaveTextContent("Running cargo test");
-    expect(screen.getAllByTestId("session-tool-card")).toHaveLength(1);
-    expect(screen.getByTestId("session-tool-card")).toHaveAttribute("data-status", "in_progress");
+    expect(screen.queryByTestId("session-tool-card")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-tool-output")).not.toBeInTheDocument();
   });
 
