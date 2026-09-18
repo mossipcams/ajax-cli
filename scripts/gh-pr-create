@@ -1,8 +1,63 @@
 #!/usr/bin/env bash
-# Create a GitHub PR and strip Cursor footer lines from the body.
+# Create a GitHub PR from a conventional branch name and strip Cursor footer lines.
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-pr_url="$(gh pr create "$@")"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+BRANCH="$(git branch --show-current)"
+
+if [[ -z "$BRANCH" || "$BRANCH" == "$BASE_BRANCH" ]]; then
+  echo "Run this from a feature branch."
+  exit 1
+fi
+
+if [[ "$BRANCH" =~ ^(feat|fix|refactor|test|chore|docs|perf|build|ci)/([^/]+)/(.+)$ ]]; then
+  BRANCH_TYPE="${BASH_REMATCH[1]}"
+  SCOPE="${BASH_REMATCH[2]}"
+  DESCRIPTION="${BASH_REMATCH[3]}"
+else
+  echo "Branch must use: type/scope/description"
+  echo "Example: feat/auth/passkey-recovery"
+  exit 1
+fi
+
+case "$BRANCH_TYPE" in
+  test | docs | build | ci) TITLE_TYPE="chore" ;;
+  *) TITLE_TYPE="$BRANCH_TYPE" ;;
+esac
+
+DESCRIPTION="${DESCRIPTION//-/ }"
+DESCRIPTION="${DESCRIPTION//_/ }"
+PR_TITLE="$TITLE_TYPE($SCOPE): $DESCRIPTION"
+
+git fetch origin "$BASE_BRANCH" --quiet
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  git add -A
+  git commit -m "$PR_TITLE"
+fi
+
+if [[ -z "$(git log "origin/$BASE_BRANCH..HEAD" --oneline)" ]]; then
+  echo "No local commits exist ahead of $BASE_BRANCH."
+  exit 1
+fi
+
+git push --set-upstream origin "$BRANCH"
+
+if gh pr view "$BRANCH" >/dev/null 2>&1; then
+  pr_url="$(gh pr view "$BRANCH" --json url --jq '.url')"
+  printf '%s\n' "$pr_url"
+  exit 0
+fi
+
+pr_url="$(
+  gh pr create \
+    --base "$BASE_BRANCH" \
+    --head "$BRANCH" \
+    --title "$PR_TITLE" \
+    --body "Automated pull request for $PR_TITLE."
+)"
+
 body="$(gh pr view "$pr_url" --json body --jq '.body')"
 clean_body="$(
   printf '%s\n' "$body" |
@@ -11,4 +66,6 @@ clean_body="$(
 if [ "$body" != "$clean_body" ]; then
   gh pr edit "$pr_url" --body "$clean_body"
 fi
+
 printf '%s\n' "$pr_url"
+echo "Created PR: $PR_TITLE"

@@ -124,11 +124,14 @@ active agent may implement, commit, push, and open pull requests in-process.
 That approval is per-request; it does not change the default.
 
 When the user asks to create a PR, the selected delegate runs the repository's
-local verification gate, commits, pushes, and runs `scripts/gh-pr-create`; the
-orchestrator reports the PR URL after reviewing the delta. After an explicit
-bypass, the active agent does that same PR path in-process. Delegates must not
-merge, rebase, force-push, or switch branches unless the user explicitly
-authorizes that behavior.
+local verification gate, then always runs `scripts/gh-pr-create` (never raw
+`gh pr create`). The script commits dirty worktrees, pushes the current branch,
+derives a CI-valid title from `type/scope/description` branch names, creates or
+reopens the PR, strips Cursor footer / co-author lines from the body, and
+prints the URL; the orchestrator reports that URL after reviewing the delta.
+After an explicit bypass, the active agent follows that same PR path in-process.
+Delegates must not merge, rebase, force-push, or switch branches unless the user
+explicitly authorizes that behavior.
 
 Every delegated task must be bounded by scope, acceptance criteria,
 verification, and stop conditions. The active agent must inspect the actual
