@@ -38,7 +38,7 @@ Use `type(optional-scope): summary`, for example `fix(web): ...` or
   product release is required.
 - `chore: release ajax-cli <version>` is reserved for Release Please's own PRs.
 - Prefer a scope when it helps. Confirm the type is in the table before
-  `gh pr create` or retitling.
+  creating or retitling a PR.
 
 ## CI trigger contract
 
@@ -102,11 +102,37 @@ Normal PR jobs:
 
 ## Who opens the PR
 
-The model-router-selected delegate runs `scripts/gh-pr-create`, not raw
-`gh pr create`. After an explicit parent-local bypass, the active agent runs
-the same wrapper. The wrapper creates the PR, strips Cursor footer /
-co-author lines from the body, and prints the URL. The orchestrator reviews
-the delta and reports that URL.
+Agents always create pull requests with `scripts/gh-pr-create`. Do not call
+raw `gh pr create`. The model-router-selected delegate runs the repository's
+local verification gate, then the script. After an explicit parent-local
+bypass, the active agent follows the same path.
+
+### Branch naming
+
+Feature branches must use `type/scope/description`, for example
+`feat/auth/passkey-recovery`. The script derives the PR title from that name:
+`type(scope): description` with hyphens and underscores in the description
+turned into spaces.
+
+Branch types `test`, `docs`, `build`, and `ci` map to `chore` in the PR title
+so CI title validation passes. All other branch types use the same type in the
+title (`feat`, `fix`, `perf`, `refactor`, `chore`).
+
+### Script flow
+
+`scripts/gh-pr-create`:
+
+1. Requires a feature branch (not `main` or detached).
+2. Parses `type/scope/description` from the branch name.
+3. Fetches `origin/$BASE_BRANCH` (default `main`).
+4. Commits dirty worktrees with the derived title when needed.
+5. Exits if there are no commits ahead of the base branch.
+6. Pushes the branch to `origin`.
+7. Prints the existing PR URL when one already exists for the branch.
+8. Otherwise creates the PR, strips Cursor footer / co-author lines from the
+   body, and prints the URL.
+
+The orchestrator reviews the delta and reports that URL.
 
 ## Local verification gate before a PR
 

@@ -72,8 +72,11 @@ An empty diff with a success claim is a failure. A delegate report is evidence,
 not approval.
 
 When the user asks to create a PR, the selected delegate runs the repository's
-local verification gate, commits, pushes, and runs `scripts/gh-pr-create`; the
-orchestrator reports the PR URL after reviewing the delta. Delegates must not
-merge, rebase, force-push, or switch branches unless the user explicitly
-authorizes that behavior. A commit or pull-request request implies commit,
-push, and `scripts/gh-pr-create`.
+local verification gate, then always runs `scripts/gh-pr-create` (never raw
+`gh pr create`). The script commits dirty worktrees, pushes the current branch,
+derives a CI-valid title from `type/scope/description` branch names, creates or
+reopens the PR, strips Cursor footer / co-author lines from the body, and
+prints the URL; the orchestrator reports that URL after reviewing the delta.
+Delegates must not merge, rebase, force-push, or switch branches unless the
+user explicitly authorizes that behavior. A commit or pull-request request
+implies running the local gate and `scripts/gh-pr-create`.
