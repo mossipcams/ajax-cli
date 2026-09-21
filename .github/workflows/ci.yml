@@ -225,7 +225,7 @@ jobs:
           shared-key: ci
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@2ab4414e29d1e7bb31565858e4b05de5d3713b61 # nextest
+        uses: taiki-e/install-action@e88e69ecdb9658bd172693dcdc2c84e7f0ab6a11 # nextest
 
       - name: Nextest
         run: cargo nextest run --all-features
@@ -301,7 +301,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@820511525783077eb70e0aa3e2e1ed0485f76cb4 # cargo-audit
+        uses: taiki-e/install-action@fd94a048c157f8a2d1975d01ffb26bd0de4f192e # cargo-audit
 
       - name: Audit dependencies
         run: cargo audit
