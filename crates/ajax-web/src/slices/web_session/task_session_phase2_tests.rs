@@ -19,6 +19,112 @@ fn exit_error_count(events: &[SessionServerEvent]) -> usize {
 }
 
 #[test]
+fn harness_switch_ends_interrupted_prompt_1189() {
+    let dir = scratch_dir("harness-switch-terminal");
+    let handle = "web/harness-switch-terminal";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    // Model a child that cannot finish cancellation before teardown kills it.
+    let script = dir.join("pending-cancel.js");
+    std::fs::copy(fake_acp_fixture(), &script).unwrap();
+    let source = std::fs::read_to_string(&script).unwrap();
+    let cancel_guard = "if (msg.method === 'session/cancel' && heldPromptId !== null) {";
+    assert!(source.contains(cancel_guard));
+    std::fs::write(&script, source.replace(cancel_guard, "if (false) {")).unwrap();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "interrupted-1".into(), "hold".into())
+                .expect("active prompt");
+            assert_eq!(
+                ledger_phase(&dir, handle, "interrupted-1"),
+                Some(PromptPhase::Dispatching)
+            );
+            directory
+                .runtime_handle()
+                .block_on(directory.inner().reset_harness_context(
+                    handle,
+                    &dir,
+                    AgentClient::Codex,
+                    "auto",
+                ))
+                .expect("harness switch");
+
+            let stored =
+                crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+            let terminal = stored.events.iter().position(|event| matches!(
+                event,
+                SessionServerEvent::TurnEnd { stop_reason: Some(reason) } if reason == "cancelled"
+            )).expect("interrupted prompt must end before the harness-switch note");
+            let note = stored.events.iter().position(|event| matches!(
+                event,
+                SessionServerEvent::Message { text, .. } if text == "Client switched harness. Context reset."
+            )).expect("harness-switch note");
+            assert!(terminal < note);
+            assert_eq!(
+                stored
+                    .events
+                    .iter()
+                    .filter(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                ledger_phase(&dir, handle, "interrupted-1"),
+                Some(PromptPhase::Interrupted)
+            );
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn normal_cancel_then_harness_switch_emits_one_terminal() {
+    let dir = scratch_dir("cancel-switch-terminal");
+    let handle = "web/cancel-switch-terminal";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "cancelled-1".into(), "hold".into())
+                .expect("active prompt");
+            directory.cancel(handle, false).expect("normal cancel");
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| matches!(event, SessionServerEvent::TurnEnd { stop_reason: Some(reason) } if reason == "cancelled"))
+            });
+            directory
+                .runtime_handle()
+                .block_on(directory.inner().reset_harness_context(
+                    handle,
+                    &dir,
+                    AgentClient::Codex,
+                    "auto",
+                ))
+                .expect("harness switch");
+            let (events, _) = directory.read_from(handle, 0);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                ledger_phase(&dir, handle, "cancelled-1"),
+                Some(PromptPhase::Completed)
+            );
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn exit_during_prompt_interrupts_active_row_and_preserves_queue() {
     let dir = scratch_dir("phase2-exit-prompt");
     let handle = "web/phase2-exit-prompt";
