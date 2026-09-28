@@ -41,11 +41,12 @@ export const BASELINE = {
    * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose).
    * Re-measured after touch momentum scrolling for tool and diff bodies (#1153).
    * Re-measured after explicit ACP restore recovery actions (#1152).
-   * Re-measured after removing side-tab accents from activity cards. */
-  sourceStylesCssBytes: 110_441,
+   * Re-measured after removing side-tab accents from activity cards.
+   * Re-measured after inline pi context usage meter in the live head. */
+  sourceStylesCssBytes: 110_626,
   builtAppCssBytes: 94_528,
   builtAppCssGzipBytes: 15_737,
-  classSelectorLines: 616,
+  classSelectorLines: 618,
   hasSelectors: 18,
 } as const;
 
