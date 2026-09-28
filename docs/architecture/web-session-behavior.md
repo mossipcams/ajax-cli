@@ -596,8 +596,11 @@ replacement while the child is healthy.
 - `usage_update` is a first-class `usage` event, not an `artifact`. A zero
   window means the harness does not report context and is dropped, so it never
   renders as 0% used. When the harness reports a non-zero window, the live head
-  shows the current fraction (`Context N% full`) in idle and working states; at
-  90%+ the indicator uses the warning tone.
+  shows the current fraction (`Context N% full`) next to the task state or
+  Reconnecting label, before the head controls. When task attention hides the
+  head line, the meter appears once at the bottom of the live head instead.
+  At 90%+ the indicator uses the warning tone. Pi uses `pi-acp@0.0.34`, which
+  reports context usage after each turn and model change.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
   `turn_usage` wire event. Cursor reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /

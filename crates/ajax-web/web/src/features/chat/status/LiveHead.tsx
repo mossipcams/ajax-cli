@@ -53,6 +53,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
               Reconnecting
             </span>
           )}
+          {view.usage ? <ContextUsageMeter usage={view.usage} /> : null}
           <div className="session-head-controls">
             {view.state === "working" ? (
               <button
@@ -94,7 +95,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
         </div>
       ) : null}
 
-      {view.usage ? <ContextUsageMeter usage={view.usage} /> : null}
+      {!view.showHeadLine && view.usage ? <ContextUsageMeter usage={view.usage} /> : null}
     </section>
   );
 }

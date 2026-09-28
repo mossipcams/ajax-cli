@@ -111,6 +111,34 @@ describe("LiveHead connection badge", () => {
 });
 
 describe("LiveHead context usage", () => {
+  it.each([true, false])("places usage once beside the label when connected=%s", (connected) => {
+    mountHead({ connected, showHeadLine: true, usage: { used: 25, size: 100 } });
+    const meter = screen.getByTestId("session-usage");
+    const label = screen.getByText(connected ? "Ready" : "Reconnecting");
+    /* eslint-disable testing-library/no-node-access -- Placement beside the label is the presentation contract. */
+    expect(label.parentElement).toHaveClass("session-head-line");
+    expect(label.parentElement).toContainElement(meter);
+    expect(label.nextElementSibling).toBe(meter);
+    expect(meter.nextElementSibling).toHaveClass("session-head-controls");
+    /* eslint-enable testing-library/no-node-access */
+    expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
+  });
+
+  it("keeps usage once at the bottom when task attention hides the head line", () => {
+    mountHead({
+      state: "attention",
+      showHeadLine: false,
+      taskAttention: { status: "waiting" },
+      attentionText: "Waiting for review",
+      usage: { used: 25, size: 100 },
+    });
+    // eslint-disable-next-line testing-library/no-node-access -- The fallback must be the final child.
+    expect(screen.getByTestId("session-head").lastElementChild).toBe(
+      screen.getByTestId("session-usage"),
+    );
+    expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
+  });
+
   it("shows reported usage in idle below 70%", () => {
     mountHead({ state: "idle", usage: { used: 25, size: 100 } });
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 25% full");
