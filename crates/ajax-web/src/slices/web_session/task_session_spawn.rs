@@ -331,8 +331,16 @@ fn release_live_client(
         }
         if awaiting_cancel_terminal {
             state.pump();
-            if state.prompts.active_prompt.is_some() {
+            if let Some(active) = state.prompts.active_prompt.as_ref() {
+                let needs_turn_end = active.terminal.is_none();
                 interrupt_active_prompt(state)?;
+                // Teardown will discard the child before its terminal result arrives.
+                // A terminal already captured by the pump emits its own event.
+                if needs_turn_end {
+                    state.append_to_log(vec![SessionServerEvent::TurnEnd {
+                        stop_reason: Some("cancelled".to_string()),
+                    }])?;
+                }
             }
         }
         let Some(mut client) = state.acp.client.take() else {
