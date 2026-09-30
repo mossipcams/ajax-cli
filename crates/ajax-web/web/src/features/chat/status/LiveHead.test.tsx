@@ -4,6 +4,9 @@ import { render, screen } from "@testing-library/react";
 import LiveHead from "./LiveHead";
 import { buildHeadView, headState, headTone, isTaskLevelAttention } from "./headView";
 import { initialHeadViewForTests } from "./headView.testHelpers";
+import { parseServerFrame } from "../session/transport/parse";
+import { projectWireEvent } from "../session/projectWireInput";
+import { initialChatSessionReducerState, reduceChatSession } from "../session/reducer";
 
 const noop = vi.fn();
 
@@ -111,6 +114,50 @@ describe("LiveHead connection badge", () => {
 });
 
 describe("LiveHead context usage", () => {
+  it("parses usage_reset without payload fields", () => {
+    expect(parseServerFrame(JSON.stringify({
+      type: "event", protocolVersion: 2, cursor: 7,
+      payload: { type: "usage_reset" },
+    }))).toEqual({ kind: "event", cursor: 7, event: { type: "usage_reset" } });
+  });
+
+  it("clears context and turn usage through the wire projection until new usage arrives", () => {
+    let state = reduceChatSession(initialChatSessionReducerState, { type: "prompt", text: "hello" });
+    const applyWire = (payload: object) => {
+      const frame = parseServerFrame(JSON.stringify({
+        type: "event", protocolVersion: 2, cursor: 7, payload,
+      }));
+      if (!frame || frame.kind !== "event") throw new Error("expected event frame");
+      const event = projectWireEvent(frame.event);
+      if (!event) throw new Error("expected projected event");
+      state = reduceChatSession(state, { type: "event", event });
+    };
+    const headView = () => buildHeadView({
+      session: state.view, taskAttention: null, hasActivity: false,
+      activityAgeMs: 0, connected: true,
+    });
+
+    applyWire({ type: "usage", used: 90, size: 100 });
+    applyWire({ type: "turn_usage", inputTokens: 7 });
+    expect(state.view.usage).toEqual({ context: { used: 90, size: 100 }, turn: { inputTokens: 7 } });
+    const { rerender } = render(<LiveHead view={headView()} permission={null} onStop={noop} />);
+    expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 90% full");
+    const beforeReset = state;
+
+    applyWire({ type: "usage_reset" });
+    expect(state.view.usage).toEqual({ context: null, turn: null });
+    expect(state.view.conversation).toBe(beforeReset.view.conversation);
+    expect(state.view.turn).toBe(beforeReset.view.turn);
+    rerender(<LiveHead view={headView()} permission={null} onStop={noop} />);
+    expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
+
+    applyWire({ type: "usage", used: 5, size: 100 });
+    applyWire({ type: "turn_usage", inputTokens: 2 });
+    expect(state.view.usage).toEqual({ context: { used: 5, size: 100 }, turn: { inputTokens: 2 } });
+    rerender(<LiveHead view={headView()} permission={null} onStop={noop} />);
+    expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 5% full");
+  });
+
   it.each([true, false])("places usage once beside the label when connected=%s", (connected) => {
     mountHead({ connected, showHeadLine: true, usage: { used: 25, size: 100 } });
     const meter = screen.getByTestId("session-usage");

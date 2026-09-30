@@ -96,6 +96,8 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
       if (entries.length !== payload.entries.length) return null;
       return { type: "plan", entries };
     }
+    case "usage_reset":
+      return { type: "usage_reset" };
     case "usage":
       if (typeof payload.used !== "number" || typeof payload.size !== "number") return null;
       return { type: "usage", used: payload.used, size: payload.size };
