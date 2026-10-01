@@ -286,7 +286,7 @@ Full gate before opening a PR: see
 | Mutable ops, receipts, repair adoption, tidy | [`docs/architecture/task-operations.md`](docs/architecture/task-operations.md) |
 | Registry, lifecycle, substrate evidence, live status | [`docs/architecture/core-subsystems.md`](docs/architecture/core-subsystems.md) |
 | Command helpers and adapters | [`docs/architecture/commands-adapters.md`](docs/architecture/commands-adapters.md) |
-| CLI composition and supervisor | [`docs/architecture/cli-supervisor.md`](docs/architecture/cli-supervisor.md) |
+| CLI composition, supervisor, agent watcher | [`docs/architecture/cli-supervisor.md`](docs/architecture/cli-supervisor.md) |
 | Web Cockpit slices, runtime, terminal, speech | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
 | Native Cockpit views | [`docs/architecture/cockpit.md`](docs/architecture/cockpit.md) |
 | Speech operator setup (not architecture ownership) | [`docs/speech-input.md`](docs/speech-input.md) |

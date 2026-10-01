@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Persistent local Laya decision worker; one JSON request/reply per line.
+
+Configure [watcher] laya_command = ["/venv/bin/python3", "/path/to/ajax-laya-sidecar"].
+Install laya in that Python environment. The model loads once at startup.
+"""
+import contextlib
+import json
+import math
+import os
+import sys
+
+CRITERIA = {
+    "progressing": "Making meaningful progress toward the objective.",
+    "stuck": "Looping or repeating an unsuccessful approach.",
+    "off_track": "Drifting from the objective.",
+    "needs_user": "Waiting for the operator.",
+    "probably_done": "The stop looks genuinely complete.",
+}
+
+
+def emit(value):
+    print(json.dumps(value, separators=(",", ":"), allow_nan=False), flush=True)
+
+
+def predict(agent, snapshot):
+    instructions = "Which progress state best describes this run toward its objective?"
+    if snapshot.get("checkpoint") == "settle":
+        instructions += " Is this stop likely premature, or genuinely complete?"
+    elif snapshot.get("checkpoint") == "loop":
+        instructions += " Is the repeated approach making meaningful progress?"
+    elif snapshot.get("checkpoint") == "grace_expiry":
+        instructions += " Has progress resumed after the intervention?"
+    # Rust bounds these summaries; never include transcripts or generate recovery text.
+    state = json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False)
+    with contextlib.redirect_stdout(sys.stderr):
+        result = agent.predict(state, {"progress": {
+            "type": "choice", "instructions": instructions, "criteria": CRITERIA,
+        }})
+    try:
+        answer = result["answers"]["progress"]
+        choice, confidence = answer["choice"], answer["confidence"]
+        if (choice not in CRITERIA or isinstance(confidence, bool)
+                or not isinstance(confidence, (float, int))
+                or not math.isfinite(confidence) or not 0 <= confidence <= 1):
+            raise ValueError("invalid verdict")
+        return {"state": choice, "confidence": confidence}
+    except (KeyError, TypeError, ValueError):
+        return {"state": "uncertain", "confidence": 0}
+
+
+def main():
+    try:
+        os.environ.setdefault("USE_TF", "0")
+        with contextlib.redirect_stdout(sys.stderr):
+            import laya
+            agent = laya.load("convaiinnovations/laya")
+    except Exception as error:
+        emit({"type": "error", "message": f"Laya unavailable: {error}"})
+        return 1
+    emit({"type": "ready"})
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            request_id, snapshot = request["id"], request["snapshot"]
+            if type(request_id) is not int or not isinstance(snapshot, dict):
+                raise ValueError("expected an integer id and snapshot object")
+            emit({"id": request_id, **predict(agent, snapshot)})
+        except Exception as error:
+            emit({"type": "error", "message": f"Laya evaluation failed: {error}"})
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -142,7 +142,7 @@ pub(crate) fn translate_native_event(
             if claude_tool_name(payload) == "AskUserQuestion" {
                 Some(attention_cleared())
             } else {
-                Some(activity_finished(payload))
+                Some(activity_finished(payload, false))
             }
         }
         ("claude", "Notification") => Some(claude_notification(payload)),
@@ -164,15 +164,15 @@ pub(crate) fn translate_native_event(
         ("claude", "SessionEnd") => Some(session_closed()),
         ("codex", "UserPromptSubmit") => Some(turn_started()),
         ("codex", "PreToolUse") => Some(activity_started(payload)),
-        ("codex", "PostToolUse") => Some(activity_finished(payload)),
+        ("codex", "PostToolUse") => Some(activity_finished(payload, false)),
         ("codex", "PermissionRequest") => Some(attention_requested(AttentionReason::Permission)),
         ("codex", "Stop") => Some(turn_settled(TurnOutcome::Completed)),
         ("codex", "SessionStart") => Some(session_opened()),
         ("codex", "SessionEnd") => Some(session_closed()),
         ("cursor", "beforeSubmitPrompt") => Some(turn_started()),
         ("cursor", "preToolUse") => Some(activity_started(payload)),
-        ("cursor", "postToolUse") => Some(activity_finished(payload)),
-        ("cursor", "postToolUseFailure") => Some(activity_finished(payload)),
+        ("cursor", "postToolUse") => Some(activity_finished(payload, false)),
+        ("cursor", "postToolUseFailure") => Some(activity_finished(payload, true)),
         ("cursor", "beforeShellExecution") | ("cursor", "beforeMCPExecution") => {
             Some(attention_requested(AttentionReason::Permission))
         }
@@ -207,16 +207,20 @@ fn activity_started(payload: &serde_json::Value) -> CanonicalAgentEvent {
         detail: Some(CanonicalEventDetail::Activity {
             activity: ActivityKind::Tool,
             activity_id: activity_id_from_payload(payload),
+            signature: crate::agent_event_signature::activity_signature(payload),
+            success: None,
         }),
     }
 }
 
-fn activity_finished(payload: &serde_json::Value) -> CanonicalAgentEvent {
+fn activity_finished(payload: &serde_json::Value, failed: bool) -> CanonicalAgentEvent {
     CanonicalAgentEvent {
         kind: CanonicalEventKind::ActivityFinished,
         detail: Some(CanonicalEventDetail::Activity {
             activity: ActivityKind::Tool,
             activity_id: activity_id_from_payload(payload),
+            signature: crate::agent_event_signature::activity_signature(payload),
+            success: crate::agent_event_signature::activity_success(failed, payload),
         }),
     }
 }
@@ -391,7 +395,7 @@ fn test_notify_socket_override() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-fn set_test_notify_socket_override(path: Option<PathBuf>) {
+pub(crate) fn set_test_notify_socket_override(path: Option<PathBuf>) {
     TEST_NOTIFY_SOCKET_OVERRIDE.with(|cell| *cell.borrow_mut() = path);
 }
 

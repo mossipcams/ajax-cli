@@ -61,6 +61,14 @@ pub enum CanonicalEventDetail {
         activity: ActivityKind,
         #[serde(skip_serializing_if = "Option::is_none")]
         activity_id: Option<String>,
+        /// Stable digest of the tool name plus a normalised bounded summary of
+        /// the tool's input fields. Absent on events written before the field
+        /// existed and when the payload carries no tool name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+        /// Success evidence for finished activity events; `None` means unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        success: Option<bool>,
     },
     Attention {
         attention: AttentionReason,
@@ -103,6 +111,12 @@ pub struct ParsedEnvelope {
     pub run_id: Option<String>,
     #[serde(default)]
     pub parent_run_id: Option<String>,
+    /// Durable per-line identity written by the CLI envelope; used by the
+    /// watcher runtime to dedupe replayed events.
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 struct FoldState {
@@ -180,6 +194,7 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                 if let Some(CanonicalEventDetail::Activity {
                     activity: ActivityKind::Tool,
                     activity_id,
+                    ..
                 }) = &event.detail
                 {
                     if let Some(id) = activity_id {
@@ -193,6 +208,7 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
                 if let Some(CanonicalEventDetail::Activity {
                     activity: ActivityKind::Tool,
                     activity_id,
+                    ..
                 }) = &event.detail
                 {
                     match activity_id {
@@ -347,6 +363,8 @@ mod tests {
             received_at_unix_millis: received_at,
             run_id: None,
             parent_run_id: None,
+            event_id: None,
+            task_id: None,
         }
     }
 
@@ -356,6 +374,8 @@ mod tests {
             Some(CanonicalEventDetail::Activity {
                 activity: ActivityKind::Tool,
                 activity_id: Some(id.to_string()),
+                signature: None,
+                success: None,
             }),
             received_at,
         )
@@ -367,6 +387,8 @@ mod tests {
             Some(CanonicalEventDetail::Activity {
                 activity: ActivityKind::Tool,
                 activity_id: Some(id.to_string()),
+                signature: None,
+                success: None,
             }),
             received_at,
         )
@@ -459,6 +481,8 @@ mod tests {
                 Some(CanonicalEventDetail::Activity {
                     activity: ActivityKind::Tool,
                     activity_id: None,
+                    signature: None,
+                    success: None,
                 }),
                 1,
             ),
@@ -484,6 +508,8 @@ mod tests {
                 Some(CanonicalEventDetail::Activity {
                     activity: ActivityKind::Tool,
                     activity_id: None,
+                    signature: None,
+                    success: None,
                 }),
                 2,
             ),

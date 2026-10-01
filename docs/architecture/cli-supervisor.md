@@ -73,3 +73,34 @@ JSONL under `AJAX_AGENT_EVENTS_DIR`. `run_agent_event` returns typed outcomes:
 IO or clock failures return `AgentEventError` and fail the hook command with a
 non-zero exit — they must not be swallowed as success. Hook installs should treat
 write failures as operator-visible (stderr from `run_agent_event_command`).
+
+## Agent watcher
+
+The agent watcher supervises ordinary tasks: it decides whether an agent is still
+working toward its task or whether Ajax should nudge it. It needs no `/goal`, no
+special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
+`ajax web` hosts it (`agent_watcher_runtime.rs`); there is no new daemon.
+
+- **Evidence.** The canonical JSONL stays the durable source. `notify.sock` lines
+  only wake the watcher to read the journal; the socket is never a second source
+  of truth. Canonical activity events carry a bounded `signature` (tool name plus
+  an FNV-1a digest of a short input summary, never raw command text) and a
+  `success` flag so repeated calls can be recognised.
+- **Policy.** The pure policy lives in `ajax_core::agent_watcher` (see
+  `core-subsystems.md`). Hosted state is per task and bounded; the registry is
+  written only through `CliRuntimeBridge::refresh_cockpit`, which also publishes
+  task frames (objective = task title, harness) to the watcher.
+- **Judge.** Ambiguous checkpoints go to an `AgentProgressJudge`. The optional
+  implementation (`laya_judge.rs`) drives a persistent Python sidecar
+  (`scripts/ajax-laya-sidecar`) around the local Laya decision model. The host
+  enforces a timeout; an unavailable, slow, malformed or failing judge means no
+  action.
+- **Config.** Optional `[watcher]` table: `enabled` (default true), `laya_command`
+  (unset means deterministic checks only), `judge_timeout_ms` (default 2000,
+  clamped 200..=10000).
+- **Delivery.** A nudge becomes `AgentNotification::WatcherNudge` and travels the
+  existing cockpit delivery path: the validated tmux path for interactive tasks,
+  `TaskSessionDirectory::submit_prompt_with_id` for ACP-backed tasks.
+- **V1 limits.** ACP sessions emit no native hook events, so only interactive runs
+  are observed (ACP nudge delivery is implemented, detection is not). Events
+  missed while `ajax web` is down are not replayed into a nudge.

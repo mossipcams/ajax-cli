@@ -924,3 +924,13 @@ dividers for cancellations, reconnects, harness switches and context resets.
   (`is-connecting`), Mic stays text-only; the label may use `--warn` so the
   state change is obvious. Hover and focus must not restore a filled chip.
   Connecting must not look like a disabled no-op at reduced opacity.
+
+## Agent watcher nudges
+
+Watcher nudges (`AgentNotification::WatcherNudge`) for ACP-backed (skip-interactive)
+tasks use the same delivery as CI notifications: `deliver` acquires the session and
+calls `TaskSessionDirectory::submit_prompt_with_id` with the nudge id, so the
+one-in-flight prompt and queue semantics apply (`Queued` while busy, `Accepted`
+when idle) and no second ACP client exists. V1 limitation: ACP sessions emit no
+native hook events, so the watcher does not yet detect stalls or premature stops
+in them; see the Agent watcher section of `cli-supervisor.md`.

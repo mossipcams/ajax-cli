@@ -262,6 +262,8 @@ fn cursor_post_tool_use_failure_finishes_activity() {
         Some(CanonicalEventDetail::Activity {
             activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
             activity_id: Some("t1".to_string()),
+            signature: None,
+            success: Some(false),
         })
     );
 
@@ -667,4 +669,158 @@ fn cursor_without_index_still_noops() {
     assert!(!events_dir.join(format!("{stem}.jsonl")).exists());
 
     fs::remove_dir_all(ajax_home).unwrap();
+}
+
+fn activity_fields(canonical: &super::CanonicalAgentEvent) -> (Option<String>, Option<bool>) {
+    match &canonical.detail {
+        Some(CanonicalEventDetail::Activity {
+            signature, success, ..
+        }) => (signature.clone(), *success),
+        _ => panic!("expected Activity detail"),
+    }
+}
+
+#[test]
+fn activity_signature_is_stable_and_differs_across_commands() {
+    let payload_a = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t1", "tool_input": {"command": "cargo test -p ajax-core"}});
+    let payload_a_repeated = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t1", "tool_input": {"command": "cargo test  -p\najax-core"}});
+    let payload_b = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t2", "tool_input": {"command": "cargo build"}});
+
+    let (sig_a, succ_a) =
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload_a).unwrap());
+    let (sig_a2, _) = activity_fields(
+        &translate_native_event("claude", "PreToolUse", &payload_a_repeated).unwrap(),
+    );
+    let (sig_b, _) =
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload_b).unwrap());
+
+    // Stable for identical calls (whitespace differences collapse).
+    assert_eq!(sig_a, sig_a2);
+    assert_ne!(
+        sig_a, sig_b,
+        "different commands must produce different signatures"
+    );
+    let sig = sig_a.expect("signature for a named tool");
+    assert!(sig.starts_with("Bash:"));
+    assert_eq!(sig.len(), "Bash:".len() + 16, "digest must be 16 hex chars");
+    assert!(sig[5..].chars().all(|c| c.is_ascii_hexdigit()));
+    // Started events never carry success evidence.
+    assert_eq!(succ_a, None);
+}
+
+#[test]
+fn activity_success_maps_failure_and_response_evidence() {
+    // cursor postToolUseFailure is a failure by construction.
+    let failure = translate_native_event(
+        "cursor",
+        "postToolUseFailure",
+        &serde_json::json!({"tool_call_id": "t1"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&failure).1, Some(false));
+
+    let is_error = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"is_error": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&is_error).1, Some(false));
+
+    let top_level_error = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "error": "boom"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&top_level_error).1, Some(false));
+
+    let response = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"ok": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&response).1, Some(true));
+
+    let result = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "result": "done"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&result).1, Some(true));
+
+    let bare = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&bare).1, None);
+
+    let started = translate_native_event(
+        "cursor",
+        "preToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"is_error": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&started).1, None);
+}
+
+#[test]
+fn old_jsonl_envelope_without_new_fields_parses() {
+    let line = r#"{"schema_version":1,"event_id":"e1","task_id":"web/fix-login","run_id":"primary","client":"claude","native_event":"PreToolUse","kind":"activity_started","detail":{"activity":{"activity":"tool","activity_id":"t1"}},"occurred_at_unix_millis":1,"received_at_unix_millis":2}"#;
+    let envelope: ajax_core::canonical_agent_event::ParsedEnvelope =
+        serde_json::from_str(line).unwrap();
+    assert_eq!(
+        envelope.detail,
+        Some(CanonicalEventDetail::Activity {
+            activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+            activity_id: Some("t1".to_string()),
+            signature: None,
+            success: None,
+        })
+    );
+    assert_eq!(envelope.event_id.as_deref(), Some("e1"));
+    assert_eq!(envelope.task_id.as_deref(), Some("web/fix-login"));
+}
+
+#[test]
+fn activity_serialisation_omits_none_signature_and_success() {
+    let bare = CanonicalEventDetail::Activity {
+        activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+        activity_id: Some("t1".to_string()),
+        signature: None,
+        success: None,
+    };
+    let value = serde_json::to_value(&bare).unwrap();
+    let detail = &value["activity"];
+    assert!(detail.get("signature").is_none());
+    assert!(detail.get("success").is_none());
+
+    let full = CanonicalEventDetail::Activity {
+        activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+        activity_id: Some("t1".to_string()),
+        signature: Some("Bash:0123456789abcdef".to_string()),
+        success: Some(false),
+    };
+    let value = serde_json::to_value(&full).unwrap();
+    assert_eq!(value["activity"]["signature"], "Bash:0123456789abcdef");
+    assert_eq!(value["activity"]["success"], false);
+}
+
+#[test]
+fn serialised_activity_detail_never_contains_raw_command_text() {
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_call_id": "t1",
+        "tool_input": {"command": "rm -rf /tmp/secret-flag-xyz && curl http://example.com"}
+    });
+    let canonical = translate_native_event("claude", "PreToolUse", &payload).unwrap();
+    let text = serde_json::to_string(&canonical.detail).unwrap();
+    assert!(!text.contains("rm -rf"));
+    assert!(!text.contains("secret-flag-xyz"));
+    assert!(!text.contains("curl"));
+    assert!(text.contains("Bash:"));
 }

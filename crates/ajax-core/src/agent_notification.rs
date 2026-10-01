@@ -1,5 +1,6 @@
 //! Transport-neutral notifications destined for the task's owning agent.
 
+use crate::agent_watcher::{nudge_prompt, WatcherReason};
 use crate::models::TaskId;
 use serde::{Deserialize, Serialize};
 
@@ -21,18 +22,26 @@ pub enum AgentNotification {
         head_sha: String,
         failed_checks: Vec<CiFailedCheck>,
     },
+    /// The agent watcher asked the owning agent to continue or explain.
+    WatcherNudge {
+        id: String,
+        task_id: TaskId,
+        reason: WatcherReason,
+    },
 }
 
 impl AgentNotification {
     pub fn id(&self) -> &str {
         match self {
             Self::CiFailed { episode_id, .. } => episode_id,
+            Self::WatcherNudge { id, .. } => id,
         }
     }
 
     pub fn task_id(&self) -> &TaskId {
         match self {
             Self::CiFailed { task_id, .. } => task_id,
+            Self::WatcherNudge { task_id, .. } => task_id,
         }
     }
 
@@ -42,7 +51,13 @@ impl AgentNotification {
             head_sha,
             failed_checks,
             ..
-        } = self;
+        } = self
+        else {
+            let Self::WatcherNudge { reason, .. } = self else {
+                unreachable!("prompt() covers every AgentNotification variant")
+            };
+            return nudge_prompt(reason).to_string();
+        };
         let mut checks = failed_checks.clone();
         checks.sort();
         let rows = checks
@@ -80,6 +95,13 @@ pub fn record_delivery(
     task: &mut crate::models::Task,
     delivery: AgentNotificationDelivery,
 ) -> bool {
+    // Watcher nudges keep their bookkeeping in the watcher store; everything
+    // else is a CI notification and keeps the existing CI monitor state.
+    if crate::agent_watcher::pending_watcher_nudge(task)
+        .is_some_and(|pending| pending.id() == delivery.notification_id)
+    {
+        return crate::agent_watcher::record_watcher_delivery(task, delivery);
+    }
     let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
     if state.delivery.as_ref() == Some(&delivery) {
         return false;
@@ -96,8 +118,139 @@ pub fn record_delivery(
 
 pub fn pending_for_task(task: &crate::models::Task) -> Option<AgentNotification> {
     crate::runtime_refresh::ci_monitor::pending_notification(task)
+        .or_else(|| crate::agent_watcher::pending_watcher_nudge(task))
 }
 
 pub fn delivery_for_task(task: &crate::models::Task) -> Option<AgentNotificationDelivery> {
-    crate::runtime_refresh::ci_monitor::load_state(task).delivery
+    crate::runtime_refresh::ci_monitor::load_state(task)
+        .delivery
+        .or_else(|| crate::agent_watcher::load_store(task).delivery)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_watcher::{enqueue_watcher_nudge, WatcherReason};
+    use crate::models::{AgentClient, Task};
+
+    fn task() -> Task {
+        Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "t1",
+            "title",
+            "branch",
+            "main",
+            "/tmp/wt",
+            "web-t1",
+            "task",
+            AgentClient::Cursor,
+        )
+    }
+
+    fn ci_notification() -> AgentNotification {
+        AgentNotification::CiFailed {
+            episode_id: "ci-failed:task-1:9:abc:1".to_string(),
+            task_id: TaskId::new("task-1"),
+            pr_number: 9,
+            head_sha: "abc".to_string(),
+            failed_checks: Vec::new(),
+        }
+    }
+
+    fn nudge_notification() -> AgentNotification {
+        AgentNotification::WatcherNudge {
+            id: "watcher-nudge:task-1:1".to_string(),
+            task_id: TaskId::new("task-1"),
+            reason: WatcherReason::Stuck,
+        }
+    }
+
+    fn delivery(id: &str, status: AgentNotificationDeliveryStatus) -> AgentNotificationDelivery {
+        AgentNotificationDelivery {
+            notification_id: id.to_string(),
+            status,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn watcher_nudge_id_task_and_prompt_match_store() {
+        let notification = nudge_notification();
+        assert_eq!(notification.id(), "watcher-nudge:task-1:1");
+        assert_eq!(notification.task_id().as_str(), "task-1");
+        assert_eq!(notification.prompt(), nudge_prompt(&WatcherReason::Stuck));
+        assert!(notification.prompt().contains("different approach"));
+    }
+
+    #[test]
+    fn pending_for_task_prefers_ci_over_watcher_nudge() {
+        let mut task = task();
+        enqueue_watcher_nudge(&mut task, "watcher-nudge:task-1:1", WatcherReason::Stuck);
+        // No CI state yet: the watcher nudge is the pending notification.
+        assert_eq!(
+            pending_for_task(&task).as_ref(),
+            Some(&nudge_notification())
+        );
+
+        // A pending CI notification shadows the watcher nudge.
+        let mut state = crate::runtime_refresh::ci_monitor::load_state(&task);
+        state.pr_number = Some(9);
+        state.head_sha = Some("abc".to_string());
+        state.episode_id = Some("ci-failed:task-1:9:abc:1".to_string());
+        state.status = crate::runtime_refresh::ci_monitor::CiAttemptStatus::Failed;
+        state.last_notified_failure = None;
+        crate::runtime_refresh::ci_monitor::store_state(&mut task, &state);
+        assert_eq!(pending_for_task(&task).as_ref(), Some(&ci_notification()));
+    }
+
+    #[test]
+    fn ci_record_delivery_is_unchanged_without_watcher_pending() {
+        let mut task = task();
+        let ci = ci_notification();
+        assert!(record_delivery(
+            &mut task,
+            delivery(ci.id(), AgentNotificationDeliveryStatus::Accepted)
+        ));
+        assert_eq!(
+            delivery_for_task(&task).as_ref(),
+            Some(&delivery(
+                ci.id(),
+                AgentNotificationDeliveryStatus::Accepted
+            ))
+        );
+        let ci_state = crate::runtime_refresh::ci_monitor::load_state(&task);
+        assert_eq!(ci_state.last_notified_failure.as_deref(), Some(ci.id()));
+        assert!(crate::agent_watcher::load_store(&task)
+            .pending_nudge
+            .is_none());
+    }
+
+    #[test]
+    fn record_delivery_routes_nudge_to_watcher_store() {
+        let mut task = task();
+        enqueue_watcher_nudge(&mut task, "watcher-nudge:task-1:1", WatcherReason::Stuck);
+        let nudge = nudge_notification();
+        assert!(record_delivery(
+            &mut task,
+            delivery(nudge.id(), AgentNotificationDeliveryStatus::Accepted)
+        ));
+        // The CI monitor state is untouched.
+        assert!(crate::runtime_refresh::ci_monitor::load_state(&task)
+            .delivery
+            .is_none());
+        let store = crate::agent_watcher::load_store(&task);
+        assert!(store.pending_nudge.is_none());
+        assert_eq!(
+            store.delivery.expect("watcher delivery").status,
+            AgentNotificationDeliveryStatus::Accepted
+        );
+        assert_eq!(
+            delivery_for_task(&task).as_ref(),
+            Some(&delivery(
+                nudge.id(),
+                AgentNotificationDeliveryStatus::Accepted
+            ))
+        );
+    }
 }
