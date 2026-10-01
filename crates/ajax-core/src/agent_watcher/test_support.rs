@@ -66,6 +66,25 @@ pub fn activity_finished(
     }
 }
 
+pub fn activity_finished_with_result(
+    ids: &mut Ids,
+    at: u64,
+    activity_id: &str,
+    signature: &str,
+    success: Option<bool>,
+) -> WatcherEvent {
+    WatcherEvent {
+        kind: WatcherEventKind::ActivityFinished,
+        detail: WatcherEventDetail::Activity {
+            activity_id: Some(activity_id.to_string()),
+            signature: Some(signature.to_string()),
+            success,
+        },
+        occurred_at_ms: at,
+        event_id: ids.next(),
+    }
+}
+
 pub fn activity_started(ids: &mut Ids, at: u64, activity_id: &str) -> WatcherEvent {
     WatcherEvent {
         kind: WatcherEventKind::ActivityStarted,

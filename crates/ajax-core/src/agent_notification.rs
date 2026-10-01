@@ -46,33 +46,33 @@ impl AgentNotification {
     }
 
     pub fn prompt(&self) -> String {
-        let Self::CiFailed {
-            pr_number,
-            head_sha,
-            failed_checks,
-            ..
-        } = self
-        else {
-            let Self::WatcherNudge { reason, .. } = self else {
-                unreachable!("prompt() covers every AgentNotification variant")
-            };
-            return nudge_prompt(reason).to_string();
-        };
-        let mut checks = failed_checks.clone();
-        checks.sort();
-        let rows = checks
-            .iter()
-            .map(|check| match (&check.link, &check.identity) {
-                (Some(link), Some(identity)) => format!("- {} — {link} ({identity})", check.name),
-                (Some(link), None) => format!("- {} — {link}", check.name),
-                (None, Some(identity)) => format!("- {} ({identity})", check.name),
-                (None, None) => format!("- {}", check.name),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "CI failed for PR #{pr_number} at head {head_sha}.\n\nFailed checks:\n{rows}\n\nInspect the logs for every failed check, determine whether each failure is caused by this branch, fix every relevant failure, run the repository's local verification, commit the fix, and push the branch. If a failure is unrelated, report the evidence instead of changing unrelated code."
-        )
+        match self {
+            Self::WatcherNudge { reason, .. } => nudge_prompt(reason).to_string(),
+            Self::CiFailed {
+                pr_number,
+                head_sha,
+                failed_checks,
+                ..
+            } => {
+                let mut checks = failed_checks.clone();
+                checks.sort();
+                let rows = checks
+                    .iter()
+                    .map(|check| match (&check.link, &check.identity) {
+                        (Some(link), Some(identity)) => {
+                            format!("- {} — {link} ({identity})", check.name)
+                        }
+                        (Some(link), None) => format!("- {} — {link}", check.name),
+                        (None, Some(identity)) => format!("- {} ({identity})", check.name),
+                        (None, None) => format!("- {}", check.name),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "CI failed for PR #{pr_number} at head {head_sha}.\n\nFailed checks:\n{rows}\n\nInspect the logs for every failed check, determine whether each failure is caused by this branch, fix every relevant failure, run the repository's local verification, commit the fix, and push the branch. If a failure is unrelated, report the evidence instead of changing unrelated code."
+                )
+            }
+        }
     }
 }
 
@@ -100,7 +100,17 @@ pub fn record_delivery(
     if crate::agent_watcher::pending_watcher_nudge(task)
         .is_some_and(|pending| pending.id() == delivery.notification_id)
     {
-        return crate::agent_watcher::record_watcher_delivery(task, delivery);
+        if !crate::agent_watcher::record_watcher_delivery(task, delivery) {
+            return false;
+        }
+        // The nudge is now the most recent delivery: drop the older CI
+        // delivery so `delivery_for_task` reports the newest one.
+        let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
+        if state.delivery.is_some() {
+            state.delivery = None;
+            return crate::runtime_refresh::ci_monitor::store_state(task, &state);
+        }
+        return true;
     }
     let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
     if state.delivery.as_ref() == Some(&delivery) {
@@ -113,7 +123,13 @@ pub fn record_delivery(
         state.last_notified_failure = Some(delivery.notification_id.clone());
     }
     state.delivery = Some(delivery);
-    crate::runtime_refresh::ci_monitor::store_state(task, &state)
+    let stored = crate::runtime_refresh::ci_monitor::store_state(task, &state);
+    if stored {
+        // The CI notification is now the most recent delivery: drop the
+        // older watcher delivery so `delivery_for_task` reports the newest.
+        crate::agent_watcher::clear_watcher_delivery(task);
+    }
+    stored
 }
 
 pub fn pending_for_task(task: &crate::models::Task) -> Option<AgentNotification> {
@@ -121,10 +137,21 @@ pub fn pending_for_task(task: &crate::models::Task) -> Option<AgentNotification>
         .or_else(|| crate::agent_watcher::pending_watcher_nudge(task))
 }
 
+/// The delivery belonging to the most recent notification. Recording a
+/// delivery on one side invalidates the other side's older delivery, so at
+/// most one store holds a current delivery; if both are present (legacy or
+/// hand-set state), a still-pending watcher nudge is the newest.
 pub fn delivery_for_task(task: &crate::models::Task) -> Option<AgentNotificationDelivery> {
-    crate::runtime_refresh::ci_monitor::load_state(task)
-        .delivery
-        .or_else(|| crate::agent_watcher::load_store(task).delivery)
+    let ci_delivery = crate::runtime_refresh::ci_monitor::load_state(task).delivery;
+    let watcher_delivery = crate::agent_watcher::load_store(task).delivery;
+    match (ci_delivery, watcher_delivery) {
+        (Some(ci), Some(watcher)) => {
+            let watcher_current = crate::agent_watcher::pending_watcher_nudge(task)
+                .is_some_and(|pending| pending.id() == watcher.notification_id);
+            Some(if watcher_current { watcher } else { ci })
+        }
+        (ci, watcher) => ci.or(watcher),
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +229,52 @@ mod tests {
         state.last_notified_failure = None;
         crate::runtime_refresh::ci_monitor::store_state(&mut task, &state);
         assert_eq!(pending_for_task(&task).as_ref(), Some(&ci_notification()));
+    }
+
+    #[test]
+    fn prompt_covers_every_notification_variant() {
+        // The watcher nudge prompt is the deterministic template.
+        let nudge = nudge_notification();
+        assert_eq!(nudge.prompt(), nudge_prompt(&WatcherReason::Stuck));
+
+        // The CI prompt renders the failure details.
+        let ci = ci_notification();
+        assert!(ci.prompt().contains("CI failed for PR #9"));
+        assert!(ci.prompt().contains("abc"));
+    }
+
+    #[test]
+    fn delivery_for_task_prefers_the_most_recent_notification() {
+        // A CI failure is notified and delivered.
+        let mut task = task();
+        let ci = ci_notification();
+        assert!(record_delivery(
+            &mut task,
+            delivery(ci.id(), AgentNotificationDeliveryStatus::Accepted)
+        ));
+        assert_eq!(
+            delivery_for_task(&task).as_ref(),
+            Some(&delivery(
+                ci.id(),
+                AgentNotificationDeliveryStatus::Accepted
+            ))
+        );
+
+        // A later watcher nudge is pending: its delivery is the most recent
+        // and must win over the older CI delivery.
+        enqueue_watcher_nudge(&mut task, "watcher-nudge:task-1:1", WatcherReason::Stuck);
+        let nudge = nudge_notification();
+        assert!(record_delivery(
+            &mut task,
+            delivery(nudge.id(), AgentNotificationDeliveryStatus::Queued)
+        ));
+        assert_eq!(
+            delivery_for_task(&task).as_ref(),
+            Some(&delivery(
+                nudge.id(),
+                AgentNotificationDeliveryStatus::Queued
+            ))
+        );
     }
 
     #[test]

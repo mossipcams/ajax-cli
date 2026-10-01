@@ -18,9 +18,9 @@ mod test_support;
 pub use policy::{apply_verdict, nudge_prompt, step, Step, WatcherConfig};
 pub use state::{WatcherPersistedState, WatcherState};
 pub use store::{
-    enqueue_watcher_nudge, load_store, load_watcher_state, pending_watcher_nudge,
-    record_watcher_delivery, store_watcher_state, WatcherPendingNudge, WatcherStore,
-    MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
+    clear_watcher_delivery, enqueue_watcher_nudge, load_store, load_watcher_state,
+    pending_watcher_nudge, record_watcher_delivery, store_watcher_state, WatcherPendingNudge,
+    WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
 };
 pub use types::{
     AgentProgressJudge, JudgeError, PendingCheckpoint, ProgressState, TaskFrame, WatcherDecision,
@@ -470,6 +470,219 @@ mod tests {
         assert!(
             fresh.has_seen_event_id(restored.last_seen_event_id.as_deref().expect("id present"))
         );
+    }
+
+    #[test]
+    fn repeated_failing_activity_reaches_loop_checkpoint() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        for i in 0..2 {
+            let failing = activity_finished_with_result(
+                &mut ids,
+                1100 + i as u64,
+                "a",
+                "failing-call",
+                Some(false),
+            );
+            assert!(matches!(
+                step(&mut s, &failing, 1100 + i as u64, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+
+        // The third identical failing signature is a loop checkpoint, even
+        // though every one of them failed.
+        let failing =
+            activity_finished_with_result(&mut ids, 1300, "a", "failing-call", Some(false));
+        assert!(matches!(
+            step(&mut s, &failing, 1300, &c),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::Loop));
+        assert_eq!(s.failure_count, 3);
+        // Failures never count as meaningful progress.
+        assert!(s.last_meaningful_activity_ms.is_none());
+    }
+
+    #[test]
+    fn failing_activity_is_never_meaningful_progress() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+        s.phase = WatcherPhase::Recovering;
+        s.grace_deadline_ms = Some(9_000);
+
+        // A fresh failing activity must not clear recovery pressure.
+        let failing = activity_finished_with_result(&mut ids, 1000, "a", "fresh-sig", Some(false));
+        assert!(matches!(
+            step(&mut s, &failing, 1000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+        assert_eq!(s.grace_deadline_ms, Some(9_000));
+
+        // A repeated failing loop checkpoints but still never clears it.
+        for i in 0..2 {
+            let failing = activity_finished_with_result(
+                &mut ids,
+                2000 + i as u64,
+                "b",
+                "failing-call",
+                Some(false),
+            );
+            assert!(matches!(
+                step(&mut s, &failing, 2000 + i as u64, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+        let failing =
+            activity_finished_with_result(&mut ids, 2200, "b", "failing-call", Some(false));
+        assert!(matches!(
+            step(&mut s, &failing, 2200, &c),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::Loop));
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+        assert_eq!(s.grace_deadline_ms, Some(9_000));
+    }
+
+    #[test]
+    fn meaningful_activity_after_nudge_resets_intervention_budgets() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        // First episode: a loop gets one nudge.
+        for i in 0..2 {
+            let looping = activity_finished(&mut ids, 1100 + i as u64, "a", "loop-sig");
+            assert!(matches!(
+                step(&mut s, &looping, 1100 + i as u64, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+        let looping = activity_finished(&mut ids, 1300, "a", "loop-sig");
+        assert!(matches!(
+            step(&mut s, &looping, 1300, &c),
+            Step::NeedsJudge(_)
+        ));
+        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 1300, &c);
+        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
+        assert_eq!(s.loop_nudges, 1);
+        assert_eq!(s.intervention_count, 1);
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+
+        // Meaningful non-repeating activity ends the episode and resets the
+        // per-episode budgets.
+        let progress = activity_finished(&mut ids, 2000, "b", "fresh-work");
+        assert!(matches!(
+            step(&mut s, &progress, 2000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.grace_deadline_ms, None);
+        assert_eq!(s.loop_nudges, 0);
+        assert_eq!(s.premature_stop_nudges, 0);
+        assert_eq!(s.intervention_count, 0);
+
+        // A later loop gets a fresh nudge, not an immediate escalation.
+        for i in 0..2 {
+            let looping = activity_finished(&mut ids, 3100 + i as u64, "c", "second-loop");
+            assert!(matches!(
+                step(&mut s, &looping, 3100 + i as u64, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+        let looping = activity_finished(&mut ids, 3300, "c", "second-loop");
+        assert!(matches!(
+            step(&mut s, &looping, 3300, &c),
+            Step::NeedsJudge(_)
+        ));
+        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3300, &c);
+        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
+        assert_eq!(s.intervention_count, 1);
+    }
+
+    #[test]
+    fn escalated_phase_clears_on_fresh_turn() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+        s.phase = WatcherPhase::Escalated;
+        s.intervention_count = 2;
+        s.loop_nudges = 1;
+        s.premature_stop_nudges = 1;
+
+        // A fresh user turn after escalation starts a fresh episode.
+        let turn = turn_started(&mut ids, 1000);
+        assert!(matches!(
+            step(&mut s, &turn, 1000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.intervention_count, 0);
+        assert_eq!(s.loop_nudges, 0);
+        assert_eq!(s.premature_stop_nudges, 0);
+    }
+
+    #[test]
+    fn escalated_phase_holds_while_grace_is_active() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+        s.phase = WatcherPhase::Escalated;
+        s.intervention_count = 2;
+        s.grace_deadline_ms = Some(9_000);
+
+        // Inside the intervention grace window the escalation holds.
+        let turn = turn_started(&mut ids, 1000);
+        assert!(matches!(
+            step(&mut s, &turn, 1000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Escalated);
+        assert_eq!(s.intervention_count, 2);
+
+        // After the window, the next turn starts a fresh episode.
+        let turn = turn_started(&mut ids, 10_000);
+        assert!(matches!(
+            step(&mut s, &turn, 10_000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.intervention_count, 0);
+    }
+
+    #[test]
+    fn persisted_state_carries_phase_and_nudge_seq() {
+        let mut s = state();
+        s.phase = WatcherPhase::Escalated;
+        s.nudge_seq = 7;
+
+        let persisted = s.persisted();
+        assert_eq!(persisted.phase, WatcherPhase::Escalated);
+        assert_eq!(persisted.nudge_seq, 7);
+
+        let json = serde_json::to_string(&persisted).expect("serialize persisted subset");
+        let restored: WatcherPersistedState =
+            serde_json::from_str(&json).expect("deserialize persisted subset");
+        let mut fresh = state();
+        fresh.apply_persisted(&restored);
+        assert_eq!(fresh.phase, WatcherPhase::Escalated);
+        assert_eq!(fresh.nudge_seq, 7);
+    }
+
+    #[test]
+    fn persisted_state_defaults_phase_and_nudge_seq_for_old_metadata() {
+        // Metadata written before phase/nudge_seq existed still loads.
+        let json = r#"{"intervention_count":1}"#;
+        let restored: WatcherPersistedState =
+            serde_json::from_str(json).expect("deserialize old persisted subset");
+        assert_eq!(restored.phase, WatcherPhase::Healthy);
+        assert_eq!(restored.nudge_seq, 0);
+        assert_eq!(restored.intervention_count, 1);
     }
 
     #[test]

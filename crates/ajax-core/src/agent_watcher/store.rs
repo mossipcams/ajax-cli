@@ -73,6 +73,17 @@ pub fn store_watcher_state(task: &mut Task, state: &WatcherPersistedState) -> bo
     persist(task, &store)
 }
 
+/// Clear the recorded nudge delivery, e.g. when a newer CI delivery
+/// supersedes it. Returns whether the task changed.
+pub fn clear_watcher_delivery(task: &mut Task) -> bool {
+    let mut store = load_store(task);
+    if store.delivery.is_none() {
+        return false;
+    }
+    store.delivery = None;
+    persist(task, &store)
+}
+
 /// The pending watcher nudge as a transport-neutral notification, if any.
 pub fn pending_watcher_nudge(task: &Task) -> Option<AgentNotification> {
     load_store(task)
@@ -158,6 +169,8 @@ mod tests {
             intervention_count: 1,
             premature_stop_nudges: 0,
             loop_nudges: 0,
+            phase: Default::default(),
+            nudge_seq: 0,
             last_intervention_event_index: None,
             last_intervention_at_ms: None,
             grace_deadline_ms: None,

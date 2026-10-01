@@ -15,9 +15,10 @@ pub struct TaskFrame {
 /// Watcher phase: the watcher's own opinion of the run. Deliberately
 /// separate from task status — a `SuspectedLoop` task may still be
 /// `Running`, and a `WaitingOnUser` task may be mid-turn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WatcherPhase {
+    #[default]
     Healthy,
     SuspectedLoop,
     PrematureStop,

@@ -14,7 +14,9 @@ use crate::agent_watcher::types::{
 };
 use crate::canonical_agent_event::TurnOutcome;
 
-/// Caps and windows for the watcher. All intervention budgets are per run.
+/// Caps and windows for the watcher. Intervention budgets are per episode:
+/// meaningful non-repeating activity after a nudge, or a fresh user turn
+/// after escalation, resets them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WatcherConfig {
     pub max_recent_events: usize,
@@ -90,6 +92,12 @@ pub fn step(
             if state.phase == WatcherPhase::WaitingOnUser {
                 state.phase = WatcherPhase::Healthy;
             }
+            if state.phase == WatcherPhase::Escalated && !state.grace_is_active(now_ms) {
+                // A fresh user turn after escalation starts a fresh episode:
+                // the intervention budgets no longer carry over.
+                state.phase = WatcherPhase::Healthy;
+                state.reset_intervention_budgets();
+            }
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::Attention => {
@@ -128,18 +136,22 @@ pub fn step(
             }
             if success == Some(false) {
                 state.failure_count += 1;
-                return Step::Decision(WatcherDecision::NoAction);
             }
-            // A non-failed activity is meaningful progress.
-            state.record_meaningful_activity(event.occurred_at_ms);
             if let Some(sig) = signature {
                 state.push_signature(&sig, config.max_recent_signatures);
                 state.bump_repeat(&sig, config.max_repeat_signatures);
                 if state.recent_signature_hits(&sig) >= config.repeat_threshold {
-                    // Repeated identical signature: loop checkpoint.
+                    // Repeated identical signature: loop checkpoint. A loop
+                    // is never meaningful activity, so a nudged loop that
+                    // keeps repeating cannot clear recovery pressure.
                     state.pending_checkpoint = Some(PendingCheckpoint::Loop);
                     return Step::NeedsJudge(state.snapshot(now_ms));
                 }
+            }
+            // Only a non-failed activity that is not part of a detected loop
+            // is meaningful progress.
+            if success != Some(false) {
+                state.record_meaningful_activity(event.occurred_at_ms);
             }
             Step::Decision(WatcherDecision::NoAction)
         }

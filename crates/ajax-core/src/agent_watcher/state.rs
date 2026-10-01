@@ -51,16 +51,28 @@ pub struct WatcherState {
     pub seen_event_ids: VecDeque<String>,
     /// Monotonic index of the last applied event.
     pub event_index: u64,
+    /// Monotonic nudge counter, never reset: nudge ids built from it stay
+    /// unique across episode budget resets.
+    #[serde(default)]
+    pub nudge_seq: u64,
 }
 
 /// The persisted subset of [`WatcherState`], stored in task metadata.
 /// Everything else (rings, counters of the moment) is rebuilt from event
 /// replay or simply starts fresh.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WatcherPersistedState {
     pub intervention_count: u32,
     pub premature_stop_nudges: u32,
     pub loop_nudges: u32,
+    /// Watcher phase, so Escalated/WaitingOnUser survive refreshes.
+    #[serde(default)]
+    pub phase: WatcherPhase,
+    /// Monotonic nudge counter, never reset: nudge ids built from it stay
+    /// unique across episode budget resets.
+    #[serde(default)]
+    pub nudge_seq: u64,
     pub last_intervention_event_index: Option<u64>,
     pub last_intervention_at_ms: Option<u64>,
     pub grace_deadline_ms: Option<u64>,
@@ -95,6 +107,7 @@ impl WatcherState {
             grace_deadline_ms: None,
             seen_event_ids: VecDeque::new(),
             event_index: 0,
+            nudge_seq: 0,
         }
     }
 
@@ -163,11 +176,22 @@ impl WatcherState {
         self.last_meaningful_activity_ms = Some(at_ms);
         // New activity makes a pending judge verdict stale.
         self.pending_checkpoint = None;
-        // Meaningful activity clears recovery pressure from a prior nudge.
+        // Meaningful non-repeating activity after a nudge ends the episode:
+        // recovery pressure clears and the intervention budgets reset, so a
+        // long task is not nudged to death by an early loop.
         if self.phase == WatcherPhase::Recovering {
             self.phase = WatcherPhase::Healthy;
             self.grace_deadline_ms = None;
+            self.reset_intervention_budgets();
         }
+    }
+
+    /// Reset the per-episode intervention budgets. `nudge_seq` is monotonic
+    /// and never resets: nudge ids built from it stay unique across resets.
+    pub fn reset_intervention_budgets(&mut self) {
+        self.premature_stop_nudges = 0;
+        self.loop_nudges = 0;
+        self.intervention_count = 0;
     }
 
     pub fn open_tool(&mut self, tool_id: &str) {
@@ -248,6 +272,8 @@ impl WatcherState {
             grace_deadline_ms: self.grace_deadline_ms,
             last_verdict: self.last_verdict.clone(),
             last_seen_event_id: self.seen_event_ids.back().cloned(),
+            phase: self.phase,
+            nudge_seq: self.nudge_seq,
         }
     }
 
@@ -261,6 +287,8 @@ impl WatcherState {
         self.last_intervention_at_ms = persisted.last_intervention_at_ms;
         self.grace_deadline_ms = persisted.grace_deadline_ms;
         self.last_verdict = persisted.last_verdict.clone();
+        self.phase = persisted.phase;
+        self.nudge_seq = persisted.nudge_seq;
         if let Some(id) = &persisted.last_seen_event_id {
             self.note_event_id(id, 512);
         }
