@@ -11,6 +11,7 @@ use crate::agent_notification::{
 use crate::agent_watcher::{WatcherPersistedState, WatcherReason};
 use crate::models::Task;
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Task metadata key holding the watcher store JSON.
 pub const WATCHER_STATE_KEY: &str = "ajax_watcher";
@@ -19,6 +20,11 @@ pub const WATCHER_STATE_KEY: &str = "ajax_watcher";
 /// broken transport cannot retry forever.
 pub const MAX_DELIVERY_ATTEMPTS: u32 = 3;
 
+/// Minimum elapsed time before a failed delivery attempt counts again. The
+/// cockpit refresh lane retries every few seconds, so a transient refusal
+/// must not burn the attempt budget in seconds.
+pub const DELIVERY_RETRY_INTERVAL_MILLIS: u64 = 60_000;
+
 /// A nudge the watcher asked for that has not yet been delivered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatcherPendingNudge {
@@ -26,6 +32,8 @@ pub struct WatcherPendingNudge {
     pub reason: WatcherReason,
     #[serde(default)]
     pub delivery_attempts: u32,
+    #[serde(default)]
+    pub last_attempt_at_ms: Option<u64>,
 }
 
 /// Everything the watcher persists for one task.
@@ -117,24 +125,47 @@ pub fn enqueue_watcher_nudge(task: &mut Task, id: &str, reason: WatcherReason) -
         id: id.to_string(),
         reason,
         delivery_attempts: 0,
+        last_attempt_at_ms: None,
     });
     persist(task, &store)
 }
 
-/// Record a delivery of the pending watcher nudge. Returns whether the task
-/// changed. Accepted/Queued clears the pending nudge; Error keeps it but
-/// increments the attempt counter and drops it after
-/// [`MAX_DELIVERY_ATTEMPTS`] failures.
+/// Record a delivery of the pending watcher nudge using the current system
+/// time. Returns whether the task changed.
 pub fn record_watcher_delivery(task: &mut Task, delivery: AgentNotificationDelivery) -> bool {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    record_watcher_delivery_at(task, delivery, now_ms)
+}
+
+/// Record a delivery of the pending watcher nudge at an explicit timestamp,
+/// so retry pacing is deterministic in tests. Returns whether the task
+/// changed. Accepted/Queued clears the pending nudge; Error keeps it but
+/// increments the attempt counter only when at least
+/// [`DELIVERY_RETRY_INTERVAL_MILLIS`] have passed since the last counted
+/// attempt, and drops it after [`MAX_DELIVERY_ATTEMPTS`] counted failures.
+pub fn record_watcher_delivery_at(
+    task: &mut Task,
+    delivery: AgentNotificationDelivery,
+    now_ms: u64,
+) -> bool {
     let mut store = load_store(task);
     let Some(pending) = store.pending_nudge.as_mut() else {
         return false;
     };
     match delivery.status {
         AgentNotificationDeliveryStatus::Error => {
-            pending.delivery_attempts += 1;
-            if pending.delivery_attempts >= MAX_DELIVERY_ATTEMPTS {
-                store.pending_nudge = None;
+            let within_window = pending
+                .last_attempt_at_ms
+                .is_some_and(|last| now_ms.saturating_sub(last) < DELIVERY_RETRY_INTERVAL_MILLIS);
+            if !within_window {
+                pending.delivery_attempts += 1;
+                pending.last_attempt_at_ms = Some(now_ms);
+                if pending.delivery_attempts >= MAX_DELIVERY_ATTEMPTS {
+                    store.pending_nudge = None;
+                }
             }
         }
         AgentNotificationDeliveryStatus::Queued | AgentNotificationDeliveryStatus::Accepted => {
@@ -257,18 +288,23 @@ mod tests {
         let mut task = task();
         enqueue_watcher_nudge(&mut task, "n1", WatcherReason::Stuck);
 
+        let mut now = DELIVERY_RETRY_INTERVAL_MILLIS;
         for expected_attempts in 1..MAX_DELIVERY_ATTEMPTS {
-            assert!(record_watcher_delivery(
+            assert!(record_watcher_delivery_at(
                 &mut task,
-                delivery(AgentNotificationDeliveryStatus::Error, "n1")
+                delivery(AgentNotificationDeliveryStatus::Error, "n1"),
+                now
             ));
             let pending = load_store(&task).pending_nudge.expect("still pending");
             assert_eq!(pending.delivery_attempts, expected_attempts);
+            assert_eq!(pending.last_attempt_at_ms, Some(now));
+            now += DELIVERY_RETRY_INTERVAL_MILLIS;
         }
 
-        assert!(record_watcher_delivery(
+        assert!(record_watcher_delivery_at(
             &mut task,
-            delivery(AgentNotificationDeliveryStatus::Error, "n1")
+            delivery(AgentNotificationDeliveryStatus::Error, "n1"),
+            now
         ));
         let store = load_store(&task);
         assert!(store.pending_nudge.is_none());
@@ -292,6 +328,32 @@ mod tests {
             delivery(AgentNotificationDeliveryStatus::Accepted, "n1")
         ));
         assert!(!task.metadata.contains_key(WATCHER_STATE_KEY));
+    }
+
+    #[test]
+    fn errors_within_the_retry_window_do_not_burn_the_attempt_budget() {
+        let mut task = task();
+        enqueue_watcher_nudge(&mut task, "n1", WatcherReason::Stuck);
+
+        // Five refused deliveries inside one minute: only the first counts.
+        for offset in 0..5 {
+            let now = offset * 10_000;
+            // Only the first (counted) error changes the store; the rest stay
+            // inside the retry window and are no-ops.
+            assert_eq!(
+                record_watcher_delivery_at(
+                    &mut task,
+                    delivery(AgentNotificationDeliveryStatus::Error, "n1"),
+                    now
+                ),
+                offset == 0
+            );
+        }
+
+        let pending = load_store(&task).pending_nudge.expect("still pending");
+        assert_eq!(pending.delivery_attempts, 1);
+        assert_eq!(pending.last_attempt_at_ms, Some(0));
+        assert!(pending.delivery_attempts < MAX_DELIVERY_ATTEMPTS);
     }
     #[test]
     fn cancellation_preserves_state_and_delivery_and_is_idempotent() {

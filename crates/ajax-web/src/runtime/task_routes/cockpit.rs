@@ -12,7 +12,7 @@ use crate::{
 use ajax_core::{
     adapters::CommandRunner,
     agent_notification::{
-        pending_for_task, record_delivery, AgentNotification, AgentNotificationDelivery,
+        pending_for_task, record_delivery_for, AgentNotification, AgentNotificationDelivery,
         AgentNotificationDeliveryStatus,
     },
     registry::Registry,
@@ -211,8 +211,9 @@ where
                     "watcher nudge delivery failed"
                 );
             }
-            changed |= record_delivery(
+            changed |= record_delivery_for(
                 task,
+                &notification,
                 AgentNotificationDelivery {
                     notification_id: notification.id().to_string(),
                     status,

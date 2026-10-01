@@ -19,8 +19,9 @@ pub use policy::{apply_verdict, nudge_prompt, step, Step, WatcherConfig};
 pub use state::{WatcherPersistedState, WatcherState};
 pub use store::{
     cancel_pending_watcher_nudge, enqueue_watcher_nudge, load_store, load_watcher_state,
-    pending_watcher_nudge, record_watcher_delivery, store_watcher_state, WatcherPendingNudge,
-    WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
+    pending_watcher_nudge, record_watcher_delivery, record_watcher_delivery_at,
+    store_watcher_state, WatcherPendingNudge, WatcherStore, DELIVERY_RETRY_INTERVAL_MILLIS,
+    MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
 };
 pub use types::{
     AgentProgressJudge, JudgeError, PendingCheckpoint, ProgressState, TaskFrame, WatcherDecision,

@@ -2,7 +2,7 @@ use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeSta
 use ajax_core::{
     adapters::{CommandRunner, CommandSpec, TmuxAdapter},
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
-    models::{AgentClient, AgentRuntimeStatus, LiveStatusKind, SideFlag, Task},
+    models::{AgentClient, LiveStatusKind, Task},
 };
 use std::{
     fs,
@@ -18,19 +18,22 @@ pub(crate) fn deliver(
     task: &Task,
     notification: &AgentNotification,
 ) -> Result<AgentNotificationDeliveryStatus, String> {
+    // Refuse only explicit blockers where the operator is being asked
+    // something or the agent cannot accept input. An idle composer after a
+    // completed turn projects as WaitingForInput / Waiting / NeedsInput, and
+    // that is exactly when a premature-stop nudge must be delivered.
     if matches!(notification, AgentNotification::WatcherNudge { .. })
-        && (task.live_status.as_ref().is_some_and(|live| {
+        && task.live_status.as_ref().is_some_and(|live| {
             matches!(
                 live.kind,
                 LiveStatusKind::WaitingForApproval
-                    | LiveStatusKind::WaitingForInput
                     | LiveStatusKind::AuthRequired
                     | LiveStatusKind::ContextLimit
+                    | LiveStatusKind::RateLimited
             )
-        }) || task.has_side_flag(SideFlag::NeedsInput)
-            || task.agent_status == AgentRuntimeStatus::Waiting)
+        })
     {
-        return Err("agent is awaiting operator input; watcher nudge retained".into());
+        return Err("agent is blocked by an explicit blocker; watcher nudge retained".into());
     }
     let expected = expected_process(task.selected_agent)?;
     let path = cache_dir
@@ -350,15 +353,18 @@ mod tests {
     }
     #[test]
     fn watcher_waits_for_operator_without_typing_or_dropping_nudge() {
-        use ajax_core::agent_watcher::{enqueue_watcher_nudge, pending_watcher_nudge};
+        use ajax_core::agent_notification::{record_delivery_for, AgentNotificationDelivery};
+        use ajax_core::agent_watcher::{
+            enqueue_watcher_nudge, load_store, pending_watcher_nudge, MAX_DELIVERY_ATTEMPTS,
+        };
         use ajax_core::models::{LiveObservation, LiveStatusKind};
         let dir = scratch_dir();
         write_snapshot(&dir, now_ms());
         for kind in [
             LiveStatusKind::WaitingForApproval,
-            LiveStatusKind::WaitingForInput,
             LiveStatusKind::AuthRequired,
             LiveStatusKind::ContextLimit,
+            LiveStatusKind::RateLimited,
         ] {
             let mut task = task();
             task.live_status = Some(LiveObservation::new(kind, "operator input required"));
@@ -367,7 +373,24 @@ mod tests {
             let result = super::deliver(&dir, &mut runner, &task, &nudge());
             assert!(result.is_err());
             assert_no_send_keys(&runner.commands);
+            // The refused attempt is recorded against the mutable task: the
+            // nudge stays pending and one refused attempt cannot reach the
+            // drop cap.
+            assert!(record_delivery_for(
+                &mut task,
+                &nudge(),
+                AgentNotificationDelivery {
+                    notification_id: nudge().id().to_string(),
+                    status: AgentNotificationDeliveryStatus::Error,
+                    detail: result.err(),
+                }
+            ));
             assert_eq!(pending_watcher_nudge(&task), Some(nudge()));
+            let attempts = load_store(&task)
+                .pending_nudge
+                .expect("nudge retained")
+                .delivery_attempts;
+            assert!(attempts < MAX_DELIVERY_ATTEMPTS);
             let ci = AgentNotification::CiFailed {
                 episode_id: "ci-1".into(),
                 task_id: task.id.clone(),
@@ -382,21 +405,37 @@ mod tests {
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
+
     #[test]
-    fn watcher_respects_input_evidence_without_live_status() {
+    fn idle_composer_watcher_nudge_is_delivered_despite_waiting_projection() {
+        use ajax_core::models::{AgentRuntimeStatus, LiveObservation, LiveStatusKind, SideFlag};
         let dir = scratch_dir();
         write_snapshot(&dir, now_ms());
-        for side_flag in [false, true] {
-            let mut task = task();
-            if side_flag {
-                task.add_side_flag(SideFlag::NeedsInput);
-            } else {
-                task.agent_status = AgentRuntimeStatus::Waiting;
-            }
-            let mut runner = FakeRunner::healthy();
-            assert!(super::deliver(&dir, &mut runner, &task, &nudge()).is_err());
-            assert_no_send_keys(&runner.commands);
-        }
+        let mut task = task();
+        // The status pipeline projects an agent idle at its composer after a
+        // completed turn as WaitingForInput / Waiting / NeedsInput; a
+        // premature-stop nudge must still be delivered there.
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "agent idle at composer",
+        ));
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        let mut runner = FakeRunner::healthy();
+        let result = super::deliver(&dir, &mut runner, &task, &nudge());
+        assert_eq!(
+            result.as_ref().ok(),
+            Some(&AgentNotificationDeliveryStatus::Accepted)
+        );
+        let send = runner
+            .commands
+            .iter()
+            .find(|command| FakeRunner::is_send_keys(command))
+            .expect("send-keys should run");
+        assert_eq!(
+            send.args.get(3),
+            Some(&nudge_prompt(&WatcherReason::Stuck).to_string())
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

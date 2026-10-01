@@ -91,17 +91,35 @@ pub struct AgentNotificationDelivery {
     pub detail: Option<String>,
 }
 
+/// Record a CI delivery against the CI monitor state. Returns whether the
+/// task changed. Watcher nudges must go through [`record_delivery_for`],
+/// which dispatches on the notification variant.
 pub fn record_delivery(
     task: &mut crate::models::Task,
     delivery: AgentNotificationDelivery,
 ) -> bool {
-    // Watcher nudges keep their bookkeeping in the watcher store; everything
-    // else is a CI notification and keeps the existing CI monitor state.
-    if crate::agent_watcher::pending_watcher_nudge(task)
-        .is_some_and(|pending| pending.id() == delivery.notification_id)
-    {
-        return crate::agent_watcher::record_watcher_delivery(task, delivery);
+    record_ci_delivery(task, delivery)
+}
+
+/// Record a delivery against the store that owns the notification: watcher
+/// nudges keep their bookkeeping in the watcher store, everything else is a
+/// CI notification and keeps the existing CI monitor state. Dispatching on
+/// the variant (not on which nudge happens to be pending) keeps a cancelled
+/// or dropped nudge from falling through into CI state.
+pub fn record_delivery_for(
+    task: &mut crate::models::Task,
+    notification: &AgentNotification,
+    delivery: AgentNotificationDelivery,
+) -> bool {
+    match notification {
+        AgentNotification::WatcherNudge { .. } => {
+            crate::agent_watcher::record_watcher_delivery(task, delivery)
+        }
+        AgentNotification::CiFailed { .. } => record_ci_delivery(task, delivery),
     }
+}
+
+fn record_ci_delivery(task: &mut crate::models::Task, delivery: AgentNotificationDelivery) -> bool {
     let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
     if state.delivery.as_ref() == Some(&delivery) {
         return false;
@@ -134,7 +152,10 @@ pub fn watcher_delivery_for_task(task: &crate::models::Task) -> Option<AgentNoti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_watcher::{enqueue_watcher_nudge, WatcherReason};
+    use crate::agent_watcher::{
+        enqueue_watcher_nudge, pending_watcher_nudge, record_watcher_delivery_at, WatcherReason,
+        DELIVERY_RETRY_INTERVAL_MILLIS,
+    };
     use crate::models::{AgentClient, Task};
 
     fn task() -> Task {
@@ -175,6 +196,14 @@ mod tests {
             notification_id: id.to_string(),
             status,
             detail: None,
+        }
+    }
+
+    fn nudge_with_id(id: &str) -> AgentNotification {
+        AgentNotification::WatcherNudge {
+            id: id.to_string(),
+            task_id: TaskId::new("task-1"),
+            reason: WatcherReason::Stuck,
         }
     }
 
@@ -247,8 +276,9 @@ mod tests {
         let mut task = task();
         enqueue_watcher_nudge(&mut task, "watcher-nudge:task-1:1", WatcherReason::Stuck);
         let nudge = nudge_notification();
-        assert!(record_delivery(
+        assert!(record_delivery_for(
             &mut task,
+            &nudge,
             delivery(nudge.id(), AgentNotificationDeliveryStatus::Accepted)
         ));
         // The CI monitor state is untouched.
@@ -274,8 +304,9 @@ mod tests {
     fn watcher_delivery_never_appears_as_ci_delivery() {
         let mut task = task();
         enqueue_watcher_nudge(&mut task, "nudge", WatcherReason::Stuck);
-        record_delivery(
+        record_delivery_for(
             &mut task,
+            &nudge_with_id("nudge"),
             delivery("nudge", AgentNotificationDeliveryStatus::Accepted),
         );
         assert_eq!(delivery_for_task(&task), None);
@@ -285,10 +316,39 @@ mod tests {
         record_delivery(&mut task, ci.clone());
         assert_eq!(watcher_delivery_for_task(&task), Some(watcher));
         enqueue_watcher_nudge(&mut task, "next-nudge", WatcherReason::Stuck);
-        record_delivery(
+        record_delivery_for(
             &mut task,
+            &nudge_with_id("next-nudge"),
             delivery("next-nudge", AgentNotificationDeliveryStatus::Error),
         );
         assert_eq!(delivery_for_task(&task), Some(ci));
+    }
+
+    #[test]
+    fn dropped_nudge_delivery_never_reaches_ci_state() {
+        let mut task = task();
+        let nudge = nudge_notification();
+        enqueue_watcher_nudge(&mut task, nudge.id(), WatcherReason::Stuck);
+        // Three counted failures (paced an interval apart) drop the nudge.
+        for offset in 0..3 {
+            record_watcher_delivery_at(
+                &mut task,
+                delivery(nudge.id(), AgentNotificationDeliveryStatus::Error),
+                offset * DELIVERY_RETRY_INTERVAL_MILLIS,
+            );
+        }
+        assert!(pending_watcher_nudge(&task).is_none());
+
+        // A late delivery record for the dropped nudge must stay in the
+        // watcher lane, never fall through into the CI monitor state.
+        record_delivery_for(
+            &mut task,
+            &nudge,
+            delivery(nudge.id(), AgentNotificationDeliveryStatus::Error),
+        );
+        assert_eq!(delivery_for_task(&task), None);
+        let ci_state = crate::runtime_refresh::ci_monitor::load_state(&task);
+        assert_eq!(ci_state.last_notified_failure, None);
+        assert!(ci_state.delivery.is_none());
     }
 }
