@@ -26,6 +26,8 @@ use ajax_core::{
 
 mod journal;
 #[cfg(test)]
+mod journal_tests;
+#[cfg(test)]
 mod replay_tests;
 #[cfg(test)]
 mod tests;
@@ -67,6 +69,7 @@ struct Mailbox {
     states: HashMap<String, WatcherPersistedState>,
     outbox: Vec<Nudge>,
     cancelled: HashSet<String>,
+    last_flush_ms: HashMap<String, u64>,
 }
 
 pub(crate) struct WatcherRuntime {
@@ -144,6 +147,10 @@ impl WatcherRuntime {
 
     /// Called only with the live registry on the cockpit refresh lane.
     pub(crate) fn refresh(&self, context: &mut CommandContext<InMemoryRegistry>) -> bool {
+        self.refresh_at(context, now_ms())
+    }
+
+    fn refresh_at(&self, context: &mut CommandContext<InMemoryRegistry>, now: u64) -> bool {
         let Ok(mut shared) = self.shared.lock() else {
             return false;
         };
@@ -154,18 +161,37 @@ impl WatcherRuntime {
                 changed |= cancel_pending_watcher_nudge(task);
             }
         }
-        for nudge in shared.outbox.drain(..) {
+        for nudge in std::mem::take(&mut shared.outbox) {
             if let Some(task) = context.registry.get_task_mut(&TaskId::new(nudge.task_id)) {
                 if eligible(task) {
                     changed |= enqueue_watcher_nudge(task, &nudge.nudge_id, nudge.reason);
                     changed |= store_watcher_state(task, &nudge.persisted_state);
+                    shared
+                        .last_flush_ms
+                        .insert(task.id.as_str().to_owned(), now);
                 }
             }
         }
-        for (id, state) in shared.states.drain() {
-            if let Some(task) = context.registry.get_task_mut(&TaskId::new(id)) {
+        for (id, state) in std::mem::take(&mut shared.states) {
+            if let Some(task) = context.registry.get_task_mut(&TaskId::new(&id)) {
                 if eligible(task) {
-                    changed |= store_watcher_state(task, &state);
+                    // Persist policy outcomes immediately; coalesce cursor-only writes.
+                    let non_cursor_changed = load_watcher_state(task).is_none_or(|mut previous| {
+                        previous
+                            .last_seen_event_id
+                            .clone_from(&state.last_seen_event_id);
+                        previous != state
+                    });
+                    if (non_cursor_changed
+                        || shared
+                            .last_flush_ms
+                            .get(&id)
+                            .is_none_or(|at| now.saturating_sub(*at) >= 60_000))
+                        && store_watcher_state(task, &state)
+                    {
+                        changed = true;
+                        shared.last_flush_ms.insert(id, now);
+                    }
                     if matches!(
                         state.phase,
                         WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
@@ -192,7 +218,13 @@ impl WatcherRuntime {
                 )
             })
             .collect();
-        shared.tick = Some(now_ms());
+        let Mailbox {
+            frames,
+            last_flush_ms,
+            ..
+        } = &mut *shared;
+        last_flush_ms.retain(|id, _| frames.contains_key(id));
+        shared.tick = Some(now);
         drop(shared);
         let _ = self.wake.send(String::new());
         changed
@@ -274,13 +306,20 @@ impl Worker {
             });
             task.state.objective = frame.objective;
             task.state.harness = frame.harness;
-            if let Err(error) = self.read_journal(&mut task) {
-                if error.kind() != io::ErrorKind::NotFound {
-                    tracing::warn!(task_id = id, %error, "watcher journal read failed");
+            let replaced = match self.read_journal(&mut task) {
+                Ok(replaced) => replaced,
+                Err(error) => {
+                    if error.kind() != io::ErrorKind::NotFound {
+                        tracing::warn!(task_id = id, %error, "watcher journal read failed");
+                    }
+                    false
                 }
-            }
+            };
             if let Some(now) = tick {
-                if task.restoring.is_none() && task.state.phase == WatcherPhase::Recovering {
+                if !replaced
+                    && task.restoring.is_none()
+                    && task.state.phase == WatcherPhase::Recovering
+                {
                     // Synthetic ticks must never replace the durable replay cursor.
                     let seen = task.state.seen_event_ids.clone();
                     self.step(
@@ -298,7 +337,9 @@ impl Worker {
                 }
             }
             if task.restoring.is_none() {
-                self.resolve_checkpoint(&mut task, tick.unwrap_or_else(now_ms));
+                if !replaced {
+                    self.resolve_checkpoint(&mut task, tick.unwrap_or_else(now_ms));
+                }
                 self.publish_state(&task.state);
             }
             self.tasks.insert(id, task);
@@ -355,7 +396,7 @@ impl Worker {
         // lines leave the checkpoint intact; fresh evidence invalidates it.
         if std::fs::metadata(self.journal_path(&state.task_id))
             .map_or(true, |meta| meta.len() != task.offset)
-            && (self.read_journal(task).is_err()
+            && (self.read_journal(task).unwrap_or(true)
                 || task.state.event_index != checkpoint_index
                 || task.state.run_id != checkpoint_run
                 || std::fs::metadata(self.journal_path(&task.state.task_id))

@@ -30,27 +30,33 @@ impl Worker {
         ))
     }
 
-    pub(super) fn read_journal(&mut self, task: &mut WatchedTask) -> io::Result<()> {
+    /// Returns whether this read recovered a truncated/replaced journal.
+    pub(super) fn read_journal(&mut self, task: &mut WatchedTask) -> io::Result<bool> {
         let file = File::open(self.journal_path(&task.state.task_id))?;
-        // JSONL is append-only. A replaced/truncated log cannot justify replaying
-        // interventions; stop at the old cursor until new evidence catches up.
-        if file.metadata()?.len() < task.offset {
-            return Ok(());
+        let replaced = file.metadata()?.len() < task.offset;
+        if replaced {
+            task.offset = 0;
+            task.state.pending_checkpoint = None;
+            task.restoring.get_or_insert_with(|| task.state.persisted());
         }
         let mut reader = BufReader::new(file);
         reader.seek(SeekFrom::Start(task.offset))?;
-        let mut line = String::new();
+        let mut line = Vec::new();
         loop {
             line.clear();
-            let bytes = reader.read_line(&mut line)?;
-            if bytes == 0 || !line.ends_with('\n') {
+            let bytes = reader.read_until(b'\n', &mut line)?;
+            if bytes == 0 || !line.ends_with(b"\n") {
+                task.finish_restore();
                 break; // Retry partial appends on the next wake.
             }
             task.offset += bytes as u64;
-            let Ok(canonical) = serde_json::from_str::<ParsedEnvelope>(&line) else {
+            let Ok(line) = std::str::from_utf8(&line) else {
                 continue;
             };
-            let Ok(timestamp) = serde_json::from_str::<Timestamp>(&line) else {
+            let Ok(canonical) = serde_json::from_str::<ParsedEnvelope>(line) else {
+                continue;
+            };
+            let Ok(timestamp) = serde_json::from_str::<Timestamp>(line) else {
                 continue;
             };
             let envelope = Envelope {
@@ -58,27 +64,23 @@ impl Worker {
                 occurred_at_unix_millis: timestamp.occurred_at_unix_millis,
             };
             let canonical = &envelope.canonical;
+            let run = canonical
+                .run_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .unwrap_or("primary");
             if canonical.task_id.as_deref() != Some(&task.state.task_id)
                 || canonical.parent_run_id.is_some()
+                || run != "primary"
             {
                 continue;
             }
             let Some(event) = translate(&envelope) else {
                 continue;
             };
-            let run = canonical.run_id.as_deref().unwrap_or("primary");
-            if run != task.state.run_id {
-                task.newest_event_at_ms = None;
-                task.state = WatcherState::new(
-                    &TaskFrame {
-                        objective: task.state.objective.clone(),
-                    },
-                    &task.state.task_id,
-                    run,
-                    &task.state.harness,
-                );
-            }
-            let replay = task.initial_read
+            let replay = replaced
+                || task.initial_read
                 || task.restoring.is_some()
                 || event.occurred_at_ms < self.started_at_ms;
             let fresh = !task.state.has_seen_event_id(&event.event_id);
@@ -91,20 +93,7 @@ impl Worker {
                 .as_ref()
                 .is_some_and(|state| state.last_seen_event_id.as_deref() == Some(&event.event_id))
             {
-                if let Some(persisted) = task.restoring.take() {
-                    task.state.apply_persisted(&persisted);
-                    // Older metadata omitted phase; retain its recovery window
-                    // without overriding a persisted operator handoff.
-                    if task.state.grace_deadline_ms.is_some()
-                        && task.state.pending_attention.is_none()
-                        && !matches!(
-                            task.state.phase,
-                            WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
-                        )
-                    {
-                        task.state.phase = WatcherPhase::Recovering;
-                    }
-                }
+                task.finish_restore();
             }
             // New evidence can cancel a nudge still waiting for registry refresh.
             if !replay
@@ -129,7 +118,28 @@ impl Worker {
             }
         }
         task.initial_read = false;
-        Ok(())
+        Ok(replaced)
+    }
+}
+
+impl WatchedTask {
+    fn finish_restore(&mut self) {
+        if let Some(mut persisted) = self.restoring.take() {
+            // A missing marker must not replace the cursor we actually folded.
+            persisted.last_seen_event_id = self.state.seen_event_ids.back().cloned();
+            self.state.apply_persisted(&persisted);
+            // Older metadata omitted phase; retain its recovery window without
+            // overriding a persisted operator handoff.
+            if self.state.grace_deadline_ms.is_some()
+                && self.state.pending_attention.is_none()
+                && !matches!(
+                    self.state.phase,
+                    WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
+                )
+            {
+                self.state.phase = WatcherPhase::Recovering;
+            }
+        }
     }
 }
 
@@ -137,7 +147,10 @@ fn translate(envelope: &Envelope) -> Option<WatcherEvent> {
     let canonical = &envelope.canonical;
     let event_id = canonical.event_id.clone().filter(|id| !id.is_empty())?;
     let kind = match canonical.kind {
-        CanonicalEventKind::TurnStarted => WatcherEventKind::TurnStarted,
+        CanonicalEventKind::TurnStarted | CanonicalEventKind::SessionOpened => {
+            WatcherEventKind::TurnStarted
+        }
+        CanonicalEventKind::SessionClosed => WatcherEventKind::SessionClosed,
         CanonicalEventKind::AttentionCleared => WatcherEventKind::AttentionCleared,
         CanonicalEventKind::ActivityStarted => WatcherEventKind::ActivityStarted,
         CanonicalEventKind::ActivityFinished => WatcherEventKind::ActivityFinished,
@@ -145,9 +158,7 @@ fn translate(envelope: &Envelope) -> Option<WatcherEvent> {
         CanonicalEventKind::TurnSettled => WatcherEventKind::TurnSettled,
         CanonicalEventKind::ChildStarted => WatcherEventKind::ChildStarted,
         CanonicalEventKind::ChildSettled => WatcherEventKind::ChildSettled,
-        CanonicalEventKind::Heartbeat
-        | CanonicalEventKind::SessionOpened
-        | CanonicalEventKind::SessionClosed => return None,
+        CanonicalEventKind::Heartbeat => return None,
     };
     let detail = match &canonical.detail {
         Some(CanonicalEventDetail::Activity {

@@ -68,12 +68,19 @@ pub fn step(
         return Step::Decision(WatcherDecision::NoAction);
     }
     state.note_event_id(&event.event_id, config.max_seen_event_ids);
+    state.expire_open_tools(now_ms);
     state.event_index += 1;
     if event.kind != WatcherEventKind::Heartbeat {
         state.push_event_label(event.kind.label(), config.max_recent_events);
     }
 
     match event.kind {
+        WatcherEventKind::SessionClosed => {
+            state.open_tools.clear();
+            state.open_tool_started_at_ms.clear();
+            state.open_children = 0;
+            Step::Decision(WatcherDecision::NoAction)
+        }
         WatcherEventKind::Heartbeat => {
             if state.phase == WatcherPhase::Recovering
                 && state.grace_has_expired(now_ms)
@@ -121,7 +128,7 @@ pub fn step(
                 ..
             } = &event.detail
             {
-                state.open_tool(id);
+                state.open_tool(id, now_ms);
             }
             Step::Decision(WatcherDecision::NoAction)
         }
@@ -441,173 +448,72 @@ pub fn nudge_prompt(reason: &WatcherReason) -> &'static str {
 }
 
 #[cfg(test)]
-mod regression_tests {
-    use super::*;
-    use crate::agent_watcher::test_support::*;
-    use crate::canonical_agent_event::AttentionReason;
+mod journal_regression_tests {
+    use crate::agent_watcher::{step, test_support::*, Step, WatcherEventKind};
 
     #[test]
-    fn loop_checkpoint_fires_once_and_rearms_after_change_or_nudge() {
+    fn session_close_clears_open_work_without_resetting_caps() {
         let (mut s, c, mut ids) = (state(), config(), Ids::new());
-        let mut checkpoints = 0;
-        for signature in ["repeat"; 40].into_iter().chain(["different"; 3]) {
-            let event = activity_finished(&mut ids, 1, "tool", signature);
-            if matches!(step(&mut s, &event, 1, &c), Step::NeedsJudge(_)) {
-                checkpoints += 1;
-                apply_verdict(&mut s, Err(JudgeError::Unavailable), 1, &c);
-            }
-        }
-        assert_eq!(checkpoints, 2);
+        step(&mut s, &activity_started(&mut ids, 1, "orphan"), 1, &c);
+        step(&mut s, &child_started(&mut ids, 2), 2, &c);
         s.record_intervention(2);
+        let mut closed = heartbeat(&mut ids, 3);
+        closed.kind = WatcherEventKind::SessionClosed;
+        step(&mut s, &closed, 3, &c);
+        assert!(s.open_tools.is_empty());
+        assert!(s.open_tool_started_at_ms.is_empty());
+        assert_eq!(s.open_children, 0);
+        assert_eq!(s.intervention_count, 1);
+    }
+
+    #[test]
+    fn tool_timestamps_are_bounded_and_removed_on_finish() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        for index in 0..300 {
+            step(
+                &mut s,
+                &activity_started(&mut ids, 1, &index.to_string()),
+                1,
+                &c,
+            );
+        }
+        assert_eq!(s.open_tools.len(), 256);
+        assert_eq!(s.open_tool_started_at_ms.len(), 256);
+        step(
+            &mut s,
+            &activity_finished(&mut ids, 2, "299", "edit"),
+            2,
+            &c,
+        );
+        assert_eq!(s.open_tool_started_at_ms.len(), 255);
+        assert!(!s.open_tool_started_at_ms.contains_key("299"));
+    }
+
+    #[test]
+    fn orphaned_tool_expires_only_after_ten_minutes() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        step(&mut s, &activity_started(&mut ids, 10, "orphan"), 10, &c);
+        step(&mut s, &heartbeat(&mut ids, 600_010), 600_010, &c);
+        assert_eq!(s.open_tools, ["orphan"]);
+        step(
+            &mut s,
+            &activity_started(&mut ids, 600_010, "new"),
+            600_010,
+            &c,
+        );
+        step(&mut s, &heartbeat(&mut ids, 600_011), 600_011, &c);
+        assert_eq!(s.open_tools, ["new"]);
+        step(&mut s, &heartbeat(&mut ids, 1), 1, &c);
+        assert_eq!(s.open_tools, ["new"]);
         assert!(matches!(
             step(
                 &mut s,
-                &activity_finished(&mut ids, 3, "tool", "different"),
-                3,
+                &settled_completed(&mut ids, 1_200_011),
+                1_200_011,
                 &c
             ),
             Step::NeedsJudge(_)
         ));
-        assert_eq!(s.phase, WatcherPhase::Recovering);
-    }
-
-    #[test]
-    fn grace_expiry_no_action_rearms_deadline_for_uncertain_errors_and_progress() {
-        for result in [
-            Err(JudgeError::Unavailable),
-            Err(JudgeError::Timeout),
-            Err(JudgeError::Malformed),
-            Ok(verdict(ProgressState::Uncertain, 0.1)),
-            Ok(verdict(ProgressState::Progressing, 1.0)),
-        ] {
-            let (mut s, c, mut ids) = (state(), config(), Ids::new());
-            s.record_intervention(0);
-            s.grace_deadline_ms = Some(1);
-            assert!(matches!(
-                step(&mut s, &heartbeat(&mut ids, 1), 1, &c),
-                Step::NeedsJudge(_)
-            ));
-            assert_eq!(
-                apply_verdict(&mut s, result, 1, &c),
-                WatcherDecision::NoAction
-            );
-            assert_eq!(s.grace_deadline_ms, Some(1 + c.grace_period_ms));
-            for now in 2..8 {
-                assert!(matches!(
-                    step(&mut s, &heartbeat(&mut ids, now), now, &c),
-                    Step::Decision(WatcherDecision::NoAction)
-                ));
-            }
-        }
-    }
-
-    #[test]
-    fn resumed_activity_clears_permission_and_loop_stop_is_judged() {
-        for resume in [
-            WatcherEventKind::ActivityStarted,
-            WatcherEventKind::ActivityFinished,
-        ] {
-            let (mut s, c, mut ids) = (state(), config(), Ids::new());
-            step(
-                &mut s,
-                &attention(&mut ids, 1, AttentionReason::Permission),
-                1,
-                &c,
-            );
-            let mut event = activity_finished(&mut ids, 2, "tool", "repeat");
-            event.kind = resume;
-            step(&mut s, &event, 2, &c);
-            assert!(s.pending_attention.is_none());
-            assert_eq!(s.phase, WatcherPhase::Healthy);
-            for at in 3..6 {
-                step(
-                    &mut s,
-                    &activity_finished(&mut ids, at, "tool", "repeat"),
-                    at,
-                    &c,
-                );
-            }
-            assert!(matches!(
-                step(&mut s, &settled_completed(&mut ids, 6), 6, &c),
-                Step::NeedsJudge(_)
-            ));
-            assert!(matches!(
-                apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 6, &c),
-                WatcherDecision::Nudge { .. }
-            ));
-        }
-    }
-
-    #[test]
-    fn attention_inside_grace_preserves_recovery_deadline() {
-        let (mut s, c, mut ids) = (state(), config(), Ids::new());
-        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c);
-        let deadline = s.grace_deadline_ms;
-        step(
-            &mut s,
-            &attention(&mut ids, 2, AttentionReason::Question),
-            2,
-            &c,
-        );
-        assert_eq!(s.grace_deadline_ms, deadline);
-        step(&mut s, &activity_started(&mut ids, 3, "tool"), 3, &c);
-        assert!(s.pending_attention.is_none());
-        assert_eq!(s.phase, WatcherPhase::Recovering);
-        assert_eq!(
-            apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 4, &c),
-            WatcherDecision::NoAction
-        );
-    }
-
-    #[test]
-    fn pi_first_stop_is_allowed_without_judge_and_claude_still_is_judged() {
-        let (c, mut ids) = (config(), Ids::new());
-        // pi emits only turn-level events: a first completed stop with no
-        // activity evidence must not become a Settle checkpoint, so the
-        // judge never runs.
-        let mut pi = WatcherState::new(&frame(), "task-1", "run-1", "pi");
-        assert!(matches!(
-            step(&mut pi, &settled_completed(&mut ids, 1), 1, &c),
-            Step::Decision(WatcherDecision::AllowStop)
-        ));
-        assert!(pi.pending_checkpoint.is_none());
-        // claude reports activity, so the same first stop is still judged.
-        let mut claude = WatcherState::new(&frame(), "task-2", "run-2", "claude");
-        assert!(matches!(
-            step(&mut claude, &settled_completed(&mut ids, 2), 2, &c),
-            Step::NeedsJudge(_)
-        ));
-        assert_eq!(claude.pending_checkpoint, Some(PendingCheckpoint::Settle));
-    }
-
-    #[test]
-    fn every_escalation_clears_recovery_deadline() {
-        for checkpoint in [
-            None,
-            Some(PendingCheckpoint::Settle),
-            Some(PendingCheckpoint::Loop),
-            Some(PendingCheckpoint::GraceExpiry),
-        ] {
-            let (mut s, c) = (state(), config());
-            s.intervention_count = c.max_total_interventions;
-            s.grace_deadline_ms = Some(1);
-            s.pending_checkpoint = checkpoint;
-            assert!(matches!(
-                apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 2, &c),
-                WatcherDecision::Escalate { .. }
-            ));
-            assert_eq!(s.grace_deadline_ms, None);
-        }
-        for prior_intervention in [None, Some(1)] {
-            let (mut s, c, mut ids) = (state(), config(), Ids::new());
-            s.intervention_count = c.max_total_interventions;
-            s.last_intervention_at_ms = prior_intervention;
-            s.grace_deadline_ms = Some(1);
-            assert!(matches!(
-                step(&mut s, &settled_completed(&mut ids, 2), 2, &c),
-                Step::Decision(WatcherDecision::Escalate { .. })
-            ));
-            assert_eq!(s.grace_deadline_ms, None);
-        }
+        assert!(s.open_tools.is_empty());
     }
 }

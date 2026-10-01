@@ -141,6 +141,7 @@ pub struct WatcherSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatcherEventKind {
     TurnStarted,
+    SessionClosed,
     ActivityStarted,
     ActivityFinished,
     Attention,
@@ -185,6 +186,7 @@ impl WatcherEventKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::TurnStarted => "turn_started",
+            Self::SessionClosed => "session_closed",
             Self::ActivityStarted => "activity_started",
             Self::ActivityFinished => "activity_finished",
             Self::Attention => "attention",

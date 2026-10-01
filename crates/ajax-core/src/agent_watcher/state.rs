@@ -4,7 +4,7 @@
 //! bound. The state is the watcher's own bookkeeping only — it never reads
 //! or writes task status, lifecycle, or registry truth.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,9 @@ pub struct WatcherState {
     pub loop_checkpoint_signature: Option<String>,
     /// Open tool ids. Bounded; the count is what policy uses.
     pub open_tools: Vec<String>,
+    /// Start timestamps, bounded by the same open-tool ids.
+    #[serde(default)]
+    pub(super) open_tool_started_at_ms: HashMap<String, u64>,
     pub open_children: u32,
     pub settle_attempts: u32,
     pub intervention_count: u32,
@@ -100,6 +103,7 @@ impl WatcherState {
             pending_checkpoint: None,
             loop_checkpoint_signature: None,
             open_tools: Vec::new(),
+            open_tool_started_at_ms: HashMap::new(),
             open_children: 0,
             settle_attempts: 0,
             intervention_count: 0,
@@ -198,19 +202,30 @@ impl WatcherState {
         self.intervention_count = 0;
     }
 
-    pub fn open_tool(&mut self, tool_id: &str) {
+    pub fn open_tool(&mut self, tool_id: &str, now_ms: u64) {
         if !self.open_tools.iter().any(|id| id == tool_id) {
             self.open_tools.push(tool_id.to_string());
+            self.open_tool_started_at_ms
+                .insert(tool_id.to_string(), now_ms);
         }
         while self.open_tools.len() > MAX_OPEN_TOOLS {
-            self.open_tools.remove(0);
+            let id = self.open_tools.remove(0);
+            self.open_tool_started_at_ms.remove(&id);
         }
     }
 
     pub fn close_tool(&mut self, tool_id: &str) {
+        self.open_tool_started_at_ms.remove(tool_id);
         if let Some(pos) = self.open_tools.iter().position(|id| id == tool_id) {
             self.open_tools.remove(pos);
         }
+    }
+
+    pub(super) fn expire_open_tools(&mut self, now_ms: u64) {
+        self.open_tool_started_at_ms
+            .retain(|_, at| now_ms.saturating_sub(*at) <= 600_000);
+        self.open_tools
+            .retain(|id| self.open_tool_started_at_ms.contains_key(id));
     }
 
     /// True when meaningful activity happened after the last intervention.
@@ -314,6 +329,178 @@ impl WatcherState {
         self.nudge_seq = persisted.nudge_seq;
         if let Some(id) = &persisted.last_seen_event_id {
             self.note_event_id(id, 512);
+        }
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use crate::agent_watcher::test_support::*;
+    use crate::agent_watcher::*;
+    use crate::canonical_agent_event::AttentionReason;
+
+    #[test]
+    fn loop_checkpoint_fires_once_and_rearms_after_change_or_nudge() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        let mut checkpoints = 0;
+        for signature in ["repeat"; 40].into_iter().chain(["different"; 3]) {
+            let event = activity_finished(&mut ids, 1, "tool", signature);
+            if matches!(step(&mut s, &event, 1, &c), Step::NeedsJudge(_)) {
+                checkpoints += 1;
+                apply_verdict(&mut s, Err(JudgeError::Unavailable), 1, &c);
+            }
+        }
+        assert_eq!(checkpoints, 2);
+        s.record_intervention(2);
+        assert!(matches!(
+            step(
+                &mut s,
+                &activity_finished(&mut ids, 3, "tool", "different"),
+                3,
+                &c
+            ),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+    }
+
+    #[test]
+    fn grace_expiry_no_action_rearms_deadline_for_uncertain_errors_and_progress() {
+        for result in [
+            Err(JudgeError::Unavailable),
+            Err(JudgeError::Timeout),
+            Err(JudgeError::Malformed),
+            Ok(verdict(ProgressState::Uncertain, 0.1)),
+            Ok(verdict(ProgressState::Progressing, 1.0)),
+        ] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            s.record_intervention(0);
+            s.grace_deadline_ms = Some(1);
+            assert!(matches!(
+                step(&mut s, &heartbeat(&mut ids, 1), 1, &c),
+                Step::NeedsJudge(_)
+            ));
+            assert_eq!(
+                apply_verdict(&mut s, result, 1, &c),
+                WatcherDecision::NoAction
+            );
+            assert_eq!(s.grace_deadline_ms, Some(1 + c.grace_period_ms));
+            for now in 2..8 {
+                assert!(matches!(
+                    step(&mut s, &heartbeat(&mut ids, now), now, &c),
+                    Step::Decision(WatcherDecision::NoAction)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn resumed_activity_clears_permission_and_loop_stop_is_judged() {
+        for resume in [
+            WatcherEventKind::ActivityStarted,
+            WatcherEventKind::ActivityFinished,
+        ] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            step(
+                &mut s,
+                &attention(&mut ids, 1, AttentionReason::Permission),
+                1,
+                &c,
+            );
+            let mut event = activity_finished(&mut ids, 2, "tool", "repeat");
+            event.kind = resume;
+            step(&mut s, &event, 2, &c);
+            assert!(s.pending_attention.is_none());
+            assert_eq!(s.phase, WatcherPhase::Healthy);
+            for at in 3..6 {
+                step(
+                    &mut s,
+                    &activity_finished(&mut ids, at, "tool", "repeat"),
+                    at,
+                    &c,
+                );
+            }
+            assert!(matches!(
+                step(&mut s, &settled_completed(&mut ids, 6), 6, &c),
+                Step::NeedsJudge(_)
+            ));
+            assert!(matches!(
+                apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 6, &c),
+                WatcherDecision::Nudge { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn attention_inside_grace_preserves_recovery_deadline() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c);
+        let deadline = s.grace_deadline_ms;
+        step(
+            &mut s,
+            &attention(&mut ids, 2, AttentionReason::Question),
+            2,
+            &c,
+        );
+        assert_eq!(s.grace_deadline_ms, deadline);
+        step(&mut s, &activity_started(&mut ids, 3, "tool"), 3, &c);
+        assert!(s.pending_attention.is_none());
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+        assert_eq!(
+            apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 4, &c),
+            WatcherDecision::NoAction
+        );
+    }
+
+    #[test]
+    fn pi_first_stop_is_allowed_without_judge_and_claude_still_is_judged() {
+        let (c, mut ids) = (config(), Ids::new());
+        // pi emits only turn-level events: a first completed stop with no
+        // activity evidence must not become a Settle checkpoint, so the
+        // judge never runs.
+        let mut pi = WatcherState::new(&frame(), "task-1", "run-1", "pi");
+        assert!(matches!(
+            step(&mut pi, &settled_completed(&mut ids, 1), 1, &c),
+            Step::Decision(WatcherDecision::AllowStop)
+        ));
+        assert!(pi.pending_checkpoint.is_none());
+        // claude reports activity, so the same first stop is still judged.
+        let mut claude = WatcherState::new(&frame(), "task-2", "run-2", "claude");
+        assert!(matches!(
+            step(&mut claude, &settled_completed(&mut ids, 2), 2, &c),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(claude.pending_checkpoint, Some(PendingCheckpoint::Settle));
+    }
+
+    #[test]
+    fn every_escalation_clears_recovery_deadline() {
+        for checkpoint in [
+            None,
+            Some(PendingCheckpoint::Settle),
+            Some(PendingCheckpoint::Loop),
+            Some(PendingCheckpoint::GraceExpiry),
+        ] {
+            let (mut s, c) = (state(), config());
+            s.intervention_count = c.max_total_interventions;
+            s.grace_deadline_ms = Some(1);
+            s.pending_checkpoint = checkpoint;
+            assert!(matches!(
+                apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 2, &c),
+                WatcherDecision::Escalate { .. }
+            ));
+            assert_eq!(s.grace_deadline_ms, None);
+        }
+        for prior_intervention in [None, Some(1)] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            s.intervention_count = c.max_total_interventions;
+            s.last_intervention_at_ms = prior_intervention;
+            s.grace_deadline_ms = Some(1);
+            assert!(matches!(
+                step(&mut s, &settled_completed(&mut ids, 2), 2, &c),
+                Step::Decision(WatcherDecision::Escalate { .. })
+            ));
+            assert_eq!(s.grace_deadline_ms, None);
         }
     }
 }

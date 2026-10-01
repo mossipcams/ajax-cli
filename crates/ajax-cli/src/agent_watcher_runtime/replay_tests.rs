@@ -4,7 +4,11 @@ use ajax_core::{agent_watcher::ProgressState, canonical_agent_event::AttentionRe
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn worker(fixture: &Fixture, calls: &Arc<AtomicUsize>, progress: ProgressState) -> Worker {
+pub(super) fn worker(
+    fixture: &Fixture,
+    calls: &Arc<AtomicUsize>,
+    progress: ProgressState,
+) -> Worker {
     let observed = calls.clone();
     let shared = Arc::new(Mutex::new(Mailbox {
         frames: fixture.runtime.shared.lock().unwrap().frames.clone(),
@@ -28,14 +32,14 @@ fn worker(fixture: &Fixture, calls: &Arc<AtomicUsize>, progress: ProgressState) 
     }
 }
 
-fn at(line: &str, now: u64) -> String {
+pub(super) fn at(line: &str, now: u64) -> String {
     let mut value: Value = serde_json::from_str(line).unwrap();
     value["occurred_at_unix_millis"] = json!(now);
     value["received_at_unix_millis"] = json!(now);
     value.to_string()
 }
 
-fn tick(worker: &mut Worker, now: u64) {
+pub(super) fn tick(worker: &mut Worker, now: u64) {
     worker.shared.lock().unwrap().tick = Some(now);
     worker.consume("");
 }
