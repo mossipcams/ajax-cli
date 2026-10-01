@@ -16,7 +16,7 @@ use std::{
     time::Instant,
 };
 
-struct Judge<F>(F);
+pub(super) struct Judge<F>(pub(super) F);
 
 impl<F: Fn(&WatcherSnapshot) -> Result<WatcherVerdict, JudgeError>> AgentProgressJudge
     for Judge<F>
@@ -26,21 +26,21 @@ impl<F: Fn(&WatcherSnapshot) -> Result<WatcherVerdict, JudgeError>> AgentProgres
     }
 }
 
-fn stuck(_: &WatcherSnapshot) -> Result<WatcherVerdict, JudgeError> {
+pub(super) fn stuck(_: &WatcherSnapshot) -> Result<WatcherVerdict, JudgeError> {
     Ok(WatcherVerdict {
         state: ProgressState::Stuck,
         confidence: 0.95,
     })
 }
 
-struct Fixture {
+pub(super) struct Fixture {
     root: PathBuf,
-    context: CommandContext<InMemoryRegistry>,
-    runtime: Arc<WatcherRuntime>,
+    pub(super) context: CommandContext<InMemoryRegistry>,
+    pub(super) runtime: Arc<WatcherRuntime>,
 }
 
 impl Fixture {
-    fn new(judge: impl AgentProgressJudge + Send + Sync + 'static) -> Self {
+    pub(super) fn new(judge: impl AgentProgressJudge + Send + Sync + 'static) -> Self {
         static SEQ: AtomicUsize = AtomicUsize::new(0);
         let root = PathBuf::from(format!(
             "/tmp/ajax-watcher-{}-{}-{}",
@@ -80,18 +80,22 @@ impl Fixture {
         )
         .unwrap();
         runtime.refresh(&mut context);
-        Self {
+        let fixture = Self {
             root,
             context,
             runtime,
-        }
+        };
+        // Establish the first replay read before tests submit live evidence.
+        fixture.send(&line("fixture-ready", "turn_started", Value::Null));
+        fixture.processed("fixture-ready");
+        fixture
     }
 
-    fn events_dir(&self) -> PathBuf {
+    pub(super) fn events_dir(&self) -> PathBuf {
         self.context.runtime_paths.cache_dir.join("agent-events")
     }
 
-    fn append(&self, line: &str) {
+    pub(super) fn append(&self, line: &str) {
         let path = self.events_dir().join(format!(
             "{}.jsonl",
             crate::agent_runtime::task_file_stem("task-1")
@@ -107,12 +111,12 @@ impl Fixture {
         .unwrap();
     }
 
-    fn send(&self, line: &str) {
+    pub(super) fn send(&self, line: &str) {
         self.append(line);
         self.runtime.sink().send(line.into()).unwrap();
     }
 
-    fn processed(&self, event_id: &str) {
+    pub(super) fn processed(&self, event_id: &str) {
         wait_until(|| {
             self.runtime
                 .shared
@@ -124,7 +128,7 @@ impl Fixture {
         });
     }
 
-    fn task(&self) -> &Task {
+    pub(super) fn task(&self) -> &Task {
         self.context
             .registry
             .get_task(&TaskId::new("task-1"))
@@ -138,7 +142,7 @@ impl Drop for Fixture {
     }
 }
 
-fn wait_until(mut ready: impl FnMut() -> bool) {
+pub(super) fn wait_until(mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while !ready() {
         assert!(
@@ -149,11 +153,11 @@ fn wait_until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-fn line(id: &str, kind: &str, detail: Value) -> String {
+pub(super) fn line(id: &str, kind: &str, detail: Value) -> String {
     json!({"event_id": id, "task_id": "task-1", "run_id": "primary", "kind": kind, "detail": detail, "occurred_at_unix_millis": now_ms(), "received_at_unix_millis": now_ms()}).to_string()
 }
 
-fn completed(id: &str) -> String {
+pub(super) fn completed(id: &str) -> String {
     line(
         id,
         "turn_settled",
@@ -201,11 +205,14 @@ fn suspicious_completion_nudges_once_despite_duplicate_socket_and_hook_lines() {
     fixture.processed("done");
     fixture.runtime.sink().send(notify.clone()).unwrap();
     fixture.send(&notify);
-    fixture.send(&line("after", "turn_started", Value::Null));
-    fixture.processed("after");
     let shared = fixture.runtime.shared.lock().unwrap();
     assert_eq!(shared.outbox.len(), 1);
     assert_eq!(shared.outbox[0].nudge_id, "watcher-task-1-primary-1");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    drop(shared);
+    fixture.send(&line("after", "turn_started", Value::Null));
+    fixture.processed("after");
+    assert!(fixture.runtime.shared.lock().unwrap().outbox.is_empty());
     assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 

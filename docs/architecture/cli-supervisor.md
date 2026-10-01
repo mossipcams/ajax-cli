@@ -94,13 +94,21 @@ special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
   implementation (`laya_judge.rs`) drives a persistent Python sidecar
   (`scripts/ajax-laya-sidecar`) around the local Laya decision model. The host
   enforces a timeout; an unavailable, slow, malformed or failing judge means no
-  action.
+  action. Calls are at least 30 seconds apart per task; loop checkpoints fire
+  once per repeated-signature episode. Active grace, attention, and operator
+  handoff states suppress judgment. Evidence older than five minutes cannot
+  justify a judgment or nudge; refresh ticks do not refresh that evidence.
 - **Config.** Optional `[watcher]` table: `enabled` (default true), `laya_command`
-  (unset means deterministic checks only), `judge_timeout_ms` (default 2000,
-  clamped 200..=10000).
+  (required to start the watcher), `judge_timeout_ms` (default 2000, clamped
+  200..=10000). When enabled without a judge command, the host logs once that
+  the watcher is idle and uses the plain notification drain listener. No
+  watcher journals are read or watcher metadata written in that mode.
 - **Delivery.** A nudge becomes `AgentNotification::WatcherNudge` and travels the
   existing cockpit delivery path: the validated tmux path for interactive tasks,
   `TaskSessionDirectory::submit_prompt_with_id` for ACP-backed tasks.
 - **V1 limits.** ACP sessions emit no native hook events, so only interactive runs
   are observed (ACP nudge delivery is implemented, detection is not). Events
-  missed while `ajax web` is down are not replayed into a nudge.
+  in the first journal read rebuild watcher state only, including for a new
+  task that reuses an old journal. Events after a restored cursor stamped before
+  `ajax web` started also replay as state only; replay never requests a judge
+  or queues a nudge.

@@ -18,9 +18,9 @@ mod test_support;
 pub use policy::{apply_verdict, nudge_prompt, step, Step, WatcherConfig};
 pub use state::{WatcherPersistedState, WatcherState};
 pub use store::{
-    clear_watcher_delivery, enqueue_watcher_nudge, load_store, load_watcher_state,
-    pending_watcher_nudge, record_watcher_delivery, store_watcher_state, WatcherPendingNudge,
-    WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
+    cancel_pending_watcher_nudge, clear_watcher_delivery, enqueue_watcher_nudge, load_store,
+    load_watcher_state, pending_watcher_nudge, record_watcher_delivery, store_watcher_state,
+    WatcherPendingNudge, WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
 };
 pub use types::{
     AgentProgressJudge, JudgeError, PendingCheckpoint, ProgressState, TaskFrame, WatcherDecision,

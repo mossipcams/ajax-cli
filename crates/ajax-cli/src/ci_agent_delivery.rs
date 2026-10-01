@@ -2,7 +2,7 @@ use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeSta
 use ajax_core::{
     adapters::{CommandRunner, CommandSpec, TmuxAdapter},
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
-    models::{AgentClient, Task},
+    models::{AgentClient, AgentRuntimeStatus, LiveStatusKind, SideFlag, Task},
 };
 use std::{
     fs,
@@ -18,6 +18,20 @@ pub(crate) fn deliver(
     task: &Task,
     notification: &AgentNotification,
 ) -> Result<AgentNotificationDeliveryStatus, String> {
+    if matches!(notification, AgentNotification::WatcherNudge { .. })
+        && (task.live_status.as_ref().is_some_and(|live| {
+            matches!(
+                live.kind,
+                LiveStatusKind::WaitingForApproval
+                    | LiveStatusKind::WaitingForInput
+                    | LiveStatusKind::AuthRequired
+                    | LiveStatusKind::ContextLimit
+            )
+        }) || task.has_side_flag(SideFlag::NeedsInput)
+            || task.agent_status == AgentRuntimeStatus::Waiting)
+    {
+        return Err("agent is awaiting operator input; watcher nudge retained".into());
+    }
     let expected = expected_process(task.selected_agent)?;
     let path = cache_dir
         .join("agent-runtime")
@@ -333,5 +347,56 @@ mod tests {
         );
         assert_eq!(send.args.get(4), Some(&"Enter".to_string()));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
+    fn watcher_waits_for_operator_without_typing_or_dropping_nudge() {
+        use ajax_core::agent_watcher::{enqueue_watcher_nudge, pending_watcher_nudge};
+        use ajax_core::models::{LiveObservation, LiveStatusKind};
+        let dir = scratch_dir();
+        write_snapshot(&dir, now_ms());
+        for kind in [
+            LiveStatusKind::WaitingForApproval,
+            LiveStatusKind::WaitingForInput,
+            LiveStatusKind::AuthRequired,
+            LiveStatusKind::ContextLimit,
+        ] {
+            let mut task = task();
+            task.live_status = Some(LiveObservation::new(kind, "operator input required"));
+            enqueue_watcher_nudge(&mut task, nudge().id(), WatcherReason::Stuck);
+            let mut runner = FakeRunner::healthy();
+            let result = super::deliver(&dir, &mut runner, &task, &nudge());
+            assert!(result.is_err());
+            assert_no_send_keys(&runner.commands);
+            assert_eq!(pending_watcher_nudge(&task), Some(nudge()));
+            let ci = AgentNotification::CiFailed {
+                episode_id: "ci-1".into(),
+                task_id: task.id.clone(),
+                pr_number: 1,
+                head_sha: "abc".into(),
+                failed_checks: Vec::new(),
+            };
+            assert_eq!(
+                super::deliver(&dir, &mut runner, &task, &ci),
+                Ok(AgentNotificationDeliveryStatus::Accepted)
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn watcher_respects_input_evidence_without_live_status() {
+        let dir = scratch_dir();
+        write_snapshot(&dir, now_ms());
+        for side_flag in [false, true] {
+            let mut task = task();
+            if side_flag {
+                task.add_side_flag(SideFlag::NeedsInput);
+            } else {
+                task.agent_status = AgentRuntimeStatus::Waiting;
+            }
+            let mut runner = FakeRunner::healthy();
+            assert!(super::deliver(&dir, &mut runner, &task, &nudge()).is_err());
+            assert_no_send_keys(&runner.commands);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

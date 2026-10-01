@@ -180,3 +180,68 @@ fn watcher_nudge_delivers_through_task_session_queue() {
     });
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn watcher_refuses_operator_requests_while_ci_still_queues() {
+    for request in [
+        SessionServerEvent::PermissionRequest {
+            request_id: "permission".into(),
+            title: None,
+            detail: None,
+        },
+        SessionServerEvent::ElicitationRequest {
+            request_id: "question".into(),
+            message: "Choose".into(),
+            schema: serde_json::json!({}),
+        },
+    ] {
+        let dir = scratch_dir("watcher-awaiting-operator");
+        let task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "waiting",
+            "test",
+            "branch",
+            "main",
+            &dir,
+            "tmux",
+            "task",
+            AgentClient::Cursor,
+        );
+        let handle = task.qualified_handle();
+        with_test_acp_program(&fake_acp_fixture(), || {
+            with_test_acp_extra_args(&["--hold-prompt"], || {
+                let directory = BlockingSessionDirectory::new(dir.clone());
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .unwrap();
+                directory.submit_prompt(&handle, "original".into()).unwrap();
+                directory.record(&handle, request.clone());
+                let nudge = AgentNotification::WatcherNudge {
+                    id: "watcher-1".into(),
+                    task_id: task.id.clone(),
+                    reason: WatcherReason::Stuck,
+                };
+                let deliver = |notification: &AgentNotification| {
+                    directory.runtime_handle().block_on(super::deliver(
+                        directory.inner(),
+                        &task,
+                        notification,
+                    ))
+                };
+                assert!(deliver(&nudge).is_err());
+                assert!(!directory.read_from(&handle, 0).0.iter().any(|event| matches!(event, SessionServerEvent::Message { role, text, .. } if role == "user" && text == &nudge.prompt())));
+                assert_eq!(directory.eviction_snapshot(&handle).unwrap().holders, 1);
+                let ci = AgentNotification::CiFailed {
+                    episode_id: "ci-1".into(),
+                    task_id: task.id.clone(),
+                    pr_number: 1,
+                    head_sha: "abc".into(),
+                    failed_checks: Vec::new(),
+                };
+                assert_eq!(deliver(&ci), Ok(AgentNotificationDeliveryStatus::Queued));
+            });
+        });
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

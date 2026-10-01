@@ -41,7 +41,8 @@ pub(crate) struct LayaJudge {
     timeout: Duration,
 }
 
-/// Disabled watcher has no judge or child; absent command is deterministic only.
+/// Disabled watcher has no judge or child. The web host also skips runtime
+/// startup without a command; the null judge remains a fail-open fallback.
 pub(crate) fn configured_judge(
     config: &WatcherConfig,
 ) -> Option<crate::agent_watcher_runtime::CheckpointJudge> {

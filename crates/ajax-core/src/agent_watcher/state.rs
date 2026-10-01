@@ -36,6 +36,9 @@ pub struct WatcherState {
     pub pending_attention: Option<AttentionReason>,
     /// Checkpoint awaiting a judge verdict, if `step` asked for one.
     pub pending_checkpoint: Option<PendingCheckpoint>,
+    /// Signature whose loop edge has already raised a checkpoint.
+    #[serde(default)]
+    pub loop_checkpoint_signature: Option<String>,
     /// Open tool ids. Bounded; the count is what policy uses.
     pub open_tools: Vec<String>,
     pub open_children: u32,
@@ -95,6 +98,7 @@ impl WatcherState {
             failure_count: 0,
             pending_attention: None,
             pending_checkpoint: None,
+            loop_checkpoint_signature: None,
             open_tools: Vec::new(),
             open_children: 0,
             settle_attempts: 0,
@@ -237,10 +241,29 @@ impl WatcherState {
     }
 
     pub fn record_intervention(&mut self, now_ms: u64) {
+        self.loop_checkpoint_signature = None;
         self.intervention_count += 1;
+        self.nudge_seq += 1;
         self.last_intervention_event_index = Some(self.event_index);
         self.last_intervention_at_ms = Some(now_ms);
         self.phase = WatcherPhase::Recovering;
+    }
+
+    pub(super) fn clear_attention(&mut self) {
+        self.pending_attention = None;
+        if self.phase == WatcherPhase::WaitingOnUser {
+            self.phase = if self.grace_deadline_ms.is_some() && self.intervention_count > 0 {
+                WatcherPhase::Recovering
+            } else {
+                WatcherPhase::Healthy
+            };
+        }
+    }
+
+    pub(super) fn escalate(&mut self) {
+        self.phase = WatcherPhase::Escalated;
+        self.grace_deadline_ms = None;
+        self.pending_checkpoint = None;
     }
 
     /// Compact, bounded view for a judge.

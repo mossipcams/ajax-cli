@@ -95,6 +95,15 @@ pub fn pending_watcher_nudge(task: &Task) -> Option<AgentNotification> {
         })
 }
 
+/// Cancel a nudge made stale by newer watcher evidence, preserving delivery history.
+pub fn cancel_pending_watcher_nudge(task: &mut Task) -> bool {
+    let mut store = load_store(task);
+    if store.pending_nudge.take().is_none() {
+        return false;
+    }
+    persist(task, &store)
+}
+
 /// Queue a nudge for delivery. Returns whether the task changed.
 ///
 /// A task has at most one pending nudge: enqueueing while one is pending, or
@@ -291,5 +300,25 @@ mod tests {
             delivery(AgentNotificationDeliveryStatus::Accepted, "n1")
         ));
         assert!(!task.metadata.contains_key(WATCHER_STATE_KEY));
+    }
+    #[test]
+    fn cancellation_preserves_state_and_delivery_and_is_idempotent() {
+        let mut task = task();
+        assert!(!cancel_pending_watcher_nudge(&mut task));
+        assert!(task.metadata.is_empty());
+        store_watcher_state(&mut task, &watcher_state());
+        enqueue_watcher_nudge(&mut task, "first", WatcherReason::Stuck);
+        record_watcher_delivery(
+            &mut task,
+            delivery(AgentNotificationDeliveryStatus::Accepted, "first"),
+        );
+        enqueue_watcher_nudge(&mut task, "second", WatcherReason::Stuck);
+        let before = load_store(&task);
+        assert!(cancel_pending_watcher_nudge(&mut task));
+        assert!(pending_watcher_nudge(&task).is_none());
+        let after = load_store(&task);
+        assert_eq!(after.state, before.state);
+        assert_eq!(after.delivery, before.delivery);
+        assert!(!cancel_pending_watcher_nudge(&mut task));
     }
 }

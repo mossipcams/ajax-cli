@@ -2,7 +2,7 @@
 //! and notification delivery remain on the existing cockpit refresh path.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     panic::{catch_unwind, AssertUnwindSafe},
     path::PathBuf,
@@ -13,10 +13,11 @@ use std::{
 
 use ajax_core::{
     agent_watcher::{
-        apply_verdict, enqueue_watcher_nudge, load_watcher_state, step, store_watcher_state,
-        AgentProgressJudge, JudgeError, PendingCheckpoint, Step, TaskFrame, WatcherConfig,
-        WatcherDecision, WatcherEvent, WatcherEventDetail, WatcherEventKind, WatcherPersistedState,
-        WatcherPhase, WatcherReason, WatcherSnapshot, WatcherState, WatcherVerdict,
+        apply_verdict, cancel_pending_watcher_nudge, enqueue_watcher_nudge, load_watcher_state,
+        step, store_watcher_state, AgentProgressJudge, JudgeError, PendingCheckpoint, Step,
+        TaskFrame, WatcherConfig, WatcherDecision, WatcherEvent, WatcherEventDetail,
+        WatcherEventKind, WatcherPersistedState, WatcherPhase, WatcherReason, WatcherSnapshot,
+        WatcherState, WatcherVerdict,
     },
     commands::CommandContext,
     models::{LifecycleStatus, Task, TaskId},
@@ -24,6 +25,8 @@ use ajax_core::{
 };
 
 mod journal;
+#[cfg(test)]
+mod replay_tests;
 #[cfg(test)]
 mod tests;
 
@@ -63,6 +66,7 @@ struct Mailbox {
     tick: Option<u64>,
     states: HashMap<String, WatcherPersistedState>,
     outbox: Vec<Nudge>,
+    cancelled: HashSet<String>,
 }
 
 pub(crate) struct WatcherRuntime {
@@ -111,6 +115,7 @@ impl WatcherRuntime {
             judge,
             judge_thread: None,
             timeout,
+            started_at_ms: now_ms(),
         };
         thread::Builder::new()
             .name("ajax-agent-watcher".into())
@@ -143,6 +148,12 @@ impl WatcherRuntime {
             return false;
         };
         let mut changed = false;
+        // Apply cancellations before any newer nudge from the same journal batch.
+        for id in shared.cancelled.drain() {
+            if let Some(task) = context.registry.get_task_mut(&TaskId::new(id)) {
+                changed |= cancel_pending_watcher_nudge(task);
+            }
+        }
         for nudge in shared.outbox.drain(..) {
             if let Some(task) = context.registry.get_task_mut(&TaskId::new(nudge.task_id)) {
                 if eligible(task) {
@@ -155,6 +166,12 @@ impl WatcherRuntime {
             if let Some(task) = context.registry.get_task_mut(&TaskId::new(id)) {
                 if eligible(task) {
                     changed |= store_watcher_state(task, &state);
+                    if matches!(
+                        state.phase,
+                        WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
+                    ) {
+                        changed |= cancel_pending_watcher_nudge(task);
+                    }
                 }
             }
         }
@@ -205,7 +222,13 @@ struct WatchedTask {
     state: WatcherState,
     offset: u64,
     restoring: Option<WatcherPersistedState>,
+    initial_read: bool,
+    newest_event_at_ms: Option<u64>,
+    last_judge_at_ms: Option<u64>,
 }
+
+const EVENT_FRESHNESS_MS: u64 = 5 * 60 * 1000;
+const JUDGE_COOLDOWN_MS: u64 = 30 * 1000;
 
 struct Worker {
     shared: Arc<Mutex<Mailbox>>,
@@ -215,6 +238,7 @@ struct Worker {
     judge: CheckpointJudge,
     judge_thread: Option<JoinHandle<()>>,
     timeout: Duration,
+    started_at_ms: u64,
 }
 
 impl Worker {
@@ -244,6 +268,9 @@ impl Worker {
                 ),
                 offset: 0,
                 restoring: frame.persisted.clone(),
+                initial_read: true,
+                newest_event_at_ms: None,
+                last_judge_at_ms: None,
             });
             task.state.objective = frame.objective;
             task.state.harness = frame.harness;
@@ -271,7 +298,7 @@ impl Worker {
                 }
             }
             if task.restoring.is_none() {
-                self.resolve_checkpoint(&mut task);
+                self.resolve_checkpoint(&mut task, tick.unwrap_or_else(now_ms));
                 self.publish_state(&task.state);
             }
             self.tasks.insert(id, task);
@@ -281,12 +308,19 @@ impl Worker {
     fn step(&mut self, state: &mut WatcherState, event: &WatcherEvent, now: u64, replay: bool) {
         if let Step::NeedsJudge(_) = step(state, event, now, &self.config) {
             if replay {
-                apply_verdict(state, Err(JudgeError::Unavailable), now, &self.config);
+                state.pending_checkpoint = None;
             }
         }
     }
 
-    fn resolve_checkpoint(&mut self, task: &mut WatchedTask) {
+    fn resolve_checkpoint(&mut self, task: &mut WatchedTask, now: u64) {
+        if task
+            .newest_event_at_ms
+            .is_none_or(|at| now.saturating_sub(at) > EVENT_FRESHNESS_MS)
+        {
+            task.state.pending_checkpoint = None;
+            return;
+        }
         let state = &task.state;
         if state.pending_checkpoint.is_none() {
             return;
@@ -297,12 +331,24 @@ impl Worker {
                 .iter()
                 .any(|nudge| nudge.task_id == state.task_id)
         });
-        let now = now_ms();
         let checkpoint_index = state.event_index;
         let checkpoint_run = state.run_id.clone();
-        let mut verdict = if pending || state.open_children > 0 || !state.open_tools.is_empty() {
+        let mut verdict = if pending
+            || state.open_children > 0
+            || !state.open_tools.is_empty()
+            || state.pending_attention.is_some()
+            || matches!(
+                state.phase,
+                WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
+            )
+            || state.grace_is_active(now)
+            || task
+                .last_judge_at_ms
+                .is_some_and(|at| now.saturating_sub(at) < JUDGE_COOLDOWN_MS)
+        {
             Err(JudgeError::Unavailable)
         } else {
+            task.last_judge_at_ms = Some(now);
             self.evaluate(state.snapshot(now), state.pending_checkpoint)
         };
         // Fold evidence arriving during evaluation before acting. Duplicate
@@ -330,7 +376,7 @@ impl Worker {
                     task_id: state.task_id.clone(),
                     nudge_id: format!(
                         "watcher-{}-{}-{}",
-                        state.task_id, state.run_id, state.intervention_count
+                        state.task_id, state.run_id, state.nudge_seq
                     ),
                     reason,
                     persisted_state: state.persisted(),
@@ -344,6 +390,13 @@ impl Worker {
             return;
         }
         if let Ok(mut shared) = self.shared.lock() {
+            if matches!(
+                state.phase,
+                WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
+            ) {
+                shared.outbox.retain(|nudge| nudge.task_id != state.task_id);
+                shared.cancelled.insert(state.task_id.clone());
+            }
             shared
                 .states
                 .insert(state.task_id.clone(), state.persisted());
@@ -412,6 +465,7 @@ mod checkpoint_tests {
             }),
             judge_thread: None,
             timeout: Duration::from_secs(1),
+            started_at_ms: now_ms(),
         };
         assert!(worker
             .evaluate(snapshot, Some(PendingCheckpoint::GraceExpiry))

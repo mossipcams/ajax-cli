@@ -170,18 +170,17 @@ pub(crate) fn serve_mobile_web(
     serve_mobile_web_with_paths(host, port, context, runner, None)
 }
 
-pub(crate) fn serve_mobile_web_with_paths(
-    host: &str,
-    port: u16,
+pub(crate) fn start_agent_watcher(
     context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<(), CliError> {
-    let state_dir = companion_state_dir(paths)?;
-    let bridge = CliRuntimeBridge::for_context(paths, context)?;
-    ajax_core::logging::init_to_logs_dir(&context.runtime_paths.logs_dir);
+) -> Option<std::sync::Arc<crate::agent_watcher_runtime::WatcherRuntime>> {
+    if context.config.watcher.laya_command.is_none() {
+        if context.config.watcher.enabled {
+            tracing::info!("agent watcher is idle without a judge; configure watcher.laya_command");
+        }
+        return None;
+    }
     let events_dir = context.runtime_paths.cache_dir.join("agent-events");
-    let watcher = crate::laya_judge::configured_judge(&context.config.watcher).and_then(|judge| {
+    crate::laya_judge::configured_judge(&context.config.watcher).and_then(|judge| {
         match crate::agent_watcher_runtime::WatcherRuntime::start_with_checkpoint_timeout(
             events_dir.clone(),
             judge,
@@ -198,7 +197,21 @@ pub(crate) fn serve_mobile_web_with_paths(
                 None
             }
         }
-    });
+    })
+}
+
+pub(crate) fn serve_mobile_web_with_paths(
+    host: &str,
+    port: u16,
+    context: &mut CommandContext<InMemoryRegistry>,
+    _runner: &mut impl CommandRunner,
+    paths: Option<&CliContextPaths>,
+) -> Result<(), CliError> {
+    let state_dir = companion_state_dir(paths)?;
+    let bridge = CliRuntimeBridge::for_context(paths, context)?;
+    ajax_core::logging::init_to_logs_dir(&context.runtime_paths.logs_dir);
+    let events_dir = context.runtime_paths.cache_dir.join("agent-events");
+    let watcher = start_agent_watcher(context);
     let listener = match &watcher {
         Some(watcher) => crate::agent_event_notify::start_agent_event_notify_listener_with_sink(
             events_dir,
